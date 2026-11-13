@@ -432,7 +432,6 @@ class SqliteDb(BaseDb):
             (self.session_table_name, "sessions"),
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
             (self.component_metrics_table_name, "component_metrics"),
             (self.aggregate_metrics_table_name, "aggregate_metrics"),
             (self.metrics_refreshes_table_name, "metrics_refreshes"),
@@ -3711,7 +3710,7 @@ class SqliteDb(BaseDb):
         refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = self._get_table(table_type="sessions")
         if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table = self._get_table(table_type="runs")
 
@@ -3841,10 +3840,9 @@ class SqliteDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
@@ -9726,7 +9724,7 @@ class SqliteDb(BaseDb):
         if table is None:
             return None
         tasks_table = self._get_table(table_type="tasks") if target == "done" else None
-        tasks = tasks_table if auto_accept else None
+        tasks = self._get_table(table_type="tasks") if auto_accept else None
         stmt = select(table).where(table.c.id == project_id, table.c.deleted_at.is_(None))
         if user_id is not None:
             stmt = stmt.where(table.c.user_id == user_id)
@@ -9735,23 +9733,36 @@ class SqliteDb(BaseDb):
         with self.Session() as sess, sess.begin():
             lock_child(sess, products, projects, table, project_id)
             if auto_accept is not None:
-                if target != "done" or expected_updated_at is _UNSET_UPDATED_AT or products is None or tasks is None:
-                    raise ValueError("Automatic completion requires expected_updated_at and a Project with Tasks")
-                task_histories = (
-                    (sess.execute(select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])))
-                    .scalars()
-                    .all()
-                )
-                project_histories = (
-                    (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
-                )
                 if (
-                    _acceptance_count(
-                        list(task_histories) + list(project_histories), auto_accept["routine_id"], auto_accept["policy"]
-                    )
-                    >= auto_accept["max_acceptances"]
+                    target not in {"active", "done"}
+                    or expected_updated_at is _UNSET_UPDATED_AT
+                    or products is None
+                    or tasks is None
                 ):
-                    raise ValueError("Routine acceptance limit reached")
+                    raise ValueError("An automatic Project decision requires expected_updated_at and a Product")
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    task_histories = (
+                        (
+                            sess.execute(
+                                select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    project_histories = (
+                        (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
+                    )
+                    if (
+                        _acceptance_count(
+                            list(task_histories) + list(project_histories),
+                            auto_accept["routine_id"],
+                            auto_accept["policy"],
+                        )
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
@@ -9805,7 +9816,12 @@ class SqliteDb(BaseDb):
             if proposal is not None:
                 return proposal
             require_project(
-                sess, projects, task_data.get("project_id"), task_data["product_id"], task_data.get("status", "backlog")
+                sess,
+                projects,
+                task_data.get("project_id"),
+                task_data["product_id"],
+                task_data.get("status", "backlog"),
+                reject_proposed=task_data.get("status", "backlog") != "backlog",
             )
             if task_data.get("dedupe_key") is not None:
                 from sqlalchemy.dialects.sqlite import insert
@@ -9978,20 +9994,28 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
+        from agno.db.sql.company import lock_child
 
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
+            try:
+                lock_child(sess, products, projects, table, task_id, reject_cancelled=True)
+            except ValueError:
+                return None
             row = (sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))).fetchone()
             if row is None:
                 return None
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id)
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
             stmt = (
                 table.update()
                 .where(
@@ -10094,10 +10118,12 @@ class SqliteDb(BaseDb):
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.sql.company import lock_child, require_open_room, require_project
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -10112,34 +10138,48 @@ class SqliteDb(BaseDb):
                 lock_child(sess, products, projects, table, task_id)
                 if expected_updated_at is _UNSET_UPDATED_AT or products is None:
                     raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
-                prior = (
-                    sess.execute(
-                        select(table.c.transitions).where(
-                            table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                if target == "ready":
+                    require_open_room(sess, table, task_id, auto_accept)
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    prior = (
+                        sess.execute(
+                            select(table.c.transitions).where(
+                                table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                            )
                         )
+                        .scalars()
+                        .all()
                     )
-                    .scalars()
-                    .all()
-                )
-                if projects is not None:
-                    prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
-                if (
-                    _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
-                    >= auto_accept["max_acceptances"]
-                ):
-                    raise ValueError("Routine acceptance limit reached")
+                    if projects is not None:
+                        prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
+                    if (
+                        _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
             existing = dict(row._mapping)
+            if expected_status is not None and existing["status"] != expected_status:
+                return None
+            if expected_job_id is not None and existing["job_id"] != expected_job_id:
+                return None
             fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
             if auto_accept is not None:
                 fields["transitions"][-1]["auto_accept"] = auto_accept
             else:
                 lock_child(sess, products, projects, table, task_id)
-            if existing["status"] in {"done", "cancelled"}:
-                # Reopened work must not land in a completed or cancelled Project.
-                require_project(sess, projects, existing["project_id"], existing["product_id"], target)
+            require_project(
+                sess,
+                projects,
+                existing["project_id"],
+                existing["product_id"],
+                target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
+                reject_proposed=target == "ready",
+                reject_cancelled=target != "cancelled",
+            )
             update = table.update().where(
                 table.c.id == task_id,
                 table.c.deleted_at.is_(None),

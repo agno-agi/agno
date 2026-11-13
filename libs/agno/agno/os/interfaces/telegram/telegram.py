@@ -28,6 +28,7 @@ class Telegram(BaseInterface):
     # the central auth layer.
     authenticates_own_requests = True
 
+    agent: Optional[Union[Agent, RemoteAgent]]
     router: APIRouter
 
     def __init__(

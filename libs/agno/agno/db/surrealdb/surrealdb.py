@@ -2021,7 +2021,7 @@ class SurrealDb(BaseDb):
         refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
         sessions_table = self._get_table_if_exists("sessions")
         if sessions_table is None:
-            log_info("No session data found. Won't calculate metrics.")
+            log_debug("No session data found. Won't calculate metrics.")
             return []
         runs_table = self._get_table_if_exists("runs")
 
@@ -2164,10 +2164,9 @@ class SurrealDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_info("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:

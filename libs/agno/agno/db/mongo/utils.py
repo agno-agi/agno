@@ -199,19 +199,16 @@ def build_component_metrics_runs_projection() -> Dict[str, int]:
     }
 
 
-def build_component_metrics_legacy_runs_projection() -> Dict[str, Any]:
+def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
     """Build the projection of a session with only what component metrics count of the runs of its legacy runs
-    field, and the runs nested inside them. A legacy runs field stored as a JSON string is read whole."""
+    field, and the runs nested inside them."""
     return {
-        "_id": 0,
         "session_id": 1,
         "user_id": 1,
         "created_at": 1,
         **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
         **{f"runs.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
         **{f"runs.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
-        # Runs stored as a JSON string, as before v2.1.1, have no fields to project, so the string is read whole
-        "runs_json": {"$cond": [{"$eq": [{"$type": "$runs"}, "string"]}, "$runs", None]},
     }
 
 
@@ -245,13 +242,23 @@ def build_component_metrics_legacy_runs(runs: Any) -> List[Dict[str, Any]]:
     return [_project_component_metrics_fields(run, fields) for run in merge_runs_table_with_legacy_blob([], runs)]
 
 
-def build_component_metrics_legacy_session(session: Dict[str, Any]) -> Dict[str, Any]:
-    """Build a session read with build_component_metrics_legacy_runs_projection with only what the projection keeps
-    of its legacy runs, also when they are stored as a JSON string."""
-    runs_json = session.pop("runs_json", None)
-    if runs_json is not None:
-        # Read whole, so each run keeps only what the projection keeps of runs stored as an array
-        session["runs"] = build_component_metrics_legacy_runs(runs_json)
+def build_component_metrics_legacy_json_runs_filter(sessions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Build the filter of the sessions read with build_component_metrics_legacy_runs_projection whose legacy runs
+    field is stored as a JSON string, as before v2.1.1, to read it whole. A string has no fields to project, so only a
+    session that came back without runs can hold one: None when every session came back with runs."""
+    ids = [session["_id"] for session in sessions if "runs" not in session]
+    if not ids:
+        return None
+    return {"_id": {"$in": ids}, "runs": {"$type": "string"}}
+
+
+def build_component_metrics_legacy_session(
+    session: Dict[str, Any], legacy_json_runs: Dict[Any, List[Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """Build a session read with build_component_metrics_legacy_runs_projection with the runs of its legacy runs field
+    stored as a JSON string, if it is one, as build_component_metrics_legacy_runs builds them."""
+    if "runs" not in session:
+        session["runs"] = legacy_json_runs.get(session["_id"])
     return session
 
 

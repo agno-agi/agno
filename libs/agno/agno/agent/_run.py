@@ -116,6 +116,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    continue_post_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -3790,7 +3791,7 @@ def _continue_run(
                 if agent.post_hooks is not None:
                     post_hook_iterator = execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -3862,6 +3863,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except ValueError:
+                # Validation errors (e.g. a tool still waiting for its external result) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -4035,7 +4039,7 @@ def _continue_run_stream(
                 if agent.post_hooks is not None:
                     yield from execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         session=session,
                         run_context=run_context,
@@ -5051,7 +5055,7 @@ async def _acontinue_run(
                 if agent.post_hooks is not None:
                     async for _ in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,
@@ -5620,7 +5624,7 @@ async def _acontinue_run_stream(
                 if agent.post_hooks is not None:
                     async for event in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,

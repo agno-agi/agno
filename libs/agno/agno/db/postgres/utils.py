@@ -1,6 +1,6 @@
 """Utility functions for the Postgres database class."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Engine
@@ -270,23 +270,6 @@ def _get_table_columns(conn, table_name: str, db_schema: str) -> set[str]:
     inspector = inspect(conn)
     columns_info = inspector.get_columns(table_name, schema=db_schema)
     return {col["name"] for col in columns_info}
-
-
-# -- Metrics util methods --
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for.
-
-    Args:
-        starting_date (date): The starting date to calculate metrics for.
-
-    Returns:
-        list[date]: The list of dates to calculate metrics for.
-    """
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
 
 
 # -- Component metrics util methods --

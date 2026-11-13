@@ -1,16 +1,31 @@
 import json
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_error
 
 try:
     from ddgs import DDGS
+    from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 except ImportError:
     raise ImportError("`ddgs` not installed. Please install using `pip install ddgs`")
 
 # Valid timelimit values for search filtering
 VALID_TIMELIMITS = frozenset({"d", "w", "m", "y"})
+
+
+def _error_payload(query: str, exc: Exception) -> str:
+    """Format an exception into a consistent JSON error string."""
+    return json.dumps(
+        {
+            "error": type(exc).__name__,
+            "message": str(exc),
+            "query": query,
+            "results": [],
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 class WebSearchTools(Toolkit):
@@ -71,7 +86,30 @@ class WebSearchTools(Toolkit):
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
-    def web_search(self, query: str, max_results: int = 5) -> str:
+    def _resolve_max_results(self, requested: Optional[int]) -> Optional[int]:
+        """Resolve the effective max_results taking fixed_max_results into account."""
+        if self.fixed_max_results is not None:
+            return self.fixed_max_results
+        return requested
+
+    def _build_query(self, query: str) -> str:
+        """Prepend modifier to the search query if set."""
+        return f"{self.modifier} {query}" if self.modifier else query
+
+    def _build_search_kwargs(self, search_query: str, max_results: Optional[int]) -> Dict[str, Any]:
+        """Build dictionary of kwargs for DDGS."""
+        kwargs: Dict[str, Any] = {
+            "query": search_query,
+            "max_results": max_results,
+            "backend": self.backend,
+        }
+        if self.timelimit is not None:
+            kwargs["timelimit"] = self.timelimit
+        if self.region is not None:
+            kwargs["region"] = self.region
+        return kwargs
+
+    def web_search(self, query: str, max_results: Optional[int] = 5) -> str:
         """Use this function to search the web for a query.
 
         Args:
@@ -81,25 +119,28 @@ class WebSearchTools(Toolkit):
         Returns:
             The search results from the web.
         """
-        actual_max_results = self.fixed_max_results or max_results
-        search_query = f"{self.modifier} {query}" if self.modifier else query
+        search_query = self._build_query(query)
+        actual_max_results = self._resolve_max_results(max_results)
+
+        if actual_max_results is not None and actual_max_results < 1:
+            log_debug(f"Skipping web search: max_results={actual_max_results}")
+            return json.dumps([], indent=2, ensure_ascii=False)
 
         log_debug(f"Searching web for: {search_query} using backend: {self.backend}")
-        search_kwargs: dict = {
-            "query": search_query,
-            "max_results": actual_max_results,
-            "backend": self.backend,
-        }
-        if self.timelimit is not None:
-            search_kwargs["timelimit"] = self.timelimit
-        if self.region is not None:
-            search_kwargs["region"] = self.region
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(**search_kwargs)
+        search_kwargs = self._build_search_kwargs(search_query, actual_max_results)
 
-        return json.dumps(results, indent=2, ensure_ascii=False)
+        try:
+            with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+                results = ddgs.text(**search_kwargs)
+            return json.dumps(results, indent=2, ensure_ascii=False)
+        except (RatelimitException, TimeoutException, DDGSException) as e:
+            log_error(f"Error searching web for '{search_query}': {e}")
+            return _error_payload(search_query, e)
+        except Exception as e:
+            log_error(f"Unexpected error searching web for '{search_query}': {e}")
+            return _error_payload(search_query, e)
 
-    def search_news(self, query: str, max_results: int = 5) -> str:
+    def search_news(self, query: str, max_results: Optional[int] = 5) -> str:
         """Use this function to get the latest news from the web.
 
         Args:
@@ -109,19 +150,23 @@ class WebSearchTools(Toolkit):
         Returns:
             The latest news from the web.
         """
-        actual_max_results = self.fixed_max_results or max_results
+        search_query = self._build_query(query)
+        actual_max_results = self._resolve_max_results(max_results)
 
-        log_debug(f"Searching web news for: {query} using backend: {self.backend}")
-        search_kwargs: dict = {
-            "query": query,
-            "max_results": actual_max_results,
-            "backend": self.backend,
-        }
-        if self.timelimit is not None:
-            search_kwargs["timelimit"] = self.timelimit
-        if self.region is not None:
-            search_kwargs["region"] = self.region
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(**search_kwargs)
+        if actual_max_results is not None and actual_max_results < 1:
+            log_debug(f"Skipping news search: max_results={actual_max_results}")
+            return json.dumps([], indent=2, ensure_ascii=False)
 
-        return json.dumps(results, indent=2, ensure_ascii=False)
+        log_debug(f"Searching web news for: {search_query} using backend: {self.backend}")
+        search_kwargs = self._build_search_kwargs(search_query, actual_max_results)
+
+        try:
+            with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+                results = ddgs.news(**search_kwargs)
+            return json.dumps(results, indent=2, ensure_ascii=False)
+        except (RatelimitException, TimeoutException, DDGSException) as e:
+            log_error(f"Error searching web news for '{search_query}': {e}")
+            return _error_payload(search_query, e)
+        except Exception as e:
+            log_error(f"Unexpected error searching web news for '{search_query}': {e}")
+            return _error_payload(search_query, e)
