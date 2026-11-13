@@ -483,8 +483,6 @@ def _add_to_session_and_latest_run(
             )
             merge_background_metrics(latest_run.metrics, [metrics])
         if record is not None:
-            # The summary stays in the compaction table, which is what replays the fold. The run only needs to say
-            # that a fold happened here and what it saved.
             latest_run.compaction = replace(record, summary="")
         runs[finished[-1]] = latest_run
     elif metrics is not None:
