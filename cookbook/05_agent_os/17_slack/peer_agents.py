@@ -6,6 +6,7 @@ Use two Slack apps in one workspace for one-way delegation. The coordinator
 ignores bot messages; only the researcher opts in with respond_to_other_apps.
 
 Prerequisites: COORDINATOR_SLACK_TOKEN, COORDINATOR_SLACK_SIGNING_SECRET, RESEARCHER_SLACK_TOKEN, RESEARCHER_SLACK_SIGNING_SECRET, RESEARCHER_SLACK_USER_ID, OPENAI_API_KEY
+RESEARCHER_SLACK_USER_ID is the researcher bot user's Slack member ID (U...; its profile > Copy member ID)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/peer_agents.py
 Try in Slack: Ask the coordinator to delegate a current research question
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history (per app)
@@ -37,6 +38,7 @@ coordinator_token = required_env("COORDINATOR_SLACK_TOKEN")
 coordinator_secret = required_env("COORDINATOR_SLACK_SIGNING_SECRET")
 researcher_token = required_env("RESEARCHER_SLACK_TOKEN")
 researcher_secret = required_env("RESEARCHER_SLACK_SIGNING_SECRET")
+# The researcher bot user's Slack member ID (U...; its profile > Copy member ID)
 researcher_user_id = required_env("RESEARCHER_SLACK_USER_ID")
 
 db = SqliteDb(

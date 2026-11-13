@@ -748,6 +748,32 @@ CANCELLATION_STAGE_DESCRIPTION = (
 )
 
 
+class CompactionSchema(BaseModel):
+    """What one compaction did to the context, without the summary text or the archived messages."""
+
+    id: Optional[str] = Field(None, description="Unique identifier for the compaction record")
+    run_id: Optional[str] = Field(
+        None, description="Run that compacted its own context. Not set for a manual compaction, which no run made"
+    )
+    messages_compacted: int = Field(0, description="Number of history messages the compaction replaced")
+    tokens_before: Optional[int] = Field(None, description="Context size before the compaction, in tokens")
+    tokens_after: Optional[int] = Field(None, description="Context size after the compaction, in tokens")
+    created_at: Optional[datetime] = Field(None, description="Compaction creation timestamp")
+    archived: bool = Field(False, description="Whether the replaced messages were stored and can be read back")
+
+    @classmethod
+    def from_dict(cls, record: Dict[str, Any]) -> "CompactionSchema":
+        return cls(
+            id=record.get("compaction_id"),
+            run_id=record.get("run_id"),
+            messages_compacted=record.get("messages_compacted") or 0,
+            tokens_before=record.get("tokens_before"),
+            tokens_after=record.get("tokens_after"),
+            created_at=to_utc_datetime(record.get("created_at")),
+            archived=bool(record.get("archived_messages")),
+        )
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
     run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
@@ -787,10 +813,12 @@ class RunSchema(BaseModel):
         None, description="If this run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this run was forked, the message index at which the source was truncated"
+        None,
+        description="If this run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this run was created via session branch, the source session's ID"
+        None,
+        description="If this run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
@@ -935,10 +963,12 @@ class TeamRunSchema(BaseModel):
         None, description="If this team run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this team run was forked, the message index at which the source was truncated"
+        None,
+        description="If this team run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this team run was created via session branch, the source session's ID"
+        None,
+        description="If this team run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"

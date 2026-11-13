@@ -18,8 +18,13 @@ class CompanyConfig:
     acceptance_checks: Dict[str, Callable[[Dict[str, Any], Any], Any]] = field(default_factory=dict)
     automation_history_retention_days: int = 30
     cron_expr: str = "0 * * * *"
+    name: str = "Company"
+    description: Optional[str] = None
 
     def __post_init__(self) -> None:
+        from agno.db.schemas.company import validate_company_details
+
+        validate_company_details({"name": self.name, "description": self.description})
         if (
             isinstance(self.automation_history_retention_days, bool)
             or not isinstance(self.automation_history_retention_days, int)
