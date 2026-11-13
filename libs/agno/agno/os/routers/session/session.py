@@ -21,7 +21,7 @@ from agno.os.routers.traces.schemas import FilterSchemaResponse
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
-    CompactionSummarySchema,
+    CompactionSchema,
     CreateSessionRequest,
     DeleteSessionRequest,
     InternalServerErrorResponse,
@@ -961,7 +961,7 @@ def attach_routes(
 
     @router.get(
         "/sessions/{session_id}/compactions",
-        response_model=List[CompactionSummarySchema],
+        response_model=List[CompactionSchema],
         status_code=200,
         operation_id="get_session_compactions",
         summary="Get Session Compactions",
@@ -989,7 +989,7 @@ def attach_routes(
         user_id: Optional[str] = Query(default=None, description="User ID to query compactions from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query compactions from"),
         table: Optional[str] = Query(default=None, description="Table to query the session from"),
-    ) -> List[CompactionSummarySchema]:
+    ) -> List[CompactionSchema]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
         # A remote AgentOS is not asked: it may predate this route
         if isinstance(db, RemoteDb):
