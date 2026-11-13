@@ -377,6 +377,8 @@ def test_websocket_workflow_factory_rejects_missing_scope(
 async def test_websocket_workflow_start_forwards_version_to_resolver():
     """A Studio WebSocket start action must resolve the requested workflow version."""
     websocket = AsyncMock()
+    # No queue worker: the run executes inline on this replica
+    websocket.app.state.queue_worker = None
     workflow = Mock(session_id=None)
     workflow.arun = AsyncMock()
     agent_os = SimpleNamespace(workflows=None, db=Mock(), registry=None)
@@ -399,6 +401,8 @@ async def test_websocket_workflow_start_forwards_version_to_resolver():
 async def test_websocket_factory_workflow_start_forwards_version_to_resolver():
     """WebSocket factory resolution must preserve a requested workflow version."""
     websocket = AsyncMock()
+    # No queue worker: the run executes inline on this replica
+    websocket.app.state.queue_worker = None
     workflow = Mock(session_id=None)
     workflow.arun = AsyncMock()
     db = Mock()

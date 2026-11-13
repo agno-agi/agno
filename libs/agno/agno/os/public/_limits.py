@@ -129,7 +129,7 @@ class PublicLimiter:
                         {"key": key, "cost": cost, "minute_limit": minute_limit, "day_limit": day_limit},
                     ).first()
                     if row is None:
-                        reset = conn.execute(
+                        reset: Any = conn.execute(
                             text("""SELECT CASE WHEN day=(now() AT TIME ZONE 'UTC')::date
                             AND day_count+:cost>:day_limit THEN
                               ceil(extract(epoch FROM (date_trunc('day', now() AT TIME ZONE 'UTC')+interval '1 day'-(now() AT TIME ZONE 'UTC'))))

@@ -5,12 +5,14 @@ from typing import Any, Dict, List, Optional
 from agno.os.interfaces.slack.ids import (
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
+    ACTION_SUBMIT,
     decode_row_button_value,
     decode_submit_button_value,
     encode_submit_button_value,
     external_result_block_id,
     feedback_action_id,
     parse_row_block_id,
+    pause_block_id,
     reject_reason_block_id,
     user_feedback_block_id,
     user_input_action_id,
@@ -141,7 +143,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
     button_value = actions[0].get("value") or ""
     if "|" not in button_value:
         return None
-    req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
+    req_id, run_id, awaiting_ts, owner = decode_row_button_value(button_value)
 
     channel = (payload.get("channel") or {}).get("id")
     message = payload.get("message") or {}
@@ -156,6 +158,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
         channel=channel,
         card_ts=card_ts,
         blocks=list(message.get("blocks") or []),
+        owner=owner,
     )
 
 
@@ -176,7 +179,7 @@ def extract_submit_context(payload: Dict[str, Any]) -> Optional[SubmitContext]:
 
     thread_ts = message.get("thread_ts") or msg_ts
     button_value = actions[0].get("value") or ""
-    _, awaiting_ts = decode_submit_button_value(button_value)
+    _, awaiting_ts, owner = decode_submit_button_value(button_value)
 
     return SubmitContext(
         run_id=run_id,
@@ -187,6 +190,7 @@ def extract_submit_context(payload: Dict[str, Any]) -> Optional[SubmitContext]:
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
         state_values=(payload.get("state") or {}).get("values") or {},
+        owner=owner,
     )
 
 
@@ -218,13 +222,14 @@ def synthetic_submit_payload(
     run_id: str,
     awaiting_ts: Optional[str],
     blocks: List[Dict[str, Any]],
+    owner: Optional[str] = None,
 ) -> Dict[str, Any]:
     synthetic = dict(payload)
     synthetic["actions"] = [
         {
-            "action_id": "submit_pause",
-            "block_id": f"pause:{run_id}",
-            "value": encode_submit_button_value(run_id, awaiting_ts),
+            "action_id": ACTION_SUBMIT,
+            "block_id": pause_block_id(run_id),
+            "value": encode_submit_button_value(run_id, awaiting_ts, owner),
         }
     ]
     synthetic["message"] = {**(payload.get("message") or {}), "blocks": blocks}

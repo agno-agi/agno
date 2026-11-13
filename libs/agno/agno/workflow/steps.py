@@ -172,6 +172,7 @@ class Steps:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
@@ -184,7 +185,7 @@ class Steps:
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
@@ -207,11 +208,13 @@ class Steps:
         current_images = step_input.images or []
         current_videos = step_input.videos or []
         current_audio = step_input.audio or []
+        current_files = step_input.files or []
 
         if isinstance(step_outputs, list):
             step_images = sum([out.images or [] for out in step_outputs], [])
             step_videos = sum([out.videos or [] for out in step_outputs], [])
             step_audio = sum([out.audio or [] for out in step_outputs], [])
+            step_files = sum([out.files or [] for out in step_outputs], [])
             # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
@@ -219,6 +222,7 @@ class Steps:
             step_images = step_outputs.images or []
             step_videos = step_outputs.videos or []
             step_audio = step_outputs.audio or []
+            step_files = step_outputs.files or []
             previous_step_content = step_outputs.content
 
         updated_previous_step_outputs = {}
@@ -235,6 +239,7 @@ class Steps:
             images=current_images + step_images,
             videos=current_videos + step_videos,
             audio=current_audio + step_audio,
+            files=current_files + step_files,
         )
 
     def execute(

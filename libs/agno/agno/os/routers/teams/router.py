@@ -38,15 +38,21 @@ from agno.os.auth import (
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    _new_queued_run_id,
+    aattach_waiting_on,
     acontinue_via_queue,
+    aenqueue_ticket,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    component_is_queueable,
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -75,10 +81,12 @@ from agno.os.utils import (
     allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    factory_row_handle,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    is_form_field_omitted,
     parse_files_metadata,
     process_audio,
     process_document,
@@ -260,7 +268,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -273,8 +281,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(team, RemoteTeam):
             try:
                 run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -289,17 +301,18 @@ async def _resume_stream_generator(
                     yield frame
                 return
             elif run_output:
-                meta = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value
-                    if hasattr(run_output.status, "value")
-                    else (run_output.status or "unknown"),
-                    "total_events": 0,
-                    "message": "Run completed but no events stored.",
-                }
+                from agno.os.utils import no_stored_events_replay_meta
+
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
                 yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -368,44 +381,9 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
-
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
-
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
 
 async def team_continue_response_streamer(
@@ -640,6 +618,10 @@ def get_team_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "monitor"):
+            monitor = True
 
         files_metadata_list = parse_files_metadata(files_metadata)
 
@@ -816,24 +798,35 @@ def get_team_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
-                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                queued_stream_payload = {
+                    "input": message,
+                    "kwargs": kwargs,
+                    "stream": True,
+                }
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(team, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and version is None
                     and not (base64_images or base64_audios or base64_videos or document_files)
-                    and any(
-                        getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                        for candidate in (os.teams or [])
-                    )
+                    and component_is_queueable(team, team_id, os.teams, os.db)
                 )
                 if stream_queueable:
                     # 202/stream-accept must honor input_schema like the inline path (400)
                     validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
-                    queued_run_id = str(uuid4())
+                    queued_run_id = _new_queued_run_id()
                     queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                    queued_stream_payload["scope"] = resolve_queue_scope(
+                        team_id,
+                        os.teams,
+                        os.db,
+                        scoped_user_id,
+                        version,
+                        state=request.state,
+                        context_user_id=user_id,
+                        session_id=queued_session_id,
+                        factory_input=factory_input,
+                    )
                     job = QueuedJob(
                         id=queued_run_id,
                         component_type="team",
@@ -845,9 +838,7 @@ def get_team_router(
                         deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
-                    enqueue_result = await queue_worker.store.enqueue_job(
-                        job, max_depth=queue_worker.config.max_queue_depth
-                    )
+                    enqueue_result = await aenqueue_ticket(queue_worker, job, team)
                     if enqueue_result["reason"] == "queue_full":
                         raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
@@ -857,7 +848,7 @@ def get_team_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        ensure_duplicate_matches_component(existing, "team", job["component_id"])
+                        ensure_duplicate_matches_component(existing, "team", job["component_id"], version=version)
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -888,11 +879,12 @@ def get_team_router(
                     await aprepare_accepted_or_abort(
                         queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                     )
+                    wake_queue_worker(queue_worker)
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background run bypasses the durable queue (remote/factory/"
-                        "version-pinned/media submissions are not queueable): bounded and "
+                        "media submissions are not queueable): bounded and "
                         "observable, but NOT durable."
                     )
                 # background=True, stream=True: resumable SSE streaming
@@ -922,19 +914,18 @@ def get_team_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "queue_worker", None)
-            # Queueable only if this is a plain registry instance: the worker
-            # resolves from the registry, so factory-backed or off-registry
-            # (db-resolved / version-pinned) components would be accepted here
-            # and then fail or run differently in the worker.
-            component_is_queueable = any(
-                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                for candidate in (os.teams or [])
-            )
-            queued_payload = {"input": message, "kwargs": kwargs}
+            # Queueable when the worker can re-resolve the team at claim
+            # time: a plain registry instance, or a db-backed (components API
+            # / version-pinned) team replayed from the scope on the ticket.
+            # Factory-backed teams need request context and never queue.
+            team_is_queueable = component_is_queueable(team, team_id, os.teams, os.db)
+            queued_payload = {
+                "input": message,
+                "kwargs": kwargs,
+            }
             if (
                 queue_worker is not None
-                and component_is_queueable
-                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and team_is_queueable
                 and payload_is_queueable(queued_payload)
                 # Media cannot ride the queue payload yet: fall back to the
                 # bounded in-process path (parity with the stream seam)
@@ -942,8 +933,19 @@ def get_team_router(
             ):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(team, message)
-                queued_run_id = str(uuid4())
+                queued_run_id = _new_queued_run_id()
                 queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                queued_payload["scope"] = resolve_queue_scope(
+                    team_id,
+                    os.teams,
+                    os.db,
+                    scoped_user_id,
+                    version,
+                    state=request.state,
+                    context_user_id=user_id,
+                    session_id=queued_session_id,
+                    factory_input=factory_input,
+                )
                 job = QueuedJob(
                     id=queued_run_id,
                     component_type="team",
@@ -959,14 +961,12 @@ def get_team_router(
                 # Enqueue FIRST: the committed queue row is the acceptance.
                 # Rejected or duplicate submissions must leave no phantom
                 # PENDING run behind in the session.
-                enqueue_result = await queue_worker.store.enqueue_job(
-                    job, max_depth=queue_worker.config.max_queue_depth
-                )
+                enqueue_result = await aenqueue_ticket(queue_worker, job, team)
                 if enqueue_result["reason"] == "queue_full":
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
-                    ensure_duplicate_matches_component(existing, "team", job["component_id"])
+                    ensure_duplicate_matches_component(existing, "team", job["component_id"], version=version)
                     return JSONResponse(
                         status_code=202,
                         content={
@@ -991,6 +991,7 @@ def get_team_router(
                 await aprepare_accepted_or_abort(
                     queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                 )
+                wake_queue_worker(queue_worker)
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
@@ -1011,15 +1012,14 @@ def get_team_router(
                         "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
                 else:
-                    # Off-registry, factory-backed, or version-pinned: the
-                    # worker resolves from the registry, so these cannot ride
-                    # the queue - previously this dropped to the non-durable
-                    # path with no log line at all.
+                    # Remote or factory-backed: the worker cannot re-resolve
+                    # these at claim time (no request context), so they
+                    # cannot ride the queue - previously this dropped to the
+                    # non-durable path with no log line at all.
                     log_warning(
-                        "Background run bypasses the durable queue: the team is not a plain "
-                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
-                        "resolution differs from the worker's registry instance). Executing on the "
-                        "accepting replica instead - bounded and observable, but NOT durable."
+                        "Background run bypasses the durable queue: the team cannot be re-resolved "
+                        "by the queue worker (remote or factory-backed teams need request context). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
 
             # Same input-error contract as the inline path: schema violations
@@ -1229,6 +1229,10 @@ def get_team_router(
             "1. **Run still active**: Sends catch-up events + continues live streaming\n"
             "2. **Run completed (in buffer)**: Replays missed buffered events\n"
             "3. **Run completed (in database)**: Replays events from database\n\n"
+            "A run submitted with `stream=false`, inline or with `background=true`, has no event stream: "
+            "nothing is published while it runs and no events are stored with it. For such a run this "
+            "endpoint sends one `replay` frame with `total_events: 0` and its current status; poll the "
+            "run endpoint for the result instead.\n\n"
             "**Client usage:**\n"
             "Track `event_index` from each SSE event. On reconnection, pass the last "
             "received `event_index` as `last_event_index`."
@@ -1391,6 +1395,10 @@ def get_team_router(
         background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
+        if await is_form_field_omitted(request, "stream"):
+            stream = True
+        if await is_form_field_omitted(request, "replace_original"):
+            replace_original = None
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1558,10 +1566,7 @@ def get_team_router(
                 "continue_from": continue_from_value,
                 "kwargs": kwargs,
             }
-            team_is_queueable = any(
-                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                for candidate in (os.teams or [])
-            )
+            team_is_queueable = component_is_queueable(team, team_id, os.teams, os.db)
             if (
                 queue_worker is not None
                 # LIVE, unlike the submit gates' dead twin: the teams continue
@@ -2099,13 +2104,7 @@ def get_team_router(
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2174,7 +2173,7 @@ def get_team_router(
         if not run_matches_component(run_output, "teams", team_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
-        return run_output.to_dict()
+        return await aattach_waiting_on(getattr(request.app.state, "queue_worker", None), run_id, run_output.to_dict())
 
     @router.get(
         "/teams/{team_id}/runs/{run_id}/checkpoints",
@@ -2200,13 +2199,7 @@ def get_team_router(
     ):
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2271,13 +2264,7 @@ def get_team_router(
     ):
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(
@@ -2342,13 +2329,7 @@ def get_team_router(
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(  # type: ignore[assignment]
-                team_id,
-                os.teams,
-                factory.db,
-                session_id=session_id,
-                published_only=False,
-            )
+            team = factory_row_handle(factory)  # type: ignore[assignment]
         else:
             try:
                 team = get_team_by_id(

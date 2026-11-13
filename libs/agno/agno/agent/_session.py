@@ -290,6 +290,11 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
+def saves_its_runs(agent: Agent) -> bool:
+    """Whether the agent saves its own runs: a team member's or a workflow step's are saved by the team or workflow."""
+    return agent.db is not None and agent.team_id is None and agent.workflow_id is None
+
+
 def save_run(
     agent: Agent,
     run: RunOutput,
@@ -321,7 +326,7 @@ def save_run(
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
 
-    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+    if saves_its_runs(agent):
         _storage.upsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_debug(f"Saved run {run.run_id} to session {session_id}")
 
@@ -350,7 +355,7 @@ async def asave_run(
     """
     from agno.agent import _storage
 
-    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+    if saves_its_runs(agent):
         await _storage.aupsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_debug(f"Saved run {run.run_id} to session {session_id}")
 
@@ -730,11 +735,11 @@ async def aget_session_metrics(agent: Agent, session_id: Optional[str] = None) -
     return await aget_session_metrics_util(agent, session_id=session_id)
 
 
-def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics convert run Metrics to SessionMetrics."""
+def update_session_metrics(agent: Agent, session: AgentSession) -> None:
+    """Calculate session metrics from the session's runs."""
     from agno.agent._storage import update_session_metrics as _update_session_metrics_storage
 
-    _update_session_metrics_storage(agent, session=session, run_response=run_response)
+    _update_session_metrics_storage(agent, session=session)
 
 
 # ---------------------------------------------------------------------------

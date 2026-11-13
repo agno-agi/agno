@@ -48,3 +48,15 @@ def isolate_run_cancellation_state():
         with original_manager._lock:
             original_manager._cancelled_runs.clear()
             original_manager._member_runs.clear()
+
+
+@pytest.fixture
+def unavailable_manager_docs(monkeypatch):
+    """Exercise manager defaults offline without contacting the hosted docs server."""
+    from agno.tools.mcp import MCPTools
+
+    async def unavailable(tool):
+        assert tool.url == "https://docs.agno.com/mcp"
+        raise OSError("Docs server unavailable in offline tests")
+
+    monkeypatch.setattr(MCPTools, "_connect", unavailable)

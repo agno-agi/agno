@@ -1026,6 +1026,7 @@ class OpenAIChat(Model):
         if prompt_token_details := response_usage.prompt_tokens_details:
             metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
             metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
+            metrics.cache_write_tokens = getattr(prompt_token_details, "cache_write_tokens", 0) or 0
 
         # Add the completion_tokens_details field
         if completion_tokens_details := response_usage.completion_tokens_details:

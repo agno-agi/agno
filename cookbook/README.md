@@ -74,8 +74,8 @@ Hundreds of examples. Copy, paste, run.
 ### Data Labeling
 [data_labeling](./data_labeling) — Agents for labeling, classification, and synthetic data generation, from single-label prompts to juries and DPO pair generation.
 
-### Other Frameworks
-[frameworks](./frameworks) — Run LangGraph, DSPy, the Claude Agent SDK and Antigravity agents inside Agno, and serve them from the same AgentOS as your native agents.
+### Harnesses and Other Frameworks
+[frameworks](./frameworks) — Run Claude, Codex, LangGraph, DSPy and Antigravity through Agno and AgentOS. Each integration keeps its starting examples, advanced patterns and test results together.
 
 ### Integrations
 [integrations](./integrations) — Partner integrations. [Parallel](https://parallel.ai) for web-scale search, extraction, and deep research; SurrealDB for agent memory.
