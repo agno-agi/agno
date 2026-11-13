@@ -32,7 +32,7 @@ db = PostgresDb(
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="BackgroundMetricsAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools(enable_stock_price=True)],
     db=db,
 )

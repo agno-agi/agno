@@ -358,10 +358,16 @@ def test_search_youtube_empty_results(api_tools):
     assert result["video_results"] == []
 
 
-def test_search_youtube_client_side_truncation(api_tools):
+@pytest.mark.parametrize(
+    ("default_limit", "requested_limit", "expected_count"),
+    [(5, None, 5), (5, 3, 3), (5, 0, 0), (0, None, 0), (0, 0, 0), (0, 3, 3)],
+    ids=["default", "positive-override", "zero-override", "zero-default", "zero-both", "override-zero-default"],
+)
+def test_search_youtube_client_side_truncation(default_limit, requested_limit, expected_count):
     """SearchAPI's YouTube engine can't limit result count server-side; the tool
     must slice client-side to honour ``num_results``.
     """
+    api_tools = SearchApiTools(api_key="test_key", num_results=default_limit)
     videos = [
         {
             "position": i,
@@ -380,7 +386,8 @@ def test_search_youtube_client_side_truncation(api_tools):
     mock = Mock(spec=requests.Response)
     mock.json.return_value = {"videos": videos}
     mock.raise_for_status.return_value = None
-    with patch("requests.get", return_value=mock):
-        result = json.loads(api_tools.search_youtube("many", num_results=3))
-    assert len(result["video_results"]) == 3
-    assert [v["id"] for v in result["video_results"]] == ["vid0", "vid1", "vid2"]
+    with patch("requests.get", return_value=mock) as mock_get:
+        result = json.loads(api_tools.search_youtube("many", num_results=requested_limit))
+    assert len(result["video_results"]) == expected_count
+    assert [v["id"] for v in result["video_results"]] == [f"vid{i}" for i in range(expected_count)]
+    assert "num" not in mock_get.call_args[1]["params"]

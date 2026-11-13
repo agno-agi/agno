@@ -1,9 +1,17 @@
 """Tests for centralized team run option resolution and renamed run functions."""
 
 import dataclasses
+import time
+from typing import Any, AsyncIterator, Dict, Iterator
 
 import pytest
 
+from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
+from agno.session import TeamSession
 from agno.team._run_options import ResolvedRunOptions, resolve_run_options
 from agno.team.team import Team
 
@@ -11,6 +19,60 @@ from agno.team.team import Team
 def _make_team(**kwargs) -> Team:
     """Create a minimal Team instance for testing."""
     return Team(members=[], **kwargs)
+
+
+class MockModel(Model):
+    """Minimal offline model: returns a canned text response without any network call."""
+
+    def __init__(self):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._mock_response = ModelResponse(
+            content="ok",
+            role="assistant",
+            response_usage=MessageMetrics(),
+        )
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._mock_response
+
+
+def _seed_team_session(db: InMemoryDb, session_id: str, team_id: str, metadata: Dict[str, Any]) -> None:
+    """Insert a session record with the given metadata, as if written by an earlier deployment."""
+    db.upsert_session(
+        TeamSession(session_id=session_id, team_id=team_id, metadata=metadata, created_at=int(time.time()))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,18 +299,91 @@ class TestMetadataMerge:
         opts = resolve_run_options(team)
         assert opts.metadata == {"team": "value"}
 
-    def test_merge_team_takes_precedence(self):
-        team = _make_team(metadata={"shared": "team_wins", "team_only": "t"})
+    def test_merge_callsite_takes_precedence(self):
+        # Metadata resolves like dependencies: call-site keys win on conflict.
+        team = _make_team(metadata={"shared": "team_value", "team_only": "t"})
         opts = resolve_run_options(team, metadata={"shared": "run_value", "run_only": "r"})
-        assert opts.metadata["shared"] == "team_wins"
+        assert opts.metadata["shared"] == "run_value"
         assert opts.metadata["team_only"] == "t"
         assert opts.metadata["run_only"] == "r"
 
+    def test_only_session(self):
+        team = _make_team()
+        opts = resolve_run_options(team, session_metadata={"session": "value"})
+        assert opts.metadata == {"session": "value"}
+
+    def test_session_beats_team(self):
+        team = _make_team(metadata={"shared": "team_value", "team_only": "t"})
+        opts = resolve_run_options(team, session_metadata={"shared": "session_value", "session_only": "s"})
+        assert opts.metadata["shared"] == "session_value"
+        assert opts.metadata["team_only"] == "t"
+        assert opts.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session(self):
+        team = _make_team()
+        opts = resolve_run_options(
+            team,
+            metadata={"shared": "run_value", "run_only": "r"},
+            session_metadata={"shared": "session_value", "session_only": "s"},
+        )
+        assert opts.metadata["shared"] == "run_value"
+        assert opts.metadata["session_only"] == "s"
+        assert opts.metadata["run_only"] == "r"
+
+    def test_three_layer_merge_non_conflicting_keys(self):
+        team = _make_team(metadata={"team_only": "t", "shared": "team_value"})
+        opts = resolve_run_options(
+            team,
+            metadata={"run_only": "r", "shared": "run_value"},
+            session_metadata={"session_only": "s"},
+        )
+        assert opts.metadata == {
+            "team_only": "t",
+            "session_only": "s",
+            "run_only": "r",
+            "shared": "run_value",
+        }
+
     def test_merge_does_not_mutate_callsite(self):
-        team = _make_team(metadata={"a": 1})
-        callsite_meta = {"b": 2}
+        # Includes a nested dict: the recursive in-place merge must never write
+        # other layers' values into the caller's nested dicts.
+        team = _make_team(metadata={"a": 1, "nested": {"team": True}})
+        callsite_meta = {"b": 2, "nested": {"call": True}}
         resolve_run_options(team, metadata=callsite_meta)
-        assert callsite_meta == {"b": 2}
+        assert callsite_meta == {"b": 2, "nested": {"call": True}}
+
+    def test_merge_does_not_mutate_team_nested_dicts(self):
+        # merge_dictionaries recurses in place: a shallow copy of team.metadata
+        # would let call-site values contaminate the team's nested dicts.
+        team = _make_team(metadata={"policy": {"read_only": True}, "flat": "team_value"})
+        opts = resolve_run_options(
+            team,
+            metadata={"policy": {"read_only": False}, "flat": "run_value"},
+            session_metadata={"policy": {"source": "session"}},
+        )
+        assert opts.metadata["policy"] == {"read_only": False, "source": "session"}
+        assert team.metadata == {"policy": {"read_only": True}, "flat": "team_value"}
+
+    def test_merge_does_not_mutate_session_nested_dicts(self):
+        # merge_dictionaries recurses in place: a shallow copy of session_metadata
+        # would let call-site values contaminate the caller's nested dicts.
+        team = _make_team(metadata={"policy": {"read_only": True}})
+        session_meta = {"policy": {"source": "session"}}
+        resolve_run_options(team, metadata={"policy": {"read_only": False}}, session_metadata=session_meta)
+        assert session_meta == {"policy": {"source": "session"}}
+
+    def test_resolved_metadata_mutation_does_not_reach_team(self):
+        team = _make_team(metadata={"policy": {"read_only": True}})
+        opts = resolve_run_options(team)
+        opts.metadata["policy"]["read_only"] = False  # type: ignore[index]
+        assert team.metadata == {"policy": {"read_only": True}}
+
+    def test_resolved_metadata_does_not_alias_callsite_nested_dicts(self):
+        team = _make_team()
+        callsite = {"labels": {"team": "ops"}}
+        opts = resolve_run_options(team, metadata=callsite)
+        opts.metadata["labels"]["team"] = "sre"  # type: ignore[index]
+        assert callsite == {"labels": {"team": "ops"}}
 
 
 # ---------------------------------------------------------------------------
@@ -451,3 +586,125 @@ class TestParityWithAgent:
         agent_types = {f.name: f.type for f in dataclasses.fields(AgentOpts)}
         team_types = {f.name: f.type for f in dataclasses.fields(TeamOpts)}
         assert agent_types == team_types
+
+
+# ---------------------------------------------------------------------------
+# Singleton isolation: session reads never mutate the shared Team instance
+# ---------------------------------------------------------------------------
+
+
+class TestTeamSingletonIsolation:
+    def _seed_session(self, db, session_id: str, team_id: str, metadata) -> None:
+        import time
+
+        from agno.session import TeamSession
+
+        db.upsert_session(
+            TeamSession(session_id=session_id, team_id=team_id, metadata=metadata, created_at=int(time.time()))
+        )
+
+    def test_team_metadata_not_aliased_to_session(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _read_or_create_session, _update_metadata
+
+        db = InMemoryDb()
+        self._seed_session(db, "session-a", "team-1", {"k": "v"})
+        team = _make_team(id="team-1", db=db, metadata={"env": "test"})
+        session = _read_or_create_session(team, session_id="session-a")
+        _update_metadata(team, session=session)
+        assert team.metadata is not session.metadata
+        assert team.metadata == {"env": "test"}
+        # Session side: team metadata fills keys the session does not set
+        assert session.metadata == {"k": "v", "env": "test"}
+
+    def test_new_session_seeding_not_aliased(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _read_or_create_session
+
+        team = _make_team(id="team-1", db=InMemoryDb(), metadata={"env": "test"})
+        session = _read_or_create_session(team, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not team.metadata
+
+    @pytest.mark.asyncio
+    async def test_new_session_seeding_not_aliased_async(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _aread_or_create_session
+
+        team = _make_team(id="team-1", db=InMemoryDb(), metadata={"env": "test"})
+        session = await _aread_or_create_session(team, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not team.metadata
+
+
+# ---------------------------------------------------------------------------
+# Session metadata precedence on the full run() path
+# ---------------------------------------------------------------------------
+
+
+class TestTeamRunSessionMetadataPrecedence:
+    """Run-level twin of the agent's TestRunSessionMetadataPrecedence."""
+
+    def _make_run_team(self, db: InMemoryDb, **kwargs) -> Team:
+        member = Agent(name="member", model=MockModel(), telemetry=False)
+        return Team(id="team-1", members=[member], model=MockModel(), db=db, telemetry=False, **kwargs)
+
+    def test_session_beats_team_on_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value", "session_only": "s"})
+        team = self._make_run_team(db, metadata={"shared": "team_value", "team_only": "t"})
+        out = team.run(input="hi", session_id="s1")
+        assert out.metadata["shared"] == "session_value"
+        assert out.metadata["team_only"] == "t"
+        assert out.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session_and_team_on_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value"})
+        team = self._make_run_team(db, metadata={"shared": "team_value"})
+        out = team.run(input="hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
+        assert out.metadata["shared"] == "call_value"
+        assert out.metadata["run_only"] == "r"
+
+    def test_run_does_not_mutate_team_metadata(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"leak": "from_session"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        out = team.run(input="hi", session_id="s1")
+        assert out.metadata["leak"] == "from_session"
+        assert team.metadata == {"env": "test"}
+
+    def test_session_beats_team_stays_stable_across_runs(self):
+        # The session value must survive persistence: _update_metadata merges team
+        # defaults as the losing layer, so the session's own value is not clobbered
+        # in the record and every subsequent run resolves it identically.
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"tier": "gold"})
+        team = self._make_run_team(db, metadata={"tier": "standard"})
+        first = team.run(input="hi", session_id="s1").metadata["tier"]
+        record = db.get_session(session_id="s1").metadata["tier"]
+        second = team.run(input="hi", session_id="s1").metadata["tier"]
+        assert (first, record, second) == ("gold", "gold", "gold")
+
+    def test_continue_run_sees_session_metadata(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"policy": "capture-only"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        run_out = team.run(input="hi", session_id="s1")
+        cont = team.continue_run(run_id=run_out.run_id, session_id="s1", requirements=[])
+        assert cont.metadata["policy"] == "capture-only"
+        assert cont.metadata["env"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_arun_sync_db_matches_async_db_path(self):
+        # Unlike agent.arun, team.arun does NOT pre-read the session even with a
+        # sync DB (arun_dispatch resolves options before the session id is known),
+        # so session metadata does not reach the resolved options. Pinned so a
+        # future change to either side is a conscious decision, not a silent drift.
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value"})
+        team = self._make_run_team(db, metadata={"shared": "team_value"})
+        out = await team.arun(input="hi", session_id="s1", metadata={"run_only": "r"})
+        assert out.metadata["shared"] == "team_value"
+        assert out.metadata["run_only"] == "r"
+        assert "session_value" not in out.metadata.values()

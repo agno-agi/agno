@@ -18,6 +18,18 @@ def test_save_and_read_dag_file_basic():
         assert airflow_tools.read_dag_file("nested/example.py") == contents
 
 
+def test_save_and_read_dag_file_non_ascii(cp1252_default_encoding):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dags_dir = Path(tmp_dir)
+        airflow_tools = AirflowTools(dags_dir=dags_dir)
+
+        contents = 'DAG_ID = "café"\n'
+        airflow_tools.save_dag_file(contents=contents, dag_file="example.py")
+
+        assert (dags_dir / "example.py").read_bytes() == contents.encode("utf-8")
+        assert airflow_tools.read_dag_file("example.py") == contents
+
+
 def test_save_dag_file_rejects_absolute_path():
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)

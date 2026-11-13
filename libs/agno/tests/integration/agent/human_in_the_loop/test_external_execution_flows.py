@@ -64,7 +64,7 @@ def test_tool_call_requires_external_execution_stream(shared_db):
     assert found_external_execution, "No tools were found to require external execution"
 
     found_external_execution = False
-    for response in agent.continue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
+    for response in agent.continue_run(run_id=response.run_id, requirements=response.requirements, stream=True):
         if response.is_paused:
             found_external_execution = True
     assert found_external_execution is False, "Some tools still require external execution"
@@ -100,7 +100,7 @@ async def test_tool_call_requires_external_execution_async(shared_db):
     # Mark the tool as confirmed
     response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"  # type: ignore
 
-    response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools)
+    response = await agent.acontinue_run(run_id=response.run_id, requirements=response.requirements)
     assert response.is_paused is False
 
 
@@ -157,7 +157,7 @@ async def test_tool_call_requires_external_execution_stream_async(shared_db):
     assert found_external_execution, "No tools were found to require external execution"
 
     found_external_execution = False
-    async for response in agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
+    async for response in agent.acontinue_run(run_id=response.run_id, requirements=response.requirements, stream=True):
         if response.is_paused:
             found_external_execution = True
     assert found_external_execution is False, "Some tools still require external execution"
@@ -392,7 +392,7 @@ def test_streaming_external_execution(shared_db):
     final_output = None
     for run_output in agent.continue_run(
         run_id=paused_run_output.run_id,
-        updated_tools=paused_run_output.tools,  # type: ignore
+        requirements=paused_run_output.requirements,  # type: ignore
         session_id=session_id,
         stream=True,
         yield_run_output=True,

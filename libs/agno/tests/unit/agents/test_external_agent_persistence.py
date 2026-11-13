@@ -1,0 +1,164 @@
+"""External agent adapters must persist runs to the runs table (v3 storage).
+
+upsert_session writes only the session row after denormalization; runs live
+in their own table. Appending to session.runs and calling upsert_session
+alone silently loses all history.
+"""
+
+import asyncio
+import tempfile
+from dataclasses import dataclass
+from typing import Any, AsyncIterator
+
+import pytest
+
+from agno.agents.base import BaseExternalAgent
+from agno.db.sqlite import SqliteDb
+from agno.metrics import RunMetrics
+from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.base import RunStatus
+from agno.session import AgentSession
+
+
+@dataclass
+class EchoAgent(BaseExternalAgent):
+    framework: str = "test-framework"
+    last_history: Any = None
+
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+        self.last_history = kwargs.get("history")
+        return f"echo: {input}"
+
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+        self.last_history = kwargs.get("history")
+        yield RunContentEvent(run_id=kwargs.get("run_id", ""), content=f"echo: {input}")
+
+
+@pytest.fixture
+def agent():
+    tmp = tempfile.mkdtemp()
+    db = SqliteDb(db_file=f"{tmp}/ext.db")
+    return EchoAgent(name="Echo", id="echo-agent", db=db)
+
+
+def test_run_persisted_to_runs_table(agent):
+    out = asyncio.run(agent._arun_non_stream("hello", session_id="s1", user_id="u1"))
+    runs = agent.db.get_runs(session_id="s1")
+    assert len(runs) == 1
+    assert runs[0].run_id == out.run_id
+
+
+def test_history_flows_across_turns(agent):
+    asyncio.run(agent._arun_non_stream("hello", session_id="s1", user_id="u1"))
+    asyncio.run(agent._arun_non_stream("again", session_id="s1", user_id="u1"))
+    assert agent.last_history == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "echo: hello"},
+    ]
+
+
+def test_streaming_run_persisted(agent):
+    async def consume():
+        async for _ in agent._arun_stream("hello", session_id="s1", user_id="u1"):
+            pass
+
+    asyncio.run(consume())
+    assert len(agent.db.get_runs(session_id="s1")) == 1
+
+
+def test_session_read_returns_runs(agent):
+    out = asyncio.run(agent._arun_non_stream("hello", session_id="s1", user_id="u1"))
+    session = agent.db.get_session(session_id="s1", session_type=None)
+    assert len(session.runs or []) == 1
+    # AgentOS run inspection path
+    assert agent.get_run_output(out.run_id, session_id="s1") is not None
+
+
+def test_get_run_output_returns_an_isolated_copy(agent):
+    out = asyncio.run(agent._arun_non_stream("hello", session_id="s1", user_id="u1"))
+    fetched = agent.get_run_output(out.run_id, session_id="s1")
+    assert fetched is not None
+
+    fetched.content = "mutated by caller"
+
+    retrieved = agent.db.get_session(session_id="s1", session_type=None)
+    assert retrieved.runs[0].content == "echo: hello"
+
+
+def test_run_indexes_are_sequential(agent):
+    for text in ("one", "two", "three"):
+        asyncio.run(agent._arun_non_stream(text, session_id="s1", user_id="u1"))
+    rows, _ = agent.db.get_runs(session_id="s1", deserialize=False)
+    assert sorted(r["run_index"] for r in rows) == [0, 1, 2]
+
+
+@pytest.mark.parametrize("source", ["source", "branch", "missing"])
+def test_history_follows_fork_ancestry_and_subsequent_turns(agent, source):
+    from agno.models.message import Message
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    def run(run_id, content, forked_from=None):
+        return RunOutput(
+            run_id=run_id,
+            messages=[Message(role="user", content=content)],
+            forked_from_run_id=forked_from,
+        )
+
+    session = AgentSession(
+        session_id="s",
+        runs=[
+            run("earlier", "earlier turn"),
+            run("source", "original turn"),
+            run("discarded", "discarded later turn"),
+            run("branch", "first branch", "source"),
+            run("later", "first branch follow-up"),
+            run("second-branch", "second branch", source),
+            run("follow-up", "active follow-up"),
+            run("current", "exclude current input"),
+        ],
+    )
+    history = agent._get_history_from_session(session, exclude_run_id="current")
+    expected = ["second branch", "active follow-up"]
+    if source != "missing":
+        expected.insert(0, "earlier turn")
+    assert [message["content"] for message in history] == expected
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_strict_runtime_persistence_failure_cannot_emit_completion(agent, monkeypatch, stream):
+    agent.strict_persistence = True
+
+    def fail(*args, **kwargs):
+        raise OSError("native history disk full")
+
+    monkeypatch.setattr(agent.db, "upsert_run", fail)
+    seen = []
+    with pytest.raises(OSError, match="disk full"):
+        if stream:
+            for item in agent.run("hello", session_id="strict", stream=True):
+                seen.append(item.event)
+        else:
+            agent.run("hello", session_id="strict")
+    assert "RunCompleted" not in seen
+
+
+def test_strict_missing_native_identity_rejects_prior_completed_history(agent):
+    agent.require_native_resume = True
+    agent.run("first", session_id="strict")
+    with pytest.raises(ValueError, match="Native conversation identity"):
+        agent._check_native_resume(None, agent.get_session("strict"))
+    agent._check_native_resume("native-id", agent.get_session("strict"))
+
+
+@pytest.mark.parametrize("status", [RunStatus.error, RunStatus.cancelled])
+def test_failed_or_cancelled_run_keeps_its_tokens_in_the_session_metrics(status):
+    """A failed or cancelled run keeps the tokens it used on its row, so the session totals keep them too."""
+    run_output = RunOutput(
+        run_id="r", status=status, metrics=RunMetrics(input_tokens=6, output_tokens=4, total_tokens=10)
+    )
+    session = AgentSession(session_id="s", runs=[run_output])
+
+    BaseExternalAgent._update_session_metrics(session)
+
+    assert session.session_data["session_metrics"]["total_tokens"] == 10

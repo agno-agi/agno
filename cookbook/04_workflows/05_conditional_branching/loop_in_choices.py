@@ -20,13 +20,13 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 draft_writer = Agent(
     name="draft_writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a draft on the given topic. Keep it concise.",
 )
 
 refiner = Agent(
     name="refiner",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Refine and improve the given draft. Make it more polished.",
 )
 

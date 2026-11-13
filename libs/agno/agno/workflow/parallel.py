@@ -7,7 +7,8 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
-from agno.models.metrics import RunMetrics
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -88,6 +89,7 @@ class Parallel:
         self.name = resolved_name
         self.description = description
         self.human_review = human_review or HumanReview()
+        _refuse_shared_harness_agents(self.steps)
 
         from agno.workflow.types import validate_human_review_for_parallel
 
@@ -154,6 +156,7 @@ class Parallel:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.router import Router
@@ -165,7 +168,7 @@ class Parallel:
         for step in self.steps:
             if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
+            elif isinstance(step, (Agent, BaseExternalAgent)):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
@@ -212,6 +215,7 @@ class Parallel:
                 images=single_result.images,
                 videos=single_result.videos,
                 audio=single_result.audio,
+                files=single_result.files,
                 metrics=aggregated_metrics,
                 success=single_result.success,
                 error=single_result.error,
@@ -228,12 +232,14 @@ class Parallel:
         all_images = []
         all_videos = []
         all_audio = []
+        all_files = []
         has_any_failure = False
 
         for result in step_outputs:
             all_images.extend(result.images or [])
             all_videos.extend(result.videos or [])
             all_audio.extend(result.audio or [])
+            all_files.extend(result.files or [])
             if result.success is False:
                 has_any_failure = True
 
@@ -250,6 +256,7 @@ class Parallel:
             images=all_images if all_images else None,
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,
+            files=all_files if all_files else None,
             success=not has_any_failure,
             stop=early_termination_requested,
             metrics=aggregated_metrics,
@@ -285,7 +292,7 @@ class Parallel:
 
         for i, output in enumerate(step_outputs):
             step_name = output.step_name or f"Step {i + 1}"
-            content = output.content or ""
+            content = output.content
 
             # Add status indicator
             if output.success is False:
@@ -294,7 +301,7 @@ class Parallel:
                 status_icon = "✅ SUCCESS:"
 
             aggregated += f"### {status_icon} {step_name}\n"
-            if content and str(content).strip():
+            if content is not None and str(content).strip():
                 aggregated += f"{content}\n\n"
             else:
                 aggregated += "*(No content)*\n\n"
@@ -308,6 +315,7 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -351,6 +359,7 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
@@ -457,6 +466,7 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -538,6 +548,7 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     session_state=step_session_state,
                     run_context=step_run_context,
                     parent_step_id=parallel_step_id,
@@ -673,6 +684,7 @@ class Parallel:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -715,6 +727,7 @@ class Parallel:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
@@ -819,6 +832,7 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -900,6 +914,7 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     session_state=step_session_state,
                     run_context=step_run_context,
                     parent_step_id=parallel_step_id,
@@ -1014,3 +1029,50 @@ class Parallel:
                 step_id=parallel_step_id,
                 parent_step_id=parent_step_id,
             )
+
+
+def _harness_agent_ids(item: Any) -> set:
+    """Ids of the harness agents (Claude Code, Codex) one Parallel branch runs, at any depth."""
+    from agno.agents.base import BaseExternalAgent
+    from agno.team.team import Team
+
+    if isinstance(item, BaseExternalAgent):
+        return {item.get_id()}
+    if isinstance(item, Team):
+        found: set = set()
+        for member in item.members if isinstance(item.members, list) else []:
+            found |= _harness_agent_ids(member)
+        return found
+    if isinstance(item, list):
+        found = set()
+        for child in item:
+            found |= _harness_agent_ids(child)
+        return found
+    found = set()
+    for attr in ("agent", "team"):
+        if getattr(item, attr, None) is not None:
+            found |= _harness_agent_ids(getattr(item, attr))
+    for attr in ("steps", "else_steps", "choices"):
+        children = getattr(item, attr, None)
+        if isinstance(children, list):
+            found |= _harness_agent_ids(children)
+    return found
+
+
+def _refuse_shared_harness_agents(branches: List[Any]) -> None:
+    """Refuse a harness agent that more than one branch runs.
+
+    A harness agent keeps one conversation per workflow session, and a conversation takes one turn at
+    a time, so two branches running it at once would leave one waiting on the other until its retries
+    ran out. Different harness agents, and Agno agents, can run side by side.
+    """
+    seen: Dict[str, int] = {}
+    for index, branch in enumerate(branches):
+        for agent_id in _harness_agent_ids(branch):
+            if agent_id in seen and seen[agent_id] != index:
+                raise ValueError(
+                    f"Harness agent '{agent_id}' is used in more than one Parallel branch. It keeps one "
+                    "conversation per workflow session, which takes one turn at a time; use a separate "
+                    "agent, with its own id, for each branch."
+                )
+            seen.setdefault(agent_id, index)

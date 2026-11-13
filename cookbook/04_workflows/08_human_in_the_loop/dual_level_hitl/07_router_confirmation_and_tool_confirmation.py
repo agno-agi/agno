@@ -26,7 +26,7 @@ from agno.run.workflow import (
 from agno.tools import tool
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput
+from agno.workflow.types import HumanReview, StepInput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -58,7 +58,7 @@ def scale_service(service: str, replicas: int) -> str:
 
 restart_agent = Agent(
     name="RestartAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[restart_service],
     instructions="You restart services. Always use restart_service. Call it exactly once.",
     db=db,
@@ -67,7 +67,7 @@ restart_agent = Agent(
 
 scale_agent = Agent(
     name="ScaleAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[scale_service],
     instructions="You scale services. Always use scale_service. Call it exactly once.",
     db=db,
@@ -94,8 +94,10 @@ workflow = Workflow(
                 Step(name="scale", agent=scale_agent),
             ],
             selector=select_action,
-            requires_confirmation=True,
-            confirmation_message="An ops action will be executed. Proceed?",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="An ops action will be executed. Proceed?",
+            ),
         ),
     ],
     telemetry=False,

@@ -21,10 +21,11 @@ knowledge = Knowledge(
         embedder=OpenAIEmbedder(
             id="text-embedding-3-small"
         ),  # Use OpenAI for embeddings
-        reranker=CohereReranker(
-            model="rerank-multilingual-v3.0"
-        ),  # Use Cohere for reranking
     ),
+    # Reranking belongs on Knowledge: it applies to every vector db and can
+    # widen the candidate pool for rerankers that need one.
+    # Use Cohere for reranking.
+    reranker=CohereReranker(model="rerank-multilingual-v3.0"),
 )
 
 # ---------------------------------------------------------------------------
@@ -41,5 +42,5 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    knowledge.insert(name="Agno Docs", url="https://docs.agno.com/introduction.md")
+    knowledge.insert(name="Agno Docs", url="https://docs.agno.com/introduction")
     agent.print_response("What are Agno's key features?")

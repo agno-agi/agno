@@ -11,7 +11,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.insert(
     name="Thai Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"doc_type": "recipe_book"},

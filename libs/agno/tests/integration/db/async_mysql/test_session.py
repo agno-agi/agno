@@ -29,6 +29,33 @@ async def test_upsert_and_get_agent_session(async_mysql_db_real):
 
 
 @pytest.mark.asyncio
+async def test_agent_session_reuses_unchanged_history_runs(async_mysql_db_real):
+    session_id = "test-agent-session-run-cache"
+    await async_mysql_db_real.upsert_session(
+        AgentSession(session_id=session_id, agent_id="test-agent", user_id="test-user")
+    )
+    await async_mysql_db_real.upsert_run(
+        {
+            "run_id": "test-agent-run-cache",
+            "agent_id": "test-agent",
+            "user_id": "test-user",
+            "content": "cached content",
+            "status": "COMPLETED",
+        },
+        session_id=session_id,
+        user_id="test-user",
+        run_index=0,
+    )
+
+    first = await async_mysql_db_real.get_session(session_id=session_id, session_type=SessionType.AGENT)
+    second = await async_mysql_db_real.get_session(session_id=session_id, session_type=SessionType.AGENT)
+
+    assert first is not None and first.runs
+    assert second is not None and second.runs
+    assert first.runs[0] is second.runs[0]
+
+
+@pytest.mark.asyncio
 async def test_upsert_and_get_team_session(async_mysql_db_real):
     """Test upserting and retrieving a team session"""
     session = TeamSession(

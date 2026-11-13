@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 import pytest
 
-from agno.models.metrics import SessionMetrics
+from agno.metrics import SessionMetrics
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 

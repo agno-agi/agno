@@ -17,7 +17,7 @@ from agno.tools.websearch import WebSearchTools
 session_id = str(uuid4())
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     db=SqliteDb(db_file="tmp/data.db"),
     tools=[WebSearchTools()],
     markdown=True,
@@ -32,7 +32,7 @@ asyncio.run(
 
 # Create a new agent with Gemini 3 Pro and re-use the history from the previous session
 agent = Agent(
-    model=Gemini(id="gemini-3-pro-preview"),
+    model=Gemini(id="gemini-3.1-pro-preview"),
     db=SqliteDb(db_file="tmp/data.db"),
     markdown=True,
     add_history_to_context=True,

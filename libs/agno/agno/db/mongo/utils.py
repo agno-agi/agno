@@ -1,54 +1,160 @@
 """Utility functions for the MongoDB database class."""
 
-import json
-import time
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from uuid import uuid4
+from datetime import date
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.mongo.schemas import get_collection_indexes
-from agno.db.schemas.culture import CulturalKnowledge
-from agno.utils.log import log_error, log_warning
+from agno.db.utils import (
+    AGGREGATE_METRICS_KEY_COLUMNS,
+    COMPONENT_METRICS_KEY_COLUMNS,
+    METRICS_BY_OWNER_FIELDS,
+    METRICS_NESTED_RUN_KEYS,
+    build_aggregate_metrics_row,
+    merge_runs_table_with_legacy_blob,
+    metrics_day_ranges,
+    metrics_rows_fields,
+    serialize_metrics_row,
+)
+from agno.utils.log import log_info, log_warning
 
 try:
+    from pymongo import UpdateOne
     from pymongo.collection import Collection
+    from pymongo.errors import OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
+
+if TYPE_CHECKING:
+    from agno.db.mongo.async_mongo import AsyncMongoCollectionType
+
+
+LEGACY_METRICS_INDEX = "date_1_aggregation_period_1"
+INDEX_NOT_FOUND = 27  # MongoDB's IndexNotFound error code
+
+
+# What component metrics count of a run. Of the messages only each request's duration and the tool call each answers
+# are read, never the content, and of the tool calls only what tool_metrics counts, never their arguments or result
+_METRICS_RUN_DATA_FIELDS = (
+    "run_id",
+    "metrics",
+    "model",
+    "model_provider",
+    "messages.role",
+    "messages.from_history",
+    "messages.metrics.duration",
+    "messages.tool_call_id",
+    "forked_from_message_index",
+    "tools.tool_call_id",
+    "tools.toolkit",
+    "tools.tool_name",
+    "tools.tool_call_error",
+    "tools.requires_confirmation",
+    "tools.confirmed",
+    "tools.requires_user_input",
+    "tools.external_execution_required",
+    "tools.metrics.duration",
+)
+
+# What a legacy run keeps of its own beside run_data: the fields the runs collection keeps a column of
+_METRICS_LEGACY_RUN_FIELDS = (
+    "agent_id",
+    "team_id",
+    "workflow_id",
+    "parent_run_id",
+    "status",
+    "created_at",
+    "forked_from_session_id",
+)
 
 
 # -- DB util methods --
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
-    """Create all required indexes for a collection"""
+    """Create all required indexes for a collection.
+
+    Each index is attempted independently: one conflicting index (e.g. a legacy
+    collection whose index exists with different options) must not prevent the
+    remaining indexes from being created.
+    """
     try:
+        # Before the creation loop, so an index that fails to build does not leave the
+        # obsolete key in place as well
+        if collection_type == "metrics" and LEGACY_METRICS_INDEX in collection.index_information():
+            try:
+                collection.drop_index(LEGACY_METRICS_INDEX)
+                log_info(
+                    f"Dropped obsolete metrics index {LEGACY_METRICS_INDEX}, superseded by the per-user unique key"
+                )
+            except OperationFailure as e:
+                if e.code != INDEX_NOT_FOUND:
+                    log_warning(f"Could not drop obsolete metrics index {LEGACY_METRICS_INDEX}: {str(e)}")
+
         indexes = get_collection_indexes(collection_type)
-        for index_spec in indexes:
-            key = index_spec["key"]
-            unique = index_spec.get("unique", False)
-
-            if isinstance(key, list):
-                collection.create_index(key, unique=unique)
-            else:
-                collection.create_index([(key, 1)], unique=unique)
-
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        return
+    for index_spec in indexes:
+        key = index_spec["key"]
+        unique = index_spec.get("unique", False)
+        extra = {"name": index_spec["name"]} if "name" in index_spec else {}
+
+        try:
+            if isinstance(key, list):
+                collection.create_index(key, unique=unique, **extra)
+            else:
+                collection.create_index([(key, 1)], unique=unique, **extra)
+        except OperationFailure as e:
+            # e.g. IndexOptionsConflict on a legacy collection, or a DuplicateKey when a
+            # unique index cannot be built over pre-existing duplicates: skip it, try the rest
+            log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            # Connection-level failure: the remaining creates would all fail too
+            # (each waiting out the server-selection timeout), so stop here
+            log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+            return
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
-    """Create all required indexes for a collection (async version for Motor)"""
+    """Create all required indexes for a collection (async version for Motor).
+
+    Each index is attempted independently: one conflicting index (e.g. a legacy
+    collection whose index exists with different options) must not prevent the
+    remaining indexes from being created.
+    """
     try:
+        # See create_collection_indexes: the drop goes before the creation loop
+        if collection_type == "metrics" and LEGACY_METRICS_INDEX in await collection.index_information():
+            try:
+                await collection.drop_index(LEGACY_METRICS_INDEX)
+                log_info(
+                    f"Dropped obsolete metrics index {LEGACY_METRICS_INDEX}, superseded by the per-user unique key"
+                )
+            except OperationFailure as e:
+                if e.code != INDEX_NOT_FOUND:
+                    log_warning(f"Could not drop obsolete metrics index {LEGACY_METRICS_INDEX}: {str(e)}")
+
         indexes = get_collection_indexes(collection_type)
-        for index_spec in indexes:
-            key = index_spec["key"]
-            unique = index_spec.get("unique", False)
-
-            if isinstance(key, list):
-                await collection.create_index(key, unique=unique)
-            else:
-                await collection.create_index([(key, 1)], unique=unique)
-
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        return
+    for index_spec in indexes:
+        key = index_spec["key"]
+        unique = index_spec.get("unique", False)
+        extra = {"name": index_spec["name"]} if "name" in index_spec else {}
+
+        try:
+            if isinstance(key, list):
+                await collection.create_index(key, unique=unique, **extra)
+            else:
+                await collection.create_index([(key, 1)], unique=unique, **extra)
+        except OperationFailure as e:
+            # e.g. IndexOptionsConflict on a legacy collection, or a DuplicateKey when a
+            # unique index cannot be built over pre-existing duplicates: skip it, try the rest
+            log_warning(f"Error creating index {key!r} for {collection_type} collection: {str(e)}")
+        except Exception as e:
+            # Connection-level failure: the remaining creates would all fail too
+            # (each waiting out the server-selection timeout), so stop here
+            log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+            return
 
 
 def apply_sorting(
@@ -73,204 +179,403 @@ def apply_pagination(
     return query_args
 
 
-# -- Metrics util methods --
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date."""
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
-
-    session_types = [
-        ("agent", "agent_sessions_count", "agent_runs_count"),
-        ("team", "team_sessions_count", "team_runs_count"),
-        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
-    ]
-    all_user_ids = set()
-
-    for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
-
-        for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
-            runs = session.get("runs", [])
-            metrics[runs_count_key] += len(runs)
-
-            if runs := session.get("runs", []):
-                if isinstance(runs, str):
-                    runs = json.loads(runs)
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
-
-            session_data = session.get("session_data", {})
-            if isinstance(session_data, str):
-                session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
-
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-    metrics["users_count"] = len(all_user_ids)
-    current_time = int(time.time())
-
+# -- Component metrics util methods --
+def build_component_metrics_runs_projection() -> Dict[str, int]:
+    """Build the projection of a stored run with only what component metrics count, and the runs nested inside it."""
     return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
+        "_id": 0,
+        "run_id": 1,
+        "session_id": 1,
+        "run_type": 1,
+        "agent_id": 1,
+        "team_id": 1,
+        "workflow_id": 1,
+        "user_id": 1,
+        "parent_run_id": 1,
+        "status": 1,
+        "created_at": 1,
+        **{f"run_data.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
+        **{f"run_data.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
     }
 
 
-def fetch_all_sessions_data(
-    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
-) -> Optional[dict]:
-    """Return all session data for the given dates, for all session types."""
-    if not dates_to_process:
+def build_component_metrics_legacy_runs_projection() -> Dict[str, int]:
+    """Build the projection of a session with only what component metrics count of the runs of its legacy runs
+    field, and the runs nested inside them."""
+    return {
+        "session_id": 1,
+        "user_id": 1,
+        "created_at": 1,
+        **{f"runs.{field}": 1 for field in _METRICS_LEGACY_RUN_FIELDS},
+        **{f"runs.{field}": 1 for field in _METRICS_RUN_DATA_FIELDS},
+        **{f"runs.{key}": 1 for key in METRICS_NESTED_RUN_KEYS},
+    }
+
+
+def _project_component_metrics_fields(document: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep of a document only the given fields, as a find projection keeps them: a field holding documents keeps of
+    each only its own given fields, and drops whatever is not a document."""
+    projected: Dict[str, Any] = {}
+    for key, nested_fields in fields.items():
+        if key not in document:
+            continue
+        value = document[key]
+        if not nested_fields:
+            projected[key] = value
+        elif isinstance(value, dict):
+            projected[key] = _project_component_metrics_fields(value, nested_fields)
+        elif isinstance(value, list):
+            projected[key] = [
+                _project_component_metrics_fields(item, nested_fields) for item in value if isinstance(item, dict)
+            ]
+    return projected
+
+
+def build_component_metrics_legacy_runs(runs: Any) -> List[Dict[str, Any]]:
+    """Build the runs of a legacy runs field stored as a JSON string with only what
+    build_component_metrics_legacy_runs_projection keeps of the runs of one stored as an array."""
+    fields: Dict[str, Any] = {}
+    for path in (*_METRICS_LEGACY_RUN_FIELDS, *_METRICS_RUN_DATA_FIELDS, *METRICS_NESTED_RUN_KEYS):
+        nested_fields = fields
+        for key in path.split("."):
+            nested_fields = nested_fields.setdefault(key, {})
+    return [_project_component_metrics_fields(run, fields) for run in merge_runs_table_with_legacy_blob([], runs)]
+
+
+def build_component_metrics_legacy_json_runs_filter(sessions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Build the filter of the sessions read with build_component_metrics_legacy_runs_projection whose legacy runs
+    field is stored as a JSON string, as before v2.1.1, to read it whole. A string has no fields to project, so only a
+    session that came back without runs can hold one: None when every session came back with runs."""
+    ids = [session["_id"] for session in sessions if "runs" not in session]
+    if not ids:
         return None
-
-    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
-        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
-    }
-
-    for session in sessions:
-        session_date = (
-            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
-        )
-        if session_date in all_sessions_data:
-            all_sessions_data[session_date][session["session_type"]].append(session)
-
-    return all_sessions_data
+    return {"_id": {"$in": ids}, "runs": {"$type": "string"}}
 
 
-def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
-    """Return the list of dates to calculate metrics for."""
-    today = datetime.now(timezone.utc).date()
-    days_diff = (today - starting_date).days + 1
-    if days_diff <= 0:
-        return []
-    return [starting_date + timedelta(days=x) for x in range(days_diff)]
+def build_component_metrics_legacy_session(
+    session: Dict[str, Any], legacy_json_runs: Dict[Any, List[Dict[str, Any]]]
+) -> Dict[str, Any]:
+    """Build a session read with build_component_metrics_legacy_runs_projection with the runs of its legacy runs field
+    stored as a JSON string, if it is one, as build_component_metrics_legacy_runs builds them."""
+    if "runs" not in session:
+        session["runs"] = legacy_json_runs.get(session["_id"])
+    return session
 
 
-def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Bulk upsert metrics into the database.
-
-    Args:
-        collection (Collection): The collection to upsert the metrics into.
-        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
-
-    Returns:
-        The list of upserted metrics records.
-    """
-    if not metrics_records:
-        return []
-
-    results = []
-    for record in metrics_records:
-        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
-        try:
-            collection.replace_one(
-                {
-                    "date": record["date"],
-                    "aggregation_period": record["aggregation_period"],
-                },
-                record,
+def _component_metrics_upserts(component_metrics_records: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each component metrics record, matched on its key."""
+    upserts = []
+    for record in component_metrics_records:
+        document = serialize_metrics_row(record)
+        # The key and created_at are never overwritten
+        fields = {
+            key: value for key, value in document.items() if key not in [*COMPONENT_METRICS_KEY_COLUMNS, "created_at"]
+        }
+        upserts.append(
+            UpdateOne(
+                {column: document[column] for column in COMPONENT_METRICS_KEY_COLUMNS},
+                {"$set": fields, "$setOnInsert": {"created_at": document["created_at"]}},
                 upsert=True,
             )
-
-            results.append(record)
-
-        except Exception as e:
-            log_error(f"Error upserting metrics record: {str(e)}")
-            continue
-
-    return results
+        )
+    return upserts
 
 
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single dict for the database content column.
-    MongoDB stores as BSON which natively supports nested documents.
+def bulk_upsert_component_metrics(collection: Collection, component_metrics_records: List[Dict[str, Any]]) -> None:
+    """Bulk upsert component metrics into the database, in one request.
 
     Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        Dict[str, Any]: A dictionary with the content field as a dict containing content, categories, and notes.
+        collection (Collection): The component metrics collection.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
     """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
+    if not component_metrics_records:
+        return
 
-    return content_dict if content_dict else {}
+    collection.bulk_write(_component_metrics_upserts(component_metrics_records))
 
 
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
+async def abulk_upsert_component_metrics(
+    collection: "AsyncMongoCollectionType", component_metrics_records: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert component metrics into the database, in one request.
 
     Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
+        collection (AsyncMongoCollectionType): The component metrics collection.
+        component_metrics_records (List[Dict[str, Any]]): The component metrics records to upsert.
+    """
+    if not component_metrics_records:
+        return
+
+    await collection.bulk_write(_component_metrics_upserts(component_metrics_records))
+
+
+def _aggregate_metrics_upsert(
+    aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Build the filter and the update of the upsert of an aggregate metrics row.
+
+    A new row starts at version 1, and every write of a stored one moves its version by one in the same update, so
+    two writers never give it the same version.
+
+    Args:
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt. None when
+            there was no stored row.
 
     Returns:
-        CulturalKnowledge: The cultural knowledge object.
+        Tuple[Dict[str, Any], List[Dict[str, Any]]]: The filter and the update pipeline.
     """
-    # Extract content, categories, and notes from the content field
-    content_json = db_row.get("content", {}) or {}
+    document = serialize_metrics_row(aggregate_metrics_row)
+    # The key and created_at are never overwritten. Each value is a literal, so a string starting with $ is never
+    # read as a field
+    fields: Dict[str, Any] = {
+        key: {"$literal": value}
+        for key, value in document.items()
+        if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version", "completed"]
+    }
+    fields["created_at"] = {"$ifNull": ["$created_at", {"$literal": document["created_at"]}]}
+    fields["version"] = {"$add": [{"$ifNull": ["$version", 0]}, 1]}
+    # Compared in the update, so a reopen written since the version was read keeps the period open
+    fields["completed"] = {
+        "$cond": [
+            {"$eq": [{"$type": "$version"}, "missing"]},
+            document["completed"],
+            {"$and": [document["completed"], {"$eq": ["$version", {"$literal": read_version}]}]},
+        ]
+    }
+    key_filter = {column: document[column] for column in AGGREGATE_METRICS_KEY_COLUMNS}
+    return key_filter, [{"$set": fields}]
 
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
+
+def upsert_aggregate_metrics_row(
+    collection: Collection, aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert an aggregate metrics row into the database.
+
+    Args:
+        collection (Collection): The aggregate metrics collection.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    key_filter, update = _aggregate_metrics_upsert(aggregate_metrics_row, read_version)
+    collection.update_one(key_filter, update, upsert=True)
+
+
+async def aupsert_aggregate_metrics_row(
+    collection: "AsyncMongoCollectionType", aggregate_metrics_row: Dict[str, Any], read_version: Optional[int]
+) -> None:
+    """Upsert an aggregate metrics row into the database.
+
+    Args:
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        aggregate_metrics_row (Dict[str, Any]): The row, from build_aggregate_metrics_row.
+        read_version (Optional[int]): The version of the stored row read before its rows were rebuilt.
+    """
+    key_filter, update = _aggregate_metrics_upsert(aggregate_metrics_row, read_version)
+    await collection.update_one(key_filter, update, upsert=True)
+
+
+def _aggregate_metrics_rows_upserts(aggregate_metrics_rows: List[Dict[str, Any]]) -> List[UpdateOne]:
+    """Build the upsert of each user row of the aggregate metrics collection. A user row is written with its period's
+    everyone row, so its completed and version are never compared."""
+    upserts = []
+    for aggregate_metrics_row in aggregate_metrics_rows:
+        document = serialize_metrics_row(aggregate_metrics_row)
+        # The key and created_at are never overwritten
+        fields = {
+            key: value
+            for key, value in document.items()
+            if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "created_at", "version"]
         }
+        upserts.append(
+            UpdateOne(
+                {column: document[column] for column in AGGREGATE_METRICS_KEY_COLUMNS},
+                {"$set": fields, "$setOnInsert": {"created_at": document["created_at"]}, "$inc": {"version": 1}},
+                upsert=True,
+            )
+        )
+    return upserts
+
+
+def bulk_upsert_aggregate_metrics_rows(collection: Collection, aggregate_metrics_rows: List[Dict[str, Any]]) -> None:
+    """Bulk upsert the user rows of a period into the aggregate metrics collection, in one request.
+
+    Args:
+        collection (Collection): The aggregate metrics collection.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
+    """
+    if not aggregate_metrics_rows:
+        return
+    collection.bulk_write(_aggregate_metrics_rows_upserts(aggregate_metrics_rows))
+
+
+async def abulk_upsert_aggregate_metrics_rows(
+    collection: "AsyncMongoCollectionType", aggregate_metrics_rows: List[Dict[str, Any]]
+) -> None:
+    """Bulk upsert the user rows of a period into the aggregate metrics collection, in one request.
+
+    Args:
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        aggregate_metrics_rows (List[Dict[str, Any]]): The user rows, from build_aggregate_metrics_rows.
+    """
+    if not aggregate_metrics_rows:
+        return
+    await collection.bulk_write(_aggregate_metrics_rows_upserts(aggregate_metrics_rows))
+
+
+def _reopen_metrics_row(row_date: date, aggregation_period: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build the filter and the update that reopen a day's or a month's everyone row of the aggregate metrics
+    collection, inserting an empty open row when it has none."""
+    empty_row = serialize_metrics_row(build_aggregate_metrics_row([], aggregation_period, row_date, completed=False))
+    key_filter = {column: empty_row[column] for column in AGGREGATE_METRICS_KEY_COLUMNS}
+    update = {
+        "$set": {"completed": False},
+        "$inc": {"version": 1},
+        "$setOnInsert": {
+            key: value for key, value in empty_row.items() if key not in [*AGGREGATE_METRICS_KEY_COLUMNS, "completed"]
+        },
+    }
+    return key_filter, update
+
+
+def reopen_metrics_day(collection: Collection, day: date) -> None:
+    """Reopen a day's aggregate metrics row, so the next calculation rebuilds the day.
+
+    Args:
+        collection (Collection): The aggregate metrics collection.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
+
+
+async def areopen_metrics_day(collection: "AsyncMongoCollectionType", day: date) -> None:
+    """Reopen a day's aggregate metrics row, so the next calculation rebuilds the day.
+
+    Args:
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        day (date): The day, from metrics_day_to_reopen.
+    """
+    await collection.update_one(*_reopen_metrics_row(day, "daily"), upsert=True)
+
+
+def _reopen_metrics_days_from(starting_date: date) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build the filter and the update that reopen every day's everyone row of the aggregate metrics collection from the
+    given date on."""
+    return (
+        {"aggregation_period": "daily", "user_id": "", "date": {"$gte": starting_date.isoformat()}},
+        {"$set": {"completed": False}, "$inc": {"version": 1}},
     )
+
+
+def reopen_metrics_days_from(collection: Collection, starting_date: date) -> None:
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens
+    a day, so the next calculation rebuilds them.
+
+    Args:
+        collection (Collection): The aggregate metrics collection.
+        starting_date (date): The first day to reopen.
+    """
+    collection.update_many(*_reopen_metrics_days_from(starting_date))
+
+
+async def areopen_metrics_days_from(collection: "AsyncMongoCollectionType", starting_date: date) -> None:
+    """Reopen every day's aggregate metrics row from the given date on, as a write reopens
+    a day, so the next calculation rebuilds them.
+
+    Args:
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        starting_date (date): The first day to reopen.
+    """
+    await collection.update_many(*_reopen_metrics_days_from(starting_date))
+
+
+def reopen_metrics_month(collection: Collection, month_start: date) -> None:
+    """Reopen a month's aggregate metrics row, so the next calculation rebuilds the month.
+
+    Args:
+        collection (Collection): The aggregate metrics collection.
+        month_start (date): The first day of the month.
+    """
+    collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
+
+
+async def areopen_metrics_month(collection: "AsyncMongoCollectionType", month_start: date) -> None:
+    """Reopen a month's aggregate metrics row, so the next calculation rebuilds the month.
+
+    Args:
+        collection (AsyncMongoCollectionType): The aggregate metrics collection.
+        month_start (date): The first day of the month.
+    """
+    await collection.update_one(*_reopen_metrics_row(month_start, "monthly"), upsert=True)
+
+
+def build_metrics_fingerprint_pipeline(start_timestamp: int) -> List[Dict[str, Any]]:
+    """Build the pipeline that counts the sessions or runs created from the given time on, and adds up and finds the
+    latest of their update times."""
+    return [
+        {"$match": {"created_at": {"$gte": start_timestamp}}},
+        {
+            "$group": {
+                "_id": None,
+                "count": {"$sum": 1},
+                "total_updated_at": {"$sum": "$updated_at"},
+                "latest_updated_at": {"$max": "$updated_at"},
+            }
+        },
+    ]
+
+
+def build_metrics_days_pipeline() -> List[Dict[str, Any]]:
+    """Build the pipeline that finds every day a session or run was created on, as days since 1970-01-01. Read from
+    the created_at index alone."""
+    return [
+        {"$match": {"created_at": {"$ne": None}}},
+        {"$project": {"_id": 0, "created_at": 1}},
+        {"$group": {"_id": {"$floor": {"$divide": ["$created_at", 86400]}}}},
+    ]
+
+
+def build_metrics_rows_filter(
+    starting_date: date,
+    ending_date: date,
+    user_id: str,
+    month_starts: Sequence[date] = (),
+) -> Optional[Dict[str, Any]]:
+    """Build the filter of one user's metrics rows of each day in the given date range.
+
+    Args:
+        starting_date (date): The first day to read.
+        ending_date (date): The last day to read.
+        user_id (str): The user whose rows are read. "" for the everyone rows of the aggregate metrics collection, or
+            the rows with no user of the component metrics collection.
+        month_starts (Sequence[date]): The first day of every month inside the date range to read the month row of
+            instead of its days.
+
+    Returns:
+        Optional[Dict[str, Any]]: The filter. None when there is no day to read.
+    """
+    # Days that follow one another are looked up as one range
+    filters: List[Dict[str, Any]] = [
+        {"aggregation_period": "daily", "date": {"$gte": first_day.isoformat(), "$lte": last_day.isoformat()}}
+        for first_day, last_day in metrics_day_ranges(starting_date, ending_date, month_starts)
+    ]
+    if month_starts:
+        filters.append(
+            {
+                "aggregation_period": "monthly",
+                "date": {"$in": [month_start.isoformat() for month_start in month_starts]},
+            }
+        )
+    if not filters:
+        return None
+    return {"user_id": user_id, "$or": filters}
+
+
+def build_metrics_rows_projection(fields: Sequence[str]) -> Dict[str, int]:
+    """Build the projection of a stored metrics row with only what totalling the given fields reads."""
+    return {"_id": 0, **{field: 1 for field in metrics_rows_fields(fields)}}
+
+
+def build_metrics_by_owner_projection() -> Dict[str, int]:
+    """Build the projection of a stored component metrics row with only what get_metrics reads of it."""
+    return {"_id": 0, **{field: 1 for field in METRICS_BY_OWNER_FIELDS}}

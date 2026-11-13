@@ -25,14 +25,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 video_agent = Agent(
     name="Video Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You specialize in video content creation and editing advice.",
     markdown=True,
 )
 
 image_agent = Agent(
     name="Image Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You specialize in image design, photography, and visual content.",
     markdown=True,
 )

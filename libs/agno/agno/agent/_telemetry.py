@@ -25,10 +25,7 @@ def get_telemetry_data(agent: Agent) -> Dict[str, Any]:
         or agent.enable_agentic_memory is True
         or agent.memory_manager is not None,
         "has_learnings": agent._learning is not None,
-        "has_culture": agent.enable_agentic_culture is True
-        or agent.update_cultural_knowledge is True
-        or agent.culture_manager is not None,
-        "has_reasoning": agent.reasoning is True,
+        "has_reasoning": agent.reasoning_model is not None,
         "has_knowledge": agent.knowledge is not None,
         "has_input_schema": agent.input_schema is not None,
         "has_output_schema": agent.output_schema is not None,
@@ -44,9 +41,11 @@ def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = N
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, create_agent_run
-
+    # Everything telemetry needs, the import included, stays inside the try:
+    # a telemetry failure must never change the outcome of the run.
     try:
+        from agno.api.agent import AgentRunCreate, create_agent_run
+
         create_agent_run(
             run=AgentRunCreate(
                 session_id=session_id,
@@ -66,9 +65,9 @@ async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[s
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, acreate_agent_run
-
     try:
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
+
         await acreate_agent_run(
             run=AgentRunCreate(
                 session_id=session_id,

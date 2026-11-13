@@ -30,7 +30,7 @@ tools = [get_weather]
 # Create Benchmark Function
 # ---------------------------------------------------------------------------
 def instantiate_agent():
-    return Agent(model=OpenAIChat(id="gpt-4o"), tools=tools)  # type: ignore
+    return Agent(model=OpenAIChat(id="gpt-5.6-luna"), tools=tools)  # type: ignore
 
 
 # ---------------------------------------------------------------------------

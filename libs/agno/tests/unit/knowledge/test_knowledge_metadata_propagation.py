@@ -1,110 +1,13 @@
-"""Tests for metadata propagation when using path in Knowledge.
-
-This tests the fix for issue #6077 where metadata was not propagated to documents
-when using path in add_content_async/ainsert.
-"""
+"""Tests that metadata reaches the documents when Knowledge loads from a path."""
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
 from unittest.mock import patch
 
 import pytest
 
 from agno.knowledge.content import Content
 from agno.knowledge.document import Document
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.base import VectorDb
-
-
-class MockVectorDb(VectorDb):
-    """Mock VectorDb that tracks inserted documents and their metadata."""
-
-    def __init__(self):
-        self.inserted_documents: List[Document] = []
-        self.upserted_documents: List[Document] = []
-
-    def create(self) -> None:
-        pass
-
-    async def async_create(self) -> None:
-        pass
-
-    def name_exists(self, name: str) -> bool:
-        return False
-
-    async def async_name_exists(self, name: str) -> bool:
-        return False
-
-    def id_exists(self, id: str) -> bool:
-        return False
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        return False
-
-    def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    async def async_insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    def upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.upserted_documents.extend(documents)
-
-    async def async_upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.upserted_documents.extend(documents)
-
-    def upsert_available(self) -> bool:
-        return True
-
-    def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    def drop(self) -> None:
-        pass
-
-    async def async_drop(self) -> None:
-        pass
-
-    def exists(self) -> bool:
-        return True
-
-    async def async_exists(self) -> bool:
-        return True
-
-    def delete(self) -> bool:
-        return True
-
-    def delete_by_id(self, id: str) -> bool:
-        return True
-
-    def delete_by_name(self, name: str) -> bool:
-        return True
-
-    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        return True
-
-    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
-        pass
-
-    def delete_by_content_id(self, content_id: str) -> bool:
-        return True
-
-    def get_supported_search_types(self) -> List[str]:
-        return ["vector"]
-
-
-class MockReader:
-    """Mock reader that returns test documents."""
-
-    def read(self, path, name=None, password=None) -> List[Document]:
-        return [Document(name=name or str(path), content="Test document content")]
-
-    async def aread(self, path, name=None, password=None) -> List[Document]:
-        return [Document(name=name or str(path), content="Test document content")]
 
 
 @pytest.fixture
@@ -118,16 +21,8 @@ def temp_text_file():
     Path(temp_path).unlink(missing_ok=True)
 
 
-@pytest.fixture
-def mock_vector_db():
-    """Create a mock vector database."""
-    return MockVectorDb()
-
-
-def test_prepare_documents_for_insert_with_metadata():
+def test_prepare_documents_for_insert_with_metadata(knowledge):
     """Test that _prepare_documents_for_insert correctly merges metadata."""
-    mock_db = MockVectorDb()
-    knowledge = Knowledge(vector_db=mock_db)
 
     # Create test documents
     documents = [
@@ -167,10 +62,8 @@ def test_prepare_documents_for_insert_with_metadata():
         assert doc.content_id == "content-id-1"
 
 
-def test_prepare_documents_for_insert_without_metadata():
+def test_prepare_documents_for_insert_without_metadata(knowledge):
     """Test that _prepare_documents_for_insert works correctly without metadata."""
-    mock_db = MockVectorDb()
-    knowledge = Knowledge(vector_db=mock_db)
 
     # Create test documents
     documents = [
@@ -181,7 +74,7 @@ def test_prepare_documents_for_insert_without_metadata():
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved (linked_to is always added)
+    # Verify existing metadata is preserved (only linked_to is added); user_id is not written into meta_data
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
     assert result[1].meta_data == {"linked_to": ""}
 
@@ -190,10 +83,8 @@ def test_prepare_documents_for_insert_without_metadata():
         assert doc.content_id == "content-id-1"
 
 
-def test_prepare_documents_for_insert_with_empty_metadata():
+def test_prepare_documents_for_insert_with_empty_metadata(knowledge):
     """Test that _prepare_documents_for_insert works correctly with empty metadata dict."""
-    mock_db = MockVectorDb()
-    knowledge = Knowledge(vector_db=mock_db)
 
     # Create test documents
     documents = [
@@ -203,14 +94,13 @@ def test_prepare_documents_for_insert_with_empty_metadata():
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (linked_to is always added)
+    # Verify existing metadata is preserved (only linked_to is added)
     assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
 
 
 @pytest.mark.asyncio
-async def test_aload_from_path_propagates_metadata(temp_text_file, mock_vector_db):
+async def test_aload_from_path_propagates_metadata(knowledge, vector_db, temp_text_file):
     """Test that _aload_from_path propagates metadata to documents."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content with metadata
     content = Content(
@@ -224,17 +114,16 @@ async def test_aload_from_path_propagates_metadata(temp_text_file, mock_vector_d
         await knowledge._aload_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify documents were inserted with metadata
-    assert len(mock_vector_db.inserted_documents) == 1
-    doc = mock_vector_db.inserted_documents[0]
+    assert len(vector_db.inserted_documents) == 1
+    doc = vector_db.inserted_documents[0]
     assert doc.meta_data.get("document_id") == "123"
     assert doc.meta_data.get("knowledge_base_id") == "456"
     assert doc.meta_data.get("filename") == "test.txt"
 
 
 @pytest.mark.asyncio
-async def test_aload_from_path_upsert_propagates_metadata(temp_text_file, mock_vector_db):
+async def test_aload_from_path_upsert_propagates_metadata(knowledge, vector_db, temp_text_file):
     """Test that _aload_from_path propagates metadata to documents when using upsert."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content with metadata
     content = Content(
@@ -243,20 +132,20 @@ async def test_aload_from_path_upsert_propagates_metadata(temp_text_file, mock_v
         metadata={"source": "test", "category": "documentation"},
     )
     content.content_hash = knowledge._build_content_hash(content)
+    vector_db.upsert_supported = True
 
     with patch.object(knowledge, "_aread", return_value=[Document(name="test", content="Test content")]):
         await knowledge._aload_from_path(content, upsert=True, skip_if_exists=False)
 
     # Verify documents were upserted with metadata
-    assert len(mock_vector_db.upserted_documents) == 1
-    doc = mock_vector_db.upserted_documents[0]
+    assert len(vector_db.upserted_documents) == 1
+    doc = vector_db.upserted_documents[0]
     assert doc.meta_data.get("source") == "test"
     assert doc.meta_data.get("category") == "documentation"
 
 
-def test_load_from_path_propagates_metadata(temp_text_file, mock_vector_db):
+def test_load_from_path_propagates_metadata(knowledge, vector_db, temp_text_file):
     """Test that _load_from_path propagates metadata to documents."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content with metadata
     content = Content(
@@ -270,15 +159,14 @@ def test_load_from_path_propagates_metadata(temp_text_file, mock_vector_db):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify documents were inserted with metadata
-    assert len(mock_vector_db.inserted_documents) == 1
-    doc = mock_vector_db.inserted_documents[0]
+    assert len(vector_db.inserted_documents) == 1
+    doc = vector_db.inserted_documents[0]
     assert doc.meta_data.get("document_id") == "789"
     assert doc.meta_data.get("author") == "test_author"
 
 
-def test_load_from_path_upsert_propagates_metadata(temp_text_file, mock_vector_db):
+def test_load_from_path_upsert_propagates_metadata(knowledge, vector_db, temp_text_file):
     """Test that _load_from_path propagates metadata to documents when using upsert."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content with metadata
     content = Content(
@@ -287,20 +175,20 @@ def test_load_from_path_upsert_propagates_metadata(temp_text_file, mock_vector_d
         metadata={"version": "1.0", "language": "en"},
     )
     content.content_hash = knowledge._build_content_hash(content)
+    vector_db.upsert_supported = True
 
     with patch.object(knowledge, "_read", return_value=[Document(name="test", content="Test content")]):
         knowledge._load_from_path(content, upsert=True, skip_if_exists=False)
 
     # Verify documents were upserted with metadata
-    assert len(mock_vector_db.upserted_documents) == 1
-    doc = mock_vector_db.upserted_documents[0]
+    assert len(vector_db.upserted_documents) == 1
+    doc = vector_db.upserted_documents[0]
     assert doc.meta_data.get("version") == "1.0"
     assert doc.meta_data.get("language") == "en"
 
 
-def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
+def test_load_from_path_without_metadata(knowledge, vector_db, temp_text_file):
     """Test that _load_from_path works correctly without metadata."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content without metadata
     content = Content(
@@ -314,15 +202,14 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
-    # Verify documents were inserted with original metadata preserved (linked_to is always added)
-    assert len(mock_vector_db.inserted_documents) == 1
-    doc = mock_vector_db.inserted_documents[0]
+    # Verify documents were inserted with original metadata preserved (only linked_to is added)
+    assert len(vector_db.inserted_documents) == 1
+    doc = vector_db.inserted_documents[0]
     assert doc.meta_data == {"original": "data", "linked_to": ""}
 
 
-def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_vector_db):
+def test_metadata_merges_with_existing_document_metadata(knowledge, vector_db, temp_text_file):
     """Test that content metadata merges with existing document metadata."""
-    knowledge = Knowledge(vector_db=mock_vector_db)
 
     # Create content with metadata
     content = Content(
@@ -347,8 +234,8 @@ def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_ve
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
     # Verify metadata was merged (content metadata should override document metadata for shared keys)
-    assert len(mock_vector_db.inserted_documents) == 1
-    doc = mock_vector_db.inserted_documents[0]
+    assert len(vector_db.inserted_documents) == 1
+    doc = vector_db.inserted_documents[0]
     assert doc.meta_data.get("existing_field") == "existing_value"
     assert doc.meta_data.get("new_field") == "new_value"
     assert doc.meta_data.get("shared_field") == "content_value"  # Content metadata overrides

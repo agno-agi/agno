@@ -71,8 +71,13 @@ class TestServiceAccountsTable:
         sqlite_db_real.db_engine.dispose()
         sqlite_db_real.db_url = "sqlite:////nonexistent/path/definitely_missing.db"
         from sqlalchemy import create_engine
+        from sqlalchemy.orm import scoped_session, sessionmaker
 
         sqlite_db_real.db_engine = create_engine(sqlite_db_real.db_url)
+        # Queries run through db.Session, whose sessionmaker was bound to the engine
+        # object at construction: repointing db_engine alone leaves the lookup talking
+        # to the live database.
+        sqlite_db_real.Session = scoped_session(sessionmaker(bind=sqlite_db_real.db_engine))
         with pytest.raises(Exception):
             sqlite_db_real.get_service_account_by_token_hash("hash-1")
 

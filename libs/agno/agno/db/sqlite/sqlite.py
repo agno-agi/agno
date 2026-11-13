@@ -2,16 +2,41 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db import mcp_oauth_store
-from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.base import (
+    _UNSET_UPDATED_AT,
+    DELETED_CONFIG_STAGE,
+    PIN_LINK_KINDS,
+    BaseDb,
+    ComponentArchivedError,
+    ComponentCycleError,
+    ComponentDependencyError,
+    ComponentDraftRequiredError,
+    ComponentLastConfigError,
+    ComponentType,
+    ComponentVersionConflictError,
+    SessionType,
+    current_version_guard_clause,
+    current_version_matches,
+    project_config_identity,
+)
 from agno.db.migrations.manager import MigrationManager
-from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.schemas.authz import (
+    AUTHZ_AUDIT,
+    AUTHZ_DECISIONS,
+    AUTHZ_GROUPING,
+    AUTHZ_POLICY,
+    AUTHZ_ROLES,
+    AUTHZ_TABLE_NAME_ATTRS,
+    AUTHZ_USERS,
+)
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
@@ -27,34 +52,104 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.sql import authz as authz_sql
+from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
+    METRICS_IN_LIST_LIMIT,
+    METRICS_STALE_KEYS_LIMIT,
     apply_sorting,
-    bulk_upsert_metrics,
-    calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
+    build_component_metrics_legacy_runs_table,
+    build_component_metrics_run,
+    build_component_metrics_runs_query,
+    build_component_metrics_totals_queries,
+    build_metrics_by_owner_queries,
+    bulk_upsert_aggregate_metrics_rows,
+    bulk_upsert_component_metrics,
+    is_lock_not_available,
     is_table_available,
     is_valid_table,
-    serialize_cultural_knowledge_for_db,
+    reopen_metrics_day,
+    reopen_metrics_days_from,
+    reopen_metrics_month,
+    upsert_aggregate_metrics_row,
 )
 from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    HISTORY_SKIP_STATUSES,
+    METRICS_BATCH_SIZE,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    METRICS_TOKEN_FIELDS,
+    SessionRunObjectCache,
+    add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
+    build_component_metrics_totals,
+    build_metrics_by_owner,
+    build_metrics_from_aggregate_metrics,
+    build_single_run_row,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
+    deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
+    get_months_to_calculate_metrics_for,
+    json_serializer,
     learning_search_patterns,
-    serialize_session_json_fields,
+    list_metrics_totals_models,
+    merge_metrics_totals,
+    merge_runs_table_with_legacy_blob,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
+    metrics_versions,
+    owner_key,
+    resolve_metrics_fields,
+    table_schema_mismatch_error,
+    validate_pagination,
 )
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
+    from sqlalchemy import (
+        Column,
+        MetaData,
+        String,
+        Table,
+        Text,
+        and_,
+        case,
+        func,
+        literal,
+        null,
+        or_,
+        select,
+        text,
+        tuple_,
+        union,
+        update,
+    )
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import IntegrityError, OperationalError
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import ForeignKey, Index, UniqueConstraint
 except ImportError:
@@ -68,9 +163,12 @@ class SqliteDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
+        component_metrics_table: Optional[str] = None,
+        aggregate_metrics_table: Optional[str] = None,
+        metrics_refreshes_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
@@ -81,6 +179,10 @@ class SqliteDb(BaseDb):
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
+        products_table: Optional[str] = None,
+        sources_table: Optional[str] = None,
+        projects_table: Optional[str] = None,
+        tasks_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
@@ -106,9 +208,13 @@ class SqliteDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
-            culture_table (Optional[str]): Name of the table to store cultural notions.
+            runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
+            component_metrics_table (Optional[str]): Name of the table to store the metrics of each agent, team and
+                workflow.
+            aggregate_metrics_table (Optional[str]): Name of the table to store the metrics of each user.
+            metrics_refreshes_table (Optional[str]): Name of the table to store the metrics refreshes.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
             traces_table (Optional[str]): Name of the table to store run traces.
@@ -119,6 +225,9 @@ class SqliteDb(BaseDb):
             component_links_table (Optional[str]): Name of the table to store component links.
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
+            products_table (Optional[str]): Name of the table to store Company Products.
+            projects_table (Optional[str]): Name of the table to store Company Projects.
+            tasks_table (Optional[str]): Name of the table to store Company Tasks.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
@@ -131,15 +240,22 @@ class SqliteDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite:///agno.db"
+            # Parenthesized on purpose: without them the conditional binds the
+            # whole or-chain, db_url/db_file become dead code whenever no engine
+            # is passed, and every instance seeds from the literal default -
+            # giving physically different databases the same generated id.
+            seed = db_url or db_file or (str(db_engine.url) if db_engine else "sqlite:///agno.db")
             id = generate_id(seed)
 
         super().__init__(
             id=id,
             session_table=session_table,
-            culture_table=culture_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
+            component_metrics_table=component_metrics_table,
+            aggregate_metrics_table=aggregate_metrics_table,
+            metrics_refreshes_table=metrics_refreshes_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             traces_table=traces_table,
@@ -150,6 +266,10 @@ class SqliteDb(BaseDb):
             component_links_table=component_links_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
+            products_table=products_table,
+            sources_table=sources_table,
+            projects_table=projects_table,
+            tasks_table=tasks_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
@@ -160,20 +280,22 @@ class SqliteDb(BaseDb):
             mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
             mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
+        if metrics_table is not None:
+            log_warning("metrics_table is deprecated; use component_metrics_table and aggregate_metrics_table.")
 
         _engine: Optional[Engine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_engine(db_url)
+                _engine = create_engine(db_url, json_serializer=json_serializer)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_file = str(db_path)
-                _engine = create_engine(f"sqlite:///{db_path}")
+                _engine = create_engine(f"sqlite:///{db_path}", json_serializer=json_serializer)
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
-                _engine = create_engine(f"sqlite:///{default_db_path}")
+                _engine = create_engine(f"sqlite:///{default_db_path}", json_serializer=json_serializer)
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
@@ -182,10 +304,60 @@ class SqliteDb(BaseDb):
         self.db_file: Optional[str] = db_file
         self.metadata: MetaData = MetaData()
 
+        # SQLite ignores FOREIGN KEY constraints by default — enable them on
+        # every new connection so agno_runs.session_id → sessions.session_id
+        # CASCADE actually fires. No-op on non-SQLite dialects.
+        from sqlalchemy import event as _sa_event
+
+        @_sa_event.listens_for(self.db_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # type: ignore[no-redef]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                # WAL replaces the default DELETE journal, which creates, fsyncs
+                # and deletes a journal file on every commit. The mode persists
+                # in the database file, so re-issuing it per connection is an
+                # idempotent no-op. synchronous is left at its default (FULL):
+                # commits still fsync, durability is unchanged. Where SQLite
+                # cannot switch (in-memory databases, filesystems without
+                # shared-memory support such as some network mounts) the pragma
+                # reports the mode actually in effect — keep whatever it gives
+                # back.
+                cursor.execute("PRAGMA journal_mode=WAL")
+                row = cursor.fetchone()
+                mode = row[0] if row else None
+                if isinstance(mode, str) and mode.lower() != "wal":
+                    log_debug(f"SQLite journal_mode=WAL unavailable, running with journal_mode={mode}")
+                cursor.close()
+            except Exception:
+                # Not SQLite (someone passed a different db_engine) — ignore.
+                pass
+
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
-        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+
+        # Deserialized history-run objects, keyed per run by the raw row text;
+        # see SessionRunObjectCache for the invalidation and immutability
+        # contract. Per adapter instance, so it can never serve runs across
+        # databases.
+        self._run_object_cache = SessionRunObjectCache()
+
+        # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
+        # spelling) gives every thread its own private database, so "this
+        # table exists" is not a process-wide fact there. StaticPool (the
+        # async in-memory arrangement) shares one connection and caches fine.
+        from sqlalchemy.pool import SingletonThreadPool
+
+        if isinstance(self.db_engine.pool, SingletonThreadPool):
+            self._table_cache.enabled = False
+            log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
         self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics table is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
 
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:
@@ -205,9 +377,12 @@ class SqliteDb(BaseDb):
             db_file=data.get("db_file"),
             db_url=data.get("db_url"),
             session_table=data.get("session_table"),
-            culture_table=data.get("culture_table"),
+            runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
+            component_metrics_table=data.get("component_metrics_table"),
+            aggregate_metrics_table=data.get("aggregate_metrics_table"),
+            metrics_refreshes_table=data.get("metrics_refreshes_table"),
             eval_table=data.get("eval_table"),
             knowledge_table=data.get("knowledge_table"),
             traces_table=data.get("traces_table"),
@@ -218,6 +393,10 @@ class SqliteDb(BaseDb):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
+            products_table=data.get("products_table"),
+            sources_table=data.get("sources_table"),
+            projects_table=data.get("projects_table"),
+            tasks_table=data.get("tasks_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             service_accounts_table=data.get("service_accounts_table"),
@@ -250,8 +429,11 @@ class SqliteDb(BaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
+            (self.component_metrics_table_name, "component_metrics"),
+            (self.aggregate_metrics_table_name, "aggregate_metrics"),
+            (self.metrics_refreshes_table_name, "metrics_refreshes"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge"),
             (self.versions_table_name, "versions"),
@@ -263,9 +445,15 @@ class SqliteDb(BaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
+            (self.tool_results_table_name, "tool_results"),
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
 
     def _create_table(self, table_name: str, table_type: str) -> Table:
@@ -285,6 +473,9 @@ class SqliteDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # The runs table declares a FK to sessions — ensure the real sessions
+        # Table object is registered in ``self.metadata`` first so SQLAlchemy
+        # can resolve the FK reference at ``Table(...)`` construction.
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
@@ -293,7 +484,27 @@ class SqliteDb(BaseDb):
                 table_type,
                 traces_table_name=self.trace_table_name,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        # Under _resolve_lock: resolve directly so the parent is
+                        # re-registered even if a stale cache entry exists
+                        self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -337,10 +548,18 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            # In-memory SQLite (cache disabled): every thread has a private
+            # database, so re-creation of an already-registered table is
+            # legitimate; allow redefinition instead of "already defined"
+            already_registered = any(t.name == table_name for t in self.metadata.tables.values())
+            table = Table(table_name, self.metadata, *columns, extend_existing=not self._table_cache.enabled)
+
+            # A pre-registered Table (extend_existing path) already carries its
+            # constraints and indexes; re-appending duplicates them unboundedly
+            attach_constraints = not already_registered
 
             # Composite PK
-            if schema_primary_key is not None:
+            if attach_constraints and schema_primary_key is not None:
                 missing = [c for c in schema_primary_key if c not in table.c]
                 if missing:
                     raise ValueError(f"Composite PK references missing columns in {table_name}: {missing}")
@@ -349,7 +568,7 @@ class SqliteDb(BaseDb):
                 table.append_constraint(PrimaryKeyConstraint(*schema_primary_key, name=pk_constraint_name))
 
             # Composite FKs
-            for fk_config in schema_foreign_keys:
+            for fk_config in schema_foreign_keys if attach_constraints else []:
                 fk_columns = fk_config["columns"]
                 ref_table_logical = fk_config["ref_table"]
                 ref_columns = fk_config["ref_columns"]
@@ -377,7 +596,7 @@ class SqliteDb(BaseDb):
                 )
 
             # Multi-column unique constraints
-            for constraint in schema_unique_constraints:
+            for constraint in schema_unique_constraints if attach_constraints else []:
                 constraint_name = f"{table_name}_{constraint['name']}"
                 constraint_columns = constraint["columns"]
 
@@ -388,20 +607,20 @@ class SqliteDb(BaseDb):
                 table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
 
             # Indexes
-            for idx_col in indexes:
+            for idx_col in indexes if attach_constraints else []:
                 if idx_col not in table.c:
                     raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
 
             # Composite indexes
-            for idx_config in schema_composite_indexes:
+            for idx_config in schema_composite_indexes if attach_constraints else []:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 idx_cols = [table.c[c] for c in idx_config["columns"]]
                 Index(idx_name, *idx_cols)
 
             # Partial unique indexes
-            for idx_config in schema_partial_unique_indexes:
+            for idx_config in schema_partial_unique_indexes if attach_constraints else []:
                 idx_name = f"{table_name}_{idx_config['name']}"
                 missing = [c for c in idx_config["columns"] if c not in table.c]
                 if missing:
@@ -426,7 +645,6 @@ class SqliteDb(BaseDb):
                         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :index_name")
                         exists = sess.execute(exists_query, {"index_name": idx.name}).scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in table {table_name}, skipping creation")
                             continue
 
                     idx.create(self.db_engine)
@@ -475,16 +693,26 @@ class SqliteDb(BaseDb):
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
             "sessions": self.session_table_name,
+            "runs": self.runs_table_name,
             "memories": self.memory_table_name,
             "metrics": self.metrics_table_name,
+            "component_metrics": self.component_metrics_table_name,
+            "aggregate_metrics": self.aggregate_metrics_table_name,
+            "metrics_refreshes": self.metrics_refreshes_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
-            "culture": self.culture_table_name,
             "versions": self.versions_table_name,
         }
         return table_map.get(logical_name, logical_name)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "transcripts":
+            return self._get_or_create_table(
+                table_name=self.transcripts_table_name,
+                table_type="transcripts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         if table_type == "sessions":
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -492,6 +720,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        elif table_type == "runs":
+            self.runs_table = self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
 
         elif table_type == "memories":
             self.memory_table = self._get_or_create_table(
@@ -508,6 +744,30 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.metrics_table
+
+        elif table_type == "component_metrics":
+            self.component_metrics_table = self._get_or_create_table(
+                table_name=self.component_metrics_table_name,
+                table_type="component_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.component_metrics_table
+
+        elif table_type == "aggregate_metrics":
+            self.aggregate_metrics_table = self._get_or_create_table(
+                table_name=self.aggregate_metrics_table_name,
+                table_type="aggregate_metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.aggregate_metrics_table
+
+        elif table_type == "metrics_refreshes":
+            self.metrics_refreshes_table = self._get_or_create_table(
+                table_name=self.metrics_refreshes_table_name,
+                table_type="metrics_refreshes",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.metrics_refreshes_table
 
         elif table_type == "evals":
             self.eval_table = self._get_or_create_table(
@@ -545,14 +805,6 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.spans_table
-
-        elif table_type == "culture":
-            self.culture_table = self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         elif table_type == "versions":
             self.versions_table = self._get_or_create_table(
@@ -602,6 +854,41 @@ class SqliteDb(BaseDb):
             )
             return self.learnings_table
 
+        elif table_type == "sources":
+            return self._get_or_create_table(
+                table_name=self.sources_table_name,
+                table_type="sources",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        elif table_type == "company":
+            return self._get_or_create_table(
+                table_name=self.company_table_name,
+                table_type="company",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        elif table_type == "products":
+            return self._get_or_create_table(
+                table_name=self.products_table_name,
+                table_type="products",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        elif table_type == "projects":
+            return self._get_or_create_table(
+                table_name=self.projects_table_name,
+                table_type="projects",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        elif table_type == "tasks":
+            return self._get_or_create_table(
+                table_name=self.tasks_table_name,
+                table_type="tasks",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         elif table_type == "schedules":
             self.schedules_table = self._get_or_create_table(
                 table_name=self.schedules_table_name,
@@ -617,6 +904,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.schedule_runs_table
+
+        elif table_type == "tool_results":
+            self.tool_results_table = self._get_or_create_table(
+                table_name=self.tool_results_table_name,
+                table_type="tool_results",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.tool_results_table
 
         elif table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
@@ -642,6 +937,21 @@ class SqliteDb(BaseDb):
             )
             return self.service_accounts_table
 
+        elif table_type == "compactions":
+            self.compactions_table = self._get_or_create_table(
+                table_name=self.compactions_table_name,
+                table_type="compactions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.compactions_table
+
+        elif table_type in AUTHZ_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         elif table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
             return self._get_or_create_table(
                 table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
@@ -652,7 +962,7 @@ class SqliteDb(BaseDb):
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
-    def _get_or_create_table(
+    def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -674,14 +984,17 @@ class SqliteDb(BaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return self._create_table(table_name=table_name, table_type=table_type)
+            table = self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         # SQLite version of table validation (no schema)
         if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
-            raise ValueError(f"Table {table_name} has an invalid schema")
+            raise table_schema_mismatch_error(table_name, table_type=table_type)
 
         try:
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
+            self._store_resolved_table(table_type, table_name, table)
             return table
 
         except Exception as e:
@@ -724,7 +1037,519 @@ class SqliteDb(BaseDb):
             )
             sess.execute(stmt)
 
+    def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped (or its content cleared on older
+            SQLite versions that don't support DROP COLUMN), False if there
+            was no legacy column to act on.
+        """
+        with self.Session() as sess, sess.begin():
+            columns_info = sess.execute(text(f"PRAGMA table_info({self.session_table_name})")).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            if "runs" not in existing_columns:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = (
+                    sess.execute(
+                        text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL")
+                    ).scalar()
+                    or 0
+                )
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            try:
+                sess.execute(text(f"ALTER TABLE {self.session_table_name} DROP COLUMN runs"))
+                log_info(f"Dropped legacy runs column from {self.session_table_name}")
+            except Exception:
+                # SQLite < 3.35 does not support DROP COLUMN; clear the column instead.
+                sess.execute(text(f"UPDATE {self.session_table_name} SET runs = NULL"))
+                log_info(
+                    f"Could not drop runs column from {self.session_table_name} "
+                    "(SQLite < 3.35); cleared its content instead."
+                )
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
+
+    # -- Run methods --
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        # run_index is the monotonic insertion order (backfilled on write, see
+        # upsert_run), so it drives the ordering and the (session_id, run_index)
+        # index serves it; created_at/run_id are deterministic tiebreakers.
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+
+    def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, in insertion order.
+
+        The raw text feeds the run-object cache, which parses and rebuilds a
+        run only when its text changed since the last read. The cast keeps the
+        JSON column's result processor out of the way -- the whole point is to
+        not parse unchanged rows.
+        """
+        stmt = (
+            select(runs_table.c.run_id, runs_table.c.run_data.cast(Text))
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [
+            (run_id, run_data if isinstance(run_data, str) else json.dumps(run_data))
+            for run_id, run_data in sess.execute(stmt).fetchall()
+        ]
+
+    def _get_sessions_runs_data(
+        self, sess, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for the given sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in sess.execute(stmt).fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to read.
+            deserialize (Optional[bool]): Whether to deserialize the run. Defaults to True.
+
+        Returns:
+            - When deserialize=True: RunOutput, TeamRunOutput or WorkflowRunOutput object
+            - When deserialize=False: Run row dictionary
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.run_id == run_id)).fetchone()
+                if result is None:
+                    return None
+
+                run_row = dict(result._mapping)
+                if isinstance(run_row.get("run_data"), str):
+                    run_row["run_data"] = json.loads(run_row["run_data"])
+
+            if not deserialize:
+                return run_row
+
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        """Cancel an observed Pending or Running run; concurrent status changes win."""
+        from agno.db.sql.runs import cancel_pending_run_statement
+
+        table = self._get_table(table_type="runs")
+        if table is None:
+            return False
+        # The stored created_at, which dates the run
+        statement = cancel_pending_run_statement(
+            table, "sqlite", run_id, session_id, reason, user_id, expected_status
+        ).returning(table.c.created_at)
+        with self.Session() as sess, sess.begin():
+            cancelled_run = sess.execute(statement).first()
+            if cancelled_run is None:
+                return False
+            self._reopen_metrics_days(sess, [cancelled_run.created_at])
+            return True
+
+    def update_run_if_matches(
+        self,
+        run_id: str,
+        session_id: str,
+        expected: Dict[str, Any],
+        fields: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Apply ``fields`` to a stored run only while it still matches ``expected``, as one atomic step.
+
+        ``expected`` maps "status" and dotted paths into the run's data to the values they must hold. A
+        paused run is handed over to its continuation this way: a repeated or stale writer finds the run
+        changed and writes nothing. Returns whether the run was updated.
+        """
+        from sqlalchemy import update
+
+        from agno.db.sql.runs import apply_run_fields, run_matches
+
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                # Take SQLite's write lock before reading, so the check and the write are one atomic step,
+                # even for another process using the same file.
+                sess.execute(update(table).where(table.c.run_id == run_id).values(run_id=table.c.run_id))
+                row = sess.execute(
+                    select(table.c.run_data, table.c.status, table.c.created_at)
+                    .where(table.c.run_id == run_id, table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | table.c.user_id.is_(None))
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return False
+                stored = json.loads(row[0]) if isinstance(row[0], str) else dict(row[0])
+                if not run_matches(stored, row[1], expected):
+                    return False
+                run, status = apply_run_fields(stored, fields)
+                values: Dict[str, Any] = {"run_data": run, "updated_at": int(time.time())}
+                if status is not None:
+                    values["status"] = status
+                sess.execute(update(table).where(table.c.run_id == run_id).values(**values))
+                self._reopen_metrics_days(sess, [row[2]])
+                return True
+        except Exception as e:
+            log_warning(f"Error conditionally updating run {run_id}: {e}")
+            raise
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            with self.Session() as sess, sess.begin():
+                # A new run always lands after the session's existing rows. Callers
+                # pass the run's position in the in-memory ``session.runs`` list, and
+                # after runs were deleted from the front of that list the position
+                # collides with, or sorts before, rows that still exist. ON CONFLICT
+                # preserves the existing index, so this only affects a genuine insert.
+                # Computed INSIDE the insert statement: SQLite holds the database
+                # write lock for the whole statement, so two concurrent inserts cannot
+                # read the same MAX.
+                next_index = (
+                    select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                    .where(runs_table.c.session_id == session_id)
+                    .scalar_subquery()
+                )
+                provided_index = row.get("run_index")
+                row["run_index"] = next_index if provided_index is None else func.max(provided_index, next_index)
+
+                stmt = sqlite.insert(runs_table).values(**row)
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["run_id"],
+                    set_=dict(
+                        status=stmt.excluded.status,
+                        run_data=stmt.excluded.run_data,
+                        user_id=stmt.excluded.user_id,
+                        parent_run_id=stmt.excluded.parent_run_id,
+                        updated_at=stmt.excluded.updated_at,
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
+                    ),
+                ).returning(runs_table.c.created_at)
+                # The stored created_at, which a resumed run keeps
+                created_at: int = sess.execute(stmt).scalar_one()
+                self._reopen_metrics_days(sess, [created_at])
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Args:
+            session_id (Optional[str]): The ID of the session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            status (Optional[RunStatus]): The run status to filter by.
+            limit (Optional[int]): The maximum number of runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
+            sort_order (Optional[str]): The sort order.
+            deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+
+        Returns:
+            - When deserialize=True: List of run output objects
+            - When deserialize=False: Tuple of (run row dictionaries, total count)
+        """
+        validate_pagination(limit, page)
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                records = sess.execute(stmt).fetchall()
+                run_rows = []
+                for record in records:
+                    run_row = dict(record._mapping)
+                    if isinstance(run_row.get("run_data"), str):
+                        run_row["run_data"] = json.loads(run_row["run_data"])
+                    run_rows.append(run_row)
+
+            if not deserialize:
+                return run_rows, total_count
+
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> bool:
+        """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
+
+        Partial-migration state: the v3 migration copied runs into the runs table
+        but kept the legacy blob as a backup, and ``merge_runs_table_with_legacy_blob``
+        still reads it. Runs inside the caller's transaction so the row delete and
+        the scrub commit together or not at all; a fully migrated DB (no ``runs``
+        column) is a no-op. ``sessions_table`` is resolved by the caller before
+        the transaction opens, because ``_get_table`` uses the same scoped session.
+
+        Returns True if any legacy blob held one of ``run_ids``.
+        """
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return False
+        wanted = set(run_ids)
+        scrubbed = False
+        rows = sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+        ).fetchall()
+        for sid, runs_raw in rows:
+            if isinstance(runs_raw, str):
+                try:
+                    runs_list = json.loads(runs_raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+            else:
+                runs_list = runs_raw
+            if not isinstance(runs_list, list):
+                continue
+            kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+            if len(kept) == len(runs_list):
+                continue
+            sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=json.dumps(kept))
+            )
+            scrubbed = True
+        return scrubbed
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Also scrubs it from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect it on the next read.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was removed from the runs table or a legacy blob, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            sessions_table = self._get_table(table_type="sessions")
+            with self.Session() as sess, sess.begin():
+                deleted = False
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0
+                scrubbed = self._scrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
+            return deleted or scrubbed
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Also scrubs them from the legacy ``runs`` blob in the same transaction, so a
+        partially migrated session cannot resurrect them on the next read.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            sessions_table = self._get_table(table_type="sessions")
+            with self.Session() as sess, sess.begin():
+                if table is not None:
+                    result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")
+                self._scrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # -- Session methods --
+
+    def reassign_session_owner(self, session_id: str, *, previous_user_id: str, user_id: Optional[str]) -> bool:
+        """Transfer only an idle session with the observed owner, without rewriting history."""
+        table = self._get_table(table_type="sessions")
+        runs = self._get_table(table_type="runs")
+        if table is None or runs is None:
+            return False
+        active = select(runs.c.run_id).where(
+            runs.c.session_id == session_id, runs.c.status.in_(["PENDING", "RUNNING", "PAUSED"])
+        )
+        statement = (
+            table.update()
+            .where(table.c.session_id == session_id, table.c.user_id == previous_user_id, ~active.exists())
+            .values(user_id=user_id, updated_at=int(time.time()))
+            .returning(table.c.created_at)
+        )
+        with self.Session() as sess, sess.begin():
+            reassigned_session = sess.execute(statement).first()
+            if reassigned_session is None:
+                return False
+            self._reopen_metrics_days(sess, [reassigned_session.created_at])
+            return True
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -741,6 +1566,9 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return False
+            runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -750,9 +1578,26 @@ class SqliteDb(BaseDb):
                 if result.rowcount == 0:
                     log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
-                else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
-                    return True
+
+                # Also delete the runs belonging to the session
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id == session_id))
+                # And its compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id == session_id))
+
+                log_debug(f"Successfully deleted session with session_id: {session_id}")
+
+            # Cascade offloaded tool results after the session delete commits.
+            self._cascade_tool_results([session_id])
+            # A deleted session's deserialized history must not stay resident.
+            self._run_object_cache.drop_session(session_id)
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -773,18 +1618,251 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return
+            runs_table = self._get_table(table_type="runs")
+            transcripts_table = self._get_table(table_type="transcripts")
+            compactions_table = self._get_table(table_type="compactions")
 
             with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                # The ids a user_id-scoped delete is allowed to touch. The
+                # cascade below removes stored payloads, which no filter on the
+                # sessions table would stop it from doing for another user's
+                # session id.
+                select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                deletable_ids = [row[0] for row in sess.execute(select_stmt)]
+                # Stored payloads are cascaded only for sessions this delete
+                # was allowed to remove. An unscoped delete has no other user
+                # to protect, so it also cleans up after a session whose row
+                # is already gone.
+                cascade_ids = session_ids if user_id is None else deletable_ids
+
+                delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = sess.execute(delete_stmt)
 
+                # Also delete the runs belonging to the sessions
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete_stmt)
+                # And external-agent transcripts, which also hold the conversation verbatim.
+                if transcripts_table is not None:
+                    sess.execute(transcripts_table.delete().where(transcripts_table.c.agno_session_id.in_(cascade_ids)))
+
+                # And their compaction records. They hold the folded transcript verbatim, and are
+                # found by session id - left behind, a session recreated under the same id would
+                # inherit the old fold and offer the agent a search over the deleted conversation.
+                # Scoped like the tool-result cascade: only sessions this delete was allowed to remove.
+                if compactions_table is not None:
+                    sess.execute(compactions_table.delete().where(compactions_table.c.session_id.in_(cascade_ids)))
+
             log_debug(f"Successfully deleted {result.rowcount} sessions")
+
+            # Cascade offloaded tool results after the session delete commits.
+            self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
             raise e
+
+    def _cascade_tool_results(self, session_ids: List[str]) -> None:
+        """Cascade result offloading on session delete: read the index rows,
+        delete their payloads, then the index rows.
+
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Payloads are removed by
+        the exact (namespace, path) of each index row, through the
+        filesystems result stores registered on this db, or from the AgentFS
+        table at its defaults when no store registered.
+        """
+        try:
+            table = self._get_table(table_type="tool_results")
+            if table is None:
+                return
+            with self.Session() as sess:
+                rows = sess.execute(
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
+                ).fetchall()
+            if not rows:
+                return
+            # Payloads are removed through every filesystem a store on this db
+            # registered, and from the default payload table as well: a fresh
+            # process has no registrations, and the exact (namespace, path)
+            # delete cannot touch anything but these rows. A row whose payload
+            # was found nowhere is reported; its bytes live in a filesystem
+            # this process cannot reach.
+            removed = set()
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            if FileSystem(backend=fs.backend, namespace=str(namespace)).delete(str(path)):
+                                removed.add((str(namespace), str(path)))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            with self.Session() as sess, sess.begin():
+                if self._default_payload_table_exists(sess):
+                    for _, namespace, path in rows:
+                        if (str(namespace), str(path)) in removed:
+                            continue
+                        result = sess.execute(
+                            text(f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"),
+                            {"ns": str(namespace), "p": str(path)},
+                        )
+                        if result.rowcount:
+                            removed.add((str(namespace), str(path)))
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                with self.Session() as sess, sess.begin():
+                    sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    @staticmethod
+    def _default_payload_table() -> str:
+        return "agno_fs"
+
+    @staticmethod
+    def _default_payload_table_exists(sess: Any) -> bool:
+        return (
+            sess.execute(text("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agno_fs'")).first()
+            is not None
+        )
+
+    # -- Tool Results (result offloading index) --
+
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(table).values(**row)
+        update_columns = {key: stmt.excluded[key] for key in row.keys() if key != "result_id"}
+        stmt = stmt.on_conflict_do_update(index_elements=["result_id"], set_=update_columns)
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.result_id == result_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
+    # --- Compactions ---
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record.
+
+        Records are immutable facts about a single fold, so a conflicting id means
+        the same record is being written twice; the insert is a no-op rather than
+        an update.
+        """
+        table = self._get_table(table_type="compactions", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.compactions_table_name}")
+        from sqlalchemy.dialects.sqlite import insert as _insert
+
+        stmt = _insert(table).values(**row).on_conflict_do_nothing(index_elements=["compaction_id"])
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.compaction_id == compaction_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.session_id == session_id))
+            return result.rowcount or 0
+
+    def search_compactions(
+        self, session_id: str, query: Union[str, Sequence[str]], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query`` - or any of several terms - newest first.
+
+        A substring match, scoped to one session so a search can never reach another conversation's
+        history. Several terms are one query, so every fold matching any of them is a candidate.
+        """
+        table = self._get_table(table_type="compactions")
+        terms = [query] if isinstance(query, str) else list(query)
+        terms = [term for term in terms if term]
+        if table is None or not terms:
+            return []
+        stmt = (
+            select(table)
+            .where(table.c.session_id == session_id)
+            .where(or_(*(table.c.archived_messages.ilike(f"%{term}%") for term in terms)))
+            .order_by(table.c.created_at.desc())
+            .limit(limit)
+        )
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
 
     def get_session(
         self,
@@ -792,6 +1870,7 @@ class SqliteDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -800,7 +1879,12 @@ class SqliteDb(BaseDb):
             session_id (str): ID of the session to read.
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -814,6 +1898,7 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -827,9 +1912,51 @@ class SqliteDb(BaseDb):
                     return None
 
                 session_raw = deserialize_session_json_fields(dict(result._mapping))
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                run_rows: Optional[List[Tuple[str, str]]] = None
+                if session_raw is not None:
+                    legacy_runs = session_raw.get("runs")
+                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                        # Fully migrated: push "most recent N" down to the DB (indexed).
+                        session_raw["runs"] = self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                        )
+                    elif (
+                        runs_table is not None
+                        and not legacy_runs
+                        and deserialize
+                        and session_raw.get("session_type") == SessionType.AGENT.value
+                        and (session_type is None or session_type == SessionType.AGENT)
+                    ):
+                        # Fully-migrated agent session on the per-turn path: fetch
+                        # the rows raw and serve run objects from the cache instead
+                        # of rebuilding every run on every read.
+                        run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                        session_raw["runs"] = None
+                    elif runs_table is not None:
+                        # Full load + merge. Also the un-migrated fallback: the legacy blob
+                        # holds the whole history in one column, so "last N" can't be pushed
+                        # to SQL — load all, merge, then filter+slice to match the migrated path.
+                        runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                        merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                        if runs_limit is not None:
+                            merged = filter_context_runs(merged)[-runs_limit:]
+                        session_raw["runs"] = merged
+                    elif runs_limit is not None:
+                        # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                        merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                        session_raw["runs"] = filter_context_runs(merged)[-runs_limit:]
+
                 if not session_raw or not deserialize:
                     return session_raw
 
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session_raw)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
             return deserialize_session(session_type, session_raw)
 
         except Exception as e:
@@ -849,9 +1976,16 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
@@ -863,8 +1997,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             List[Session]:
@@ -874,13 +2007,21 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        from agno.db.session_filters import normalize_session_filter, session_filter_to_sqlalchemy
+
+        filter_expr = normalize_session_filter(filter_expr)
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                if filter_expr is not None:
+                    stmt = stmt.where(session_filter_to_sqlalchemy(filter_expr, table))
 
                 # Filtering
                 if user_id is not None:
@@ -925,6 +2066,21 @@ class SqliteDb(BaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
+
+                # Attach the runs stored in the runs table. If a session has no rows in the
+                # runs table, fall back to its legacy `runs` column content, if any.
+                if include_runs and runs_table is not None and sessions_raw:
+                    runs_by_session = self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions_raw]
+                    )
+                    for s in sessions_raw:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in sessions_raw:
+                        s["runs"] = None
+
                 if not deserialize:
                     return sessions_raw, total_count
                 if not sessions_raw:
@@ -990,7 +2146,7 @@ class SqliteDb(BaseDb):
 
         Args:
             session (Session): The session data to upsert.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Session]:
@@ -1005,122 +2161,86 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict())
+            # The JSON columns take the dicts as-is; the engine's json_serializer encodes them
+            session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.AGENT.value,
-                        agent_id=serialized_session.get("agent_id"),
-                        user_id=serialized_session.get("user_id"),
-                        agent_data=serialized_session.get("agent_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=serialized_session.get("agent_id"),
-                            user_id=serialized_session.get("user_id"),
-                            runs=serialized_session.get("runs"),
-                            summary=serialized_session.get("summary"),
-                            agent_data=serialized_session.get("agent_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return AgentSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             elif isinstance(session, TeamSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.TEAM.value,
-                        team_id=serialized_session.get("team_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                        team_data=serialized_session.get("team_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            team_id=serialized_session.get("team_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            team_data=serialized_session.get("team_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return TeamSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             else:
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.WORKFLOW.value,
-                        workflow_id=serialized_session.get("workflow_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at") or int(time.time()),
-                        updated_at=serialized_session.get("updated_at") or int(time.time()),
-                        workflow_data=serialized_session.get("workflow_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=serialized_session.get("workflow_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            workflow_data=serialized_session.get("workflow_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
+                values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
 
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return WorkflowSession.from_dict(session_raw)
+            update_values = {k: v for k, v in values.items() if k != "session_type"}
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
+
+            with self.Session() as sess, sess.begin():
+                reopen_session_ids = self._get_metrics_reopen_session_ids(
+                    sess,
+                    table,
+                    [
+                        {
+                            "session_id": session_dict.get("session_id"),
+                            "created_at": session_dict.get("created_at"),
+                            **values,
+                        }
+                    ],
+                )
+                stmt = sqlite.insert(table).values(
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at") or int(time.time()),
+                    updated_at=session_dict.get("created_at") or int(time.time()),
+                    **values,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_=dict(updated_at=int(time.time()), **update_values),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                )
+                stmt = stmt.returning(*table.columns)  # type: ignore
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                session_raw = deserialize_session_json_fields(dict(row._mapping))
+                if session_raw["session_id"] in reopen_session_ids:
+                    self._reopen_metrics_days(sess, [session_raw["created_at"]])
+
+            if not deserialize:
+                session_raw["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_raw
+
+            session_raw.pop("runs", None)
+            upserted_session = deserialize_session(None, session_raw)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {str(e)}")
@@ -1174,6 +2294,20 @@ class SqliteDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
+            sessions_by_id_and_user: Dict[Tuple[str, Optional[str]], Session] = {
+                (s.session_id, owner_key(s.user_id)): s for s in sessions
+            }
+
+            def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+                original_session = sessions_by_id_and_user.get(
+                    (session_dict.get("session_id"), owner_key(session_dict.get("user_id")))  # type: ignore[arg-type]
+                )
+                session_dict["runs"] = [
+                    run if isinstance(run, dict) else run.to_dict()
+                    for run in (original_session.runs if original_session else None) or []
+                ]
+                return session_dict
+
             results: List[Union[Session, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
@@ -1181,21 +2315,20 @@ class SqliteDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": serialized_session.get("agent_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "agent_data": serialized_session.get("agent_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
-                                "runs": serialized_session.get("runs"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
                             }
                         )
@@ -1210,20 +2343,38 @@ class SqliteDb(BaseDb):
                                 agent_data=stmt.excluded.agent_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
+                        reopen_session_ids = self._get_metrics_reopen_session_ids(sess, table, agent_data)
                         sess.execute(stmt, agent_data)
 
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
                         result = sess.execute(select_stmt).fetchall()
+                        # The stored created_at, which a session keeps, of the rows the upsert wrote
+                        self._reopen_metrics_days(
+                            sess,
+                            [
+                                row._mapping["created_at"]
+                                for row in result
+                                if row._mapping["session_id"] in reopen_session_ids
+                                and (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                                in sessions_by_id_and_user
+                            ],
+                        )
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
                                 if deserialized_agent_session is None:
@@ -1236,22 +2387,21 @@ class SqliteDb(BaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": serialized_session.get("team_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "team_data": serialized_session.get("team_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -1265,20 +2415,38 @@ class SqliteDb(BaseDb):
                                 team_data=stmt.excluded.team_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
+                        reopen_session_ids = self._get_metrics_reopen_session_ids(sess, table, team_data)
                         sess.execute(stmt, team_data)
 
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
                         result = sess.execute(select_stmt).fetchall()
+                        # The stored created_at, which a session keeps, of the rows the upsert wrote
+                        self._reopen_metrics_days(
+                            sess,
+                            [
+                                row._mapping["created_at"]
+                                for row in result
+                                if row._mapping["session_id"] in reopen_session_ids
+                                and (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                                in sessions_by_id_and_user
+                            ],
+                        )
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
                                 if deserialized_team_session is None:
@@ -1291,22 +2459,21 @@ class SqliteDb(BaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": serialized_session.get("workflow_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "workflow_data": serialized_session.get("workflow_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -1320,20 +2487,38 @@ class SqliteDb(BaseDb):
                                 workflow_data=stmt.excluded.workflow_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
+                        reopen_session_ids = self._get_metrics_reopen_session_ids(sess, table, workflow_data)
                         sess.execute(stmt, workflow_data)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(workflow_ids))
                         result = sess.execute(select_stmt).fetchall()
+                        # The stored created_at, which a session keeps, of the rows the upsert wrote
+                        self._reopen_metrics_days(
+                            sess,
+                            [
+                                row._mapping["created_at"]
+                                for row in result
+                                if row._mapping["session_id"] in reopen_session_ids
+                                and (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                                in sessions_by_id_and_user
+                            ],
+                        )
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            submitted = sessions_by_id_and_user.get(
+                                (row._mapping["session_id"], owner_key(row._mapping["user_id"]))
+                            )
+                            if submitted is None:
+                                # The conflict update was refused: the row belongs to another user
+                                continue
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
                                 if deserialized_workflow_session is None:
@@ -1363,9 +2548,6 @@ class SqliteDb(BaseDb):
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1466,7 +2648,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The user ID to filter by. Defaults to None.
 
         Returns:
@@ -1525,7 +2707,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
 
         Returns:
@@ -1536,6 +2718,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1612,6 +2795,7 @@ class SqliteDb(BaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1663,7 +2847,7 @@ class SqliteDb(BaseDb):
 
         Args:
             memory (UserMemory): The user memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -1854,166 +3038,1027 @@ class SqliteDb(BaseDb):
             raise e
 
     # -- Metrics methods --
-
-    def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
-
-         Args:
-            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
-            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
-
-        Returns:
-            List[Dict[str, Any]]: List of session dictionaries with session_type field.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-            if table is None:
-                return []
-
-            stmt = select(
-                table.c.user_id,
-                table.c.session_data,
-                table.c.runs,
-                table.c.created_at,
-                table.c.session_type,
-            )
-
-            if start_timestamp is not None:
-                stmt = stmt.where(table.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(table.c.created_at <= end_timestamp)
-
-            with self.Session() as sess:
-                result = sess.execute(stmt).fetchall()
-                return [record._mapping for record in result]
-
-        except Exception as e:
-            log_error(f"Error reading from sessions table: {str(e)}")
-            raise e
-
-    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed:
-
-        1. If there are metrics records, return the date of the first day without a complete metrics record.
-        2. If there are no metrics records, return the date of the first recorded session.
-        3. If there are no metrics records and no sessions records, return None.
+    def _reopen_metrics_days(self, sess: Any, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, in the write's transaction, so the next calculation
+        rebuilds it. A day it could not reopen is retried by the next write.
 
         Args:
-            table (Table): The table to get the starting date for.
+            sess (Any): The session of the write.
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        days = {
+            day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None
+        } | self._metrics_days_not_reopened
+        if not days:
+            return
+        # No savepoint: SQLite rolls back only the statement that failed, and the write's transaction goes on
+        try:
+            # Looked up only when a day reopens, the table loaded on the write's own connection: a lookup
+            # through another session would not run in the write's transaction. None when no day was calculated yet
+            aggregate_metrics_table = self._get_cached_table("aggregate_metrics", self.aggregate_metrics_table_name)
+            if aggregate_metrics_table is None:
+                if not is_table_available(session=sess, table_name=self.aggregate_metrics_table_name):
+                    self._metrics_days_not_reopened.clear()
+                    return
+                if not is_valid_table(
+                    db_engine=self.db_engine,
+                    table_name=self.aggregate_metrics_table_name,
+                    table_type="aggregate_metrics",
+                ):
+                    raise table_schema_mismatch_error(self.aggregate_metrics_table_name, table_type="aggregate_metrics")
+                with self._resolve_lock:
+                    aggregate_metrics_table = Table(
+                        self.aggregate_metrics_table_name, self.metadata, autoload_with=sess.connection()
+                    )
+                    self._store_resolved_table(
+                        "aggregate_metrics", self.aggregate_metrics_table_name, aggregate_metrics_table
+                    )
+            for day in days:
+                reopen_metrics_day(session=sess, table=aggregate_metrics_table, day=day)
+            self._metrics_days_not_reopened.difference_update(days)
+        except Exception as e:
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
+
+    def _get_metrics_reopen_session_ids(
+        self, sess: Any, table: Table, session_records: List[Dict[str, Any]]
+    ) -> Set[str]:
+        """Get the id of each session the given rows add, move to another owner or component, or give other
+        compaction metrics."""
+        written_session_ids = [record["session_id"] for record in session_records]
+        stored_stmt = select(
+            table.c.session_id,
+            table.c.user_id,
+            table.c.agent_id,
+            table.c.team_id,
+            table.c.workflow_id,
+            table.c.created_at,
+            table.c.session_data["compaction_metrics"].label("compaction_metrics"),
+        ).where(table.c.session_id.in_(written_session_ids))
+        stored_sessions: Dict[str, Any] = {row.session_id: row for row in sess.execute(stored_stmt).fetchall()}
+        session_ids: Set[str] = set()
+        for record in session_records:
+            stored_session = stored_sessions.get(record["session_id"])
+            if (
+                stored_session is None
+                or any(
+                    record[column] != getattr(stored_session, column)
+                    for column in ["user_id", "agent_id", "team_id", "workflow_id"]
+                    if column in record
+                )
+                or (
+                    "session_data" in record
+                    and (record["session_data"] if isinstance(record["session_data"], dict) else {}).get(
+                        "compaction_metrics"
+                    )
+                    != stored_session.compaction_metrics
+                )
+            ):
+                session_ids.add(record["session_id"])
+        return session_ids
+
+    def _get_metrics_table(self, table_type: str, table_name: str) -> Optional[Table]:
+        """Get a metrics table, creating it on first use."""
+        try:
+            return self._get_table(table_type=table_type, create_table_if_not_found=True)
+        except Exception as exc:
+            # Another process may have completed the first-time DDL meanwhile.
+            if "already exists" not in str(getattr(exc, "orig", exc)) or not self.table_exists(table_name):
+                raise
+            self._invalidate_table_cache(table_name)
+            return self._get_table(table_type=table_type)
+
+    def _get_metrics_refresh_row(self, refreshes_table: Table) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the row of the metrics refreshes table, and the locked_at at or before which its lock is stale."""
+        # Every process using the database file shares this machine's clock
+        stale_lock_threshold = int(time.time()) - METRICS_LOCK_SECONDS
+        with self.Session() as sess:
+            row = (
+                sess.execute(select(refreshes_table).where(refreshes_table.c.id == METRICS_REFRESH_ID))
+                .mappings()
+                .first()
+            )
+        if row is None:
+            # Before the first refresh there is no lock to judge stale
+            return None, 0
+        return dict(row), stale_lock_threshold
+
+    def _claim_metrics_refresh(self, refreshes_table: Table, worker_id: str) -> Optional[Dict[str, Any]]:
+        """Claim the row of the metrics refreshes table, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
 
         Returns:
-            Optional[date]: The starting date for which metrics calculation is needed.
+            Optional[Dict[str, Any]]: The claimed row, with when the last calculation finished and its fingerprint.
+                None when another process holds it.
         """
-        with self.Session() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = sess.execute(stmt).fetchone()
-
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
-
-        # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore
-
-        # 3. No metrics records and no sessions records. Return None.
-        if not first_session_date:
+        # Every process using the database file shares this machine's clock
+        now = int(time.time())
+        try:
+            with self.Session() as sess, sess.begin():
+                # One statement, so two processes never both find the row free
+                stmt = sqlite.insert(refreshes_table).values(
+                    id=METRICS_REFRESH_ID, locked_by=worker_id, locked_at=now, started_at=now, status="running"
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(locked_by=worker_id, locked_at=now, started_at=now, status="running", error=None),
+                    # A stale lock is taken over: the process that held it stopped
+                    where=or_(
+                        refreshes_table.c.locked_by.is_(None),
+                        refreshes_table.c.locked_at <= now - METRICS_LOCK_SECONDS,
+                    ),
+                ).returning(*refreshes_table.c)
+                row = sess.execute(stmt).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except OperationalError as exc:
+            # The holder's calculation keeps the database locked while it writes a day, so this returns once the busy
+            # timeout ends instead of raising
+            if not is_lock_not_available(exc):
+                raise
             return None
 
-        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+    def _mark_metrics_refresh_rebuild(self, refreshes_table: Table) -> bool:
+        """Write a mark no fingerprint equals on the row of the metrics refreshes table, so the next calculation
+        rebuilds yesterday and today. False when a calculation kept the database locked through every try."""
+        for _ in range(3):
+            try:
+                with self.Session() as sess, sess.begin():
+                    # A calculation keeps the database locked while it writes a day, and lets it go between days
+                    sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID)
+                        .values(fingerprint=["rebuild", uuid4().hex])
+                    )
+                return True
+            except OperationalError as exc:
+                if not is_lock_not_available(exc):
+                    raise
+        return False
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics.
+    def _heartbeat_metrics_refresh(self, sess: Any, refreshes_table: Table, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        result = sess.execute(
+            update(refreshes_table)
+            .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+            .values(locked_at=int(time.time()))
+        )
+        return result.rowcount > 0
+
+    def _release_metrics_refresh(
+        self,
+        refreshes_table: Table,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the row of the metrics refreshes table: completed, with the fingerprint, without an error, failed
+        with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_table (Table): The metrics refreshes table.
+            worker_id (Optional[str]): The id of the calculation that claimed the row. None writes the row only while
+                no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed row. A rebuild that marked
+                another one since keeps its mark.
+        """
+        values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+        if stopped:
+            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+            values.update(
+                status=case((refreshes_table.c.finished_at.is_not(None), "completed"), else_="failed"),
+                error=case((refreshes_table.c.finished_at.is_not(None), None), else_=METRICS_STOPPED_ERROR),
+            )
+        elif error is None:
+            values.update(status="completed", error=None, finished_at=int(time.time()))
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today. No fingerprint is stored as NULL, which a claim of NULL compares equal to
+            values["fingerprint"] = case(
+                (
+                    refreshes_table.c.fingerprint.is_distinct_from(claimed_fingerprint),
+                    refreshes_table.c.fingerprint,
+                ),
+                else_=null() if fingerprint is None else literal(fingerprint, refreshes_table.c.fingerprint.type),
+            )
+        else:
+            values.update(status="failed", error=error)
+        try:
+            with self.Session() as sess, sess.begin():
+                if worker_id is None:
+                    # Before any refresh there is no row to update
+                    sess.execute(
+                        sqlite.insert(refreshes_table)
+                        .values(id=METRICS_REFRESH_ID, started_at=int(time.time()), status="failed", error=error)
+                        .on_conflict_do_update(
+                            index_elements=["id"], set_=values, where=refreshes_table.c.locked_by.is_(None)
+                        )
+                    )
+                else:
+                    sess.execute(
+                        update(refreshes_table)
+                        .where(refreshes_table.c.id == METRICS_REFRESH_ID, refreshes_table.c.locked_by == worker_id)
+                        .values(**values)
+                    )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
+
+    def _get_metrics_fingerprint(
+        self, sess: Any, sessions_table: Table, runs_table: Optional[Table], yesterday: date
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = int(datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        current_time = int(time.time())
+        fingerprint: List[Any] = [yesterday.isoformat()]
+        for source_table in [sessions_table, runs_table]:
+            if source_table is None:
+                continue
+            count, total_updated_at, latest_updated_at = sess.execute(
+                select(func.count(), func.sum(source_table.c.updated_at), func.max(source_table.c.updated_at)).where(
+                    source_table.c.created_at >= start_timestamp
+                )
+            ).one()
+            if latest_updated_at is not None and latest_updated_at >= current_time:
+                return None
+            fingerprint.extend([count, int(total_updated_at or 0)])
+        return fingerprint
+
+    def _get_metrics_dates_to_calculate(
+        self,
+        aggregate_metrics_table: Table,
+        sessions_table: Table,
+        runs_table: Optional[Table],
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
+
+        Args:
+            aggregate_metrics_table (Table): The aggregate metrics table.
+            sessions_table (Table): The sessions table.
+            runs_table (Optional[Table]): The runs table.
+            refresh_row (Dict[str, Any]): The row of the metrics refreshes table, from _claim_metrics_refresh.
+            rebuild_from (Optional[date]): The first day of a rebuild.
 
         Returns:
-            Optional[list[dict]]: The calculated metrics.
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the row of
+                the metrics refreshes table.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        with self.Session() as sess:
+            fingerprint = self._get_metrics_fingerprint(sess, sessions_table, runs_table, yesterday)
+            first_calculation = refresh_row["finished_at"] is None
+            # Yesterday and today, when their sessions or runs changed since the last calculation
+            if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+                dates_to_process.update([yesterday, today])
+
+            # Every earlier day still open: not yet completed, or reopened by a write since
+            dates_to_process.update(
+                sess.execute(
+                    select(aggregate_metrics_table.c.date).where(
+                        aggregate_metrics_table.c.aggregation_period == "daily",
+                        aggregate_metrics_table.c.user_id == "",
+                        aggregate_metrics_table.c.completed.is_(False),
+                        aggregate_metrics_table.c.date < yesterday,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while
+            # it was yesterday or today
+            if not first_calculation:
+                dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+            # Until a first calculation has finished, every day with a session or a run not yet completed; with
+            # rebuild_from, every day with one from that date on. Only days with data, so one session dated long ago
+            # never builds every empty day since
+            if first_calculation or rebuild_from is not None:
+                # Integer division, since SQLite has floor() only in builds compiled with its math functions
+                day_stmts = [
+                    select((source_table.c.created_at // 86400).label("day")).distinct()
+                    for source_table in [sessions_table, runs_table]
+                    if source_table is not None
+                ]
+                completed_days: Set[date] = set()
+                if first_calculation:
+                    completed_days = set(
+                        sess.execute(
+                            select(aggregate_metrics_table.c.date).where(
+                                aggregate_metrics_table.c.aggregation_period == "daily",
+                                aggregate_metrics_table.c.user_id == "",
+                                aggregate_metrics_table.c.completed.is_(True),
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                for (day,) in sess.execute(union(*day_stmts)).fetchall():
+                    data_date = date(1970, 1, 1) + timedelta(days=int(cast(Any, day)))
+                    # A rebuild takes every day with data from its first day, completed or not
+                    rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                    if data_date <= today and (rebuilt or (first_calculation and data_date not in completed_days)):
+                        dates_to_process.add(data_date)
+
+        return sorted(dates_to_process), fingerprint
+
+    def _get_open_metrics_months(self, aggregate_metrics_table: Table) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        with self.Session() as sess:
+            return list(
+                sess.execute(
+                    select(aggregate_metrics_table.c.date).where(
+                        aggregate_metrics_table.c.aggregation_period == "monthly",
+                        aggregate_metrics_table.c.user_id == "",
+                        aggregate_metrics_table.c.completed.is_(False),
+                        aggregate_metrics_table.c.date < current_month,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    def _get_metrics_parent_runs(self, sess: Any, runs_table: Table, parent_run_ids: List[str]) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            for start in range(0, len(parent_run_ids), METRICS_IN_LIST_LIMIT):
+                parents_stmt = select(
+                    runs_table.c.run_id,
+                    runs_table.c.run_type,
+                    runs_table.c.agent_id,
+                    runs_table.c.team_id,
+                    runs_table.c.workflow_id,
+                    runs_table.c.parent_run_id,
+                ).where(runs_table.c.run_id.in_(parent_run_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                parent_runs.extend(dict(record._mapping) for record in sess.execute(parents_stmt).fetchall())
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    def _write_aggregate_metrics_rows(
+        self,
+        sess: Any,
+        aggregate_metrics_table: Table,
+        aggregate_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+    ) -> None:
+        """Write a period's rows of the aggregate metrics table, from build_aggregate_metrics_rows, in its transaction:
+        the user rows, then the everyone row, which is completed only while it still has the version read before the
+        period's rows."""
+        period, period_date = aggregate_metrics_rows[0]["aggregation_period"], aggregate_metrics_rows[0]["date"]
+        stored_rows = (
+            sess.execute(
+                select(aggregate_metrics_table).where(
+                    aggregate_metrics_table.c.aggregation_period == period,
+                    aggregate_metrics_table.c.date == period_date,
+                )
+            )
+            .mappings()
+            .all()
+        )
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, [dict(row) for row in stored_rows], rows_changed
+        )
+        for start in range(0, len(stale_user_ids), METRICS_IN_LIST_LIMIT):
+            sess.execute(
+                aggregate_metrics_table.delete().where(
+                    aggregate_metrics_table.c.aggregation_period == period,
+                    aggregate_metrics_table.c.date == period_date,
+                    aggregate_metrics_table.c.user_id.in_(stale_user_ids[start : start + METRICS_IN_LIST_LIMIT]),
+                )
+            )
+        bulk_upsert_aggregate_metrics_rows(
+            session=sess, table=aggregate_metrics_table, aggregate_metrics_rows=changed_rows
+        )
+        if everyone_row is not None:
+            upsert_aggregate_metrics_row(
+                session=sess,
+                table=aggregate_metrics_table,
+                aggregate_metrics_row=everyone_row,
+                read_version=read_version,
+            )
+
+    def _calculate_date_metrics(
+        self,
+        table: Table,
+        aggregate_metrics_table: Table,
+        sessions_table: Table,
+        runs_table: Optional[Table],
+        date_to_process: date,
+        legacy_run_rows: List[Any],
+        legacy_run_rows_by_id: Dict[str, Any],
+        refreshes_table: Table,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and aggregate metrics rows in one transaction. False when nothing was written."""
+        start_timestamp = int(
+            datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        # Each day is its own transaction, so a day that fails never holds back the rows of the days before it
+        with self.Session() as sess, sess.begin():
+            # Read before the day's runs, so a run written while they are read moves it
+            read_version = sess.execute(
+                select(aggregate_metrics_table.c.version).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily",
+                    aggregate_metrics_table.c.date == date_to_process,
+                    aggregate_metrics_table.c.user_id == "",
+                )
+            ).scalar()
+
+            sessions_stmt = select(
+                sessions_table.c.session_id,
+                sessions_table.c.session_type,
+                sessions_table.c.user_id,
+                sessions_table.c.agent_id,
+                sessions_table.c.team_id,
+                sessions_table.c.workflow_id,
+                sessions_table.c.metadata,
+                func.json_extract(sessions_table.c.session_data, "$.compaction_metrics").label("compaction_metrics"),
+            ).where(sessions_table.c.created_at >= start_timestamp, sessions_table.c.created_at < end_timestamp)
+            result = sess.execute(sessions_stmt).fetchall()
+            sessions = [dict(record._mapping) for record in result]
+
+            runs: List[Dict[str, Any]] = []
+            stored_run_ids: Set[str] = set()
+            if runs_table is not None:
+                run_rows = sess.execute(
+                    build_component_metrics_runs_query(runs_table, start_timestamp, end_timestamp)
+                ).fetchall()
+                for start in range(0, len(run_rows), METRICS_BATCH_SIZE):
+                    # Checked between batches too, so a stop never waits for the whole of a large day
+                    if should_stop is not None and should_stop():
+                        return False
+                    runs.extend(
+                        build_component_metrics_run(record) for record in run_rows[start : start + METRICS_BATCH_SIZE]
+                    )
+            # A legacy run migrated to the runs table since the legacy runs were read is among the day's runs, and
+            # is counted from there
+            day_run_ids = {run["run_id"] for run in runs}
+            runs.extend(
+                build_component_metrics_run(record) for record in legacy_run_rows if record.run_id not in day_run_ids
+            )
+            nested_run_ids = metrics_nested_run_ids(runs)
+
+            # A run started by a run of another day, such as a member run after midnight, names that run's
+            # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs table
+            day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+            parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+            parent_runs = [
+                dict(legacy_run_rows_by_id[run_id]._mapping)
+                for run_id in parent_run_ids
+                if run_id in legacy_run_rows_by_id
+            ]
+            parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_run_rows_by_id]
+            # A nested run also stored as a legacy run of its own is counted from that run, whatever day it is on
+            stored_run_ids.update(run_id for run_id in nested_run_ids if run_id in legacy_run_rows_by_id)
+
+            if runs_table is not None:
+                # A nested run also stored as a run of its own is counted from that row, whatever day it is on
+                run_ids = sorted(nested_run_ids)
+                for start in range(0, len(run_ids), METRICS_IN_LIST_LIMIT):
+                    stored_stmt = select(runs_table.c.run_id).where(
+                        runs_table.c.run_id.in_(run_ids[start : start + METRICS_IN_LIST_LIMIT])
+                    )
+                    stored_run_ids.update(record.run_id for record in sess.execute(stored_stmt).fetchall())
+
+                # A remote member's run after midnight is named by its team's run of the day before
+                team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+                for start in range(0, len(team_session_ids), METRICS_IN_LIST_LIMIT):
+                    team_runs_stmt = build_component_metrics_runs_query(
+                        runs_table, start_timestamp - 86400, start_timestamp
+                    ).where(runs_table.c.session_id.in_(team_session_ids[start : start + METRICS_IN_LIST_LIMIT]))
+                    team_runs = [
+                        build_component_metrics_run(record) for record in sess.execute(team_runs_stmt).fetchall()
+                    ]
+                    parent_runs.extend(team_runs)
+                    parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+                parent_runs.extend(self._get_metrics_parent_runs(sess, runs_table, parent_run_ids))
+
+            records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+            result = sess.execute(
+                select(table).where(table.c.aggregation_period == "daily", table.c.date == date_to_process)
+            ).fetchall()
+            stored_rows = [dict(record._mapping) for record in result]
+
+            # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
+            # the process that took the refresh over
+            if not self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                return False
+            changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+            for start in range(0, len(stale_keys), METRICS_STALE_KEYS_LIMIT):
+                sess.execute(
+                    table.delete().where(
+                        table.c.aggregation_period == "daily",
+                        table.c.date == date_to_process,
+                        tuple_(
+                            table.c.user_id,
+                            table.c.component_type,
+                            table.c.component_id,
+                            table.c.parent_component_id,
+                            table.c.root_component_id,
+                        ).in_(stale_keys[start : start + METRICS_STALE_KEYS_LIMIT]),
+                    )
+                )
+            bulk_upsert_component_metrics(session=sess, table=table, component_metrics_records=changed_rows)
+
+            # Written last, in the day's transaction, so its version never moves without the rows it tells of
+            self._write_aggregate_metrics_rows(
+                sess,
+                aggregate_metrics_table,
+                build_aggregate_metrics_rows(records, "daily", date_to_process, metrics_day_completed(date_to_process)),
+                rows_changed=bool(changed_rows or stale_keys),
+                read_version=read_version,
+            )
+            if changed_rows or stale_keys:
+                # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+                reopen_metrics_month(
+                    session=sess, table=aggregate_metrics_table, month_start=date_to_process.replace(day=1)
+                )
+            return True
+
+    def _calculate_month_metrics(
+        self, table: Table, aggregate_metrics_table: Table, month_start: date, refreshes_table: Table, worker_id: str
+    ) -> bool:
+        """Rebuild the month rows of the aggregate metrics table from the component metrics rows of the month's days, in
+        one transaction. False when another process took the refresh over, and nothing was written."""
+        with self.Session() as sess, sess.begin():
+            read_version = sess.execute(
+                select(aggregate_metrics_table.c.version).where(
+                    aggregate_metrics_table.c.aggregation_period == "monthly",
+                    aggregate_metrics_table.c.date == month_start,
+                    aggregate_metrics_table.c.user_id == "",
+                )
+            ).scalar()
+            # SQLite steps rows as they are fetched, so a month of many rows is added up a batch at a time instead of
+            # held whole
+            result = sess.execute(
+                select(table).where(
+                    table.c.aggregation_period == "daily",
+                    table.c.date >= month_start,
+                    table.c.date <= metrics_month_end(month_start),
+                )
+            )
+            per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+            while True:
+                batch = result.fetchmany(METRICS_BATCH_SIZE)
+                if not batch:
+                    break
+                add_metrics_month_totals(per_owner, [dict(record._mapping) for record in batch])
+
+            # Checked in the transaction of the rows, so a process whose lock went stale never overwrites the rows of
+            # the process that took the refresh over
+            if not self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                return False
+            # Added up per owner and component over the month, so a user of several days is one user of the month
+            self._write_aggregate_metrics_rows(
+                sess,
+                aggregate_metrics_table,
+                build_aggregate_metrics_month_rows(month_start, per_owner),
+                rows_changed=False,
+                read_version=read_version,
+            )
+            return True
+
+    def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process uses the database file: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
 
         Raises:
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            # Stamp first so failed runs are throttled too instead of retried on every read
-            self._metrics_refreshed_at = time.time()
-
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
+            calculated_dates = self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
                 return None
-
-            starting_date = self._get_metrics_calculation_starting_date(table)
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = int(
-                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
-            )
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-
-            sessions = self._get_all_sessions_for_metrics_calculation(
-                start_timestamp=start_timestamp, end_timestamp=end_timestamp
-            )
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions,
-                dates_to_process=dates_to_process,
-                start_timestamp=start_timestamp,
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
-                return None
-
-            results = []
-            metrics_records = []
-
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
-
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
-                    continue
-
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
-
-            if metrics_records:
-                with self.Session() as sess, sess.begin():
-                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
-
-            log_debug("Updated metrics calculations")
-
-            return results
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
             log_error(f"Error refreshing metrics: {str(e)}")
             raise e
 
+    def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between a day's
+                batches. Once it returns True, the calculation releases the refresh and stops; the next one continues
+                from the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        table = self._get_metrics_table("component_metrics", self.component_metrics_table_name)
+        aggregate_metrics_table = self._get_metrics_table("aggregate_metrics", self.aggregate_metrics_table_name)
+        refreshes_table = self._get_metrics_table("metrics_refreshes", self.metrics_refreshes_table_name)
+        sessions_table = self._get_table(table_type="sessions")
+        if table is None or aggregate_metrics_table is None or refreshes_table is None or sessions_table is None:
+            log_debug("No session data found. Won't calculate metrics.")
+            return []
+        runs_table = self._get_table(table_type="runs")
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                # A transaction of its own, without locking the metrics refresh row: a day's calculation locks the
+                # database first
+                with self.Session() as sess, sess.begin():
+                    reopen_metrics_days_from(session=sess, table=aggregate_metrics_table, starting_date=rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                if not self._mark_metrics_refresh_rebuild(refreshes_table):
+                    return None
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                self._release_metrics_refresh(
+                    refreshes_table,
+                    None,
+                    error=database_error_message(e),
+                )
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = self._claim_metrics_refresh(refreshes_table, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = self._get_metrics_dates_to_calculate(
+                aggregate_metrics_table, sessions_table, runs_table, refresh_row, rebuild_from
+            )
+
+            legacy_run_rows_by_day: Dict[date, List[Any]] = {}
+            legacy_run_rows_by_id: Dict[str, Any] = {}
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                self.get_latest_schema_version(self.session_table_name)
+            ) < packaging_version.parse("3.0.0"):
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                legacy_runs_table = build_component_metrics_legacy_runs_table(
+                    sessions_table, runs_table, start_timestamp, end_timestamp
+                )
+                if legacy_runs_table is not None:
+                    with self.Session() as sess, sess.begin():
+                        # SQLite steps rows as they are fetched, so the legacy runs are read a batch at a time
+                        # instead of held whole
+                        legacy_runs_result = sess.execute(
+                            build_component_metrics_runs_query(legacy_runs_table, start_timestamp, end_timestamp)
+                        )
+                        while True:
+                            batch = legacy_runs_result.fetchmany(METRICS_BATCH_SIZE)
+                            if not batch:
+                                break
+                            for record in batch:
+                                legacy_run_day = datetime.fromtimestamp(record.created_at, tz=timezone.utc).date()
+                                legacy_run_rows_by_day.setdefault(legacy_run_day, []).append(record)
+                                legacy_run_rows_by_id[record.run_id] = record
+                        if not self._heartbeat_metrics_refresh(sess, refreshes_table, worker_id):
+                            return None
+                    # A legacy run is dated on its own day, which may hold no session or run of the tables
+                    today = datetime.now(timezone.utc).date()
+                    dates_to_process = sorted(
+                        set(dates_to_process)
+                        | {
+                            day
+                            for day in legacy_run_rows_by_day
+                            if day <= today
+                            and (
+                                refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from)
+                            )
+                        }
+                    )
+
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                if not self._calculate_date_metrics(
+                    table,
+                    aggregate_metrics_table,
+                    sessions_table,
+                    runs_table,
+                    date_to_process,
+                    legacy_run_rows_by_day.get(date_to_process, []),
+                    legacy_run_rows_by_id,
+                    refreshes_table,
+                    worker_id,
+                    should_stop,
+                ):
+                    if should_stop is not None and should_stop():
+                        self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
+
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(self._get_open_metrics_months(aggregate_metrics_table))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    self._release_metrics_refresh(refreshes_table, worker_id, stopped=True)
+                    return None
+                if not self._calculate_month_metrics(
+                    table, aggregate_metrics_table, month_start, refreshes_table, worker_id
+                ):
+                    return None
+
+        except Exception as e:
+            self._release_metrics_refresh(refreshes_table, worker_id, error=database_error_message(e))
+            raise
+
+        self._release_metrics_refresh(
+            refreshes_table, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
+
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
+            return []
+
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        table = self._get_table(table_type="component_metrics")
+        if table is None:
+            return [], None
+
+        queries = build_metrics_by_owner_queries(table, starting_date, ending_date, user_id)
+        with self.Session() as sess, sess.begin():
+            rows_by_query = {name: sess.execute(query).fetchall() for name, query in queries.items()}
+            if not rows_by_query["totals"]:
+                return [], None
+
+            # Get the latest updated_at, scoped to the same user filter
+            latest_stmt = select(func.max(table.c.updated_at))
+            if user_id is not None:
+                latest_stmt = latest_stmt.where(table.c.user_id == user_id)
+            latest_updated_at = sess.execute(latest_stmt).scalar()
+
+        return build_metrics_by_owner(rows_by_query["totals"], rows_by_query["model_metrics"]), latest_updated_at
+
+    def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics table in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_table = self._get_table(table_type="aggregate_metrics")
+        if aggregate_metrics_table is None:
+            return [], None
+
+        filters = [aggregate_metrics_table.c.aggregation_period == "daily"]
+        if starting_date:
+            filters.append(aggregate_metrics_table.c.date >= starting_date)
+        if ending_date:
+            filters.append(aggregate_metrics_table.c.date <= ending_date)
+        filters.append(
+            aggregate_metrics_table.c.user_id != "" if user_id is None else aggregate_metrics_table.c.user_id == user_id
+        )
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        filters.append(
+            or_(
+                *[
+                    aggregate_metrics_table.c[column] > 0
+                    for column in AGGREGATE_METRICS_COUNT_COLUMNS
+                    if column != "users_count"
+                ],
+                aggregate_metrics_table.c.total_tokens > 0,
+            )
+        )
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+        columns = [
+            aggregate_metrics_table.c[column]
+            for column in [
+                "date",
+                "user_id",
+                *AGGREGATE_METRICS_COUNT_COLUMNS,
+                *[field for field in METRICS_TOKEN_FIELDS if field in aggregate_metrics_table.c],
+                "token_details",
+                "model_metrics",
+                "created_at",
+                "updated_at",
+            ]
+        ]
+        with self.Session() as sess:
+            rows = (
+                sess.execute(
+                    select(*columns)
+                    .where(*filters)
+                    .order_by(aggregate_metrics_table.c.date, aggregate_metrics_table.c.user_id)
+                )
+                .mappings()
+                .all()
+            )
+            if not rows:
+                return [], None
+
+            # Get the latest updated_at, scoped to the same user filter
+            latest_updated_at = sess.execute(
+                select(func.max(aggregate_metrics_table.c.updated_at)).where(
+                    aggregate_metrics_table.c.aggregation_period == "daily",
+                    aggregate_metrics_table.c.user_id != ""
+                    if user_id is None
+                    else aggregate_metrics_table.c.user_id == user_id,
+                )
+            ).scalar()
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
+
+    def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    def _metrics_calculated(self, refreshes_table: Optional[Table]) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics tables over agno_metrics."""
+        refresh_row = self._get_metrics_refresh_row(refreshes_table)[0] if refreshes_table is not None else None
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    def _has_deprecated_metrics(self) -> bool:
+        """Whether the deprecated metrics table has rows, which reads serve until a first build has finished."""
+        table = self._get_table(table_type="metrics")
+        if table is None:
+            return False
+        with self.Session() as sess, sess.begin():
+            return sess.execute(select(table.c.id).limit(1)).first() is not None
+
+    def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, unless metrics calculation is turned
+        off or the deprecated metrics table is served until a first calculate_metrics has finished. Another process
+        calculating them holds the metrics refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            if not metrics_calculation_enabled():
+                return
+            # A first build reads every run, so a read runs one only when the deprecated metrics table has no rows to
+            # serve meanwhile
+            if (
+                not self._metrics_calculated(self._get_table(table_type="metrics_refreshes"))
+                and self._has_deprecated_metrics()
+            ):
+                return
+            self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
-        Metrics are refreshed lazily, at most once per minute per process, so results
-        stay current even on deployments where nothing calls the refresh endpoint.
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics table until then. They are refreshed first, at most once per minute per
+        process, unless stop_metrics_refresh_on_read was called.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string unowned one.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_table(table_type="metrics_refreshes")):
+                return self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            table = self._get_table(table_type="metrics")
+            if table is None:
+                return [], None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if starting_date:
+                    stmt = stmt.where(table.c.date >= starting_date)
+                if ending_date:
+                    stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], None
+
+                # Get the latest updated_at, scoped to the same user filter
+                latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
+                latest_updated_at = sess.execute(latest_stmt).scalar()
+
+            # Map the sentinel empty-string user_id back to None for API consumers
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+
+            if not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
+            return rows, latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting metrics: {str(e)}")
+            raise e
+
+    def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics table until then. They are refreshed first, as get_metrics does.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
@@ -2026,45 +4071,215 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            # Refresh at most once per minute per process: recalculating the current
-            # day scans all of today's sessions, too costly for every read.
-            if time.time() - self._metrics_refreshed_at >= 60:
-                try:
-                    self.calculate_metrics()
-                except Exception as e:
-                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
-
-            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
-            if table is None:
-                return [], None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-                if starting_date:
-                    stmt = stmt.where(table.c.date >= starting_date)
-                if ending_date:
-                    stmt = stmt.where(table.c.date <= ending_date)
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [], None
-
-                # Get the latest updated_at
-                latest_stmt = select(func.max(table.c.updated_at))
-                latest_updated_at = sess.execute(latest_stmt).scalar()
-
-            return [row._mapping for row in result], latest_updated_at
+            self._refresh_metrics_before_read()
+            if self._metrics_calculated(self._get_table(table_type="metrics_refreshes")):
+                return self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return super().get_metrics_by_date(starting_date, ending_date)
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
 
-    # -- Knowledge methods --
+    def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes table.
 
-    def delete_knowledge_content(self, id: str):
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            refreshes_table = self._get_table(table_type="metrics_refreshes")
+            if refreshes_table is None:
+                return None
+            return metrics_refresh_status(*self._get_metrics_refresh_row(refreshes_table))
+
+        except Exception as e:
+            log_error(f"Error getting metrics refresh status: {str(e)}")
+            raise e
+
+    def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_table = self._get_table(table_type="aggregate_metrics")
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # aggregate metrics row of their own, so they are read from their component rows
+        table = self._get_table(table_type="component_metrics") if user_id == "" else aggregate_metrics_table
+        if aggregate_metrics_table is None or table is None:
+            return [], None
+
+        # The component metrics table keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        month_starts: Sequence[date] = []
+        rows_by_query = {}
+        with self.Session() as sess, sess.begin():
+            # One snapshot for every query of the read, so a rebuild committing between them is never half seen.
+            # SQLite gives a SELECT on its own a snapshot of its own, so the read transaction is begun explicitly
+            if not sess.connection().connection.driver_connection.in_transaction:
+                sess.execute(text("BEGIN"))
+            if full_months:
+                # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since
+                # or not yet built, is read from its days
+                month_starts = (
+                    sess.execute(
+                        select(aggregate_metrics_table.c.date).where(
+                            aggregate_metrics_table.c.aggregation_period == "monthly",
+                            aggregate_metrics_table.c.user_id == "",
+                            aggregate_metrics_table.c.completed.is_(True),
+                            # The full months follow each other, so a range finds them however long the window is
+                            aggregate_metrics_table.c.date.between(full_months[0], full_months[-1]),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            queries = build_component_metrics_totals_queries(
+                table, starting_date, ending_date, user_id or "", fields, month_starts=month_starts
+            )
+            for name, query in queries.items():
+                rows_by_query[name] = sess.execute(query).fetchall()
+        return build_component_metrics_totals(fields, rows_by_query)
+
+    def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting component metrics: {str(e)}")
+            raise e
+
+    def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting metrics totals: {str(e)}")
+            raise e
+
+    def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without an aggregate metrics table: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            self._refresh_metrics_before_read()
+            table = self._get_table(table_type="aggregate_metrics")
+            if table is None or not self._metrics_calculated(self._get_table(table_type="metrics_refreshes")):
+                return None
+
+            with self.Session() as sess, sess.begin():
+                rows = sess.execute(
+                    select(table.c.aggregation_period, table.c.date, table.c.version).where(
+                        table.c.user_id == "",
+                        table.c.date.between(starting_date, ending_date),
+                    )
+                ).fetchall()
+            return metrics_versions(rows)
+
+        except Exception as e:
+            log_error(f"Error getting metrics versions: {str(e)}")
+            raise e
+
+    # -- Knowledge methods --
+    # Reads also match unowned (shared) rows; deletes are strict to the owner. A ``None``
+    # user_id drops the predicate entirely.
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete the row if it is owned by this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2076,17 +4291,20 @@ class SqliteDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2101,6 +4319,8 @@ class SqliteDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2118,6 +4338,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2127,6 +4348,7 @@ class SqliteDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2138,6 +4360,7 @@ class SqliteDb(BaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -2145,6 +4368,10 @@ class SqliteDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping if provided
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 if sort_by is not None:
@@ -2182,6 +4409,12 @@ class SqliteDb(BaseDb):
                 return None
 
             with self.Session() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id)).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 update_fields = {
                     k: v
                     for k, v in {
@@ -2194,6 +4427,7 @@ class SqliteDb(BaseDb):
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
                         "status_message": knowledge_row.status_message,
+                        "user_id": knowledge_row.user_id,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -2277,11 +4511,12 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -2290,6 +4525,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2301,13 +4538,14 @@ class SqliteDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2324,11 +4562,13 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
-                eval_run_raw = result._mapping
+                eval_run_raw = dict(result._mapping)
                 if not eval_run_raw or not deserialize:
                     return eval_run_raw
 
@@ -2351,6 +4591,7 @@ class SqliteDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2363,10 +4604,10 @@ class SqliteDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2376,6 +4617,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="evals")
             if table is None:
@@ -2385,6 +4627,8 @@ class SqliteDb(BaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2422,7 +4666,7 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                eval_runs_raw = [dict(row._mapping) for row in result]
                 if not deserialize:
                     return eval_runs_raw, total_count
 
@@ -2433,14 +4677,15 @@ class SqliteDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2459,9 +4704,11 @@ class SqliteDb(BaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2472,6 +4719,26 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Trace methods --
@@ -3285,248 +5552,22 @@ class SqliteDb(BaseDb):
                 self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
 
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural artifacts from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                sess.execute(table.delete())
-
-        except Exception as e:
-            from agno.utils.log import log_warning
-
-            log_warning(f"Exception deleting all cultural artifacts: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural artifact from the database.
-
-        Args:
-            id (str): The ID of the cultural artifact to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted cultural artifact id: {id}")
-                else:
-                    log_debug(f"No cultural artifact found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural artifact: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural artifact from the database.
-
-        Args:
-            id (str): The ID of the cultural artifact to get.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The cultural artifact, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = sess.execute(stmt).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural artifacts table: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural artifacts from the database as CulturalNotion objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural artifact to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural artifacts to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifacts. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalNotion objects
-                - When deserialize=False: List of CulturalNotion dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural artifacts table: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural artifact into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural artifact to upsert.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalNotion, Dict[str, Any]]]:
-                - When deserialize=True: CulturalNotion object
-                - When deserialize=False: CulturalNotion dictionary
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON string for DB storage (SQLite requires strings)
-            content_json_str = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_json_str,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["id"],
-                    set_=dict(
-                        name=cultural_knowledge.name,
-                        summary=cultural_knowledge.summary,
-                        content=content_json_str,
-                        metadata=cultural_knowledge.metadata,
-                        input=cultural_knowledge.input,
-                        updated_at=int(time.time()),
-                        agent_id=cultural_knowledge.agent_id,
-                        team_id=cultural_knowledge.team_id,
-                    ),
-                ).returning(table)
-
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-            db_row: Dict[str, Any] = dict(row._mapping)
-            if not db_row or not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
-
     # --- Components ---
     def get_component(
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional type filter (agent|team|workflow).
+            user_id: If set, return the component only if this user may see it:
+                owned by them, unowned (shared), or published.
+            include_deleted: Also return an archived (soft-deleted) row.
 
         Returns:
             Component dictionary or None if not found.
@@ -3537,12 +5578,28 @@ class SqliteDb(BaseDb):
                 return None
 
             with self.Session() as sess:
-                stmt = select(table).where(
-                    table.c.component_id == component_id,
-                    table.c.deleted_at.is_(None),
-                )
+                stmt = select(table).where(table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(table.c.deleted_at.is_(None))
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Same catalog visibility rule as get_component: own rows,
+                    # unowned (shared) rows, and anything published.
+                    stmt = stmt.where(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            # Live published rows only. Archiving is the off-switch:
+                            # it withdraws a component from every other user even
+                            # under include_deleted, which relaxes the tombstone
+                            # filter for the OWNER's own history, never across owners.
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
 
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
@@ -3559,6 +5616,7 @@ class SqliteDb(BaseDb):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -3569,6 +5627,7 @@ class SqliteDb(BaseDb):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -3581,10 +5640,24 @@ class SqliteDb(BaseDb):
             if table is None:
                 raise ValueError("Components table not found")
 
+            # Resolved outside the transaction: _get_table may open its own.
+            configs_table = self._get_table(table_type="component_configs") if current_version is not None else None
+
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                existing_stmt = select(table).where(table.c.component_id == component_id)
+                if user_id is not None:
+                    existing_stmt = existing_stmt.where(table.c.user_id == user_id)
+                existing = sess.execute(existing_stmt).fetchone()
 
                 if existing is None:
+                    # The row can exist under another owner: fail closed instead of creating
+                    if user_id is not None:
+                        unscoped = sess.execute(
+                            select(table.c.component_id).where(table.c.component_id == component_id)
+                        ).fetchone()
+                        if unscoped is not None:
+                            raise ValueError(f"Component {component_id} not found")
+
                     # Create new component
                     if component_type is None:
                         raise ValueError("component_type is required when creating a new component")
@@ -3594,6 +5667,7 @@ class SqliteDb(BaseDb):
                             component_id=component_id,
                             component_type=component_type.value if hasattr(component_type, "value") else component_type,
                             name=name or component_id,
+                            user_id=user_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
@@ -3603,47 +5677,95 @@ class SqliteDb(BaseDb):
                     log_debug(f"Created component {component_id}")
 
                 elif existing.deleted_at is not None:
-                    # Reactivate soft-deleted
-                    if component_type is None:
-                        raise ValueError("component_type is required when reactivating a deleted component")
-
-                    sess.execute(
-                        table.update()
-                        .where(table.c.component_id == component_id)
-                        .values(
-                            component_type=component_type.value if hasattr(component_type, "value") else component_type,
-                            name=name or component_id,
-                            description=description,
-                            current_version=None,
-                            metadata=metadata,
-                            updated_at=int(time.time()),
-                            deleted_at=None,
-                        )
+                    # Archived ids are reserved and their rows immutable. The old
+                    # implicit reactivation let a create silently inherit a dead
+                    # component's history; restore is explicit now.
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
                     )
-                    log_debug(f"Reactivated component {component_id}")
 
                 else:
                     # Update existing
                     updates: Dict[str, Any] = {"updated_at": int(time.time())}
                     if component_type is not None:
-                        updates["component_type"] = (
-                            component_type.value if hasattr(component_type, "value") else component_type
-                        )
+                        new_type = component_type.value if hasattr(component_type, "value") else component_type
+                        # A component's type is part of its identity, not a
+                        # field: it decides the run endpoint every schedule
+                        # stores, which loader rebuilds it, and how every
+                        # stored reference resolves. Rewriting it silently
+                        # invalidates all of them - and the archive cascade,
+                        # which matches on (type, id), would then miss the very
+                        # schedules it exists to disable. Create a new
+                        # component instead.
+                        if str(existing.component_type) != str(new_type):
+                            raise ValueError(
+                                f"Cannot change component {component_id} from {existing.component_type} "
+                                f"to {new_type}; a component's type is fixed at creation."
+                            )
+                        updates["component_type"] = new_type
                     if name is not None:
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
                     if current_version is not None:
+                        # The current pointer names what the platform runs, and
+                        # what every actor can see: the catalog's visibility
+                        # predicate reads "has a current version" as published.
+                        # So the same invariant set_current_version enforces is
+                        # enforced here - the version must exist and be
+                        # published - or this writer becomes the way around it.
+                        if configs_table is not None:
+                            target_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == current_version,
+                                )
+                            ).scalar()
+                            if target_stage == DELETED_CONFIG_STAGE:
+                                raise ValueError(
+                                    f"Cannot set deleted config {component_id} v{current_version} as current"
+                                )
+                            if target_stage is None:
+                                raise ValueError(
+                                    f"Cannot set missing config {component_id} v{current_version} as current"
+                                )
+                            if target_stage != "published":
+                                raise ValueError(
+                                    f"Cannot set draft config {component_id} v{current_version} as current. "
+                                    "Only published configs can be current."
+                                )
                         updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
-                    sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
+                    # deleted_at is re-asserted on the UPDATE itself: the
+                    # archived pre-check above is check-then-write, so a
+                    # concurrent archive committing in the gap must fail this
+                    # write rather than be overtaken by it.
+                    update_result = sess.execute(
+                        table.update()
+                        .where(
+                            table.c.component_id == component_id,
+                            table.c.deleted_at.is_(None),
+                        )
+                        .values(**updates)
+                    )
+                    if update_result.rowcount == 0:
+                        raise ComponentArchivedError(
+                            f"Component {component_id} is archived; restore it explicitly before writing to it"
+                        )
                     log_debug(f"Updated component {component_id}")
 
-            result = self.get_component(component_id)
-            if result is None:
-                raise ValueError(f"Failed to get component {component_id} after upsert")
+                # The answer is read inside the transaction that wrote it, and
+                # without the archived filter. A read taken after the commit can
+                # be overtaken by an archive on another connection, and reporting
+                # a committed write as a failure hands the caller a 4xx for a
+                # write that landed.
+                written = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get component {component_id} after upsert")
+                result = dict(written._mapping)
+
             return result
 
         except Exception as e:
@@ -3654,12 +5776,23 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
     ) -> bool:
-        """Delete a component and all its configs/links.
+        """Delete a component. Soft delete archives it; the id stays reserved.
+
+        Every schedule aimed at the component is disabled in the same
+        transaction, so no delete surface can leave a schedule firing at a
+        target that is gone; a cascade failure rolls the delete back.
 
         Args:
             component_id: The component ID.
-            hard_delete: If True, permanently delete. Otherwise soft-delete.
+            hard_delete: If True, permanently delete rows and links. Otherwise archive.
+            user_id: If set, only delete the component if owned by this user.
+            expected_current_version: Optional CAS guard on current_version.
+            require_no_dependents: Refuse when other components pin this one.
 
         Returns:
             True if deleted, False if not found.
@@ -3668,36 +5801,283 @@ class SqliteDb(BaseDb):
             components_table = self._get_table(table_type="components")
             configs_table = self._get_table(table_type="component_configs")
             links_table = self._get_table(table_type="component_links")
+            schedules_table = self._get_table(table_type="schedules")
 
             if components_table is None:
                 return False
 
+            # Scope to owner: a non-owner must not delete the component or its configs/links.
+            if user_id is not None:
+                # Reads treat unowned as shared, but delete stays strict: only the owner (or admin) removes it
+                component = self.get_component(component_id, user_id=user_id, include_deleted=hard_delete)
+                if component is None or component.get("user_id") != user_id:
+                    return False
+
+            if require_no_dependents:
+                # An archive breaks only live parents; a hard delete breaks even an
+                # archived parent's history, so it checks every link. This read is
+                # the early, friendly refusal; the one that cannot be overtaken
+                # runs after the write below.
+                # Scoped to parents this caller owns (plus unowned ones).
+                # Publishing shares a component for composing, so any other
+                # tenant can pin it from a draft the owner can never see, edit
+                # or reach - and an unscoped veto would then make the owner's
+                # own component permanently unarchivable, with the blocking id
+                # redacted out of the message. A parent the caller cannot act
+                # on does not get to veto; archiving is exactly the signal that
+                # such a parent must stop resolving. An unscoped caller (an
+                # operator) still sees every parent.
+                dependents = self.get_dependents(
+                    component_id, active_parents_only=not hard_delete, parent_user_id=user_id
+                )
+                if dependents:
+                    parents = sorted(
+                        {str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")}
+                    )
+                    raise ComponentDependencyError(
+                        f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+                    )
+
             with self.Session() as sess, sess.begin():
+                # Locked read (a no-op lock on SQLite, a row lock on Postgres):
+                # the guard is decided before any row goes, and a concurrent
+                # writer pinning this component serializes here.
+                row = sess.execute(
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.component_type,
+                        components_table.c.user_id,
+                    )
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+                # The scope above is the friendly early exit, read on its own
+                # connection; this is the one that cannot be overtaken. Ids are
+                # caller-chosen and reusable, so a component freed and
+                # re-claimed by another owner in the gap must not be deleted
+                # under the first caller's authority.
+                if user_id is not None and row.user_id != user_id:
+                    return False
+                component_type = str(row.component_type)
+                if expected_current_version is not None and not current_version_matches(
+                    row.current_version, expected_current_version
+                ):
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version is {row.current_version}, "
+                        f"expected {expected_current_version}"
+                    )
+
                 if hard_delete:
-                    # Delete links where this component is parent or child
+                    # FK order: links and configs go before the component row
+                    # (the FKs have no ON DELETE CASCADE, so the reverse order
+                    # violates them on every populated component). The guard
+                    # was taken as a locked read above; the predicate on the
+                    # final DELETE is the belt over that lock.
                     if links_table is not None:
+                        # This component's OWN outgoing pins go first. They are
+                        # not the evidence the guard below reads, and deleting
+                        # them takes the write lock, which is what makes that
+                        # read see a parent committed since the friendly
+                        # pre-read - the same reason the archive branch
+                        # re-asserts after its UPDATE rather than before it.
                         sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                    if require_no_dependents:
+                        # Same check-then-write gap the archive branch closes,
+                        # and it has to run while the incoming links still
+                        # exist: those rows ARE the evidence. Raising here rolls
+                        # the whole delete back.
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=False,
+                            parent_user_id=user_id,
+                        )
+                    if links_table is not None:
                         sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
-                    # Delete configs
                     if configs_table is not None:
                         sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
-                    # Delete component
-                    result = sess.execute(
-                        components_table.delete().where(components_table.c.component_id == component_id)
-                    )
+                    component_delete = components_table.delete().where(components_table.c.component_id == component_id)
+                    if user_id is not None:
+                        component_delete = component_delete.where(components_table.c.user_id == user_id)
+                    if expected_current_version is not None:
+                        component_delete = component_delete.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    result = sess.execute(component_delete)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version changed; expected {expected_current_version}"
+                        )
                 else:
-                    # Soft delete
+                    # Archive: stamp deleted_at on a live row only, so the call is
+                    # idempotent-visible (a second archive returns False). The
+                    # guard rides the UPDATE, so a raced pointer move conflicts
+                    # instead of archiving the wrong state.
                     now = int(time.time())
-                    result = sess.execute(
+                    archive_update = (
                         components_table.update()
-                        .where(components_table.c.component_id == component_id)
-                        .values(deleted_at=now)
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                        .values(deleted_at=now, updated_at=now)
                     )
+                    if user_id is not None:
+                        # The scope rides the WRITE, not just the reads above:
+                        # the locked read is still check-then-write against an
+                        # id that was hard-deleted and re-claimed by another
+                        # owner in the gap, and this UPDATE would otherwise
+                        # match that new row.
+                        archive_update = archive_update.where(components_table.c.user_id == user_id)
+                    if expected_current_version is not None:
+                        archive_update = archive_update.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    result = sess.execute(archive_update)
+                    if result.rowcount == 0 and expected_current_version is not None:
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                        if still_live is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
+
+                    if require_no_dependents and result.rowcount > 0:
+                        # The guard above is check-then-write: SQLite takes the
+                        # write lock at the first write, so a parent that pinned
+                        # this component in the gap becomes visible only now.
+                        # Re-asserting rolls the archive back instead of leaving
+                        # a live parent pinning an archived child.
+                        self._refuse_if_dependents(
+                            sess,
+                            links_table,
+                            components_table,
+                            configs_table,
+                            component_id,
+                            active_parents_only=True,
+                            parent_user_id=user_id,
+                        )
+
+                if result.rowcount > 0 and schedules_table is not None:
+                    # A component that is gone cannot serve a run, so the
+                    # schedules aimed at it go off in the SAME transaction as
+                    # the delete. Left to the caller, the cascade reaches only
+                    # the surfaces that remember it (the SDK deletes did not),
+                    # and run after the commit it leaves a window where the
+                    # target is gone and the poller still fires. A failure here
+                    # rolls the delete back rather than parting the two halves.
+                    disabled = self._disable_schedules_for_target_in_session(
+                        sess,
+                        schedules_table,
+                        target_type=component_type,
+                        target_id=component_id,
+                        reason=f"target_archived:{component_type}:{component_id}",
+                    )
+                    if cascade_stats is not None:
+                        cascade_stats["schedules_disabled"] = disabled
+                    if disabled:
+                        log_debug(f"Disabled {disabled} schedule(s) targeting {component_type} '{component_id}'")
 
             return result.rowcount > 0
 
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
+            raise
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Restore an archived component: clear deleted_at, keep every version."""
+        try:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
+                return False
+
+            if user_id is not None:
+                component = self.get_component(component_id, user_id=user_id, include_deleted=True)
+                if component is None or component.get("user_id") != user_id:
+                    return False
+
+            links_table = self._get_table(table_type="component_links")
+
+            with self.Session() as sess, sess.begin():
+                # Locked read (a row lock on Postgres, a no-op on SQLite).
+                row = sess.execute(
+                    select(components_table.c.current_version, components_table.c.user_id)
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+                if row is None:
+                    return False
+                # Same reason as delete: the scope read above ran on its own
+                # connection, so it re-rides the locked row here.
+                if user_id is not None and row.user_id != user_id:
+                    return False
+
+                restore_update = (
+                    components_table.update()
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_not(None),
+                    )
+                    .values(deleted_at=None, updated_at=int(time.time()))
+                )
+                if user_id is not None:
+                    # The scope rides the write here too: the reads above are
+                    # check-then-write against a reusable id.
+                    restore_update = restore_update.where(components_table.c.user_id == user_id)
+                result = sess.execute(restore_update)
+                if result.rowcount == 0:
+                    return False
+
+                # A restore returns the component to dispatch, so its live
+                # version's pinned children must be live too: archiving allowed
+                # parent-then-child, and restoring only the parent would publish
+                # a component whose members can never rebuild. Restore children
+                # first. The check runs after the restore write, inside the
+                # transaction that holds the write lock: read before it, the
+                # guard is check-then-write and an archive of a child committing
+                # in the gap leaves a live parent pinning it - a state this
+                # guard is supposed to make unreachable.
+                if row.current_version is not None and links_table is not None:
+                    link_rows = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == row.current_version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {link.child_component_id for link in link_rows if link.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(child.component_id) for child in child_rows if child.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot restore {component_id}: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error restoring component: {str(e)}")
             raise
 
     def list_components(
@@ -3707,6 +6087,7 @@ class SqliteDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
         name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
@@ -3717,6 +6098,8 @@ class SqliteDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, list the components this user may see: their own,
+                unowned (shared) ones, and published ones.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -3733,6 +6116,23 @@ class SqliteDb(BaseDb):
                 where_clauses = []
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    # Same catalog visibility rule as get_component: own rows,
+                    # unowned (shared) rows, and anything published.
+                    where_clauses.append(
+                        or_(
+                            table.c.user_id == user_id,
+                            table.c.user_id.is_(None),
+                            # Live published rows only. Archiving is the off-switch:
+                            # it withdraws a component from every other user even
+                            # under include_deleted, which relaxes the tombstone
+                            # filter for the OWNER's own history, never across owners.
+                            and_(
+                                table.c.current_version.isnot(None),
+                                table.c.deleted_at.is_(None),
+                            ),
+                        )
+                    )
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
@@ -3774,6 +6174,7 @@ class SqliteDb(BaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -3788,12 +6189,13 @@ class SqliteDb(BaseDb):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         if stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
@@ -3821,7 +6223,34 @@ class SqliteDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    raise ValueError(f"Component {component_id} already exists")
+                    # Generic wording: must not confirm another user's component exists
+                    raise ValueError(f"Component ID {component_id} is not available")
+
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
+                if stage == "published" and links:
+                    # A published component pins published children (PIN_LINK_KINDS);
+                    # a draft child can change in place under the pin. The versioned
+                    # edit paths bind children with require_published, but a direct
+                    # create_component_with_config (and versions=False creates) reach
+                    # here without that check.
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_stage = sess.execute(
+                            select(configs_table.c.stage).where(
+                                configs_table.c.component_id == link["child_component_id"],
+                                configs_table.c.version == link["child_version"],
+                            )
+                        ).scalar()
+                        if child_stage != "published":
+                            raise ComponentDependencyError(
+                                f"Cannot create {component_id} as published: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' "
+                                f"v{link['child_version']} is {child_stage or 'missing'}; "
+                                "publish the child first."
+                            )
 
                 # Check label uniqueness
                 if label is not None:
@@ -3843,6 +6272,7 @@ class SqliteDb(BaseDb):
                         component_id=component_id,
                         component_type=component_type.value,
                         name=name,
+                        user_id=user_id,
                         description=description,
                         metadata=metadata,
                         current_version=version if stage == "published" else None,
@@ -3880,14 +6310,51 @@ class SqliteDb(BaseDb):
                             )
                         )
 
-            # Fetch and return both
-            component = self.get_component(component_id)
-            config_result = self.get_config(component_id, version=version)
+                if stage == "published" and links and links_table is not None:
+                    # The pin checks above are check-then-write: they run before
+                    # any row is written, take no lock, and a child archived in
+                    # the gap would leave a brand-new PUBLISHED parent pinning
+                    # an archived child - the state upsert_config's publish gate
+                    # raises to prevent. Re-assert the liveness half here, where
+                    # the write lock is held, so a lost race rolls the creation
+                    # back rather than committing that state.
+                    for link in links:
+                        if link.get("link_kind") not in PIN_LINK_KINDS:
+                            continue
+                        child_deleted_at = sess.execute(
+                            select(components_table.c.deleted_at)
+                            .where(components_table.c.component_id == link["child_component_id"])
+                            .with_for_update()
+                        ).scalar()
+                        if child_deleted_at is not None:
+                            raise ComponentDependencyError(
+                                f"Cannot publish {component_id} v{version}: pinned "
+                                f"{link['link_kind']} '{link['child_component_id']}' is archived; "
+                                "restore it first."
+                            )
 
-            if component is None:
-                raise ValueError(f"Failed to get component {component_id} after creation")
-            if config_result is None:
-                raise ValueError(f"Failed to get config for {component_id} after creation")
+                # Both halves of the answer are read inside the transaction that
+                # wrote them, and without the archived filter. A read taken after
+                # the commit can be overtaken by an archive on another connection,
+                # and reporting a committed creation as a failure hands the caller
+                # a 4xx for a write that landed.
+                component_row = sess.execute(
+                    select(components_table).where(components_table.c.component_id == component_id)
+                ).fetchone()
+                config_row = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).fetchone()
+
+                if component_row is None:
+                    raise ValueError(f"Failed to get component {component_id} after creation")
+                if config_row is None:
+                    raise ValueError(f"Failed to get config for {component_id} after creation")
+
+                component = dict(component_row._mapping)
+                config_result = dict(config_row._mapping)
 
             return component, config_result
 
@@ -3901,6 +6368,7 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
@@ -3908,6 +6376,7 @@ class SqliteDb(BaseDb):
             component_id: The component ID.
             version: Specific version number. If None, uses current or latest draft.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Also return a tombstoned version (explicit version only).
 
         Returns:
             Config dictionary or None if not found.
@@ -3942,22 +6411,32 @@ class SqliteDb(BaseDb):
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == version,
                     )
+                    if not include_deleted:
+                        stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
                 elif label is not None:
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                 elif current_version is not None:
-                    # Use the current published version
+                    # Use the current published version. The stage filter keeps
+                    # a corrupted pointer (naming a tombstoned version) from
+                    # serving the dead payload; the read returns None instead,
+                    # matching get_current_config.
                     stmt = select(configs_table).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.version == current_version,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                 else:
-                    # No current_version set (draft only) - get the latest version
+                    # No current_version set (draft only) - get the latest visible version
                     stmt = (
                         select(configs_table)
-                        .where(configs_table.c.component_id == component_id)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
                         .order_by(configs_table.c.version.desc())
                         .limit(1)
                     )
@@ -3969,6 +6448,43 @@ class SqliteDb(BaseDb):
             log_error(f"Error getting config: {str(e)}")
             raise
 
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The current published config, or None when nothing is published."""
+        component = self.get_component(component_id)
+        if component is None or component.get("current_version") is None:
+            return None
+        return self.get_config(component_id, version=component["current_version"])
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The latest visible (non-tombstoned) config version, draft or published."""
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+            if configs_table is None or components_table is None:
+                return None
+            with self.Session() as sess:
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+                if exists is None:
+                    return None
+                result = sess.execute(
+                    select(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                    .order_by(configs_table.c.version.desc())
+                    .limit(1)
+                ).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting latest config: {str(e)}")
+            raise
+
     def upsert_config(
         self,
         component_id: str,
@@ -3978,6 +6494,9 @@ class SqliteDb(BaseDb):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
@@ -3994,6 +6513,9 @@ class SqliteDb(BaseDb):
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
+            user_id: When set, the write applies only if this user owns the
+                component; checked on the component row inside the write
+                transaction.
 
         Returns:
             Created/updated config dictionary.
@@ -4016,22 +6538,55 @@ class SqliteDb(BaseDb):
                 raise ValueError("Component configs table not found")
 
             with self.Session() as sess, sess.begin():
-                # Verify component exists and is not deleted
+                # Verify component exists and is not archived
                 component = sess.execute(
-                    select(components_table.c.component_id).where(
-                        components_table.c.component_id == component_id,
-                        components_table.c.deleted_at.is_(None),
-                    )
+                    select(
+                        components_table.c.component_id, components_table.c.deleted_at, components_table.c.user_id
+                    ).where(components_table.c.component_id == component_id)
                 ).fetchone()
 
                 if component is None:
                     raise ValueError(f"Component {component_id} not found")
+                # Writes are owner-scoped always. Checked before the archived
+                # verdict and answering exactly as a missing component, so a
+                # scoped caller learns nothing about a row it does not own.
+                if user_id is not None and component.user_id != user_id:
+                    raise ValueError(f"Component {component_id} not found")
+                if component.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
 
-                # Label uniqueness check
+                # Optional compare-and-set against the latest VISIBLE version:
+                # a mismatch means someone else wrote since the caller read.
+                if expected_latest_version is not None:
+                    latest_visible = sess.execute(
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.stage != DELETED_CONFIG_STAGE,
+                        )
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+                    if latest_visible != expected_latest_version:
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} latest version is {latest_visible}, "
+                            f"expected {expected_latest_version}"
+                        )
+
+                # Links must point at real, unarchived children and must not
+                # close a cycle. The published-parents-pin-published-children
+                # rule is enforced below, at the promote transition.
+                if links:
+                    self._validate_links_in_session(sess, component_id, links, components_table, links_table)
+
+                # Label uniqueness check (a tombstoned version frees its label)
                 if label is not None:
                     label_query = select(configs_table.c.version).where(
                         configs_table.c.component_id == component_id,
                         configs_table.c.label == label,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
                     )
                     if version is not None:
                         label_query = label_query.where(configs_table.c.version != version)
@@ -4053,6 +6608,8 @@ class SqliteDb(BaseDb):
                     if stage is None:
                         stage = "draft"
 
+                    # High-water over EVERY row including tombstones: numbers are
+                    # never recycled into a history someone may still cite.
                     max_version = sess.execute(
                         select(configs_table.c.version)
                         .where(configs_table.c.component_id == component_id)
@@ -4062,17 +6619,53 @@ class SqliteDb(BaseDb):
 
                     final_version = (max_version or 0) + 1
 
-                    sess.execute(
-                        configs_table.insert().values(
-                            component_id=component_id,
-                            version=final_version,
-                            label=label,
-                            stage=stage,
-                            config=config,
-                            notes=notes,
-                            created_at=int(time.time()),
+                    try:
+                        sess.execute(
+                            configs_table.insert().values(
+                                component_id=component_id,
+                                version=final_version,
+                                label=label,
+                                stage=stage,
+                                config=config,
+                                notes=notes,
+                                created_at=int(time.time()),
+                            )
                         )
-                    )
+                    except IntegrityError as exc:
+                        # Two appends raced for one number; the (component_id,
+                        # version) primary key is the backstop.
+                        raise ComponentVersionConflictError(
+                            f"Concurrent append on {component_id}: version {final_version} was taken"
+                        ) from exc
+
+                    if expected_latest_version is not None:
+                        # Re-verify the guard AFTER the insert: the pre-check
+                        # and the insert are separate statements, so a raced
+                        # append can land between them (both writers reading
+                        # the same latest). Exactly one row can be the direct
+                        # successor of the expected version; a loser removes
+                        # its own row and conflicts.
+                        prior = sess.execute(
+                            select(configs_table.c.version)
+                            .where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.stage != DELETED_CONFIG_STAGE,
+                                configs_table.c.version < final_version,
+                            )
+                            .order_by(configs_table.c.version.desc())
+                            .limit(1)
+                        ).scalar()
+                        if prior != expected_latest_version:
+                            sess.execute(
+                                configs_table.delete().where(
+                                    configs_table.c.component_id == component_id,
+                                    configs_table.c.version == final_version,
+                                )
+                            )
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} latest version is {prior}, "
+                                f"expected {expected_latest_version}"
+                            )
                 else:
                     existing = sess.execute(
                         select(configs_table.c.version, configs_table.c.stage).where(
@@ -4081,7 +6674,7 @@ class SqliteDb(BaseDb):
                         )
                     ).fetchone()
 
-                    if existing is None:
+                    if existing is None or existing.stage == DELETED_CONFIG_STAGE:
                         raise ValueError(f"Config {component_id} v{version} not found")
 
                     # Published configs are immutable
@@ -4109,6 +6702,20 @@ class SqliteDb(BaseDb):
                     )
                     final_version = version
 
+                # The archive precondition at the top is check-then-write:
+                # SQLite opens its transaction at the first write, so an archive
+                # can commit in the gap. The config row is written by now, which
+                # holds the write lock, so this re-read is final - an archive
+                # that got in first rolls the whole edit back instead of letting
+                # it mutate a row that is already immutable.
+                archived_at = sess.execute(
+                    select(components_table.c.deleted_at).where(components_table.c.component_id == component_id)
+                ).scalar()
+                if archived_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
                 if links is not None and links_table is not None:
                     sess.execute(
                         links_table.delete().where(
@@ -4135,15 +6742,122 @@ class SqliteDb(BaseDb):
                 final_stage = stage if stage is not None else (existing.stage if version is not None else "draft")
 
                 if final_stage == "published":
-                    sess.execute(
+                    # A published parent pins published children: a draft child
+                    # can change in place under the pin. One gate here covers
+                    # every promote surface (Studio publish, edit+publish, REST
+                    # PATCH stage). Only member/step links carry rebuild pins;
+                    # other link kinds pass through.
+                    if links_table is not None:
+                        link_rows = sess.execute(
+                            select(
+                                links_table.c.child_component_id,
+                                links_table.c.child_version,
+                                links_table.c.link_kind,
+                            ).where(
+                                links_table.c.parent_component_id == component_id,
+                                links_table.c.parent_version == final_version,
+                            )
+                        ).fetchall()
+                        for link_row in link_rows:
+                            if link_row.link_kind not in PIN_LINK_KINDS:
+                                continue
+                            child_stage = sess.execute(
+                                select(configs_table.c.stage).where(
+                                    configs_table.c.component_id == link_row.child_component_id,
+                                    configs_table.c.version == link_row.child_version,
+                                )
+                            ).scalar()
+                            if child_stage != "published":
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' "
+                                    f"v{link_row.child_version} is {child_stage or 'missing'}; "
+                                    "publish the child first."
+                                )
+                            # A pinned child must also still be LIVE. A config
+                            # keeps its published stage after its component is
+                            # archived, so a stage-only gate lets a version go
+                            # live pinning an archived child, and the parent
+                            # then loads with that member missing. The lock is a
+                            # no-op on SQLite and a row lock on Postgres, where
+                            # it serializes this against a concurrent archive.
+                            # A child with no catalog row is code-defined and
+                            # passes, exactly as the link validator allows.
+                            child_deleted_at = sess.execute(
+                                select(components_table.c.deleted_at)
+                                .where(components_table.c.component_id == link_row.child_component_id)
+                                .with_for_update()
+                            ).scalar()
+                            if child_deleted_at is not None:
+                                raise ComponentDependencyError(
+                                    f"Cannot publish {component_id} v{final_version}: pinned "
+                                    f"{link_row.link_kind} '{link_row.child_component_id}' is archived; "
+                                    "restore it first."
+                                )
+                    # Publishing moves the pointer and re-projects the config's
+                    # denormalized identity onto the row in one transaction, so
+                    # listings never show a stale name for the live version.
+                    projection: Dict[str, Any] = {"current_version": final_version, "updated_at": int(time.time())}
+                    published_config = config
+                    if published_config is None and version is not None:
+                        stored = sess.execute(
+                            select(configs_table.c.config).where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.version == final_version,
+                            )
+                        ).scalar()
+                        published_config = stored if isinstance(stored, dict) else None
+                    if isinstance(published_config, dict):
+                        projection.update(project_config_identity(published_config))
+                    projection_update = (
                         components_table.update()
-                        .where(components_table.c.component_id == component_id)
-                        .values(current_version=final_version, updated_at=int(time.time()))
+                        .where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                        .values(**projection)
                     )
+                    if expected_current_version is not None:
+                        # CAS on the pointer being replaced: the guard rides the
+                        # UPDATE so two publishers expecting the same current
+                        # version cannot both win.
+                        projection_update = projection_update.where(
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                        )
+                    projection_result = sess.execute(projection_update)
+                    if projection_result.rowcount == 0:
+                        # Zero rows: the row was archived underneath this
+                        # publish, or the CAS guard lost. Re-read to answer
+                        # which, holding the write transaction.
+                        still_live = sess.execute(
+                            select(components_table.c.component_id).where(
+                                components_table.c.component_id == component_id,
+                                components_table.c.deleted_at.is_(None),
+                            )
+                        ).fetchone()
+                        if still_live is None:
+                            raise ComponentArchivedError(
+                                f"Component {component_id} is archived; restore it explicitly before writing to it"
+                            )
+                        if expected_current_version is not None:
+                            raise ComponentVersionConflictError(
+                                f"Component {component_id} current version changed; expected {expected_current_version}"
+                            )
 
-            result = self.get_config(component_id, version=final_version)
-            if result is None:
-                raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+                # The answer is built inside the transaction that wrote it. A
+                # read taken after the commit can be overtaken by an archive on
+                # another connection, and reporting a committed publish as a
+                # failure hands the caller a 4xx for a write that landed.
+                written = sess.execute(
+                    select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == final_version,
+                    )
+                ).fetchone()
+                if written is None:
+                    raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+                result = dict(written._mapping)
+
             return result
 
         except Exception as e:
@@ -4154,21 +6868,33 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Delete a specific config version.
+        """Tombstone a specific config version. Its number is never reused.
 
         Only draft configs can be deleted. Published configs are immutable.
-        Cannot delete the current version.
+        Never the current version, never the last visible version, and never a
+        version an ACTIVE parent pins - a parent that is archived, or whose own
+        version is tombstoned, holds no pin.
 
         Args:
             component_id: The component ID.
             version: The version to delete.
+            user_id: When set, the delete applies only if this user owns the
+                component; checked on the component row inside the write
+                transaction. A foreign or shared row answers False, the same
+                as a missing version.
 
         Returns:
-            True if deleted, False if not found.
+            True if deleted, False if not found (or already tombstoned).
 
         Raises:
-            ValueError: If attempting to delete a published or current config.
+            ComponentDraftRequiredError: If the version is published.
+            ComponentArchivedError: If the component is archived; its history is
+                frozen so restore brings every version back.
+            ComponentLastConfigError: If it is the last visible version.
+            ComponentDependencyError: If an active parent pins this version.
+            ValueError: If it is the current version.
         """
         try:
             configs_table = self._get_table(table_type="component_configs")
@@ -4179,6 +6905,37 @@ class SqliteDb(BaseDb):
                 return False
 
             with self.Session() as sess, sess.begin():
+                # The component row is read first, locked (a row lock on
+                # Postgres, a no-op on SQLite), doing two jobs: the owner
+                # scope must answer before ANY stage verdict - a foreign probe
+                # learns nothing, not even that a version is published - and
+                # the lock serializes this call against a concurrent publish
+                # of the same component.
+                component_row = sess.execute(
+                    select(
+                        components_table.c.current_version,
+                        components_table.c.user_id,
+                        components_table.c.deleted_at,
+                    )
+                    .where(components_table.c.component_id == component_id)
+                    .with_for_update()
+                ).fetchone()
+
+                # Writes are owner-scoped always. A foreign or shared row
+                # answers the same False a missing version answers, inside
+                # the write transaction.
+                if user_id is not None and (component_row is None or component_row.user_id != user_id):
+                    return False
+
+                # An archived component's history is frozen: archive reserves
+                # the id and keeps every version so restore can bring them
+                # back, which a tombstoned draft would silently break. Every
+                # other writer refuses an archived row; this one is the last.
+                if component_row is not None and component_row.deleted_at is not None:
+                    raise ComponentArchivedError(
+                        f"Component {component_id} is archived; restore it explicitly before writing to it"
+                    )
+
                 # Get config stage and check if it's current
                 config_row = sess.execute(
                     select(configs_table.c.stage).where(
@@ -4187,18 +6944,128 @@ class SqliteDb(BaseDb):
                     )
                 ).fetchone()
 
-                if config_row is None:
+                if config_row is None or config_row.stage == DELETED_CONFIG_STAGE:
                     return False
 
-                # Check if it's current version
-                current = sess.execute(
-                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
-                ).fetchone()
+                if config_row.stage == "published":
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
 
-                if current and current.current_version == version:
+                if component_row is not None and component_row.current_version == version:
                     raise ValueError(f"Cannot delete current config {component_id} v{version}")
 
-                # Delete associated links
+                # A component keeps at least one visible version
+                visible = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible or 0) <= 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                # Another ACTIVE component may pin this exact version. A parent
+                # that is archived, or whose own version is tombstoned, has no
+                # claim left: it cannot dispatch, so holding a draft hostage
+                # would leave the only release destroying the parent's history.
+                # The release must be PROVEN, never assumed from an absent row -
+                # a link whose parent config row is missing keeps its pin, since
+                # nothing there says the parent is gone.
+                pinned_stmt = None
+                if links_table is not None:
+                    archived_parent = (
+                        select(components_table.c.component_id)
+                        .where(
+                            components_table.c.component_id == links_table.c.parent_component_id,
+                            components_table.c.deleted_at.is_not(None),
+                        )
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    tombstoned_parent_version = (
+                        select(configs_table.c.version)
+                        .where(
+                            configs_table.c.component_id == links_table.c.parent_component_id,
+                            configs_table.c.version == links_table.c.parent_version,
+                            configs_table.c.stage == DELETED_CONFIG_STAGE,
+                        )
+                        .correlate(links_table)
+                        .exists()
+                    )
+                    pinned_stmt = select(links_table.c.parent_component_id).where(
+                        links_table.c.child_component_id == component_id,
+                        links_table.c.child_version == version,
+                        ~archived_parent,
+                        ~tombstoned_parent_version,
+                    )
+                    pinned_by = sess.execute(pinned_stmt).fetchall()
+                    if pinned_by:
+                        parents = sorted({r.parent_component_id for r in pinned_by if r.parent_component_id})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                # Tombstone: keep the row so the version number is never reused
+                # and free its label. The draft predicate rides the UPDATE -
+                # every read above is check-then-write, and a publish of this
+                # very version committing in the gap would otherwise leave the
+                # live pointer naming a deleted config.
+                result = sess.execute(
+                    configs_table.update()
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                        configs_table.c.stage == "draft",
+                    )
+                    .values(stage=DELETED_CONFIG_STAGE, label=None, updated_at=int(time.time()))
+                )
+                if result.rowcount == 0:
+                    stage_now = sess.execute(
+                        select(configs_table.c.stage).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.version == version,
+                        )
+                    ).scalar()
+                    if stage_now is None or stage_now == DELETED_CONFIG_STAGE:
+                        return False
+                    raise ComponentDraftRequiredError(
+                        f"Cannot delete published config {component_id} v{version}; only drafts are deletable"
+                    )
+
+                # The other three guards ride the same transaction: the write
+                # above holds the write lock, so these re-reads see every
+                # committed writer and nothing can move underneath them. A
+                # violation rolls the tombstone back.
+                current_after = sess.execute(
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                ).scalar()
+                if current_after == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                visible_after = sess.execute(
+                    select(func.count())
+                    .select_from(configs_table)
+                    .where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.stage != DELETED_CONFIG_STAGE,
+                    )
+                ).scalar()
+                if (visible_after or 0) < 1:
+                    raise ComponentLastConfigError(f"Cannot delete the last visible config of {component_id}")
+
+                if pinned_stmt is not None:
+                    pinned_after = sess.execute(pinned_stmt).fetchall()
+                    if pinned_after:
+                        parents = sorted({r.parent_component_id for r in pinned_after if r.parent_component_id})
+                        raise ComponentDependencyError(
+                            f"Cannot delete {component_id} v{version}: pinned by {', '.join(parents)}"
+                        )
+
+                # Drop the version's outgoing links last: nothing below can
+                # refuse the delete now.
                 if links_table is not None:
                     sess.execute(
                         links_table.delete().where(
@@ -4206,14 +7073,6 @@ class SqliteDb(BaseDb):
                             links_table.c.parent_version == version,
                         )
                     )
-
-                # Delete the config
-                sess.execute(
-                    configs_table.delete().where(
-                        configs_table.c.component_id == component_id,
-                        configs_table.c.version == version,
-                    )
-                )
 
             return True
 
@@ -4225,6 +7084,7 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         include_config: bool = False,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
@@ -4269,7 +7129,10 @@ class SqliteDb(BaseDb):
                         configs_table.c.updated_at,
                     )
 
-                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+                stmt = stmt.where(configs_table.c.component_id == component_id)
+                if not include_deleted:
+                    stmt = stmt.where(configs_table.c.stage != DELETED_CONFIG_STAGE)
+                stmt = stmt.order_by(configs_table.c.version.desc())
 
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]
@@ -4282,6 +7145,8 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -4292,30 +7157,40 @@ class SqliteDb(BaseDb):
         Args:
             component_id: The component ID.
             version: The version to set as current (must be published).
+            user_id: When set, the pointer moves only if this user owns the
+                component; the predicate rides the UPDATE itself. A foreign
+                or shared row answers False, the same as a missing component.
 
         Returns:
             True if successful, False if component or version not found.
 
         Raises:
             ValueError: If attempting to set a draft config as current.
+            ComponentDependencyError: If the version pins an archived child.
         """
         try:
             configs_table = self._get_table(table_type="component_configs")
             components_table = self._get_table(table_type="components")
+            links_table = self._get_table(table_type="component_links")
 
             if configs_table is None or components_table is None:
                 return False
 
             with self.Session() as sess, sess.begin():
                 # Verify component exists and is not deleted
-                component_exists = sess.execute(
-                    select(components_table.c.component_id).where(
+                component_row = sess.execute(
+                    select(components_table.c.component_id, components_table.c.user_id).where(
                         components_table.c.component_id == component_id,
                         components_table.c.deleted_at.is_(None),
                     )
                 ).fetchone()
 
-                if component_exists is None:
+                if component_row is None:
+                    return False
+
+                # Writes are owner-scoped always: a foreign or shared row
+                # answers the same False a missing component answers.
+                if user_id is not None and component_row.user_id != user_id:
                     return False
 
                 # Verify version exists and get stage
@@ -4336,12 +7211,91 @@ class SqliteDb(BaseDb):
                         "Only published configs can be current."
                     )
 
-                # Update pointer
-                sess.execute(
+                if expected_current_version is not None:
+                    pointer = sess.execute(
+                        select(components_table.c.current_version).where(
+                            components_table.c.component_id == component_id
+                        )
+                    ).scalar()
+                    if not current_version_matches(pointer, expected_current_version):
+                        raise ComponentVersionConflictError(
+                            f"Component {component_id} current version is {pointer}, "
+                            f"expected {expected_current_version}"
+                        )
+
+                # Update pointer. The guards ride the UPDATE itself: the
+                # pre-reads give the friendly messages, these predicates give
+                # correctness under concurrent writers. deleted_at is
+                # re-asserted here because the liveness pre-read above is
+                # check-then-write: a concurrent archive committing in the gap
+                # must make this a no-op, never a pointer move onto an
+                # archived (immutable) row. The owner scope rides the same way,
+                # so a delete-and-recreate under a new owner in that gap is a
+                # no-op too, never a pointer move on someone else's row.
+                pointer_update = (
                     components_table.update()
-                    .where(components_table.c.component_id == component_id)
+                    .where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
                     .values(current_version=version, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    pointer_update = pointer_update.where(components_table.c.user_id == user_id)
+                if expected_current_version is not None:
+                    pointer_update = pointer_update.where(
+                        current_version_guard_clause(components_table.c.current_version, expected_current_version)
+                    )
+                result = sess.execute(pointer_update)
+                if result.rowcount == 0:
+                    # Zero rows: the row was archived or changed owner
+                    # underneath us, or the CAS guard lost. Re-read to answer
+                    # which (holding the write transaction, so the answer
+                    # cannot move again), under the same scope the UPDATE used.
+                    still_live_stmt = select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                    if user_id is not None:
+                        still_live_stmt = still_live_stmt.where(components_table.c.user_id == user_id)
+                    still_live = sess.execute(still_live_stmt).fetchone()
+                    if still_live is None:
+                        # Concurrent archive won: same verdict as the pre-check.
+                        return False
+                    raise ComponentVersionConflictError(
+                        f"Component {component_id} current version changed; expected {expected_current_version}"
+                    )
+
+                # The live version must not pin an archived child: the component
+                # would resolve and dispatch with that member missing. Stage
+                # alone does not say this - a config keeps its published stage
+                # after its component is archived. Checked after the pointer
+                # write so the guard rides the transaction holding the write
+                # lock; a violation rolls the pointer move back. Children with
+                # no catalog row are code-defined and pass.
+                if links_table is not None:
+                    pinned = sess.execute(
+                        select(links_table.c.child_component_id).where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                            links_table.c.link_kind.in_(PIN_LINK_KINDS),
+                        )
+                    ).fetchall()
+                    child_ids = {row.child_component_id for row in pinned if row.child_component_id}
+                    if child_ids:
+                        child_rows = sess.execute(
+                            select(components_table.c.component_id, components_table.c.deleted_at)
+                            .where(components_table.c.component_id.in_(child_ids))
+                            .with_for_update()
+                        ).fetchall()
+                        archived_children = sorted(
+                            str(row.component_id) for row in child_rows if row.deleted_at is not None
+                        )
+                        if archived_children:
+                            raise ComponentDependencyError(
+                                f"Cannot make {component_id} v{version} current: pinned child(ren) "
+                                f"{', '.join(archived_children)} are archived. Restore them first."
+                            )
 
             log_debug(f"Set {component_id} current version to {version}")
             return True
@@ -4395,12 +7349,20 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
         Args:
             component_id: The component ID to find dependents of.
             version: Optional specific version. If None, finds links to any version.
+            active_parents_only: Only count links whose parent component is not
+                archived and whose parent version is not tombstoned.
+            parent_user_id: When set, count only parents this user owns, plus
+                unowned (shared) ones. Used where the answer decides an
+                owner-scoped write: a parent the caller can neither see nor
+                edit must not veto that caller's own delete.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -4409,18 +7371,179 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="component_links")
             if table is None:
                 return []
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
 
             with self.Session() as sess:
-                stmt = select(table).where(table.c.child_component_id == component_id)
-                if version is not None:
-                    stmt = stmt.where(table.c.child_version == version)
-
-                results = sess.execute(stmt).fetchall()
-                return [dict(row._mapping) for row in results]
+                return self._dependents_in_session(
+                    sess,
+                    table,
+                    components_table,
+                    configs_table,
+                    component_id,
+                    version=version,
+                    active_parents_only=active_parents_only,
+                    parent_user_id=parent_user_id,
+                )
 
         except Exception as e:
             log_error(f"Error getting dependents: {str(e)}")
             raise
+
+    def _dependents_in_session(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+        parent_user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """The dependents read, run on a session the caller already holds.
+
+        The tables are passed in because the caller may hold an open
+        transaction on this scoped session; _get_table would try to begin a
+        second one.
+        """
+        if links_table is None:
+            return []
+        stmt = select(links_table).where(links_table.c.child_component_id == component_id)
+        if version is not None:
+            stmt = stmt.where(links_table.c.child_version == version)
+        if active_parents_only and components_table is not None and configs_table is not None:
+            stmt = (
+                stmt.join(
+                    components_table,
+                    components_table.c.component_id == links_table.c.parent_component_id,
+                )
+                .join(
+                    configs_table,
+                    and_(
+                        configs_table.c.component_id == links_table.c.parent_component_id,
+                        configs_table.c.version == links_table.c.parent_version,
+                    ),
+                )
+                .where(
+                    components_table.c.deleted_at.is_(None),
+                    configs_table.c.stage != DELETED_CONFIG_STAGE,
+                )
+            )
+            if parent_user_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        components_table.c.user_id == parent_user_id,
+                        components_table.c.user_id.is_(None),
+                    )
+                )
+        elif parent_user_id is not None and components_table is not None:
+            # The scope needs the parent row even when liveness does not.
+            stmt = stmt.join(
+                components_table,
+                components_table.c.component_id == links_table.c.parent_component_id,
+            ).where(
+                or_(
+                    components_table.c.user_id == parent_user_id,
+                    components_table.c.user_id.is_(None),
+                )
+            )
+
+        results = sess.execute(stmt).fetchall()
+        # The join widens the row; keep only the link columns.
+        return [{k: v for k, v in row._mapping.items() if k in links_table.c.keys()} for row in results]
+
+    def _refuse_if_dependents(
+        self,
+        sess,
+        links_table,
+        components_table,
+        configs_table,
+        component_id: str,
+        active_parents_only: bool,
+        parent_user_id: Optional[str] = None,
+    ) -> None:
+        """Raise ComponentDependencyError when another component pins this one."""
+        dependents = self._dependents_in_session(
+            sess,
+            links_table,
+            components_table,
+            configs_table,
+            component_id,
+            active_parents_only=active_parents_only,
+            parent_user_id=parent_user_id,
+        )
+        if dependents:
+            parents = sorted({str(d["parent_component_id"]) for d in dependents if d.get("parent_component_id")})
+            raise ComponentDependencyError(
+                f"Cannot delete {component_id}: referenced by {', '.join(str(x) for x in parents)}"
+            )
+
+    def _validate_links_in_session(
+        self,
+        sess,
+        parent_component_id: str,
+        links: List[Dict[str, Any]],
+        components_table,
+        links_table,
+    ) -> None:
+        """Backstop validation for links being written under one parent.
+
+        Checks that every child exists and is not archived, and that the new
+        edges do not close a cycle through the existing active links. Stage
+        rules (published parents pin published children) and link-kind typing
+        stay at the control plane; unknown link kinds (for example a future
+        "prompt" kind) pass through untouched.
+
+        The tables are passed in because the caller holds an open transaction
+        on this scoped session; _get_table would try to begin a second one.
+        """
+        if components_table is None:
+            return
+
+        child_ids = {link["child_component_id"] for link in links if link.get("child_component_id")}
+        # Self-links are the smallest cycle.
+        if parent_component_id in child_ids:
+            raise ComponentCycleError(f"Component {parent_component_id} cannot reference itself")
+
+        if child_ids:
+            rows = sess.execute(
+                select(components_table.c.component_id, components_table.c.deleted_at).where(
+                    components_table.c.component_id.in_(child_ids)
+                )
+            ).fetchall()
+            found = {r.component_id: r.deleted_at for r in rows}
+            for child_id in sorted(child_ids):
+                if child_id not in found:
+                    # A code-defined child has no row; the control plane decides
+                    # whether that is allowed, so absence is not an error here.
+                    continue
+                if found[child_id] is not None:
+                    raise ComponentArchivedError(f"Cannot link {parent_component_id} to archived component {child_id}")
+
+        # Cycle check: DFS from the new children through the existing links.
+        # Only the new edges can introduce a cycle, so the walk starts there
+        # instead of loading the whole table.
+        if links_table is None or not child_ids:
+            return
+        visited: set = set()
+        frontier = list(child_ids)
+        while frontier:
+            current = frontier.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            rows = sess.execute(
+                select(links_table.c.child_component_id).where(links_table.c.parent_component_id == current)
+            ).fetchall()
+            for row in rows:
+                nxt = row.child_component_id
+                if nxt == parent_component_id:
+                    raise ComponentCycleError(
+                        f"Linking {parent_component_id} -> {current} would close a reference cycle"
+                    )
+                if nxt not in visited:
+                    frontier.append(nxt)
 
     def resolve_version(
         self,
@@ -4459,8 +7582,13 @@ class SqliteDb(BaseDb):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        _visited: Optional[Set[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
+
+        Tracks the ACTIVE recursion path, not every node seen, so a shared
+        child in a valid DAG loads normally while a true cycle returns a stub
+        with cycle_detected=True instead of recursing forever.
 
         Args:
             component_id: The component ID.
@@ -4471,6 +7599,18 @@ class SqliteDb(BaseDb):
             Dictionary with component, config, links, and resolved children.
         """
         try:
+            if _visited is None:
+                _visited = set()
+            if component_id in _visited:
+                return {
+                    "component": {"component_id": component_id},
+                    "config": None,
+                    "children": [],
+                    "resolved_versions": {},
+                    "cycle_detected": True,
+                }
+            _visited = _visited | {component_id}
+
             # Get component
             component = self.get_component(component_id)
             if component is None:
@@ -4503,6 +7643,7 @@ class SqliteDb(BaseDb):
                 child_graph = self.load_component_graph(
                     link["child_component_id"],
                     version=child_version,
+                    _visited=_visited,
                 )
 
                 if child_graph:
@@ -4926,6 +8067,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="learnings")
             if table is None:
@@ -4974,25 +8116,37 @@ class SqliteDb(BaseDb):
             raise e
 
     # -- Schedule methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller has to fire
+    # schedules across all users.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule by name: {e}")
@@ -5003,16 +8157,24 @@ class SqliteDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
+                # _get_table also returns None on connection errors (is_table_available
+                # swallows them), so strict callers must not see this as an empty catalog
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
             with self.Session() as sess:
                 # Build base query with filters
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -5021,12 +8183,15 @@ class SqliteDb(BaseDb):
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
-                # Get paginated results
-                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Get paginated results (id is a unique tiebreaker so offset pages do not overlap
+                # or skip rows when many schedules share a created_at second)
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -5041,20 +8206,39 @@ class SqliteDb(BaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
-            kwargs["updated_at"] = int(time.time())
+            if kwargs.get("enabled") is True:
+                # A system-set disabled_reason describes why the row was off;
+                # turning it on retires the explanation.
+                kwargs.setdefault("disabled_reason", None)
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
-                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return self.get_schedule(schedule_id)
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt.values(**kwargs))
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
@@ -5062,12 +8246,131 @@ class SqliteDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                    # Mirror the owner guard on the cascade so another user's runs are kept
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Matches provenance-tagged rows (target_type/target_id) AND generic rows
+        whose endpoint is that component's run endpoint - a schedule that can
+        only 404 against an archived target is not a schedule. A system reason
+        lands in disabled_reason so the owner's next read explains the flip;
+        enable clears it. Crosses owners deliberately: archiving the target is
+        a system action.
+
+        delete_component runs this same cascade inside the transaction that
+        removes the target, so archiving through the catalog needs no second
+        call; this stays public for targets that have no catalog row.
+        """
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                return self._disable_schedules_for_target_in_session(sess, table, target_type, target_id, reason)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    def _disable_schedules_for_target_in_session(
+        self,
+        sess,
+        table,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """The cascade write, run on a session the caller already holds.
+
+        The table is passed in because the caller may hold an open transaction
+        on this scoped session; _get_table would try to begin a second one.
+        """
+        from sqlalchemy import literal
+
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        endpoint = build_run_endpoint(target_type, target_id)
+        # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+        # "/agents/x/runs/" is a valid run endpoint that plain equality would
+        # miss - matching both spellings keeps the cascade from leaking rows.
+        #
+        # The match stays TYPED. Keying on the id alone would look tempting
+        # (the id is unique inside the catalog) but a schedule's target need
+        # not be in the catalog at all: a code-defined component of another
+        # type can hold the same id, and disabling its schedules from an
+        # unrelated tenant's archive is not a cascade, it is collateral. The
+        # type is kept honest at the other end instead - upsert_component
+        # refuses to rewrite it.
+        endpoints = [endpoint, endpoint + "/"]
+        result = sess.execute(
+            table.update()
+            .where(
+                or_(
+                    and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                    table.c.endpoint.in_(endpoints),
+                ),
+                table.c.enabled.is_(True),
+            )
+            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+            .values(
+                enabled=False,
+                disabled_reason=reason,
+                updated_at=case(
+                    (table.c.managed_by == "company", table.c.updated_at),
+                    else_=literal(int(time.time()), table.c.updated_at.type),
+                ),
+            )
+        )
+        return int(result.rowcount or 0)
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses.
+
+        The trusted path for control planes: managed_by, target_type,
+        target_id, created_by_*/updated_by_*. Never touches ownership or the
+        mutable surface.
+        """
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.update().where(table.c.id == schedule_id).values(updated_at=int(time.time()), **provenance)
+                )
+            return result.rowcount > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
@@ -5095,11 +8398,17 @@ class SqliteDb(BaseDb):
                 if row is None:
                     return None
                 schedule = dict(row._mapping)
-                # Atomically claim it
+                # Claim it with EVERY predicate the select used, not just the
+                # lock half: the select runs outside the write transaction, so
+                # a disable (the archive cascade among them) or a reschedule
+                # committing in the gap must make the claim a no-op rather than
+                # arm a run against a target that is gone.
                 result = sess.execute(
                     table.update()
                     .where(
                         table.c.id == schedule["id"],
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
                         or_(
                             table.c.locked_by.is_(None),
                             table.c.locked_at <= stale_lock_threshold,
@@ -5109,27 +8418,63 @@ class SqliteDb(BaseDb):
                 )
                 if result.rowcount == 0:
                     return None
-                schedule["locked_by"] = worker_id
-                schedule["locked_at"] = now
-                return schedule
+                # Return post-claim state: the executor acts on this dict, and
+                # the pre-claim snapshot can already be stale.
+                claimed = sess.execute(select(table).where(table.c.id == schedule["id"])).fetchone()
+                if claimed is None:
+                    return None
+                return dict(claimed._mapping)
         except Exception as e:
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
+            # A cron may be cleared while this claim is running. Never re-arm
+            # an on-demand schedule using the executor's older schedule snapshot.
+            updates["next_run_at"] = case(
+                (table.c.cron_expr == "", None),
+                else_=next_run_at if next_run_at is not None else table.c.next_run_at,
+            )
+            statement = table.update().where(table.c.id == schedule_id)
+            if worker_id is not None:
+                statement = statement.where(table.c.locked_by == worker_id)
+            if locked_at is not None:
+                statement = statement.where(table.c.locked_at == locked_at)
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                result = sess.execute(statement.values(**updates))
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        table = self._get_table(table_type="schedule_runs")
+        if table is None:
+            return 0
+        statement = (
+            table.delete()
+            .where(table.c.schedule_id == schedule_id, table.c.completed_at < before)
+            .returning(table.c.id)
+        )
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(statement)
+            return len(result.scalars().all())
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -5155,23 +8500,52 @@ class SqliteDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
             return None
+
+    def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch one most recent run per schedule, without per-schedule queries."""
+        if not schedule_ids:
+            return {}
+        table = self._get_table(table_type="schedule_runs")
+        if table is None:
+            return {}
+        ranked = (
+            select(
+                table,
+                func.row_number()
+                .over(
+                    partition_by=table.c.schedule_id,
+                    order_by=(table.c.triggered_at.desc(), table.c.created_at.desc(), table.c.id.desc()),
+                )
+                .label("position"),
+            )
+            .where(table.c.schedule_id.in_(schedule_ids))
+            .subquery()
+        )
+        stmt = select(*(ranked.c[column.name] for column in table.columns)).where(ranked.c.position == 1)
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return {row._mapping["schedule_id"]: dict(row._mapping) for row in result.fetchall()}
 
     def get_schedule_runs(
         self,
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
@@ -5179,20 +8553,17 @@ class SqliteDb(BaseDb):
                 return [], 0
             with self.Session() as sess:
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
@@ -5290,8 +8661,11 @@ class SqliteDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total
         except Exception as e:
-            log_debug(f"Error listing approvals: {e}")
-            return [], 0
+            # Raise rather than return an empty page: the continue-run approval gate reads
+            # "no pending approval" as permission to continue, so a failed read must not
+            # look like one.
+            log_error(f"Error listing approvals: {e}")
+            raise e
 
     def update_approval(
         self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
@@ -5366,19 +8740,19 @@ class SqliteDb(BaseDb):
             return 0
 
     # --- Built-in MCP OAuth server store ---
-    # Thin delegations to agno.db.mcp_oauth_store (shared with PostgresDb); each fetches the
+    # Thin delegations to agno.db.sql.mcp_oauth (shared with PostgresDb); each fetches the
     # table via the normal schema-aware _get_table path, so the store is created on first
     # use like every other agno table.
 
     def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+        return mcp_oauth_sql.get_client(self.db_engine, table, client_id)
 
     def create_mcp_oauth_client(
         self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
     ) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        return mcp_oauth_store.create_client(
+        return mcp_oauth_sql.create_client(
             self.db_engine,
             table,
             client_id=client_id,
@@ -5390,13 +8764,13 @@ class SqliteDb(BaseDb):
 
     def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
-        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+        mcp_oauth_sql.mark_client_consumed(self.db_engine, table, client_id, now)
 
     def store_mcp_oauth_transaction(
         self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        mcp_oauth_store.store_transaction(
+        mcp_oauth_sql.store_transaction(
             self.db_engine,
             table,
             txn_id=txn_id,
@@ -5409,31 +8783,31 @@ class SqliteDb(BaseDb):
 
     def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+        return mcp_oauth_sql.get_transaction(self.db_engine, table, txn_id)
 
     def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
-        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+        return mcp_oauth_sql.consume_transaction(self.db_engine, table, txn_id, now)
 
     def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        mcp_oauth_store.store_code(
+        mcp_oauth_sql.store_code(
             self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
         )
 
     def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.get_code(self.db_engine, table, code_hash)
 
     def delete_mcp_oauth_code(self, code_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+        return mcp_oauth_sql.delete_code(self.db_engine, table, code_hash)
 
     def store_mcp_oauth_refresh(
         self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
     ) -> None:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        mcp_oauth_store.store_refresh(
+        mcp_oauth_sql.store_refresh(
             self.db_engine,
             table,
             token_hash=token_hash,
@@ -5446,23 +8820,23 @@ class SqliteDb(BaseDb):
 
     def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.get_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+        return mcp_oauth_sql.delete_refresh(self.db_engine, table, token_hash)
 
     def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
         table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
-        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+        return mcp_oauth_sql.delete_refresh_family(self.db_engine, table, family_id)
 
     def get_mcp_oauth_keys(self) -> List[tuple]:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.get_keys(self.db_engine, table)
+        return mcp_oauth_sql.get_keys(self.db_engine, table)
 
     def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
         table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
-        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+        return mcp_oauth_sql.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
 
     # --- Auth Tokens ---
 
@@ -5549,13 +8923,16 @@ class SqliteDb(BaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting service account: {e}")
@@ -5606,6 +8983,7 @@ class SqliteDb(BaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="service_accounts")
@@ -5616,6 +8994,8 @@ class SqliteDb(BaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -5664,3 +9044,1139 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
             return False
+
+    # --- Authorization ---
+    # Thin delegations to agno.db.sql.authz (shared with the other SQLAlchemy backend);
+    # each fetches its table via the normal schema-aware _get_table path, so authorization
+    # tables are created on first use like every other agno table -- honouring this
+    # backend's configured schema and any table-name override.
+
+    def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_policies(self.db_engine, table, roles)
+
+    def get_authz_policies_for_resources(self, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_policies_for_resources(self.db_engine, table, resources)
+
+    def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.get_role_policies(self.db_engine, table, role)
+
+    def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.set_role_policies(self.db_engine, table, role, rows)
+
+    def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.upsert_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
+
+    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        authz_sql.delete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+
+    def get_authz_direct_roles(self, subject: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_direct_roles(self.db_engine, table, subject)
+
+    def get_authz_direct_roles_many(self, subjects: List[str]) -> Dict[str, List[str]]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_direct_roles_many(self.db_engine, table, subjects)
+
+    def list_authz_role_subjects(self, role: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.get_role_subjects(self.db_engine, table, role)
+
+    def authz_name_is_role(self, name: str) -> bool:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.name_is_role(self.db_engine, policy, grouping, name)
+
+    def assign_authz_role(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.assign_role(self.db_engine, table, subject, role)
+
+    def unassign_authz_role(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.unassign_role(self.db_engine, table, subject, role)
+
+    def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        authz_sql.replace_subject_roles(self.db_engine, table, subject, role)
+
+    def list_authz_roles(self) -> List[str]:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        return authz_sql.list_roles(self.db_engine, policy, grouping)
+
+    def delete_authz_role(self, role: str) -> None:
+        policy = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        grouping = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
+        meta = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.delete_role(self.db_engine, policy, grouping, meta, role)
+
+    def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return authz_sql.get_role_meta(self.db_engine, table, slug)
+
+    def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        return authz_sql.list_role_meta(self.db_engine, table)
+
+    def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.upsert_role_meta(self.db_engine, table, slug, values)
+
+    def delete_authz_role_meta(self, slug: str) -> None:
+        table = self._get_table(table_type=AUTHZ_ROLES, create_table_if_not_found=True)
+        authz_sql.delete_role_meta(self.db_engine, table, slug)
+
+    def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.get_user(self.db_engine, table, user_id)
+
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
+
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users(self.db_engine, table, include_disabled, search)
+
+    def count_authz_users_by_status(self) -> Dict[str, int]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users_by_status(self.db_engine, table)
+
+    def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.list_user_ids(self.db_engine, table, include_disabled)
+
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> List[Dict[str, int]]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.count_users_by_day(self.db_engine, table, starting_at, ending_before)
+
+    def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.upsert_user(self.db_engine, table, user_id, values)
+
+    def set_authz_user_disabled(self, user_id: str, disabled: bool) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.set_user_disabled(self.db_engine, table, user_id, disabled)
+
+    def delete_authz_user(self, user_id: str) -> None:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        authz_sql.delete_user(self.db_engine, table, user_id)
+
+    def is_authz_user_disabled(self, user_id: str) -> bool:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.is_user_disabled(self.db_engine, table, user_id)
+
+    def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_AUDIT, create_table_if_not_found=True)
+        authz_sql.record_event(self.db_engine, table, values)
+
+    def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        table = self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        authz_sql.record_event(self.db_engine, table, values)
+
+    def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return authz_sql.read_events(
+            self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
+        )
+
+    def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
+        columns = ["actor", "action", "target"]
+        table = self._get_table(table_type=table_type, create_table_if_not_found=True)
+        return authz_sql.count_events(self.db_engine, table, search, search_columns=columns)
+
+    # --- External agent transcripts ---
+
+    def append_transcript_entries(
+        self,
+        framework: str,
+        project_key: str,
+        session_id: str,
+        entries: List[Dict[str, Any]],
+        agno_session_id: str,
+        subpath: Optional[str] = None,
+    ) -> None:
+        if not entries:
+            return
+        from sqlalchemy.dialects.sqlite import insert as transcript_insert
+
+        from agno.db.transcripts import transcript_rows
+
+        table = self._get_table("transcripts", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Could not create transcript table")
+        stmt = transcript_insert(table).on_conflict_do_nothing(
+            index_elements=["framework", "project_key", "session_id", "subpath", "entry_uuid"]
+        )
+        with self.Session() as sess, sess.begin():
+            sess.execute(text("BEGIN IMMEDIATE"))
+            previous = sess.execute(
+                select(func.max(table.c.position)).where(
+                    table.c.framework == framework,
+                    table.c.project_key == project_key,
+                    table.c.session_id == session_id,
+                    table.c.subpath == (subpath or ""),
+                )
+            )
+            rows = transcript_rows(
+                framework, project_key, session_id, subpath, agno_session_id, entries, previous.scalar() or 0
+            )
+            sess.execute(stmt, rows)
+
+    def get_transcript_entries(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        import json
+
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.entry)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath == (subpath or ""),
+            )
+            .order_by(table.c.position)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [json.loads(row[0]) for row in result.fetchall()]
+
+    def list_transcript_sessions(self, framework: str, project_key: str) -> List[Dict[str, Any]]:
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.session_id, func.max(table.c.created_at).label("mtime"))
+            .where(table.c.framework == framework, table.c.project_key == project_key, table.c.subpath == "")
+            .group_by(table.c.session_id)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    def list_transcript_subpaths(self, framework: str, project_key: str, session_id: str) -> List[str]:
+        table = self._get_table("transcripts")
+        if table is None:
+            return []
+        stmt = (
+            select(table.c.subpath)
+            .where(
+                table.c.framework == framework,
+                table.c.project_key == project_key,
+                table.c.session_id == session_id,
+                table.c.subpath != "",
+            )
+            .distinct()
+            .order_by(table.c.subpath)
+        )
+        with self.Session() as sess:
+            result = sess.execute(stmt)
+            return [row[0] for row in result.fetchall()]
+
+    def delete_transcript(
+        self, framework: str, project_key: str, session_id: str, subpath: Optional[str] = None
+    ) -> None:
+        table = self._get_table("transcripts")
+        if table is None:
+            return
+        stmt = table.delete().where(
+            table.c.framework == framework, table.c.project_key == project_key, table.c.session_id == session_id
+        )
+        if subpath is not None:
+            stmt = stmt.where(table.c.subpath == subpath)
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    # --- Sources ---
+
+    def create_source(self, source_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import create_company_source
+
+        table = self._get_table(table_type="sources", create_table_if_not_found=True)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None or products is None:
+            raise RuntimeError("Failed to get or create Company tables")
+        with self.Session() as sess, sess.begin():
+            return create_company_source(sess, products, table, source_data, reuse)
+
+    def get_source(
+        self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == source_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_sources(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return [], 0
+        from agno.db.sql.company import active_parents
+
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            stmt = stmt.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_source(self, source_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.sources import validate_source_fields
+
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess, sess.begin():
+            condition = stmt.whereclause
+            assert condition is not None
+            existing = (sess.execute(select(table).where(condition).with_for_update())).mappings().first()
+            if existing is None:
+                return None
+            candidate = {**{key: existing[key] for key in ("type", "reference", "credential_ref", "config")}, **fields}
+            if "config" not in fields and isinstance(candidate.get("config"), dict):
+                candidate["config"] = {key: value for key, value in candidate["config"].items() if key != "metadata"}
+            # Unchanged legacy references need not satisfy a newly introduced URL rule.
+            if "reference" not in fields and candidate["type"] == existing["type"]:
+                candidate.pop("reference", None)
+            validate_source_fields(candidate)
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        now = int(time.time())
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
+            return result is not None
+
+    def restore_source(self, source_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="sources")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == source_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(stmt.values(deleted_at=None, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    # --- Company details ---
+
+    def get_company(self) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="company")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.id == "company")).first()
+            return dict(row._mapping) if row is not None else None
+
+    def initialize_company(self, name: str = "Company", description: Optional[str] = None) -> Dict[str, Any]:
+        from agno.db.sql.company import initialize_company_details
+
+        table = self._get_table(table_type="company", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Company details table is unavailable after provisioning")
+        with self.Session() as sess, sess.begin():
+            return initialize_company_details(sess, table, name, description)
+
+    def update_company(self, expected_updated_at: int, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import update_company_details
+
+        table = self._get_table(table_type="company")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            return update_company_details(sess, table, expected_updated_at, fields)
+
+    # --- Products ---
+
+    def create_product(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.schemas.products import product_metadata
+
+        product_data = {**product_data, "metadata": product_metadata(product_data.get("metadata"))}
+        table = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create products table")
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.insert().values(**product_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_product(
+        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == product_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_products(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="products")
+        if table is None:
+            return [], 0
+        stmt = select(table)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_product(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.products import product_metadata, validate_product_fields
+        from agno.db.sql.company import update_product_row
+
+        validate_product_fields(fields)
+        if "metadata" in fields:
+            fields["metadata"] = product_metadata(fields["metadata"])
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            return update_product_row(sess, table, product_id, user_id, fields)
+
+    def get_product_counts(self, product_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import product_counts
+
+        if not product_ids:
+            return {}
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess:
+            return product_counts(sess, products, projects, tasks, product_ids)
+
+    def delete_product(self, product_id: str, user_id: Optional[str] = None) -> bool:
+        from agno.db.sql.company import archive_product
+
+        table = self._get_table(table_type="products")
+        if table is None:
+            return False
+        products = table
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return archive_product(sess, products, projects, tasks, product_id, user_id)
+
+    def restore_product(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_product
+
+        table = self._get_table(table_type="products")
+        if table is None:
+            return None
+        products = table
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return restore_product(sess, products, projects, tasks, product_id, user_id)
+
+    # --- Projects ---
+
+    def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
+        from agno.db.sql.company import lock_product
+
+        table = self._get_table(table_type="projects", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create projects table")
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_product(sess, products, project_data["product_id"])
+            if reuse:
+                existing = sess.execute(select(table).where(table.c.id == project_data["id"])).first()
+                if existing is not None:
+                    if existing._mapping["product_id"] != project_data["product_id"]:
+                        raise ValueError("Project identity belongs to another Product")
+                    return dict(existing._mapping)
+            result = sess.execute(table.insert().values(**project_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return [], 0
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.projects import validate_project_fields
+        from agno.db.sql.company import lock_child
+
+        validate_project_fields(fields)
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, project_id)
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_project_counts(self, project_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        from agno.db.sql.company import project_counts
+
+        if not project_ids:
+            return {}
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess:
+            return project_counts(sess, products, projects, tasks, project_ids)
+
+    def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        from agno.db.sql.company import archive_project
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return archive_project(sess, products, projects, tasks, project_id, user_id, updated_before)
+
+    def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import restore_project
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = table
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return restore_project(sess, products, projects, tasks, project_id, user_id)
+
+    def transition_project(
+        self,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.projects import project_transition_fields
+        from agno.db.schemas.tasks import _acceptance_count
+        from agno.db.sql.company import lock_child, open_project_tasks
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return None
+        tasks_table = self._get_table(table_type="tasks") if target == "done" else None
+        tasks = self._get_table(table_type="tasks") if auto_accept else None
+        stmt = select(table).where(table.c.id == project_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, project_id)
+            if auto_accept is not None:
+                if (
+                    target not in {"active", "done"}
+                    or expected_updated_at is _UNSET_UPDATED_AT
+                    or products is None
+                    or tasks is None
+                ):
+                    raise ValueError("An automatic Project decision requires expected_updated_at and a Product")
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    task_histories = (
+                        (
+                            sess.execute(
+                                select(tasks.c.transitions).where(tasks.c.routine_id == auto_accept["routine_id"])
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    project_histories = (
+                        (sess.execute(select(table.c.transitions).where(table.c.id != project_id))).scalars().all()
+                    )
+                    if (
+                        _acceptance_count(
+                            list(task_histories) + list(project_histories),
+                            auto_accept["routine_id"],
+                            auto_accept["policy"],
+                        )
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
+            row = sess.execute(stmt).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            open_tasks = []
+            if tasks_table is not None:
+                open_query = open_project_tasks(tasks_table, project_id)
+                open_tasks = [dict(task._mapping) for task in sess.execute(open_query).fetchall()]
+            fields = project_transition_fields(existing, target, reason, accepted_by, tasks=open_tasks)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            update = table.update().where(
+                table.c.id == project_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if tasks_table is not None:
+                update = update.where(~open_query.exists())
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = sess.execute(update.values(**fields).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def add_product_routine(self, product_id: str, schedule_id: str) -> Dict[str, Any]:
+        """Append a schedule id under the existing hierarchy write lock."""
+        from agno.db.sql.company import link_product_routine
+
+        table = self._get_table(table_type="products", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Products table unavailable")
+        with self.Session() as sess, sess.begin():
+            return link_product_routine(sess, table, product_id, schedule_id)
+
+    # --- Tasks ---
+
+    def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agno.db.sql.company import existing_task_proposal, lock_product, require_project
+
+        table = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create tasks table")
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_product(sess, products, task_data["product_id"])
+            require_project(sess, projects, task_data.get("project_id"), task_data["product_id"])
+            proposal = existing_task_proposal(sess, table, task_data)
+            if proposal is not None:
+                return proposal
+            require_project(
+                sess,
+                projects,
+                task_data.get("project_id"),
+                task_data["product_id"],
+                task_data.get("status", "backlog"),
+                reject_proposed=task_data.get("status", "backlog") != "backlog",
+            )
+            if task_data.get("dedupe_key") is not None:
+                from sqlalchemy.dialects.sqlite import insert
+
+                stmt = (
+                    insert(table)
+                    .values(**task_data)
+                    .on_conflict_do_nothing(index_elements=[table.c.product_id, table.c.dedupe_key])
+                    .returning(table)
+                )
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    existing = select(table).where(
+                        table.c.product_id == task_data["product_id"],
+                        table.c.dedupe_key == task_data["dedupe_key"],
+                    )
+                    result = sess.execute(existing).one()
+                return dict(result._mapping)
+            result = sess.execute(table.insert().values(**task_data).returning(table)).one()
+            return dict(result._mapping)
+
+    def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            result = sess.execute(stmt).fetchone()
+            return dict(result._mapping) if result else None
+
+    def get_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        product_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        from agno.db.schemas.products import company_sort
+        from agno.db.sql.company import active_parents
+
+        sort_by, sort_order = company_sort(sort_by, sort_order)
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return [], 0
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        stmt = active_parents(select(table), table, products, projects)
+        if failed is not None:
+            result_status = table.c.result["status"].as_string()
+            stmt = stmt.where(
+                and_(table.c.status == "in_progress", result_status.in_(["ERROR", "CANCELLED"]))
+                if failed
+                else or_(
+                    table.c.status != "in_progress",
+                    result_status.is_(None),
+                    result_status.not_in(["ERROR", "CANCELLED"]),
+                )
+            )
+        if session_id is not None:
+            stmt = stmt.where(table.c.session_id == session_id)
+        if product_id is not None:
+            stmt = stmt.where(table.c.product_id == product_id)
+        if status is not None:
+            stmt = stmt.where(table.c.status == status)
+        if project_id is not None:
+            stmt = stmt.where(table.c.project_id == project_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if not include_deleted:
+            stmt = stmt.where(table.c.deleted_at.is_(None))
+        with self.Session() as sess:
+            total = sess.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+            column = (
+                func.coalesce(table.c.updated_at, table.c.created_at) if sort_by == "updated_at" else table.c.created_at
+            )
+            order = column.asc() if sort_order == "asc" else column.desc()
+            tie = table.c.id.asc() if sort_order == "asc" else table.c.id.desc()
+            stmt = stmt.order_by(order, tie).limit(limit).offset((page - 1) * limit)
+            rows = sess.execute(stmt).fetchall()
+            return [dict(row._mapping) for row in rows], total
+
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.sql.company import lock_child, require_project
+
+        validate_task_fields(fields)
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if set(fields) - {"title", "brief"}:
+            stmt = stmt.where(table.c.status == "backlog")
+        if expected_status is not None:
+            stmt = stmt.where(table.c.status == expected_status)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id)
+            product_id = sess.execute(select(table.c.product_id).where(table.c.id == task_id)).scalar()
+            if product_id is not None and fields.get("project_id") is not None:
+                require_project(sess, projects, fields["project_id"], product_id, "backlog")
+            result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
+        from agno.db.sql.company import lock_child
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return False
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        if updated_before is not None:
+            stmt = stmt.where(
+                table.c.status.in_(["done", "cancelled"]),
+                func.coalesce(table.c.updated_at, table.c.created_at) < updated_before,
+            )
+        now = int(time.time())
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id)
+            result = sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(table.c.id)).fetchone()
+            return result is not None
+
+    def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import lock_child, task_restore_fields
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            lock_child(sess, products, projects, table, task_id, restoring=True)
+            existing = sess.execute(select(table).where(table.c.id == task_id)).mappings().first()
+            if existing is None:
+                return None
+            result = sess.execute(stmt.values(**task_restore_fields(dict(existing))).returning(table)).fetchone()
+            return dict(result._mapping) if result else None
+
+    def start_task_run(
+        self,
+        task_id: str,
+        attempt: int,
+        expected_transitions: List[Dict[str, Any]],
+        user_id: Optional[str] = None,
+        run_db_id: Optional[str] = None,
+        session_user_id: Optional[str] = None,
+        requested_from: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.tasks import task_run_fields
+        from agno.db.sql.company import lock_child
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            try:
+                lock_child(sess, products, projects, table, task_id, reject_cancelled=True)
+            except ValueError:
+                return None
+            row = (sess.execute(select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None)))).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if existing["transitions"] != expected_transitions:
+                return None
+            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.transitions == expected_transitions,
+                    table.c.status == existing["status"],
+                )
+                .values(**fields)
+                .returning(table)
+            )
+            row = (sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    def complete_task_run(
+        self,
+        task_id: str,
+        job_id: str,
+        result: Dict[str, Any],
+        expected_transitions: Optional[List[Dict[str, Any]]] = None,
+        checkout: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from sqlalchemy import JSON, or_
+
+        from agno.db.schemas.tasks import task_transition_fields
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        with self.Session() as sess, sess.begin():
+            row = (
+                sess.execute(
+                    select(table).where(
+                        table.c.id == task_id,
+                        table.c.job_id == job_id,
+                        table.c.deleted_at.is_(None),
+                        table.c.status == "in_progress",
+                        or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    )
+                )
+            ).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if expected_transitions is not None and existing["transitions"] != expected_transitions:
+                return None
+            fields: Dict[str, Any] = (
+                task_transition_fields(existing, "in_review", "Execution completed; human review required")
+                if result.get("status") == "COMPLETED"
+                else {"updated_at": int(time.time())}
+            )
+            if checkout is not None:
+                fields["metadata"] = {**(existing.get("metadata") or {}), "checkout": checkout}
+            stmt = (
+                table.update()
+                .where(
+                    table.c.id == task_id,
+                    table.c.job_id == job_id,
+                    table.c.deleted_at.is_(None),
+                    table.c.status == "in_progress",
+                    or_(table.c.result.is_(None), table.c.result == JSON.NULL),
+                    table.c.transitions == existing["transitions"],
+                )
+                .values(**fields, result=result)
+                .returning(table)
+            )
+            row = (sess.execute(stmt)).fetchone()
+            return dict(row._mapping) if row else None
+
+    def count_company_acceptances(
+        self, routine_id: str, policy: str, exclude_task_id: str, user_id: Optional[str] = None
+    ) -> int:
+        """Count accepted Tasks and completed Projects, including archived records."""
+        from agno.db.schemas.tasks import _acceptance_count
+
+        table = self._get_table(table_type="tasks")
+        projects = self._get_table(table_type="projects")
+        if table is None:
+            return 0
+        stmt = select(table.c.transitions).where(table.c.routine_id == routine_id, table.c.id != exclude_task_id)
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        with self.Session() as sess:
+            histories = (sess.execute(stmt)).scalars().all()
+            if projects is not None:
+                project_stmt = select(projects.c.transitions)
+                if user_id is not None:
+                    project_stmt = project_stmt.where(projects.c.user_id == user_id)
+                histories = list(histories) + list((sess.execute(project_stmt)).scalars().all())
+        return _acceptance_count(histories, routine_id, policy)
+
+    def transition_task(
+        self,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply a lifecycle transition only if the observed state still matches."""
+        from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
+        from agno.db.sql.company import lock_child, require_open_room, require_project
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        stmt = select(table).where(table.c.id == task_id, table.c.deleted_at.is_(None))
+        if user_id is not None:
+            stmt = stmt.where(table.c.user_id == user_id)
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            if auto_accept is not None:
+                lock_child(sess, products, projects, table, task_id)
+                if expected_updated_at is _UNSET_UPDATED_AT or products is None:
+                    raise ValueError("Automatic acceptance requires expected_updated_at and a Product")
+                if target == "ready":
+                    require_open_room(sess, table, task_id, auto_accept)
+                # A policy with no lifetime count has nothing to compare, so no history is read for it.
+                if "max_acceptances" in auto_accept:
+                    prior = (
+                        sess.execute(
+                            select(table.c.transitions).where(
+                                table.c.routine_id == auto_accept["routine_id"], table.c.id != task_id
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    if projects is not None:
+                        prior = list(prior) + list((sess.execute(select(projects.c.transitions))).scalars().all())
+                    if (
+                        _acceptance_count(prior, auto_accept["routine_id"], auto_accept["policy"])
+                        >= auto_accept["max_acceptances"]
+                    ):
+                        raise ValueError("Routine acceptance limit reached")
+            row = sess.execute(stmt).fetchone()
+            if row is None:
+                return None
+            existing = dict(row._mapping)
+            if expected_status is not None and existing["status"] != expected_status:
+                return None
+            if expected_job_id is not None and existing["job_id"] != expected_job_id:
+                return None
+            fields = task_transition_fields(existing, target, reason, accepted_by, executor_type, executor_id)
+            if auto_accept is not None:
+                fields["transitions"][-1]["auto_accept"] = auto_accept
+            else:
+                lock_child(sess, products, projects, table, task_id)
+            require_project(
+                sess,
+                projects,
+                existing["project_id"],
+                existing["product_id"],
+                target if target == "ready" or existing["status"] in {"done", "cancelled"} else None,
+                reject_proposed=target == "ready",
+                reject_cancelled=target != "cancelled",
+            )
+            update = table.update().where(
+                table.c.id == task_id,
+                table.c.deleted_at.is_(None),
+                table.c.status == existing["status"],
+                table.c.transitions == existing["transitions"],
+            )
+            if expected_updated_at is not _UNSET_UPDATED_AT:
+                update = update.where(table.c.updated_at == expected_updated_at)
+            if user_id is not None:
+                update = update.where(table.c.user_id == user_id)
+            result = sess.execute(update.values(**fields).returning(table)).fetchone()
+            return dict(result._mapping) if result else None

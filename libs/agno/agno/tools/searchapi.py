@@ -288,7 +288,7 @@ class SearchApiTools(Toolkit):
         if "error" in data:
             return json.dumps({"error": data["error"]})
 
-        limit = num_results or self.num_results
+        limit = self.num_results if num_results is None else num_results
         videos = data.get("videos", []) or []
         result = {
             "video_results": [

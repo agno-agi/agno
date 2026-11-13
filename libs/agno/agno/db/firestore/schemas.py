@@ -59,6 +59,59 @@ SESSION_COLLECTION_SCHEMA = [
         ],
         "collection_group": False,
     },
+    # The metrics fingerprint: the count and the sum of updated_at of the sessions created since a time
+    {"key": [("created_at", "ASCENDING"), ("updated_at", "ASCENDING")], "collection_group": False},
+]
+
+RUNS_COLLECTION_SCHEMA = [
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "run_type"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "user_id"},
+    {"key": "parent_run_id"},
+    {"key": "status"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # Compound index: ordered fetch of runs per session (used by
+    # _get_session_runs_docs — the hot path for reading a session's history).
+    {"key": [("session_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
+    # get_runs supports filter-by-any-of + default order by run_index/created_at.
+    # Firestore requires a composite index for every filter+order combo — without
+    # these, queries fail at runtime with FAILED_PRECONDITION or fall back to
+    # unindexed scans that scale linearly with collection size.
+    {
+        "key": [("session_id", "ASCENDING"), ("status", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("agent_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("team_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("workflow_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("status", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    # Common HITL / background polling: find PENDING/RUNNING runs per user.
+    {
+        "key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+    # The metrics fingerprint: the count and the sum of updated_at of the runs created since a time
+    {"key": [("created_at", "ASCENDING"), ("updated_at", "ASCENDING")], "collection_group": False},
+    # The metrics of a remote member's run: its team's runs created before the member's day
+    {"key": [("session_id", "ASCENDING"), ("created_at", "ASCENDING")], "collection_group": False},
 ]
 
 USER_MEMORY_COLLECTION_SCHEMA = [
@@ -83,8 +136,11 @@ EVAL_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    # Composite index for user-scoped listing sorted by creation time
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
 ]
 
 KNOWLEDGE_COLLECTION_SCHEMA = [
@@ -107,19 +163,65 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Rows with no owner use the empty-string sentinel so they fit the compound unique key below
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     # Composite index for metrics uniqueness (same as MongoDB)
-    {"key": [("date", "ASCENDING"), ("aggregation_period", "ASCENDING")], "collection_group": False, "unique": True},
+    {
+        "key": [("user_id", "ASCENDING"), ("date", "ASCENDING"), ("aggregation_period", "ASCENDING")],
+        "collection_group": False,
+        "unique": True,
+    },
 ]
 
-CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
-    {"key": "id", "unique": True},
-    {"key": "name"},
-    {"key": "agent_id"},
-    {"key": "team_id"},
+COMPONENT_METRICS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "user_id"},
+    {"key": "component_type"},
+    {"key": "component_id"},
+    {"key": "parent_component_id"},
+    {"key": "root_component_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    # The rows of a date range, and one user's rows of a date range
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+]
+
+AGGREGATE_METRICS_COLLECTION_SCHEMA = [
+    {"key": "aggregation_period"},
+    {"key": "date"},
+    {"key": "user_id"},
+    {"key": "completed"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # The rows of a date range, one user's rows of a date range, of a period or of every period, and the days still
+    # open
+    {"key": [("aggregation_period", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("aggregation_period", "ASCENDING"), ("date", "ASCENDING")],
+        "collection_group": False,
+    },
+    {"key": [("user_id", "ASCENDING"), ("date", "ASCENDING")], "collection_group": False},
+    {
+        "key": [
+            ("aggregation_period", "ASCENDING"),
+            ("user_id", "ASCENDING"),
+            ("completed", "ASCENDING"),
+            ("date", "ASCENDING"),
+        ],
+        "collection_group": False,
+    },
+]
+
+# One document, which one refresh of the metrics collections at a time holds
+METRICS_REFRESHES_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
 ]
 
 TRACE_COLLECTION_SCHEMA = [
@@ -165,11 +267,14 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
+        "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
+        "component_metrics": COMPONENT_METRICS_COLLECTION_SCHEMA,
+        "aggregate_metrics": AGGREGATE_METRICS_COLLECTION_SCHEMA,
+        "metrics_refreshes": METRICS_REFRESHES_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
     }

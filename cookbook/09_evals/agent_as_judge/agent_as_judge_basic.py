@@ -27,7 +27,7 @@ sync_db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 sync_db = PostgresDb(db_url=sync_db_url)
 
 sync_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a technical writer. Explain concepts clearly and concisely.",
     db=sync_db,
 )
@@ -47,7 +47,7 @@ sync_evaluation = AgentAsJudgeEval(
 async_db = AsyncSqliteDb(db_file="tmp/agent_as_judge_async.db")
 
 async_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide helpful and informative answers.",
     db=async_db,
 )
@@ -77,8 +77,8 @@ async def run_async_evaluation():
     async_eval_runs = await async_db.get_eval_runs()
     print(f"Total evaluations stored: {len(async_eval_runs)}")
     if async_eval_runs:
-        latest = async_eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = async_eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Name: {latest.name}")
 
 
@@ -98,8 +98,8 @@ if __name__ == "__main__":
     sync_eval_runs = sync_db.get_eval_runs()
     print(f"Total evaluations stored: {len(sync_eval_runs)}")
     if sync_eval_runs:
-        latest = sync_eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = sync_eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Name: {latest.name}")
 
     asyncio.run(run_async_evaluation())

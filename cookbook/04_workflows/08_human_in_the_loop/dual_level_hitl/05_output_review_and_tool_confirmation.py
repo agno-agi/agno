@@ -23,7 +23,7 @@ from agno.run.workflow import (
 )
 from agno.tools import tool
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -44,7 +44,7 @@ def query_database(query: str) -> str:
 
 analyst_agent = Agent(
     name="DataAnalyst",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[query_database],
     instructions=(
         "You are a data analyst. You MUST always use the query_database tool to fetch data. "
@@ -69,10 +69,12 @@ workflow = Workflow(
             name="analyze_data",
             agent=analyst_agent,
             # Post-execution review: user reviews agent output after it completes
-            requires_output_review=True,
-            output_review_message="Review the analysis before saving the report.",
-            on_reject=OnReject.retry,
-            hitl_max_retries=2,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the analysis before saving the report.",
+                on_reject=OnReject.retry,
+                max_retries=2,
+            ),
         ),
         Step(name="save_report", executor=save_report),
     ],

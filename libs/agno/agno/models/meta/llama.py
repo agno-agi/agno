@@ -7,9 +7,9 @@ import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -440,7 +440,7 @@ class Llama(Model):
         Parse the Llama streaming response into a ModelResponse.
 
         Args:
-            response_delta: Raw response chunk from the Llama API
+            response: Raw response chunk from the Llama API
 
         Returns:
             ModelResponse: Parsed response data

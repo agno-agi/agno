@@ -123,7 +123,10 @@ def test_create_collection(milvus_db, mock_milvus_client):
         # Verify parameters
         args, kwargs = mock_milvus_client.create_collection.call_args
         assert kwargs["collection_name"] == "test_collection"
-        assert kwargs["dimension"] == milvus_db.dimensions
+        fields = {f.name: f for f in kwargs["schema"].fields}
+        assert fields["vector"].params["dim"] == milvus_db.dimensions
+        # Shared rows use a sentinel value instead of null
+        assert fields["user_id"].nullable is False
 
 
 def test_exists(milvus_db, mock_milvus_client):
@@ -274,6 +277,18 @@ def test_get_count(milvus_db, mock_milvus_client):
     mock_milvus_client.get_collection_stats.assert_called_once_with(collection_name="test_collection")
 
 
+def _vector_index_metric(index_params):
+    """The metric the dense vector index was created with.
+
+    Asked for by field name rather than taken from the last add_index call: the adapter also
+    indexes ``user_id``, so call ordering is not a stable way to find the vector index.
+    """
+    for call in reversed(index_params.add_index.call_args_list):
+        if call.kwargs.get("field_name") in ("vector", "dense_vector"):
+            return call.kwargs["metric_type"]
+    raise AssertionError("no vector index was created")
+
+
 def test_distance_setting(mock_embedder, mock_milvus_client):
     """Test that distance settings are properly applied"""
     # Test with cosine distance (default)
@@ -284,7 +299,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db1, "exists", return_value=False):
             db1.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "COSINE"
+            assert _vector_index_metric(kwargs["index_params"]) == "COSINE"
 
     # Test with L2 distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
@@ -294,7 +309,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db2, "exists", return_value=False):
             db2.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "L2"
+            assert _vector_index_metric(kwargs["index_params"]) == "L2"
 
     # Test with inner product distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
@@ -304,7 +319,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db3, "exists", return_value=False):
             db3.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "IP"
+            assert _vector_index_metric(kwargs["index_params"]) == "IP"
 
 
 def test_build_expr(milvus_db):
