@@ -348,30 +348,20 @@ class MistralChat(Model):
             text_parts: List[str] = []
             thinking_parts: List[str] = []
             for chunk in content:
-                chunk_type = getattr(chunk, "type", None) or (chunk.get("type") if isinstance(chunk, dict) else None)
+                chunk_type = getattr(chunk, "type", None)
                 if chunk_type == "thinking":
-                    thinking_items = getattr(chunk, "thinking", None) or (
-                        chunk.get("thinking") if isinstance(chunk, dict) else None
-                    )
+                    thinking_items = getattr(chunk, "thinking", None)
                     if isinstance(thinking_items, list):
                         for item in thinking_items:
-                            text = getattr(item, "text", None) or (
-                                item.get("text")
-                                if isinstance(item, dict)
-                                else (item if isinstance(item, str) else None)
-                            )
+                            text = getattr(item, "text", None) or (item if isinstance(item, str) else None)
                             if text:
                                 thinking_parts.append(text)
                     elif isinstance(thinking_items, str):
                         thinking_parts.append(thinking_items)
-                elif chunk_type == "text":
-                    text = getattr(chunk, "text", None) or (chunk.get("text") if isinstance(chunk, dict) else None)
-                    if text:
-                        text_parts.append(text)
                 elif isinstance(chunk, str):
                     text_parts.append(chunk)
                 else:
-                    text = getattr(chunk, "text", None) or (chunk.get("text") if isinstance(chunk, dict) else None)
+                    text = getattr(chunk, "text", None)
                     if text:
                         text_parts.append(text)
 
@@ -393,12 +383,11 @@ class MistralChat(Model):
             response_message: AssistantMessage = response.choices[0].message  # type: ignore
 
             # -*- Set content
-            if response_message.content is not None and not isinstance(response_message.content, Unset):
-                content, reasoning_content = self._extract_content_and_reasoning(response_message.content)
-                if content is not None:
-                    model_response.content = content
-                if reasoning_content is not None:
-                    model_response.reasoning_content = reasoning_content
+            content, reasoning_content = self._extract_content_and_reasoning(response_message.content)
+            if content is not None:
+                model_response.content = content
+            if reasoning_content is not None:
+                model_response.reasoning_content = reasoning_content
 
             # -*- Set role
             model_response.role = response_message.role
@@ -430,12 +419,11 @@ class MistralChat(Model):
         if delta_message.role is not None and not isinstance(delta_message.role, Unset):
             model_response.role = delta_message.role  # type: ignore
 
-        if delta_message.content is not None and not isinstance(delta_message.content, Unset):
-            content, reasoning_content = self._extract_content_and_reasoning(delta_message.content)
-            if content is not None:
-                model_response.content = content
-            if reasoning_content is not None:
-                model_response.reasoning_content = reasoning_content
+        content, reasoning_content = self._extract_content_and_reasoning(delta_message.content)
+        if content is not None:
+            model_response.content = content
+        if reasoning_content is not None:
+            model_response.reasoning_content = reasoning_content
 
         if delta_message.tool_calls is not None:
             model_response.tool_calls = []
