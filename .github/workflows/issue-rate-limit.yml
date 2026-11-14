@@ -1,0 +1,94 @@
+name: Issue Rate Limit
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+permissions:
+  issues: write
+
+jobs:
+  rate-limit:
+    name: Rate limit issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issues over the per-user limit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const MAX_ISSUES = 5;
+            const WINDOW_HOURS = 24;
+            const LABEL = 'rate-limited';
+
+            const issue = context.payload.issue;
+            const author = issue.user.login;
+            const sender = context.payload.sender.login;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function hasWriteAccess(username) {
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner, repo, username,
+                });
+                return ['admin', 'maintain', 'write'].includes(data.permission);
+              } catch (err) {
+                console.log(`Could not check permissions for ${username}: ${err.message}`);
+                return false;
+              }
+            }
+
+            async function close(body) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [LABEL] });
+              if (body) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });
+              }
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned',
+              });
+            }
+
+            if (issue.user.type === 'Bot' || ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(issue.author_association)) {
+              return;
+            }
+
+            // A maintainer reopening (or removing the label) overrides the limit; the author reopening does not
+            if (context.payload.action === 'reopened') {
+              const isLimited = issue.labels.some(l => l.name === LABEL);
+              if (isLimited && !(await hasWriteAccess(sender))) {
+                await close(null);
+                console.log(`Re-closed #${issue.number}, reopened by @${sender} while rate-limited.`);
+              }
+              return;
+            }
+
+            if (await hasWriteAccess(author)) {
+              return;
+            }
+
+            // Count only issues opened at or before this one, so simultaneous runs agree on which issues are over the limit
+            const createdAt = new Date(issue.created_at);
+            const windowStart = new Date(createdAt.getTime() - WINDOW_HOURS * 60 * 60 * 1000);
+            const recent = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, creator: author, state: 'all', since: windowStart.toISOString(), per_page: 100,
+            });
+            const count = recent.filter(i =>
+              !i.pull_request
+              && i.number <= issue.number
+              && new Date(i.created_at) >= windowStart
+            ).length;
+
+            console.log(`@${author} opened ${count} issue(s) in the ${WINDOW_HOURS}h up to #${issue.number}.`);
+            if (count <= MAX_ISSUES) {
+              return;
+            }
+
+            await close(
+              `Thanks for the report. To keep the tracker manageable, we limit each account to ${MAX_ISSUES} new issues `
+              + `per ${WINDOW_HOURS} hours, and this one is over that limit, so it has been closed automatically.\n\n`
+              + 'If it is still relevant, please open it again after the window has passed, or add the details to one '
+              + 'of your existing issues. A maintainer can also reopen it.'
+            );
+            console.log(`Closed #${issue.number}: @${author} is over the limit.`);

@@ -1806,8 +1806,16 @@ def test_metrics_page_counts_codex_runs_per_model(fake_sdk, tmp_db):
                 time.sleep(0.01)
             else:
                 raise AssertionError("Automatic background run did not complete")
-        # A read never calculates under AgentOS: the refresh builds the runs' day
-        assert client.post("/metrics/refresh").status_code == 200
+        # A read never calculates under AgentOS: the refresh builds the runs' day. A refresh that finds
+        # another one running answers already_running and calculates nothing, so ask again until it runs
+        for _ in range(200):
+            response = client.post("/metrics/refresh")
+            assert response.status_code == 200
+            if isinstance(response.json(), list):
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("Metrics refresh never ran")
         body = client.get("/metrics").json()
         days = body["metrics"] if isinstance(body, dict) else body
         assert days[-1]["model_metrics"] == [
