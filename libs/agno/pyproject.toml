@@ -204,7 +204,7 @@ redis = ["redis>=6.1.0", "redisvl>=0.12.1"]  # >=6.1.0: transactions on a Redis 
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy[asyncio]"]
 sqlite = ["sqlalchemy[asyncio]", "aiosqlite"]
-valkey = ["valkey-glide-sync>=2.1.0"]
+valkey = ["valkey-glide-sync>=2.5.2"]
 
 # Dependencies for Vector databases
 cassandra = ["cassio"]
