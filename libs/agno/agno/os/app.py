@@ -404,7 +404,6 @@ class AgentOS:
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
-        filesystems: Optional[List["FileSystem"]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: Union[bool, "Authorization"] = False,
@@ -436,6 +435,7 @@ class AgentOS:
         public: Optional[Any] = None,
         manager: Optional[Union[bool, "OSManager"]] = None,
         company: Optional["CompanyConfig"] = None,
+        filesystems: Optional[List["FileSystem"]] = None,
     ):
         """Initialize AgentOS.
 
@@ -453,9 +453,6 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
-            filesystems: List of file systems to include in the OS. Each one is browsable through
-                the file system routes without an agent holding it. A namespace may use the
-                ``{user_id}`` placeholder; ``{agent_id}`` and ``{team_id}`` are refused.
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
             company: Enable Company Products, inheriting db unless a Company database is provided.
@@ -531,6 +528,9 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
+            filesystems: List of file systems to include in the OS. Each one is browsable through
+                the file system routes without an agent holding it. A namespace may use the
+                ``{user_id}`` placeholder; ``{agent_id}`` and ``{team_id}`` are refused.
         """
         if (
             not agents
@@ -1303,8 +1303,10 @@ class AgentOS:
         """Validate the file systems the OS holds.
 
         The OS binds a namespace from the caller alone, so only ``{user_id}`` can be filled.
-        ``user_scoped`` is left as given: the object may also be an agent's or a registry
-        tool's, and holding it on the OS must not move where their runs write.
+        Holding a file system on the OS leaves ``user_scoped`` as given: the object may also be
+        an agent's or a registry tool's, and holding it must not move where their runs write.
+        An agent holding the same object applies the ``user_isolation`` policy to it, so an
+        unset ``user_scoped`` turns ``True`` under isolation for the OS as well.
 
         Raises:
             TypeError: If an entry is not a FileSystem.

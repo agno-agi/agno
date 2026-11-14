@@ -1157,3 +1157,46 @@ def test_filesystem_routes_are_read_only(db, client_factory):
         )
         assert response.status_code == 405, method
     assert shared.read("style.md") == "shared\n"
+
+
+def test_a_broken_agent_does_not_fail_a_read_the_os_answers(db, client_factory, monkeypatch):
+    from fastapi import HTTPException
+
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    shared = FileSystem(db, namespace="shared-notes")
+    client = client_factory(Agent(id="broken", db=db, filesystem=True), db=db, filesystems=[shared])
+    shared.write("style.md", "shared\n")
+
+    async def unavailable(os, agent_id, request):
+        raise HTTPException(status_code=503, detail="Agent filesystem is unavailable")
+
+    monkeypatch.setattr(filesystem_router, "_get_agent_filesystems", unavailable)
+
+    listed = client.get("/filesystem/entries", params={"namespace": "shared-notes"}, headers=_headers("alice"))
+    assert listed.status_code == 200
+    assert [entry["path"] for entry in listed.json()["entries"]] == ["style.md"]
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["namespace"], row["path"]) for row in rows] == [("shared-notes", "style.md")]
+    # A namespace only the agent holds still reports the agent's failure.
+    assert (
+        client.get("/filesystem/entries", params={"namespace": "broken"}, headers=_headers("alice")).status_code == 503
+    )
+
+
+def test_an_agent_on_the_same_object_applies_isolation_to_the_os_filesystem(db, client_factory):
+    shared = FileSystem(db, namespace="shared-notes")
+    client_factory(Agent(id="writer", db=db, filesystem=shared), db=db, filesystems=[shared], user_isolation=True)
+
+    # The agent's isolation policy fills the unset setting on the one object both hold.
+    assert shared.user_scoped is True
+    shared.partition(None).write("style.md", "shared\n")
+    assert shared.partition(None).read("style.md") == "shared\n"
+
+
+def test_filesystems_does_not_shift_positional_constructor_arguments():
+    import inspect
+
+    parameters = list(inspect.signature(AgentOS.__init__).parameters)
+    assert parameters[parameters.index("knowledge") + 1] == "interfaces"
+    assert parameters[-1] == "filesystems"
