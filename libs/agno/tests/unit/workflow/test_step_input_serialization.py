@@ -1,8 +1,9 @@
 """
-Unit tests for StepInput file serialization.
+Unit tests for StepInput serialization.
 
 Tests cover:
 - to_dict(): File objects are serialized via .to_dict()
+- to_dict(): falsy previous_step_content values are preserved
 - Roundtrip serialization (no data loss)
 """
 
@@ -65,3 +66,39 @@ class TestStepInputFileSerialization:
         assert restored.files[0].url == "https://example.com/test-file.pdf"
         assert restored.files[0].format == "pdf"
         assert restored.files[0].filename == "test-file.pdf"
+
+
+class TestStepInputPreviousStepContentSerialization:
+    @pytest.mark.parametrize(
+        "content, expected",
+        [
+            ("", ""),
+            (0, "0"),
+            (False, "False"),
+            (0.0, "0.0"),
+            ([], "[]"),
+            ({}, "{}"),
+            ("result", "result"),
+            (42, "42"),
+        ],
+    )
+    def test_to_dict_preserves_falsy_previous_step_content(self, content, expected):
+        """Falsy content is a meaningful step result and must not become None.
+
+        An empty string is explicitly used as the "empty result" marker in
+        workflow conditions, and CEL context building already treats these
+        values with ``is not None``. to_dict() must do the same so a
+        to_dict -> from_dict roundtrip does not lose them.
+        """
+        step_input = StepInput(input="run", previous_step_content=content)
+        assert step_input.to_dict()["previous_step_content"] == expected
+
+    def test_to_dict_keeps_none_previous_step_content(self):
+        step_input = StepInput(input="run", previous_step_content=None)
+        assert step_input.to_dict()["previous_step_content"] is None
+
+    def test_roundtrip_preserves_falsy_previous_step_content(self):
+        for content in ("", 0, False, [], {}):
+            original = StepInput(input="run", previous_step_content=content)
+            restored = StepInput.from_dict(original.to_dict())
+            assert restored.previous_step_content == str(content), content
