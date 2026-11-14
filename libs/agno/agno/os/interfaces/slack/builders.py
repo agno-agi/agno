@@ -11,6 +11,7 @@ from slack_sdk.models.blocks import (
     DividerBlock,
     InputBlock,
     PlainTextInputElement,
+    SectionBlock,
     StaticSelectElement,
 )
 from slack_sdk.models.blocks.basic_components import MarkdownTextObject, Option, PlainTextObject
@@ -48,6 +49,12 @@ from agno.utils.serialize import json_serializer
 
 # Slack caps messages at 50 blocks
 MAX_MESSAGE_BLOCKS = 50
+# Slack rejects a message whose option text or description is over 75 chars
+MAX_OPTION_TEXT = 75
+# Slack caps section text at 3000 chars
+MAX_SECTION_TEXT = 3000
+# Slack caps card body text at 200 chars
+MAX_CARD_BODY = 200
 
 
 # Untrusted values are embedded in Slack inline code spans: a backtick closes the span,
@@ -103,7 +110,9 @@ def _build_select_element(name: str, options: List[Tuple[str, str]]) -> StaticSe
     return StaticSelectElement(
         action_id=user_input_action_id(name),
         placeholder=PlainTextObject(text="Select"),
-        options=[Option(text=PlainTextObject(text=text), value=value) for text, value in options],
+        options=[
+            Option(text=PlainTextObject(text=truncate(text, MAX_OPTION_TEXT)), value=value) for text, value in options
+        ],
     )
 
 
@@ -164,9 +173,9 @@ def _user_feedback_option_to_slack_option(option: Any, index: int) -> Option:
     label = getattr(option, "label", f"option-{index}")
     description = getattr(option, "description", None)
     return Option(
-        text=PlainTextObject(text=label),
+        text=PlainTextObject(text=truncate(label, MAX_OPTION_TEXT)),
         value=label,
-        description=PlainTextObject(text=description) if description else None,
+        description=PlainTextObject(text=truncate(description, MAX_OPTION_TEXT)) if description else None,
     )
 
 
@@ -200,24 +209,59 @@ def _build_user_feedback_question_block(req_id: str, question: Any, q_index: int
     )
 
 
-# Builds HITL confirmation card with Approve/Deny buttons for a tool execution
-def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awaiting_ts: Optional[str] = None) -> Card:
-    req_id = requirement.id or ""
-    name = tool_name(requirement)
-    args = tool_args(requirement)
+# Caps keys and values inside their code spans so the joined lines fit the limit without cutting a span
+def _code_span_lines(pairs: List[Tuple[str, str]], limit: int) -> List[str]:
+    lines = [f"• {key}: `{value}`" for key, value in pairs]
+    if len("\n".join(lines)) <= limit:
+        return lines
+    key_cap = max(limit // len(pairs) // 2, 1)
+    pairs = [(truncate(key, key_cap), value) for key, value in pairs]
+    # Short values keep their full length; the budget left is split among the long values
+    budget = limit - sum(len(key) + 7 for key, _ in pairs)
+    caps: Dict[int, int] = {}
+    for count, i in enumerate(sorted(range(len(pairs)), key=lambda i: len(pairs[i][1]))):
+        caps[i] = min(len(pairs[i][1]), budget // (len(pairs) - count))
+        budget -= caps[i]
+    return [f"• {key}: `{truncate(value, max(caps[i], 1))}`" for i, (key, value) in enumerate(pairs)]
 
+
+def _args_text(requirement: RunRequirement) -> str:
     # Format args as bullet points in body (not subtitle which truncates). Arg keys are
     # model-derived and sit outside the code span, so inert them too.
-    body_lines = [f"• {inert_code_span_text(str(k))}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
-    body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
-    # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
-    body_text = truncate(body_text, 200)
+    pairs = [(inert_code_span_text(str(k)), render_arg_value(v)) for k, v in (tool_args(requirement) or {}).items()]
+    body_lines = _code_span_lines(pairs, MAX_SECTION_TEXT)
+    return "\n".join(body_lines) if body_lines else "_(no arguments)_"
+
+
+# The full args of a confirmation whose card body lists only names, so an approver sees what is approved
+def _build_full_args_section(requirement: RunRequirement) -> Optional[SectionBlock]:
+    args_text = _args_text(requirement)
+    if len(args_text) <= MAX_CARD_BODY:
+        return None
+    return SectionBlock(
+        block_id=f"args:{requirement.id or ''}",
+        text=MarkdownTextObject(text=truncate(args_text, MAX_SECTION_TEXT)),
+    )
+
+
+# Builds HITL confirmation card with Approve/Deny buttons for a tool execution
+def _build_confirmation_card(
+    requirement: RunRequirement, run_id: str = "", awaiting_ts: Optional[str] = None, owner: Optional[str] = None
+) -> Card:
+    req_id = requirement.id or ""
+    name = tool_name(requirement)
+    body_text = _args_text(requirement)
+    if len(body_text) > MAX_CARD_BODY:
+        # A cut inside a code span drops its closing backtick, so the card lists only the arg names
+        names_text = "\n".join(f"• {inert_code_span_text(str(k))}" for k in (tool_args(requirement) or {}))
+        full_values_note = "\n_Full values below._"
+        body_text = truncate(names_text, MAX_CARD_BODY - len(full_values_note)) + full_values_note
 
     # approval_type="required" tools need admin approval via dashboard, not Slack buttons
     tool_exec = requirement.tool_execution
     if tool_exec and getattr(tool_exec, "approval_type", None) == "required":
         approval_id = getattr(tool_exec, "approval_id", None) or ""
-        button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
+        button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts, owner)
         return Card(
             block_id=f"rowact:{req_id}:admin_approval",
             title=MarkdownTextObject(text=f"*{name}*"),
@@ -232,7 +276,7 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
             ],
         )
 
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts, owner)
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
         title=MarkdownTextObject(text=f"*{name}*"),
@@ -262,9 +306,10 @@ def build_admin_approval_status_card(
     approval_id: str,
     run_id: str,
     awaiting_ts: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> Card:
     """Build card showing admin approval status after check."""
-    button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
+    button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts, owner)
 
     # "approved" case handled by auto-continue in handle_check_status
     if status == "rejected":
@@ -298,11 +343,11 @@ def build_confirmation_toggle_card(
     tool_name: str,
     body_text: str,
     selected: str,
+    owner: Optional[str] = None,
 ) -> Card:
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts, owner)
     is_approved = selected == "approve"
-    # Slack Block Kit section text has ~200 char limit
-    body_text = truncate(body_text, 200)
+    body_text = truncate(body_text, MAX_CARD_BODY)
 
     approve_btn = ButtonElement(
         action_id=ACTION_ROW_APPROVE,
@@ -336,14 +381,14 @@ def decision_marker(req_id: str, decision: str) -> Dict[str, Any]:
     }
 
 
-def build_submit_button(run_id: str, awaiting_ts: Optional[str]) -> Dict[str, Any]:
+def build_submit_button(run_id: str, awaiting_ts: Optional[str], owner: Optional[str] = None) -> Dict[str, Any]:
     submit_btn = ButtonElement(
-        action_id="submit_pause",
+        action_id=ACTION_SUBMIT,
         text=PlainTextObject(text="Submit", emoji=True),
         style="primary",
-        value=encode_submit_button_value(run_id, awaiting_ts),
+        value=encode_submit_button_value(run_id, awaiting_ts, owner),
     )
-    return ActionsBlock(block_id=f"pause:{run_id}", elements=[submit_btn]).to_dict()
+    return ActionsBlock(block_id=pause_block_id(run_id), elements=[submit_btn]).to_dict()
 
 
 def select_confirmation_row(
@@ -366,6 +411,7 @@ def select_confirmation_row(
                 tool_name=name,
                 body_text=body_text,
                 selected=selected,
+                owner=ctx.owner,
             )
             updated.append(block_to_dict(toggle_card))
             # Deny keeps card interactive so user can add optional reason before Submit
@@ -402,13 +448,14 @@ def append_submit_if_needed(
     blocks: List[Dict[str, Any]],
     run_id: str,
     awaiting_ts: Optional[str],
+    owner: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if not run_id:
         return blocks
     summary = confirmation_row_summary(blocks)
     if summary.pending_ids or summary.has_global_submit:
         return blocks
-    return blocks + [build_submit_button(run_id, awaiting_ts)]
+    return blocks + [build_submit_button(run_id, awaiting_ts, owner)]
 
 
 # Builds InputBlocks for user_input pause type (text fields, dropdowns for bool/Enum/Literal)
@@ -451,6 +498,7 @@ def build_pause_message(
     run_id: str,
     requirements: List[RunRequirement],
     awaiting_ts: Optional[str] = None,
+    owner: Optional[str] = None,
 ) -> List[Any]:
     blocks: List[Any] = []
     processed = 0
@@ -462,7 +510,12 @@ def build_pause_message(
     for i, requirement in enumerate(requirements):
         kind = requirement.pause_type
         if kind == "confirmation":
-            row_blocks = [_build_confirmation_card(requirement, run_id=run_id, awaiting_ts=awaiting_ts)]
+            row_blocks: List[Any] = [
+                _build_confirmation_card(requirement, run_id=run_id, awaiting_ts=awaiting_ts, owner=owner)
+            ]
+            full_args = _build_full_args_section(requirement)
+            if full_args is not None:
+                row_blocks.append(full_args)
         else:
             # Input/feedback/external rows: just fields, global Submit handles submission
             if kind == "user_input":
@@ -506,7 +559,7 @@ def build_pause_message(
                         action_id=ACTION_SUBMIT,
                         text=PlainTextObject(text="Submit"),
                         style="primary",
-                        value=encode_submit_button_value(run_id, awaiting_ts),
+                        value=encode_submit_button_value(run_id, awaiting_ts, owner),
                     ),
                 ],
             )
@@ -565,7 +618,7 @@ def response_blocks(
     requirements: List[RunRequirement],
 ) -> List[Dict[str, Any]]:
     preserved: List[Dict[str, Any]] = []
-    submissions: List[str] = []
+    submissions: List[Tuple[str, str]] = []
 
     for block in original_blocks:
         btype = block.get("type", "")
@@ -590,14 +643,20 @@ def response_blocks(
         value = _extract_input_value(element, submitted)
         # Labels round-trip through Slack from the input schema (may be model-derived)
         # and sit outside the code span, so inert them too.
-        submissions.append(f"• {inert_code_span_text(label)}: `{inert_code_span_text(value)}`")
+        submissions.append((inert_code_span_text(label), inert_code_span_text(value)))
 
     if not submissions:
         return preserved
 
-    body_text = "\n".join(submissions)
-    if len(body_text) > 200:
-        body_text = body_text[:197] + "..."
+    lines = [_code_span_lines([pair], MAX_CARD_BODY - 2)[0] for pair in submissions]
+    body_text = "\n".join(lines)
+    if len(body_text) > MAX_CARD_BODY:
+        kept: List[str] = []
+        for line in lines:
+            if len("\n".join(kept + [line, "…"])) > MAX_CARD_BODY:
+                break
+            kept.append(line)
+        body_text = "\n".join(kept + ["…"])
 
     return preserved + [
         {

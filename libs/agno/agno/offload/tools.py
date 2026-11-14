@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Optional
 
+from agno.offload.store import READ_MAX_CHARS
 from agno.run import RunContext
 from agno.tools.function import Function
 
@@ -16,7 +17,8 @@ OFFLOAD_INSTRUCTION = (
     "Large tool results are stored as files and shown to you as a short preview with a "
     "result id. The preview is not the whole result. Use search_result to locate what you "
     "need and read_result to read that range; do not answer from the preview when the "
-    "preview was truncated."
+    "preview was truncated. Read a focused excerpt with the match's line, start_char and a "
+    "small max_chars instead of reloading the whole result."
 )
 
 
@@ -57,35 +59,12 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
                 header += f" More follows: read from line {page.next_start_line}."
         return f"{header}\n{page.text}"
 
-    def read_result(result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0) -> str:
-        """Read a stored tool result. Lines are 1-indexed and inclusive.
-
-        Output is capped at 400 lines or 16000 characters, whichever comes first;
-        the reply names where to continue when there is more. A line longer than
-        one page is read in pieces: continue with the start_char the reply names.
-
-        Args:
-            result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
-            start_line: First line to read (1-indexed, default 1).
-            end_line: Last line to read (inclusive). Defaults to the end.
-            start_char: Character offset into start_line to begin at (0-indexed, default 0).
-
-        Returns:
-            str: The requested lines, or an error message starting with "Error".
-        """
-        store = owner._result_store
-        if store is None:
-            return f"Error: result offloading is not enabled for this {owner_kind}"
-        try:
-            error = _resolve(result_id, store.get_row(result_id))
-            if error is not None:
-                return error
-            return _render(result_id, store.read(result_id, start_line, end_line, start_char))
-        except Exception as e:
-            return f"Error reading result: {e}"
-
-    async def aread_result(
-        result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+    def read_result(
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        max_chars: int = READ_MAX_CHARS,
     ) -> str:
         """Read a stored tool result. Lines are 1-indexed and inclusive.
 
@@ -98,6 +77,41 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
             start_line: First line to read (1-indexed, default 1).
             end_line: Last line to read (inclusive). Defaults to the end.
             start_char: Character offset into start_line to begin at (0-indexed, default 0).
+            max_chars: Maximum characters to read, clamped to 1-16000. Use a small value for focused excerpts.
+
+        Returns:
+            str: The requested lines, or an error message starting with "Error".
+        """
+        store = owner._result_store
+        if store is None:
+            return f"Error: result offloading is not enabled for this {owner_kind}"
+        try:
+            error = _resolve(result_id, store.get_row(result_id))
+            if error is not None:
+                return error
+            return _render(result_id, store.read(result_id, start_line, end_line, start_char, max_chars))
+        except Exception as e:
+            return f"Error reading result: {e}"
+
+    async def aread_result(
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        max_chars: int = READ_MAX_CHARS,
+    ) -> str:
+        """Read a stored tool result. Lines are 1-indexed and inclusive.
+
+        Output is capped at 400 lines or 16000 characters, whichever comes first;
+        the reply names where to continue when there is more. A line longer than
+        one page is read in pieces: continue with the start_char the reply names.
+
+        Args:
+            result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
+            start_line: First line to read (1-indexed, default 1).
+            end_line: Last line to read (inclusive). Defaults to the end.
+            start_char: Character offset into start_line to begin at (0-indexed, default 0).
+            max_chars: Maximum characters to read, clamped to 1-16000. Use a small value for focused excerpts.
 
         Returns:
             str: The requested lines, or an error message starting with "Error".
@@ -109,7 +123,7 @@ def get_read_result_function(owner: Any, run_context: RunContext, async_mode: bo
             error = _resolve(result_id, await store.aget_row(result_id))
             if error is not None:
                 return error
-            return _render(result_id, await store.aread(result_id, start_line, end_line, start_char))
+            return _render(result_id, await store.aread(result_id, start_line, end_line, start_char, max_chars))
         except Exception as e:
             return f"Error reading result: {e}"
 
@@ -146,8 +160,8 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
     def search_result(result_id: str, pattern: str, context_lines: int = 0) -> str:
         """Search a stored tool result with a regular expression.
 
-        Returns at most 20 matches as line-number/line pairs, each line clipped to 500
-        characters. Use read_result with the reported line numbers to read around a match.
+        Returns at most 20 excerpts, including separate passages on a single line,
+        each clipped to 500 characters. Matches already visible in an excerpt are skipped.
 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
@@ -176,8 +190,8 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
     async def asearch_result(result_id: str, pattern: str, context_lines: int = 0) -> str:
         """Search a stored tool result with a regular expression.
 
-        Returns at most 20 matches as line-number/line pairs, each line clipped to 500
-        characters. Use read_result with the reported line numbers to read around a match.
+        Returns at most 20 excerpts, including separate passages on a single line,
+        each clipped to 500 characters. Matches already visible in an excerpt are skipped.
 
         Args:
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".

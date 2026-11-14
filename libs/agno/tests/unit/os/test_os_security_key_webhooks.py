@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agent import Agent
 from agno.os.app import AgentOS
@@ -36,21 +37,11 @@ def agent_os_with_slack_and_key():
         )
     )
 
-    mock_slack_tools = Mock()
-    mock_slack_tools.send_message = Mock()
-    mock_slack_tools.upload_file = Mock()
-    mock_slack_tools.max_file_size = 1_073_741_824
-
-    mock_async_web_client = AsyncMock()
-    mock_async_web_client.users_info = AsyncMock(return_value={"ok": True, "user": {"id": "U123"}})
-
     settings = AgnoAPISettings(os_security_key=OS_KEY)
     slack = Slack(agent=agent, token="xoxb-test", signing_secret=SIGNING_SECRET, streaming=False)
 
-    with (
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack_tools),
-        patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_async_web_client),
-    ):
+    auth_test = AsyncMock(return_value={"ok": True, "bot_id": "B123", "user_id": "U123"})
+    with patch.object(AsyncWebClient, "auth_test", auth_test):
         agent_os = AgentOS(agents=[agent], interfaces=[slack], settings=settings, telemetry=False)
         app = agent_os.get_app()
         yield app, agent.arun
@@ -129,19 +120,10 @@ def test_env_var_os_security_key_does_not_block_slack(monkeypatch):
         )
     )
 
-    mock_slack_tools = Mock()
-    mock_slack_tools.send_message = Mock()
-    mock_slack_tools.upload_file = Mock()
-    mock_slack_tools.max_file_size = 1_073_741_824
-    mock_async_web_client = AsyncMock()
-    mock_async_web_client.users_info = AsyncMock(return_value={"ok": True, "user": {"id": "U123"}})
-
     slack = Slack(agent=agent, token="xoxb-test", signing_secret=SIGNING_SECRET, streaming=False)
 
-    with (
-        patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack_tools),
-        patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_async_web_client),
-    ):
+    auth_test = AsyncMock(return_value={"ok": True, "bot_id": "B123", "user_id": "U123"})
+    with patch.object(AsyncWebClient, "auth_test", auth_test):
         agent_os = AgentOS(agents=[agent], interfaces=[slack], telemetry=False)
         assert agent_os.settings.os_security_key == OS_KEY, "Env var should have been picked up by AgnoAPISettings"
 

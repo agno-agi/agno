@@ -4,11 +4,11 @@ Call an A2A Agent with the First-Party Client
 
 Use `A2AClient` to send a message, thread a returned `context_id` into a
 follow-up, stream another turn, and handle an unavailable server. The client
-base URL is the entity root; it appends the message routes itself.
+base URL is the entity root, which is the entity's A2A endpoint.
 
 Prerequisites: Start basic.py on port 7779
 Run: .venvs/demo/bin/python cookbook/05_agent_os/15_a2a/client.py
-Try: Observe POST http://127.0.0.1:7779/a2a/agents/a2a-assistant/v1/message:send and http://127.0.0.1:7779/a2a/agents/a2a-assistant/v1/message:stream
+Try: Observe POST http://127.0.0.1:7779/a2a/agents/a2a-assistant for both the send and the stream calls
 """
 
 import asyncio

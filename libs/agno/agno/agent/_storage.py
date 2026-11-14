@@ -21,13 +21,15 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.offload.store import ResultStore
 
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
-from agno.metrics import RunMetrics, SessionMetrics
+from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -264,6 +266,20 @@ def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
         from agno.offload.store import ResultStore
 
         return ResultStore.from_dict(value)
+    return bool(value)
+
+
+def _followups_to_config(value: Union[bool, FollowupConfig]) -> Union[bool, Dict[str, Any]]:
+    """The followups setting as it is stored: True, False, or the FollowupConfig fields."""
+    if isinstance(value, FollowupConfig):
+        return value.to_dict()
+    return bool(value)
+
+
+def _followups_from_config(value: Any, registry: Optional[Registry] = None) -> Union[bool, FollowupConfig]:
+    """The followups setting from a stored config: False when unset, True, False, or a FollowupConfig."""
+    if isinstance(value, dict):
+        return FollowupConfig.from_dict(value, registry)
     return bool(value)
 
 
@@ -593,40 +609,13 @@ def update_metadata(agent: Agent, session: AgentSession):
         session.metadata.update(merged)
 
 
-def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return SessionMetrics.from_dict(session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, SessionMetrics):
-                return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, RunMetrics):
-                # Convert legacy RunMetrics to SessionMetrics
-                return SessionMetrics(
-                    input_tokens=session_metrics_from_db.input_tokens,
-                    output_tokens=session_metrics_from_db.output_tokens,
-                    total_tokens=session_metrics_from_db.total_tokens,
-                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
-                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
-                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
-                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
-                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
-                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                    cost=session_metrics_from_db.cost,
-                )
-    return SessionMetrics()
-
-
-def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
-    """Calculate session metrics - convert run Metrics to SessionMetrics."""
-    session_metrics = get_session_metrics_internal(agent, session=session)
-    # Add the metrics for the current run to the session metrics
-    if session_metrics is None:
-        return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
+def update_session_metrics(agent: Agent, session: AgentSession) -> None:
+    """Calculate session metrics from the session's runs, so a run saved more than once is counted once."""
+    # A manual compaction with no finished run to carry its usage keeps it apart from the runs
+    session_metrics = SessionMetrics.from_dict((session.session_data or {}).get("compaction_metrics") or {})
+    for run in session.runs or []:
+        if run.metrics is not None:
+            session_metrics.accumulate_from_run(run.metrics)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
@@ -873,6 +862,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_dependencies_to_context:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
+    if agent.filesystem is True:
+        config["filesystem"] = True
+    elif agent.filesystem is not None and agent.filesystem is not False:
+        from agno.fs import FileSystem
+
+        stores = agent.filesystem if isinstance(agent.filesystem, list) else [agent.filesystem]
+        serialized_stores = []
+        for store in stores:
+            if not isinstance(store, FileSystem):
+                raise TypeError("filesystem must contain only FileSystem instances")
+            serialized_stores.append(store.to_dict())
+        config["filesystem"] = serialized_stores if isinstance(agent.filesystem, list) else serialized_stores[0]
+
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
     # a model and callables, so the config names it and the registry supplies
@@ -1020,6 +1022,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
 
+    # --- Followup settings ---
+    if agent.followups:
+        config["followups"] = _followups_to_config(agent.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(agent.followups, FollowupConfig):
+        if agent.num_followups != 3:
+            config["num_followups"] = agent.num_followups
+        if agent.followup_model is not None:
+            if isinstance(agent.followup_model, Model):
+                config["followup_model"] = model_identity(agent.followup_model)
+            else:
+                config["followup_model"] = str(agent.followup_model)
+
     # --- Default tools settings ---
     if agent.read_chat_history:
         config["read_chat_history"] = agent.read_chat_history
@@ -1161,6 +1176,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
+    # TODO: implement compaction serialization - until then an agent saved with compaction
+    # (True or a Compaction) loads back with it off.
+    # if agent.compaction is not None:
+    #     config["compaction"] = agent.compaction if isinstance(agent.compaction, bool) else agent.compaction.to_dict()
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1200,9 +1219,18 @@ def from_dict(
     Raises:
         ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.agents._storage import is_external_agent_config
     from agno.models.utils import resolve_model
 
     component_label = f"Agent '{data.get('id') or data.get('name') or '<unknown>'}'"
+
+    if is_external_agent_config(data):
+        # An external adapter's config is not an Agent's: rebuilding it here would
+        # silently produce a native agent with the harness settings dropped.
+        raise ComponentRehydrationError(
+            f"{component_label} is stored as a {data['sdk']!r} external agent and cannot be loaded as an Agent. "
+            "Load it with get_agent_by_id, or with the adapter's own load()."
+        )
 
     config = data.copy()
 
@@ -1213,6 +1241,10 @@ def from_dict(
     # --- Handle reasoning_model reconstruction ---
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
+
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1280,6 +1312,34 @@ def from_dict(
             # backends the caller's own db is the fallback, in both modes.
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
+
+    # --- Handle FileSystem reconstruction ---
+    if isinstance(config.get("filesystem"), (dict, list)):
+        from agno.fs import FileSystem
+
+        try:
+            filesystem_config = config["filesystem"]
+            store_configs = filesystem_config if isinstance(filesystem_config, list) else [filesystem_config]
+            restored_stores: List[FileSystem] = []
+            for store_config in store_configs:
+                if not isinstance(store_config, dict):
+                    raise TypeError("each serialized filesystem must be an object")
+                filesystem_db_id = (store_config.get("backend") or {}).get("db_id")
+                agent_db = config.get("db")
+                filesystem_db = None
+                if filesystem_db_id is None or getattr(agent_db, "id", None) == filesystem_db_id:
+                    filesystem_db = agent_db
+                elif registry is not None:
+                    filesystem_db = registry.get_db(filesystem_db_id)
+                if filesystem_db_id is not None and filesystem_db is None:
+                    raise ValueError(f"database {filesystem_db_id!r} was not found on the agent or in the registry")
+                restored_stores.append(FileSystem.from_dict(store_config, db=filesystem_db))
+            config["filesystem"] = restored_stores if isinstance(filesystem_config, list) else restored_stores[0]
+        except (TypeError, ValueError) as e:
+            if strict:
+                raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e
+            log_warning(f"{component_label} filesystem could not be restored: {e}")
+            del config["filesystem"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -1349,6 +1409,12 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    # --- Handle Compaction reconstruction ---
+    # TODO: implement compaction deserialization
+    # if "compaction" in config and isinstance(config["compaction"], dict):
+    #     from agno.compaction import Compaction
+    #     config["compaction"] = Compaction.from_dict(config["compaction"])
+
     # --- Handle Learning reconstruction ---
     # A named machine is stored as a reference and resolved from the registry;
     # any other dict is an inline machine config and is rebuilt here.
@@ -1389,6 +1455,7 @@ def from_dict(
         # --- Dependencies ---
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+        filesystem=config.get("filesystem", False),
         # --- Agentic Memory settings ---
         memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
@@ -1416,6 +1483,10 @@ def from_dict(
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         reasoning_model=config.get("reasoning_model"),
+        # --- Followup settings ---
+        followups=_followups_from_config(config.get("followups"), registry),
+        num_followups=config.get("num_followups"),
+        followup_model=config.get("followup_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
@@ -1514,6 +1585,9 @@ def save(
 
     if agent.id is None:
         agent.id = generate_id_from_name(agent.name)
+    from agno.agents._storage import require_same_agent_kind
+
+    require_same_agent_kind(db_, agent.id, None)
 
     try:
         # Create or update component
@@ -1568,6 +1642,9 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
 
     if published_only and version is None and label is None:
         # Dispatch semantics on demand: resolve strictly through the live

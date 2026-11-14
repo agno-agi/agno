@@ -61,13 +61,14 @@ class JSONReader(Reader):
                 json_contents = json.loads(path.read_text(encoding=self.encoding or "utf-8"))
             elif hasattr(path, "seek") and hasattr(path, "read"):
                 log_debug(f"Reading uploaded file: {getattr(path, 'name', 'BytesIO')}")
-                json_name = name or getattr(path, "name", "json_file").split(".")[0]
+                stream_name = getattr(path, "name", None)
+                json_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "json_file")
                 path.seek(0)
                 json_contents = json.load(path)
             else:
                 raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
-            if isinstance(json_contents, dict):
+            if not isinstance(json_contents, list):
                 json_contents = [json_contents]
 
             documents = [

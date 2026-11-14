@@ -47,15 +47,15 @@ async def test_public_custom_tools_need_no_lifecycle_override(public_os):
         assert {tool.name for tool in await client.list_tools()} == {"echo"}
         result = await client.call_tool("echo", {"message": "hello"})
         assert result.content[0].text == "hello"
-    assert public_os.mcp_config.lifecycle_tools is True
+    assert public_os.mcp_config.lifecycle_tools is False
 
 
 @pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
 @pytest.mark.parametrize("named", [False, True])
-def test_public_exposed_components_explain_lifecycle_opt_out(public_os, kind, named):
+def test_public_exposed_components_reject_explicit_lifecycle_tools(public_os, kind, named):
     component = getattr(public_os, kind)[0]
     tool = component.as_tool(name="docs") if named else component
-    public_os.mcp = MCPConfig(tools=[tool], default_tools=False, stateless=True)
+    public_os.mcp = MCPConfig(tools=[tool], lifecycle_tools=True, stateless=True)
 
     with pytest.raises(ValueError) as error:
         public_os.get_app()
@@ -68,11 +68,13 @@ def test_public_exposed_components_explain_lifecycle_opt_out(public_os, kind, na
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["agents", "teams", "workflows"])
 @pytest.mark.parametrize("named", [False, True])
-@pytest.mark.parametrize("opt_out", [{"lifecycle_tools": False}, {"exclude_tags": {"lifecycle"}}])
-async def test_public_exposed_components_accept_both_lifecycle_opt_outs(public_os, kind, named, opt_out):
+@pytest.mark.parametrize(
+    "options", [{}, {"lifecycle_tools": False}, {"lifecycle_tools": True, "exclude_tags": {"lifecycle"}}]
+)
+async def test_public_exposed_components_allow_defaults_and_lifecycle_exclusions(public_os, kind, named, options):
     component = getattr(public_os, kind)[0]
     tool = component.as_tool(name="docs") if named else component
-    public_os.mcp = MCPConfig(tools=[tool], default_tools=False, stateless=True, **opt_out)
+    public_os.mcp = MCPConfig(tools=[tool], stateless=True, **options)
     public_os.get_app()
 
     async with Client(build_mcp_server(public_os)) as client:

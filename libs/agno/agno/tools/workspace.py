@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.exceptions import PathSecurityError
+from agno.run.authorization import requires_permission
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, compile_exclude_patterns
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -641,6 +642,7 @@ class Workspace(Toolkit):
     # Read operations (auto-pass by default)
     # ------------------------------------------------------------------
 
+    @requires_permission("filesystem", "read")
     def read_file(
         self,
         path: str,
@@ -663,6 +665,9 @@ class Workspace(Toolkit):
         :return: Line-numbered file contents (or selected range), or an error message
             starting with "Error".
         """
+        return self._read_file(path, start_line, end_line, encoding)
+
+    def _read_file(self, path: str, start_line: Optional[int], end_line: Optional[int], encoding: str) -> str:
         try:
             log_debug(f"read_file: {path}")
             err, file_path = self._resolve(path)
@@ -698,6 +703,7 @@ class Workspace(Toolkit):
             log_error(f"read_file failed: {e}")
             return f"Error reading file: {e}"
 
+    @requires_permission("filesystem", "read")
     def list_files(
         self,
         directory: str = ".",
@@ -725,6 +731,9 @@ class Workspace(Toolkit):
         :return: JSON string with keys ``directory``, ``pattern``, ``recursive``, and
             ``files`` (list of entry objects).
         """
+        return self._list_files(directory, pattern, recursive, max_depth)
+
+    def _list_files(self, directory: str, pattern: Optional[str], recursive: bool, max_depth: int) -> str:
         try:
             err, d = self._resolve(directory, what="directory")
             if err:
@@ -788,6 +797,7 @@ class Workspace(Toolkit):
             log_error(f"list_files failed: {e}")
             return f"Error listing files: {e}"
 
+    @requires_permission("filesystem", "read")
     def search_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Recursive case-insensitive content grep across text files in the workspace.
 
@@ -800,6 +810,9 @@ class Workspace(Toolkit):
         :return: JSON string with keys ``query``, ``matches_found``, and ``files`` (a list of
             ``{"file", "size", "snippet"}`` objects).
         """
+        return self._search_content(query, directory, limit)
+
+    def _search_content(self, query: str, directory: str, limit: int) -> str:
         try:
             if not query or not query.strip():
                 return "Error: query cannot be empty"
@@ -1038,9 +1051,10 @@ class Workspace(Toolkit):
                 timeout=timeout,
             )
             if result.returncode != 0:
-                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
+                # tail=0 asks for no lines; [-0:] would return the whole output.
+                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:]) if tail > 0 else ""
                 return f"Error (exit {result.returncode}): {err}"
-            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
+            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:]) if tail > 0 else ""
         except subprocess.TimeoutExpired:
             log_warning(f"run_command timed out after {timeout}s: {args}")
             return f"Error: command timed out after {timeout} seconds"
@@ -1052,6 +1066,7 @@ class Workspace(Toolkit):
     # Async siblings
     # ------------------------------------------------------------------
 
+    @requires_permission("filesystem", "read")
     async def aread_file(
         self,
         path: str,
@@ -1060,8 +1075,9 @@ class Workspace(Toolkit):
         encoding: str = "utf-8",
     ) -> str:
         """Async variant of ``read_file``."""
-        return await asyncio.to_thread(self.read_file, path, start_line, end_line, encoding)
+        return await asyncio.to_thread(self._read_file, path, start_line, end_line, encoding)
 
+    @requires_permission("filesystem", "read")
     async def alist_files(
         self,
         directory: str = ".",
@@ -1070,11 +1086,12 @@ class Workspace(Toolkit):
         max_depth: int = 3,
     ) -> str:
         """Async variant of ``list_files``."""
-        return await asyncio.to_thread(self.list_files, directory, pattern, recursive, max_depth)
+        return await asyncio.to_thread(self._list_files, directory, pattern, recursive, max_depth)
 
+    @requires_permission("filesystem", "read")
     async def asearch_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Async variant of ``search_content``."""
-        return await asyncio.to_thread(self.search_content, query, directory, limit)
+        return await asyncio.to_thread(self._search_content, query, directory, limit)
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""
@@ -1119,9 +1136,9 @@ class Workspace(Toolkit):
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             if proc.returncode != 0:
-                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:])
+                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:]) if tail > 0 else ""
                 return f"Error (exit {proc.returncode}): {err}"
-            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:])
+            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:]) if tail > 0 else ""
         except Exception as e:
             log_warning(f"arun_command failed: {e}")
             return f"Error running command: {e}"
