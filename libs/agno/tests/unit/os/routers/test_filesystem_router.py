@@ -1159,7 +1159,7 @@ def test_filesystem_routes_are_read_only(db, client_factory):
     assert shared.read("style.md") == "shared\n"
 
 
-def test_a_broken_agent_does_not_fail_a_read_the_os_answers(db, client_factory, monkeypatch):
+def test_an_agent_that_fails_to_load_fails_a_read_by_namespace(db, client_factory, monkeypatch):
     from fastapi import HTTPException
 
     from agno.os.routers.filesystem import router as filesystem_router
@@ -1173,15 +1173,10 @@ def test_a_broken_agent_does_not_fail_a_read_the_os_answers(db, client_factory, 
 
     monkeypatch.setattr(filesystem_router, "_get_agent_filesystems", unavailable)
 
-    listed = client.get("/filesystem/entries", params={"namespace": "shared-notes"}, headers=_headers("alice"))
-    assert listed.status_code == 200
-    assert [entry["path"] for entry in listed.json()["entries"]] == ["style.md"]
-    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
-    assert [(row["namespace"], row["path"]) for row in rows] == [("shared-notes", "style.md")]
-    # A namespace only the agent holds still reports the agent's failure.
-    assert (
-        client.get("/filesystem/entries", params={"namespace": "broken"}, headers=_headers("alice")).status_code == 503
-    )
+    # The agent's store could use this namespace on another backend, so the OS's is not chosen blind.
+    params = {"namespace": "shared-notes"}
+    assert client.get("/filesystem/entries", params=params, headers=_headers("alice")).status_code == 503
+    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 503
 
 
 def test_an_agent_on_the_same_object_applies_isolation_to_the_os_filesystem(db, client_factory):

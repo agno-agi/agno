@@ -86,10 +86,9 @@ backend and namespace, it is one entry with that agent in `agents`.
   to both. Two objects on one store can disagree on `user_scoped`, and a request
   with no `agent_id` then reads the store as the OS's object describes it.
 - An agent applies `user_isolation` to its filesystems. Under isolation, a shared
-  object with `user_scoped` unset therefore becomes user-scoped on the OS too, and
-  writes from the application then need a user (`shared.partition(None)` writes
-  to the shared partition). Set `user_scoped=False` to keep it one store for
-  every user.
+  object with `user_scoped` unset therefore becomes user-scoped on the OS too:
+  each caller and each run sees only their own partition. Set `user_scoped=False`
+  to keep it one store for every user.
 - If an agent uses the same namespace on another backend, a request by namespace
   alone returns 409. Pass `agent_id` for the agent's, and give the filesystem on
   the OS its own namespace to read it by name.

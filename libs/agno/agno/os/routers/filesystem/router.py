@@ -169,9 +169,9 @@ async def _get_filesystems(
 
     ``agent_id`` narrows the search to that agent, and its errors are raised. With
     none the search covers the filesystems the OS holds, then those of every agent
-    the caller may read; an agent that cannot be browsed is left out, and so is one
-    that fails to load once the OS holds a match, which needs no agent. ``namespace``
-    keeps the filesystems resolving to it.
+    the caller may read; an agent that cannot be browsed is left out, and one that
+    fails to load fails the request, since its store could clash with a match.
+    ``namespace`` keeps the filesystems resolving to it.
     """
     held: dict[tuple, _HeldFileSystem] = {}
     # An empty agent_id names no agent.
@@ -189,13 +189,11 @@ async def _get_filesystems(
     if agent_id is None and os.filesystems:
         for filesystem in _bind_filesystems(os.filesystems, request)[0]:
             add(filesystem, None)
-    # A broken agent must not fail a read the OS answers without it.
-    held_by_os = bool(held)
     for candidate_id in agent_ids:
         try:
             agent_filesystems = await _get_agent_filesystems(os, candidate_id, request)
         except HTTPException as e:
-            if agent_id is None and (e.status_code in (400, 404, 501) or held_by_os):
+            if agent_id is None and e.status_code in (400, 404, 501):
                 continue
             raise
         for filesystem in agent_filesystems:
