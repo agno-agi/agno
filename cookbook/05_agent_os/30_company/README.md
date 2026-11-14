@@ -230,6 +230,26 @@ Super Agent saved in one person's chat can be read in another person's chat.
 Listing `products/` and searching the tree show every Product, as the Product
 listing does.
 
+**Reading it over the API.** `wiki/` and each Product's pages have the wiki routes
+above. A Task's files and the notes have read routes, so the Company pages can
+show what Super Agent and its workers wrote:
+
+| Route | Scope | Returns |
+| --- | --- | --- |
+| GET `/company/tasks/{id}/files` | `tasks:read` and `wiki:read` | The Task's files, paged with `limit` and `page` |
+| GET `/company/tasks/{id}/files/{path}` | `tasks:read` and `wiki:read` | One file: `content`, `metadata` and `next_offset` |
+| GET `/company/notes` | `wiki:read` | The notes, paged the same way |
+| GET `/company/notes/{path}` | `wiki:read` | One note |
+
+A Task's files ask for `wiki:read` as well as `tasks:read`, because reading them in
+chat asks for `wiki:read`. A listing returns at most 200 files a page.
+
+Each `path` is inside its folder: `report.md`, not `tasks/<task-id>/report.md`.
+One read returns at most 40,000 characters. A longer file returns `next_offset`;
+send it as `offset` to read on. A Task that is missing or archived returns
+`404 Task not found`, as the Task route does. These two folders have no write,
+delete or search route.
+
 Super Agent is told that `notes/` is shared. What a person marks private, or
 for Super Agent only, goes to its memory of that person when
 `OSManager(learning=...)` keeps a user profile or a user memory. With no such
