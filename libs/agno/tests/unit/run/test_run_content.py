@@ -41,6 +41,13 @@ def test_shown_tool_results_are_kept_in_message_order():
     assert get_run_content(after) == "Looking it up.TOOL-OUT"
 
 
+def test_shown_result_replaced_by_a_pointer_is_shown_in_full():
+    offloaded = Message(role="tool", content="<result id=...>", tool_call_id="call_1", show_result=True)
+    offloaded.shown_content = "FULL TABLE"
+    assert get_run_content([assistant(tool_call=True), offloaded, assistant("Here it is.")]) == "FULL TABLEHere it is."
+    assert Message.from_dict(offloaded.to_dict()).shown_content == "FULL TABLE"
+
+
 def test_tool_results_that_are_not_shown_are_not_content():
     assert get_run_content([assistant(tool_call=True), tool_result("hidden")]) is None
     assert get_run_content([]) is None

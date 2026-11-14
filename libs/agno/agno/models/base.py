@@ -2203,8 +2203,12 @@ class Model(ABC):
         output: Optional[Union[List[Any], str]] = None,
         timer: Optional[Timer] = None,
         function_execution_result: Optional[FunctionExecutionResult] = None,
+        shown_output: Optional[str] = None,
     ) -> Message:
-        """Create a function call result message."""
+        """Create a function call result message.
+
+        shown_output is the full result of a show_result tool, passed when output holds a pointer to it instead.
+        """
         kwargs: Dict[str, Any] = {}
         # Tool messages don't get metrics - only assistant messages do
 
@@ -2230,6 +2234,7 @@ class Model(ABC):
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
             show_result=function_call.function.show_result and success,
+            shown_content=shown_output if function_call.function.show_result and success else None,
             images=images,
             videos=videos,
             audio=audios,
@@ -2415,6 +2420,7 @@ class Model(ABC):
         # Replace an oversized successful result with its stored envelope
         # BEFORE the tool message (and the ToolExecution derived from it) is
         # built. With no result_store this is a no-op passthrough.
+        full_output = function_call_output
         if result_store is not None:
             function_call_output = self._substitute_tool_result(
                 result_store, function_call, function_call_success, function_call_output
@@ -2426,6 +2432,7 @@ class Model(ABC):
             output=function_call_output,
             timer=function_call_timer,
             function_execution_result=function_execution_result,
+            shown_output=full_output if function_call_output != full_output else None,
         )
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
@@ -3139,6 +3146,7 @@ class Model(ABC):
             # Replace an oversized successful result with its stored envelope
             # BEFORE the tool message (and the ToolExecution derived from it)
             # is built. Async parity: the a-prefixed store methods do the I/O.
+            full_output = function_call_output
             if result_store is not None:
                 function_call_output = await self._asubstitute_tool_result(
                     result_store, function_call, function_call_success, function_call_output
@@ -3150,6 +3158,7 @@ class Model(ABC):
                 output=function_call_output,
                 timer=function_call_timer,
                 function_execution_result=function_execution_result,
+                shown_output=full_output if function_call_output != full_output else None,
             )
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:

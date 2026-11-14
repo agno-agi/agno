@@ -16,8 +16,10 @@ from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.response import ModelResponse
+from agno.offload import ResultStore
 from agno.run.agent import RunCompletedEvent, RunPausedEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
 from agno.team.mode import TeamMode
@@ -198,6 +200,29 @@ def test_show_result_output_stays_in_content_in_order(stream: bool, use_async: b
     script = [{"content": narration, "tool": "get_stories", "args": "{}"}, {"content": "Here are the top stories."}]
     observed = observe(make_agent(script, tools=[get_stories]), stream, use_async)
     assert_content(observed, "STORY-TABLEHere are the top stories.")
+
+
+@all_modes
+def test_show_result_output_is_shown_in_full_when_the_result_is_offloaded(stream: bool, use_async: bool, tmp_path):
+    table = "\n".join(f"story {index}: a headline long enough to cross the offload threshold" for index in range(20))
+
+    @tool(show_result=True)
+    def get_stories() -> str:
+        """Get the top stories."""
+        return table
+
+    script = [{"tool": "get_stories", "args": "{}"}, {"content": "Here are the top stories."}]
+    agent = Agent(
+        model=RecordingModel(script),
+        tools=[get_stories],
+        db=SqliteDb(db_file=str(tmp_path / "offload.db")),
+        offload_tool_results=ResultStore(threshold_chars=100),
+    )
+    observed = observe(agent, stream, use_async)
+    assert_content(observed, table + "Here are the top stories.")
+    # The model still reads the pointer to the stored result, not the full table
+    tool_result = [content for role, content in agent.model.inputs[-1] if role == "tool"][0]
+    assert table not in tool_result
 
 
 @all_modes

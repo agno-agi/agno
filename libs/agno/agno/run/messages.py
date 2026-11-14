@@ -81,6 +81,8 @@ def get_run_content(messages: Sequence[Message]) -> Optional[str]:
     for index, message in enumerate(messages):
         if index == answer_index:
             parts.append(message.get_content_string())
+        elif message.show_result and message.shown_content is not None:
+            parts.append(message.shown_content)
         elif message.show_result and message.content is not None:
             parts.append(message.content if isinstance(message.content, str) else message.get_content_string())
     return "".join(parts) if parts else None
