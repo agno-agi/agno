@@ -14,9 +14,10 @@ from typing import Any, Dict, List, Literal, NamedTuple, Optional, Set, Tuple, T
 
 from starlette.concurrency import run_in_threadpool
 
+from agno.compaction.archive import stores_compaction_records
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
-from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.os.schema import CompactionSchema, RunSchema, TeamRunSchema, WorkflowRunSchema
 from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
@@ -333,6 +334,30 @@ async def get_session_runs(
         for indexed_run in indexed.runs
         if _run_matches_filters(indexed_run[1], created_after, created_before, None)
     ]
+
+
+async def get_session_compactions(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+) -> List[CompactionSchema]:
+    """Every compaction of a session, automatic and manual, newest first.
+
+    Read from the compaction records rather than from runs: a manual compaction is made by no run, so the
+    records are the only place that has all of them. A database that does not store compaction records has
+    none to return.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
+    """
+    await _get_session_dict(db, session_id=session_id, session_type=session_type, user_id=user_id)
+
+    # Only SqliteDb and PostgresDb store compaction records
+    if isinstance(db, AsyncBaseDb) or not stores_compaction_records(db):
+        return []
+    records = await run_in_threadpool(lambda: db.get_compactions_for_session(session_id))
+    return [CompactionSchema.from_dict(record) for record in records]
 
 
 class SessionRunsWindow(NamedTuple):
