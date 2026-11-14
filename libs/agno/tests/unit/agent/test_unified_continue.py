@@ -1867,6 +1867,7 @@ class TestToolDedupeOnUpdate:
     def test_update_run_response_replaces_by_tool_call_id(self):
         from agno.models.response import ModelResponse
         from agno.run.agent import RunOutput
+        from agno.run.messages import RunMessages
 
         # Existing tool (already written by checkpoint callback)
         existing = ToolExecution(tool_call_id="tc-1", tool_name="search", result="result-1")
@@ -1883,7 +1884,7 @@ class TestToolDedupeOnUpdate:
             agent=Agent(name="x"),
             model_response=model_response,
             run_response=run_response,
-            run_messages=type("RM", (), {"messages": []})(),
+            run_messages=RunMessages(messages=[]),
             run_context=None,
         )
 

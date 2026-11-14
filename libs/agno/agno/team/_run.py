@@ -7947,8 +7947,7 @@ def continue_run_dispatch(
 
         # Reset run state for continuation
         run_response.status = RunStatus.running
-        # Reset content before re-running the model; _update_run_response appends
-        # to existing content, so stale content from the paused run must be cleared.
+        # Clear the paused run's content before re-running the model.
         run_response.content = None
 
         log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
@@ -9546,8 +9545,7 @@ async def _acontinue_run(
                 # parameter must be provided" for forked runs that have no
                 # surviving requirements.
                 if _did_snapshot_dispatch:
-                    # Reset content so update_run_response doesn't append to
-                    # stale content from the source run.
+                    # Clear the source run's content before re-running the model.
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
@@ -10033,8 +10031,7 @@ async def _acontinue_run_stream(
                 # parameter must be provided" for forked runs that have no
                 # surviving requirements.
                 if _did_snapshot_dispatch:
-                    # Reset content so update_run_response doesn't append to
-                    # stale content from the source run.
+                    # Clear the source run's content before re-running the model.
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:

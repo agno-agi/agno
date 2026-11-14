@@ -1,4 +1,4 @@
-"""Team run content is the last model call's text, not every call's text glued together (#11641)."""
+"""Team run content is the last model call's text, not every call's text glued together."""
 
 import pytest
 

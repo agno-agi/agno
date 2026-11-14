@@ -1,4 +1,4 @@
-"""Run content is the last model call's text, not every call's text glued together (#11641).
+"""Run content is the last model call's text, not every call's text glued together.
 
 In a run like "text + tool call -> text + tool call -> final text", each model call
 writes its own assistant message. ``RunOutput.content`` must hold only the final
@@ -145,8 +145,8 @@ def test_tool_call_without_narration(stream: bool, use_async: bool):
 
 
 @pytest.mark.parametrize("stream,use_async", MODES, ids=MODE_IDS)
-def test_final_call_without_text_gives_no_content(stream: bool, use_async: bool):
-    """Every mode agrees when the last call writes nothing: the narration is not the answer."""
+def test_final_call_without_text_keeps_the_last_written_text(stream: bool, use_async: bool):
+    """Every mode agrees when the last call writes nothing: the content is the last text the run wrote."""
     script = [{"content": NARRATION[0], "tool": "add_to_cart", "args": '{"item": "apples"}'}, {"content": ""}]
     output, _ = run_in_mode(make_agent(script), stream, use_async)
-    assert not output.content
+    assert output.content == NARRATION[0]
