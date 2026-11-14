@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
@@ -44,6 +44,9 @@ class AgentSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
+    # Runtime-only: a private copy loaded for a temporary run (store_run=False), never written back.
+    transient: bool = field(default=False, repr=False, compare=False)
+
     def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         # Exclude runs from asdict to avoid the deep serialization cost. Serialize
         # a shallow copy so we never mutate a live (possibly shared/cached) session
@@ -51,6 +54,7 @@ class AgentSession:
         session_copy = copy.copy(self)
         session_copy.runs = None
         session_dict = asdict(session_copy)
+        session_dict.pop("transient", None)
 
         if include_runs:
             session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None

@@ -34,6 +34,7 @@ class ResolvedRunOptions:
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]]
     metadata: Optional[Dict[str, Any]]
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]]
+    store_run: bool = True
 
     def apply_to_context(
         self,
@@ -42,6 +43,7 @@ class ResolvedRunOptions:
         dependencies_provided: bool = False,
         knowledge_filters_provided: bool = False,
         metadata_provided: bool = False,
+        store_run_provided: bool = False,
         user_id: Optional[str] = None,
     ) -> None:
         """Apply resolved options to run_context with precedence:
@@ -75,6 +77,9 @@ class ResolvedRunOptions:
         # run_context was provided"
         run_context.output_schema = self.output_schema
 
+        if store_run_provided:
+            run_context.store_run = self.store_run
+
 
 def resolve_run_options(
     agent: Agent,
@@ -90,6 +95,7 @@ def resolve_run_options(
     metadata: Optional[Dict[str, Any]] = None,
     session_metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    store_run: Optional[bool] = None,
 ) -> ResolvedRunOptions:
     """Resolve all run options from call-site values and agent defaults.
 
@@ -172,6 +178,9 @@ def resolve_run_options(
     # output_schema: call-site > agent.output_schema
     resolved_output_schema = output_schema if output_schema is not None else agent.output_schema
 
+    # store_run: call-site > True (a run is stored unless the caller opts out)
+    resolved_store_run = store_run if store_run is not None else True
+
     return ResolvedRunOptions(
         stream=resolved_stream,
         stream_events=resolved_stream_events,
@@ -183,4 +192,5 @@ def resolve_run_options(
         knowledge_filters=resolved_filters,
         metadata=resolved_metadata,
         output_schema=resolved_output_schema,
+        store_run=resolved_store_run,
     )
