@@ -43,6 +43,7 @@ from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.messages import get_run_content
 from agno.run.requirement import RunRequirement
 from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
@@ -51,6 +52,7 @@ from agno.tools.function import (
     Function,
     FunctionCall,
     FunctionExecutionResult,
+    ToolResult,
     UserFeedbackOption,
     UserFeedbackQuestion,
     UserInputField,
@@ -505,12 +507,22 @@ class Model(ABC):
                 if time() - cached_data["timestamp"] > self.cache_ttl:
                     return None
 
+            # Entries written before messages were cached cannot be replayed
+            if "messages" not in cached_data:
+                return None
+
             return cached_data
         except Exception:
             return None
 
-    def _save_model_response_to_cache(self, cache_key: str, result: ModelResponse, is_streaming: bool = False) -> None:
-        """Save a model response to cache."""
+    def _save_model_response_to_cache(
+        self,
+        cache_key: str,
+        result: ModelResponse,
+        is_streaming: bool = False,
+        messages: Optional[List[Message]] = None,
+    ) -> None:
+        """Save a model response, and the messages it produced, to cache."""
         try:
             cache_file = self._get_model_cache_file_path(cache_key)
 
@@ -518,20 +530,24 @@ class Model(ABC):
                 "timestamp": int(time()),
                 "is_streaming": is_streaming,
                 "result": result.to_dict(),
+                "messages": [m.to_dict() for m in messages or []],
             }
             with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
 
-    def _save_streaming_responses_to_cache(self, cache_key: str, responses: List[ModelResponse]) -> None:
-        """Save streaming responses to cache."""
+    def _save_streaming_responses_to_cache(
+        self, cache_key: str, responses: List[ModelResponse], messages: Optional[List[Message]] = None
+    ) -> None:
+        """Save streaming responses, and the messages they produced, to cache."""
         cache_file = self._get_model_cache_file_path(cache_key)
 
         cache_data = {
             "timestamp": int(time()),
             "is_streaming": True,
             "streaming_responses": [r.to_dict() for r in responses],
+            "messages": [m.to_dict() for m in messages or []],
         }
 
         try:
@@ -543,6 +559,10 @@ class Model(ABC):
     def _model_response_from_cache(self, cached_data: Dict[str, Any]) -> ModelResponse:
         """Reconstruct a ModelResponse from cached data."""
         return ModelResponse.from_dict(cached_data["result"])
+
+    def _messages_from_cache(self, cached_data: Dict[str, Any]) -> List[Message]:
+        """Reconstruct the messages a cached response produced."""
+        return [Message.from_dict(message) for message in cached_data["messages"]]
 
     def _streaming_responses_from_cache(self, cached_data: list) -> Iterator[ModelResponse]:
         """Reconstruct streaming responses from cached data."""
@@ -686,6 +706,7 @@ class Model(ABC):
 
             if cached_data:
                 log_info("Cache hit for model response")
+                messages.extend(self._messages_from_cache(cached_data))
                 return self._model_response_from_cache(cached_data)
 
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
@@ -693,6 +714,7 @@ class Model(ABC):
 
         _log_messages(messages)
         model_response = ModelResponse()
+        response_start = len(messages)
 
         function_call_count = 0
 
@@ -811,7 +833,7 @@ class Model(ABC):
                             ModelResponseEvent.tool_call_completed.value,
                         ]:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = (model_response.content or "") + function_call_response.content
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -875,9 +897,14 @@ class Model(ABC):
 
         log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
 
+        # The content is the answer of the whole loop, not the text of every model call
+        model_response.content = get_run_content(messages[response_start:])
+
         # Save to cache if enabled
         if self.cache_response:
-            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+            self._save_model_response_to_cache(
+                cache_key, model_response, is_streaming=False, messages=messages[response_start:]
+            )
 
         return model_response
 
@@ -911,12 +938,14 @@ class Model(ABC):
 
             if cached_data:
                 log_info("Cache hit for model response")
+                messages.extend(self._messages_from_cache(cached_data))
                 return self._model_response_from_cache(cached_data)
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         model_response = ModelResponse()
+        response_start = len(messages)
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -1034,7 +1063,7 @@ class Model(ABC):
                             ModelResponseEvent.tool_call_completed.value,
                         ]:
                             if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                                model_response.content = (model_response.content or "") + function_call_response.content
 
                 # Add a function call for each successful execution
                 function_call_count += self._limit_charge_for(function_call_results, result_store)
@@ -1098,9 +1127,14 @@ class Model(ABC):
 
         log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
 
+        # The content is the answer of the whole loop, not the text of every model call
+        model_response.content = get_run_content(messages[response_start:])
+
         # Save to cache if enabled
         if self.cache_response:
-            self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+            self._save_model_response_to_cache(
+                cache_key, model_response, is_streaming=False, messages=messages[response_start:]
+            )
 
         return model_response
 
@@ -1139,12 +1173,8 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+        # Content holds this model call's text only, earlier calls keep theirs in their own assistant message
+        model_response.content = assistant_message.get_content_string() if assistant_message.content else None
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1209,12 +1239,8 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Update model response with assistant message content and audio
-        if assistant_message.content is not None:
-            if model_response.content is None:
-                model_response.content = assistant_message.get_content_string()
-            else:
-                model_response.content += assistant_message.get_content_string()
+        # Content holds this model call's text only, earlier calls keep theirs in their own assistant message
+        model_response.content = assistant_message.get_content_string() if assistant_message.content else None
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_reasoning_content is not None:
@@ -1398,12 +1424,14 @@ class Model(ABC):
                 # Yield cached responses
                 for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
                     yield response
+                messages.extend(self._messages_from_cache(cached_data))
                 return
 
             log_info("Cache miss for streaming model response")
 
         # Track streaming responses for caching
         streaming_responses: List[ModelResponse] = []
+        response_start = len(messages)
 
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -1608,7 +1636,7 @@ class Model(ABC):
 
         # Save streaming responses to cache if enabled
         if self.cache_response and cache_key and streaming_responses:
-            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses, messages=messages[response_start:])
 
     async def aprocess_response_stream(
         self,
@@ -1679,12 +1707,14 @@ class Model(ABC):
                 # Yield cached responses
                 for response in self._streaming_responses_from_cache(cached_data["streaming_responses"]):
                     yield response
+                messages.extend(self._messages_from_cache(cached_data))
                 return
 
             log_info("Cache miss for async streaming model response")
 
         # Track streaming responses for caching
         streaming_responses: List[ModelResponse] = []
+        response_start = len(messages)
 
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -1889,7 +1919,7 @@ class Model(ABC):
 
         # Save streaming responses to cache if enabled
         if self.cache_response and cache_key and streaming_responses:
-            self._save_streaming_responses_to_cache(cache_key, streaming_responses)
+            self._save_streaming_responses_to_cache(cache_key, streaming_responses, messages=messages[response_start:])
 
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData
@@ -2173,8 +2203,12 @@ class Model(ABC):
         output: Optional[Union[List[Any], str]] = None,
         timer: Optional[Timer] = None,
         function_execution_result: Optional[FunctionExecutionResult] = None,
+        shown_output: Optional[str] = None,
     ) -> Message:
-        """Create a function call result message."""
+        """Create a function call result message.
+
+        shown_output is the full result of a show_result tool, passed when output holds a pointer to it instead.
+        """
         kwargs: Dict[str, Any] = {}
         # Tool messages don't get metrics - only assistant messages do
 
@@ -2199,12 +2233,27 @@ class Model(ABC):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
+            show_result=function_call.function.show_result and success,
+            shown_content=shown_output if function_call.function.show_result and success else None,
             images=images,
             videos=videos,
             audio=audios,
             files=files,
             **kwargs,  # type: ignore
         )
+
+    @staticmethod
+    def _apply_tool_result(function_execution_result: FunctionExecutionResult, tool_result: ToolResult) -> str:
+        """Move a ToolResult's media onto the execution result and return its content."""
+        if tool_result.images:
+            function_execution_result.images = tool_result.images
+        if tool_result.videos:
+            function_execution_result.videos = tool_result.videos
+        if tool_result.audios:
+            function_execution_result.audios = tool_result.audios
+        if tool_result.files:
+            function_execution_result.files = tool_result.files
+        return tool_result.content
 
     @staticmethod
     def _limit_charge_for(function_call_results: List[Message], result_store: Optional["ResultStore"]) -> int:
@@ -2284,8 +2333,11 @@ class Model(ABC):
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
             try:
                 for item in function_execution_result.result:
+                    # A yielded ToolResult is the tool's result, replacing what was streamed before it
+                    if isinstance(item, ToolResult):
+                        function_call_output = self._apply_tool_result(function_execution_result, item)
                     # This function yields agent/team/workflow run events
-                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
+                    elif isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2342,22 +2394,10 @@ class Model(ABC):
                 ):
                     function_execution_result.updated_session_state = function_call.function._run_context.session_state
         else:
-            from agno.tools.function import ToolResult
-
             if isinstance(function_execution_result.result, ToolResult):
-                # Extract content and media from ToolResult
-                tool_result = function_execution_result.result
-                function_call_output = tool_result.content
-
-                # Transfer media from ToolResult to FunctionExecutionResult
-                if tool_result.images:
-                    function_execution_result.images = tool_result.images
-                if tool_result.videos:
-                    function_execution_result.videos = tool_result.videos
-                if tool_result.audios:
-                    function_execution_result.audios = tool_result.audios
-                if tool_result.files:
-                    function_execution_result.files = tool_result.files
+                function_call_output = self._apply_tool_result(
+                    function_execution_result, function_execution_result.result
+                )
             else:
                 function_call_output = str(function_execution_result.result)
 
@@ -2380,6 +2420,7 @@ class Model(ABC):
         # Replace an oversized successful result with its stored envelope
         # BEFORE the tool message (and the ToolExecution derived from it) is
         # built. With no result_store this is a no-op passthrough.
+        full_output = function_call_output
         if result_store is not None:
             function_call_output = self._substitute_tool_result(
                 result_store, function_call, function_call_success, function_call_output
@@ -2391,6 +2432,7 @@ class Model(ABC):
             output=function_call_output,
             timer=function_call_timer,
             function_execution_result=function_execution_result,
+            shown_output=full_output if function_call_output != full_output else None,
         )
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
@@ -2874,8 +2916,11 @@ class Model(ABC):
 
             try:
                 async for item in function_call.result:
+                    # A yielded ToolResult is the tool's result, replacing what was streamed before it
+                    if isinstance(item, ToolResult):
+                        function_call_output = self._apply_tool_result(function_execution_result, item)
                     # This function yields agent/team/workflow run events
-                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
+                    elif isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -3015,8 +3060,11 @@ class Model(ABC):
                 function_call_timer.start_time = function_call_timer.start() - elapsed_before_consumption
                 try:
                     for item in function_call.result:
+                        # A yielded ToolResult is the tool's result, replacing what was streamed before it
+                        if isinstance(item, ToolResult):
+                            function_call_output = self._apply_tool_result(function_execution_result, item)
                         # This function yields agent/team/workflow run events
-                        if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
+                        elif isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                             # We only capture content events
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
@@ -3072,20 +3120,10 @@ class Model(ABC):
                     (GeneratorType, collections.abc.Iterator, AsyncGeneratorType, collections.abc.AsyncIterator),
                 )
             ):
-                from agno.tools.function import ToolResult
-
                 if isinstance(function_execution_result.result, ToolResult):
-                    tool_result = function_execution_result.result
-                    function_call_output = tool_result.content
-
-                    if tool_result.images:
-                        function_execution_result.images = tool_result.images
-                    if tool_result.videos:
-                        function_execution_result.videos = tool_result.videos
-                    if tool_result.audios:
-                        function_execution_result.audios = tool_result.audios
-                    if tool_result.files:
-                        function_execution_result.files = tool_result.files
+                    function_call_output = self._apply_tool_result(
+                        function_execution_result, function_execution_result.result
+                    )
                 else:
                     function_call_output = str(function_call.result)
 
@@ -3108,6 +3146,7 @@ class Model(ABC):
             # Replace an oversized successful result with its stored envelope
             # BEFORE the tool message (and the ToolExecution derived from it)
             # is built. Async parity: the a-prefixed store methods do the I/O.
+            full_output = function_call_output
             if result_store is not None:
                 function_call_output = await self._asubstitute_tool_result(
                     result_store, function_call, function_call_success, function_call_output
@@ -3119,6 +3158,7 @@ class Model(ABC):
                 output=function_call_output,
                 timer=function_call_timer,
                 function_execution_result=function_execution_result,
+                shown_output=full_output if function_call_output != full_output else None,
             )
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:

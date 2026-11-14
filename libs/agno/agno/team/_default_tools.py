@@ -69,7 +69,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.team._members import member_knowledge_filters, member_storage
-from agno.tools.function import Function
+from agno.tools.function import Function, ToolResult
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
     get_run_response_kwarg,
@@ -710,7 +710,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
-    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_member(
+        member_id: str, task: str
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Use this function to delegate a task to the selected team member.
 
         Args:
@@ -848,33 +850,19 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
+        # A streamed member run that returned no run output keeps its streamed text as the result
+        if member_agent_run_response is not None or not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    content = member_agent_run_response.content.strip()  # type: ignore
-                    if len(content) > 0:
-                        yield content
-
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:  # type: ignore
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:  # type: ignore
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
-
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
-
-                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
+                member_result = _member_result_text(member_agent_run_response)  # type: ignore
             except Exception as e:
-                yield str(e)
+                member_result = str(e)
+            if member_result is not None:
+                member_result = member_result.strip()
+            if stream:
+                # The member's final output replaces the text streamed while it ran
+                yield ToolResult(content=member_result or "")
+            elif member_result is not None:
+                yield member_result
 
         # Afterward, switch back to the team logger
         use_team_logger()
@@ -888,7 +876,7 @@ def _get_delegate_task_function(
 
     async def adelegate_task_to_member(
         member_id: str, task: str
-    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Use this function to delegate a task to the selected team member.
 
         Args:
@@ -1031,30 +1019,17 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
+        # A streamed member run that returned no run output keeps its streamed text as the result
+        if member_agent_run_response is not None or not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                    if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                        yield member_agent_run_response.content  # type: ignore
-
-                    # If the content is empty but we have tool calls
-                    elif (
-                        member_agent_run_response.tools is not None  # type: ignore
-                        and len(member_agent_run_response.tools) > 0  # type: ignore
-                    ):
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                else:
-                    import json
-
-                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
+                member_result = _member_result_text(member_agent_run_response)  # type: ignore
             except Exception as e:
-                yield str(e)
+                member_result = str(e)
+            if stream:
+                # The member's final output replaces the text streamed while it ran
+                yield ToolResult(content=member_result or "")
+            elif member_result is not None:
+                yield member_result
 
         # Afterward, switch back to the team logger
         use_team_logger()
@@ -1067,7 +1042,9 @@ def _get_delegate_task_function(
         )
 
     # When the task should be delegated to all members
-    def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_members(
+        task: str,
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """
         Use this function to send one task to every member agent and return their responses.
         One call reaches all members; do not call it once per member.
@@ -1080,6 +1057,9 @@ def _get_delegate_task_function(
         from agno.utils.callables import get_resolved_members
 
         resolved_members = get_resolved_members(team, run_context) or []
+
+        member_results: List[str] = []
+        missing_run_output = False
 
         # Run all the members sequentially
         for _, member_agent in enumerate(resolved_members):
@@ -1198,30 +1178,25 @@ def _get_delegate_task_function(
                     task,  # type: ignore
                     member_session_state_copy,  # type: ignore
                 )
-                yield f"Agent {member_agent.name}: Requires human input before continuing."
+                paused_line = f"Agent {member_agent.name}: Requires human input before continuing."
+                member_results.append(paused_line)
+                yield paused_line
                 continue
 
-            if not stream:
+            if member_agent_run_response is None and stream:
+                missing_run_output = True
+            else:
+                member_line: Optional[str] = None
                 try:
-                    if member_agent_run_response.content is None and (  # type: ignore
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                    ):
-                        yield f"Agent {member_agent.name}: No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):  # type: ignore
-                        if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content}"  # type: ignore
-                        elif (
-                            member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0  # type: ignore
-                        ):
-                            yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                    else:
-                        import json
-
-                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"  # type: ignore
+                    member_result = _member_result_text(member_agent_run_response)  # type: ignore
+                    if member_result is not None:
+                        member_line = f"Agent {member_agent.name}: {member_result}"
                 except Exception as e:
-                    yield f"Agent {member_agent.name}: Error - {str(e)}"
+                    member_line = f"Agent {member_agent.name}: Error - {str(e)}"
+                if member_line is not None:
+                    member_results.append(member_line)
+                    if not stream:
+                        yield member_line
 
             _process_delegate_task_to_member(
                 member_agent_run_response,
@@ -1230,11 +1205,17 @@ def _get_delegate_task_function(
                 member_session_state_copy,  # type: ignore
             )
 
+        # The members' final outputs replace the text streamed while they ran
+        if stream and not missing_run_output:
+            yield ToolResult(content="".join(member_results))
+
         # After all the member runs, switch back to the team logger
         use_team_logger()
 
     # When the task should be delegated to all members
-    async def adelegate_task_to_members(task: str) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    async def adelegate_task_to_members(
+        task: str,
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Use this function to send one task to every member agent and return their responses.
         One call reaches all members; do not call it once per member.
 
@@ -1258,7 +1239,12 @@ def _get_delegate_task_function(
             done_marker = object()
             queue: "asyncio.Queue[Union[RunOutputEvent, TeamRunOutputEvent, str, object]]" = asyncio.Queue()
 
-            async def stream_member(agent: Union[Agent, "Team"]) -> None:
+            member_results: Dict[int, str] = {}
+            missing_run_output = False
+
+            async def stream_member(agent: Union[Agent, "Team"], member_index: int) -> None:
+                nonlocal missing_run_output
+                member_name = agent.name if agent.name else f"agent_{member_index}"
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                 member_session_state_copy = copy(run_context.session_state)
 
@@ -1336,7 +1322,9 @@ def _get_delegate_task_function(
                                 task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
-                            await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
+                            paused_line = f"Agent {agent.name}: Requires human input before continuing."
+                            member_results[member_index] = paused_line
+                            await queue.put(paused_line)
                         else:
                             await _aprocess_delegate_task_to_member(
                                 member_agent_run_response,
@@ -1344,15 +1332,24 @@ def _get_delegate_task_function(
                                 task,  # type: ignore
                                 member_session_state_copy,  # type: ignore
                             )
+                            if member_agent_run_response is None:
+                                missing_run_output = True
+                            else:
+                                try:
+                                    member_result = _member_result_text(member_agent_run_response)
+                                    if member_result is not None:
+                                        member_results[member_index] = f"Agent {member_name}: {member_result}"
+                                except Exception as e:
+                                    member_results[member_index] = f"Agent {member_name}: Error - {str(e)}"
                 finally:
                     await queue.put(done_marker)
 
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
-            for member_agent in resolved_members:
+            for member_agent_index, member_agent in enumerate(resolved_members):
                 current_agent = member_agent
                 _initialize_member(team, current_agent)
-                tasks.append(asyncio.create_task(stream_member(current_agent)))
+                tasks.append(asyncio.create_task(stream_member(current_agent, member_agent_index)))
 
             # Drain queue until all members reported done
             completed = 0
@@ -1379,6 +1376,10 @@ def _get_delegate_task_function(
                     exc = t.exception()
                     if isinstance(exc, RunCancelledException):
                         raise exc
+
+            # The members' final outputs replace the text streamed while they ran
+            if not missing_run_output:
+                yield ToolResult(content="".join(member_results[index] for index in sorted(member_results)))
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
@@ -1455,35 +1456,9 @@ def _get_delegate_task_function(
                     )
 
                     try:
-                        if member_agent_run_response.content is None and (
-                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                        ):
-                            return (f"Agent {member_name}: No response from the member agent.", None, None)
-                        elif isinstance(member_agent_run_response.content, str):
-                            if len(member_agent_run_response.content.strip()) > 0:
-                                return (f"Agent {member_name}: {member_agent_run_response.content}", None, None)
-                            elif (
-                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
-                            ):
-                                return (
-                                    f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}",
-                                    None,
-                                    None,
-                                )
-                        elif issubclass(type(member_agent_run_response.content), BaseModel):
-                            return (
-                                f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
-                                None,
-                                None,
-                            )
-                        else:
-                            import json
-
-                            return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
-                                None,
-                                None,
-                            )
+                        member_result = _member_result_text(member_agent_run_response)
+                        if member_result is not None:
+                            return (f"Agent {member_name}: {member_result}", None, None)
                     except Exception as e:
                         return (f"Agent {member_name}: Error - {str(e)}", None, None)
 
@@ -1532,6 +1507,24 @@ def _get_delegate_task_function(
         delegate_func.show_result = True
 
     return delegate_func
+
+
+def _member_result_text(member_run_response: Union[RunOutput, TeamRunOutput]) -> Optional[str]:
+    """The text a finished member run hands back to the team leader, None when it has nothing to say."""
+    content = member_run_response.content
+    tools = member_run_response.tools or []
+    if content is None and not tools:
+        return "No response from the member agent."
+    if isinstance(content, str):
+        if content.strip():
+            return content
+        # The content is empty but we have tool calls
+        if tools:
+            return ",".join(str(tool.result) for tool in tools if tool.result)
+        return None
+    if isinstance(content, BaseModel):
+        return content.model_dump_json(indent=2)
+    return json.dumps(content, indent=2, ensure_ascii=False)
 
 
 def add_to_knowledge(team: "Team", query: str, result: str, user_id: Optional[str] = None) -> str:
