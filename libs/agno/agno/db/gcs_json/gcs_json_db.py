@@ -2592,8 +2592,10 @@ class GcsJsonDb(BaseDb):
             filtered.sort(key=lambda x: x.get("start_time", ""), reverse=True)
 
             # Apply pagination
-            if limit and page:
-                start_idx = (page - 1) * limit
+            if limit is not None:
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
                 filtered = filtered[start_idx : start_idx + limit]
 
             # Add total_spans and error_count to each trace
@@ -2702,8 +2704,10 @@ class GcsJsonDb(BaseDb):
             stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
 
             # Apply pagination
-            if limit and page:
-                start_idx = (page - 1) * limit
+            if limit is not None:
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
                 stats_list = stats_list[start_idx : start_idx + limit]
 
             # Convert ISO strings to datetime objects
