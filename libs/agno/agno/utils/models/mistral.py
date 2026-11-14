@@ -78,14 +78,12 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
             else:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
-            if message.reasoning_content is not None:
-                mistral_message = UserMessage(role="user", content=message.content)
-            elif message.tool_calls is not None:
+            if message.tool_calls is not None:
                 mistral_message = AssistantMessage(
                     role="assistant", content=message.content, tool_calls=message.tool_calls
                 )
             else:
-                mistral_message = AssistantMessage(role=message.role, content=message.content)
+                mistral_message = AssistantMessage(role="assistant", content=message.content)
         elif message.role == "system":
             mistral_message = SystemMessage(role="system", content=message.content)
         elif message.role == "tool":
