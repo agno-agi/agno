@@ -45,6 +45,9 @@ async def enqueue_sandbox_run(
         _check_rebuild(agent, resolved)
     elif resolved is not agent:
         raise ValueError("Sandbox submissions must use the registered agent instance")
+    run_id = run_id or _new_queued_run_id()
+    # A sandbox takes no dependencies, so they go into the input as the block an Agent adds to its context.
+    input = await _harness.asubmission_input(agent, input, kwargs, run_id, session_id, user_id)
     options = _harness.submission(agent, input, kwargs)
     if kwargs.get("output_schema") is None:
         # The worker derives the agent's own schema at the ticket's version; stored here, a publish
@@ -64,7 +67,7 @@ async def enqueue_sandbox_run(
         # refuse this turn as a lost lease after the ticket exists. Answer as that rule does.
         raise HTTPException(status_code=404, detail="Session not found")
     job = QueuedJob(
-        id=run_id or _new_queued_run_id(),
+        id=run_id,
         component_type="agent",
         component_id=agent.get_id(),
         session_id=session_id,

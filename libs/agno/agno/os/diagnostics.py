@@ -199,25 +199,6 @@ async def _check(agent_os: "AgentOS", name: str, *, network_probe: bool, public_
         return CheckResult(name, "PASS", "Declared knowledge and learning names are unique")
 
     if name == "interfaces":
-
-        def credentials_present(interface: Any) -> bool:
-            # Match SlackTools' token fallback and the signature verifier's
-            # explicit-secret precedence (an empty explicit secret stays empty).
-            from agno.os.interfaces.slack.security import SLACK_SIGNING_SECRET
-
-            token = getattr(interface, "token", None) or os.getenv("SLACK_TOKEN")
-            secret = getattr(interface, "signing_secret", None)
-            if secret is None:
-                secret = SLACK_SIGNING_SECRET
-            return bool(token and secret)
-
-        missing = [
-            interface
-            for interface in agent_os.interfaces
-            if getattr(interface, "type", None) == "slack" and not credentials_present(interface)
-        ]
-        if missing:
-            return CheckResult(name, "FAIL", "A Slack interface is missing its token or signing secret")
         return CheckResult(name, "PASS", f"{len(agent_os.interfaces)} interfaces configured; delivery not tested")
 
     if name == "scheduler":

@@ -7,8 +7,8 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import httpx
 import pytest

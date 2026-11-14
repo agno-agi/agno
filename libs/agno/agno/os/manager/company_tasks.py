@@ -75,9 +75,12 @@ def _user_isolation(agent_os: Any) -> bool:
 def _unsigned(agent_os: Any, authority: Any, user_id: Any) -> bool:
     """Whether nobody stands behind this run: it carries no permissions where the deployment checks
     them, or names no person where the deployment isolates users."""
-    return (authority is None and bool(getattr(agent_os, "authorization", None))) or (
-        _user_isolation(agent_os) and not user_id
-    )
+    from agno.os.auth import _authorization_enforced
+
+    # An authorization middleware on the app checks permissions just as AgentOS(authorization=...) does
+    app = getattr(agent_os, "_company_app", None)
+    authorization = bool(getattr(agent_os, "authorization", None)) or (app is not None and _authorization_enforced(app))
+    return (authority is None and authorization) or (_user_isolation(agent_os) and not user_id)
 
 
 def _policy_line(policy: Any) -> str:

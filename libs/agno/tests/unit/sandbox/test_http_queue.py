@@ -408,6 +408,25 @@ async def test_ticket_carries_only_the_callers_output_schema(accepted, db, regis
 
 
 @pytest.mark.asyncio
+async def test_ticket_carries_dependencies_as_the_block_an_agent_adds(accepted, db, registry_sandbox):
+    agent = ClaudeAgent(id="coder", db=db, sandbox=registry_sandbox)
+    worker = FakeWorker(None, None, [agent])
+
+    job = await sandbox.enqueue_sandbox_run(
+        agent,
+        worker,
+        input="hello",
+        session_id="s1",
+        user_id=None,
+        kwargs={"dependencies": {"run": lambda run_context: run_context.run_id}, "add_dependencies_to_context": True},
+    )
+
+    # Added once here: the ticket carries no dependencies for the worker's run to add again.
+    block = '\n\n<additional context>\n{\n  "run": "' + job["id"] + '"\n}\n</additional context>'
+    assert job["payload"]["input"] == "hello" + block and job["payload"]["kwargs"] == {}
+
+
+@pytest.mark.asyncio
 async def test_idempotent_retry_survives_a_publish_that_changes_the_default_output_schema(
     accepted, db, registry, registry_sandbox, monkeypatch
 ):

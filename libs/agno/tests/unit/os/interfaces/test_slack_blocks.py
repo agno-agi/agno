@@ -123,10 +123,10 @@ class TestConfirmationRow:
         assert [el.action_id for el in card.actions] == [ACTION_ROW_APPROVE, ACTION_ROW_REJECT]
 
     def test_button_value_routing(self):
-        # _handle_row_click splits on "|" to recover (req_id, run_id, awaiting_ts).
+        # The row handlers split on "|" to recover (req_id, run_id, awaiting_ts, owner).
         card = build_pause_message("A1", [_make_requirement()])[0]
-        assert card.actions[0].value == "r1|A1|"
-        assert card.actions[1].value == "r1|A1|"
+        assert card.actions[0].value == "r1|A1||"
+        assert card.actions[1].value == "r1|A1||"
 
     def test_buttons_no_confirm_dialogs(self):
         # Direct action without confirmation popup for faster UX
@@ -141,7 +141,7 @@ class TestConfirmationRow:
             "A1", [_make_requirement(tool_name="comment_on_issue", tool_args={"body": long_comment})]
         )[0]
         assert len(card.body.text) <= 200
-        assert card.body.text.endswith("…")
+        assert card.body.text == "• body\n_Full values below._"
 
 
 # -- User-input row --
@@ -580,7 +580,45 @@ class TestResponseBlocks:
         result = response_blocks(original, state_values, [])
         submitted_card = result[-1]
         assert len(submitted_card["body"]["text"]) <= 200
-        assert submitted_card["body"]["text"].endswith("...")
+        assert submitted_card["body"]["text"].endswith("…`")
+        assert submitted_card["body"]["text"].count("`") % 2 == 0
+
+        long_labels = [
+            {
+                "type": "input",
+                "block_id": f"row:r1:user_input:field{i}",
+                "label": {"type": "plain_text", "text": "L" * 110},
+                "element": {"type": "plain_text_input", "action_id": f"input_field:field{i}"},
+            }
+            for i in (1, 2)
+        ]
+        label_values = {
+            f"row:r1:user_input:field{i}": {f"input_field:field{i}": {"type": "plain_text_input", "value": v}}
+            for i, v in ((1, "Yes"), (2, "No"))
+        }
+        label_body = response_blocks(long_labels, label_values, [])[-1]["body"]["text"]
+        assert len(label_body) <= 200
+        assert label_body.count("`") % 2 == 0
+        assert label_body.endswith("…")
+
+        many_fields = [
+            {
+                "type": "input",
+                "block_id": f"row:r1:user_input:field{i}",
+                "label": {"type": "plain_text", "text": f"Field {i}"},
+                "element": {"type": "plain_text_input", "action_id": f"input_field:field{i}"},
+            }
+            for i in range(20)
+        ]
+        many_values = {
+            f"row:r1:user_input:field{i}": {f"input_field:field{i}": {"type": "plain_text_input", "value": f"v{i}"}}
+            for i in range(20)
+        }
+        many_body = response_blocks(many_fields, many_values, [])[-1]["body"]["text"]
+        assert many_body.startswith("• Field 0: `v0`\n• Field 1: `v1`")
+        assert many_body.endswith("\n…")
+        assert len(many_body) <= 200
+        assert many_body.count("`") % 2 == 0
 
 
 # -- render_arg_value inerting --
@@ -696,3 +734,75 @@ class TestRenderArgValueInerting:
         assert "<" not in body
         assert ">" not in body
         assert "\n" not in body
+
+
+# -- Slack size limits and card owner --
+
+
+def _to_dicts(blocks):
+    from agno.os.interfaces.slack.types import block_to_dict
+
+    return [block_to_dict(b) for b in blocks]
+
+
+class TestSlackLimits:
+    def test_long_option_text_truncated_value_kept(self):
+        long_label = "L" * 100
+        req = _make_requirement(
+            user_feedback_schema=[
+                UserFeedbackQuestion(
+                    question="Pick", options=[UserFeedbackOption(label=long_label, description="D" * 200)]
+                )
+            ],
+        )
+        blocks = _to_dicts(build_pause_message("run-1", [req]))
+        option = next(b for b in blocks if b.get("type") == "input")["element"]["options"][0]
+        assert len(option["text"]["text"]) <= 75
+        assert option["value"] == long_label
+        assert len(option["description"]["text"]) <= 75
+
+    def test_full_args_section_when_card_body_is_cut(self):
+        long_value = "x" * 500
+        req = _make_requirement(requires_confirmation=True, tool_args={"query": long_value, "limit": 5})
+        blocks = _to_dicts(build_pause_message("run-1", [req]))
+        card = next(b for b in blocks if b.get("type") == "card")
+        assert card["body"]["text"] == "• query\n• limit\n_Full values below._"
+        section = next(b for b in blocks if b.get("block_id") == "args:r1")
+        assert long_value in section["text"]["text"]
+        assert "• limit: `5`" in section["text"]["text"]
+
+        huge_req = _make_requirement(requires_confirmation=True, tool_args={"query": "y" * 4000})
+        huge_section = next(
+            b for b in _to_dicts(build_pause_message("run-1", [huge_req])) if b.get("block_id") == "args:r1"
+        )
+        assert len(huge_section["text"]["text"]) <= 3000
+        assert huge_section["text"]["text"].count("`") % 2 == 0
+
+        command = "c" * 1500
+        fit_req = _make_requirement(
+            requires_confirmation=True, tool_args={"command": command, "cwd": "/repo", "timeout": "30"}
+        )
+        fit_section = next(
+            b for b in _to_dicts(build_pause_message("run-1", [fit_req])) if b.get("block_id") == "args:r1"
+        )
+        assert f"• command: `{command}`" in fit_section["text"]["text"]
+
+        short_req = _make_requirement(requires_confirmation=True, tool_args={"query": "hi"})
+        short_card = next(b for b in _to_dicts(build_pause_message("run-1", [short_req])) if b.get("type") == "card")
+        assert short_card["body"]["text"] == "• query: `hi`"
+
+    def test_no_args_section_for_short_args(self):
+        req = _make_requirement(requires_confirmation=True)
+        blocks = _to_dicts(build_pause_message("run-1", [req]))
+        assert not any(str(b.get("block_id", "")).startswith("args:") for b in blocks)
+
+    def test_buttons_carry_owner_and_no_thread_ts_fallback(self):
+        from agno.os.interfaces.slack.ids import decode_row_button_value
+
+        req = _make_requirement(requires_confirmation=True)
+        blocks = _to_dicts(build_pause_message("run-1", [req], None, owner="U_OWNER"))
+        card = next(b for b in blocks if b.get("type") == "card")
+        req_id, run_id, awaiting_ts, owner = decode_row_button_value(card["actions"][0]["value"])
+        assert (req_id, run_id, owner) == ("r1", "run-1", "U_OWNER")
+        # No awaiting indicator stays None, so "Check again" can never delete the thread root
+        assert awaiting_ts is None
