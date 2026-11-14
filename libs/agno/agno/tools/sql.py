@@ -33,19 +33,20 @@ class SQLTools(Toolkit):
     ):
         # Get the database engine
         _engine: Optional[Engine] = db_engine
-        if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
-        elif _engine is None and user and password and host and port and dialect:
-            _engine = create_engine(
-                URL.create(
-                    drivername=dialect,
-                    username=user,
-                    password=password,
-                    host=host,
-                    port=port,
-                    database=schema,
+        if _engine is None:
+            if db_url is not None:
+                _engine = create_engine(db_url)
+            elif user and password and host and port and dialect:
+                _engine = create_engine(
+                    URL.create(
+                        drivername=dialect,
+                        username=user,
+                        password=password,
+                        host=host,
+                        port=port,
+                        database=schema,
+                    )
                 )
-            )
 
         if _engine is None:
             raise ValueError("Could not build the database connection")
