@@ -83,6 +83,7 @@ from agno.run.cancel import (
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.status_persist import apersist_run_transition
+from agno.run.streamed import StreamedContent
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -2961,15 +2962,12 @@ class Workflow:
                 if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                     raise ValueError("Cannot use async function with synchronous execution")
                 elif isgeneratorfunction(self.steps):
-                    content = ""
+                    streamed_content = StreamedContent()
                     for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):
                         # Check for cancellation while consuming generator
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                        streamed_content.add(chunk)
+                    workflow_run_response.content = streamed_content.get()
                 else:
                     # Execute the workflow with the custom executor
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -3318,16 +3316,13 @@ class Workflow:
                 if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                     raise ValueError("Cannot use async function with synchronous execution")
                 elif isgeneratorfunction(self.steps):
-                    content = ""
+                    streamed_content = StreamedContent()
                     for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        # Update the run_response with the content from the result
+                        streamed_content.add(chunk)
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
                             yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                    workflow_run_response.content = streamed_content.get()
                 else:
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
@@ -3956,7 +3951,7 @@ class Workflow:
 
         if callable(self.steps):
             # Execute the workflow with the custom executor
-            content = ""
+            streamed_content = StreamedContent()
 
             try:
                 if iscoroutinefunction(self.steps):  # type: ignore
@@ -3967,20 +3962,14 @@ class Workflow:
                 elif isgeneratorfunction(self.steps):
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                        streamed_content.add(chunk)
+                    workflow_run_response.content = streamed_content.get()
                 elif isasyncgenfunction(self.steps):  # type: ignore
                     async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                     async for chunk in async_gen:
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                        streamed_content.add(chunk)
+                    workflow_run_response.content = streamed_content.get()
                 else:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
@@ -4335,26 +4324,22 @@ class Workflow:
                         self.steps, execution_input, **kwargs
                     )
                 elif isgeneratorfunction(self.steps):
-                    content = ""
+                    streamed_content = StreamedContent()
                     for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        streamed_content.add(chunk)
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
                             yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                    workflow_run_response.content = streamed_content.get()
                 elif isasyncgenfunction(self.steps):  # type: ignore
-                    content = ""
+                    streamed_content = StreamedContent()
                     async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                     async for chunk in async_gen:
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        streamed_content.add(chunk)
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
                             yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
+                    workflow_run_response.content = streamed_content.get()
                 else:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
