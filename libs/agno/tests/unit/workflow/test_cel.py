@@ -328,3 +328,71 @@ class TestValidateCelExpression:
     def test_empty_expression(self):
         """Empty expression should not validate."""
         assert validate_cel_expression("") is False
+
+
+class TestFalsyStepContentPreservation:
+    """Regression tests for preserving falsy step content in CEL context.
+
+    When a step returns a falsy value (0, False, [], ""), the value must be
+    preserved (as its string form) instead of being silently dropped to an
+    empty string. See PR #10599.
+    """
+
+    def _build_input_context(self, output_content):
+        from agno.workflow.cel import _build_step_input_context
+        from agno.workflow.types import StepInput, StepOutput
+
+        step_output = StepOutput(content=output_content, step_name="step_1")
+        step_input = StepInput(previous_step_outputs={"step_1": step_output})
+        return _build_step_input_context(step_input)
+
+    def test_zero_content_is_preserved(self):
+        """0 (falsy int) must be kept as '0' in previous_step_outputs."""
+        ctx = self._build_input_context(0)
+        assert ctx["previous_step_outputs"]["step_1"] == "0"
+
+    def test_false_content_is_preserved(self):
+        """False (falsy bool) must be kept as 'False' in previous_step_outputs."""
+        ctx = self._build_input_context(False)
+        assert ctx["previous_step_outputs"]["step_1"] == "False"
+
+    def test_empty_list_content_is_preserved(self):
+        """[] (falsy list) must be kept as '[]' in previous_step_outputs."""
+        ctx = self._build_input_context([])
+        assert ctx["previous_step_outputs"]["step_1"] == "[]"
+
+    def test_none_content_is_empty_string(self):
+        """None must be normalized to an empty string in previous_step_outputs."""
+        ctx = self._build_input_context(None)
+        assert ctx["previous_step_outputs"]["step_1"] == ""
+
+    def _build_loop_context(self, output_content):
+        from agno.workflow.cel import _build_loop_step_output_context
+        from agno.workflow.types import StepOutput
+
+        step_output = StepOutput(content=output_content, step_name="step_1", success=True)
+        return _build_loop_step_output_context([step_output])
+
+    def test_loop_zero_content_is_preserved(self):
+        """0 (falsy int) must be kept as '0' in loop step_outputs."""
+        ctx = self._build_loop_context(0)
+        assert ctx["step_outputs"]["step_1"] == "0"
+        assert ctx["last_step_content"] == "0"
+
+    def test_loop_false_content_is_preserved(self):
+        """False (falsy bool) must be kept as 'False' in loop step_outputs."""
+        ctx = self._build_loop_context(False)
+        assert ctx["step_outputs"]["step_1"] == "False"
+        assert ctx["last_step_content"] == "False"
+
+    def test_loop_empty_list_content_is_preserved(self):
+        """[] (falsy list) must be kept as '[]' in loop step_outputs."""
+        ctx = self._build_loop_context([])
+        assert ctx["step_outputs"]["step_1"] == "[]"
+        assert ctx["last_step_content"] == "[]"
+
+    def test_loop_none_content_is_empty_string(self):
+        """None must be normalized to an empty string in loop step_outputs."""
+        ctx = self._build_loop_context(None)
+        assert ctx["step_outputs"]["step_1"] == ""
+        assert ctx["last_step_content"] == ""

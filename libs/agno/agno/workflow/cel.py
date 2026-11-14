@@ -255,7 +255,7 @@ def _build_step_input_context(
     previous_step_outputs: Dict[str, str] = {}
     if step_input.previous_step_outputs:
         for name, output in step_input.previous_step_outputs.items():
-            previous_step_outputs[name] = str(output.content) if output.content else ""
+            previous_step_outputs[name] = str(output.content) if output.content is not None else ""
 
     return {
         "input": input_str,
@@ -283,7 +283,7 @@ def _build_loop_step_output_context(
     last_content = ""
 
     for result in iteration_results:
-        content = str(result.content) if result.content else ""
+        content = str(result.content) if result.content is not None else ""
         name = result.step_name or f"step_{len(outputs)}"
         outputs[name] = content
         last_content = content
