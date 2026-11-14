@@ -160,14 +160,15 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Skip push events if there's an open PR from the same branch
     if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
-        group: [1, 2, 3, 4, 5, 6]
+        group: [1, 2, 3, 4, 5, 6, 7, 8]
       fail-fast: true
 
-    name: tests (${{ matrix.group }}/6)
+    name: tests (${{ matrix.group }}/8)
 
     # The catalog's Postgres suites live under tests/unit and skip themselves
     # without a server, so the adapter production actually runs had no gate at
@@ -204,7 +205,7 @@ jobs:
         run: |
           set -e
           ./scripts/test_setup.sh
-      - name: Run tests (group ${{ matrix.group }}/6)
+      - name: Run tests (group ${{ matrix.group }}/8)
         working-directory: .
         env:
           AGNO_TELEMETRY: false
@@ -212,8 +213,8 @@ jobs:
           source .venv/bin/activate
           # psycopg, so the catalog's Postgres suites resolve their driver and
           # run against the service above instead of importorskip-ing away.
-          uv pip install pytest-split "psycopg[binary]" --quiet
-          python -m pytest --splits 6 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          uv pip install pytest-split pytest-xdist "psycopg[binary]" --quiet
+          python -m pytest -n logical --splits 8 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
 
   queue-store-parity:
     runs-on: ubuntu-latest
