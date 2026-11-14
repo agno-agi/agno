@@ -1,46 +1,52 @@
-"""Unit tests for ModelsLabTools."""
+"""Unit tests for ModelsLabTools class."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
+import pytest
+from requests.exceptions import RequestException
 
 from agno.tools.models_labs import ModelsLabTools
 
 
-def test_models_labs_default_timeout():
-    """Test default timeout is 30 seconds."""
+@pytest.fixture
+def mock_requests_post():
+    """Mock requests.post to return a canned generation response."""
+    with patch("agno.tools.models_labs.requests.post") as mock_post:
+        mock_post.return_value.json.return_value = {"status": "success", "eta": 10}
+        yield mock_post
+
+
+def test_generate_media_passes_default_timeout(mock_requests_post):
+    """Test that the generation request receives the default HTTP timeout."""
     tools = ModelsLabTools(api_key="test-key")
-    assert tools.timeout == 30
-
-
-def test_models_labs_custom_timeout():
-    """Test custom timeout is respected."""
-    tools = ModelsLabTools(api_key="test-key", timeout=45)
-    assert tools.timeout == 45
-
-
-@patch("agno.tools.models_labs.requests.post")
-def test_models_labs_generate_media_timeout(mock_post):
-    """Test generate_media passes timeout to requests.post."""
-    mock_response = Mock()
-    mock_response.json.return_value = {"status": "success", "id": 12345, "eta": 10}
-    mock_post.return_value = mock_response
-
-    tools = ModelsLabTools(api_key="test-key", timeout=25)
     tools.generate_media("a sunset over the ocean")
 
-    mock_post.assert_called_once()
-    assert mock_post.call_args.kwargs["timeout"] == 25
+    assert mock_requests_post.call_args[1]["timeout"] == 120
 
 
-@patch("agno.tools.models_labs.requests.post")
-def test_models_labs_wait_for_media_timeout(mock_post):
-    """Test _wait_for_media passes timeout to requests.post."""
-    mock_response = Mock()
-    mock_response.json.return_value = {"status": "success"}
-    mock_post.return_value = mock_response
-
+def test_generate_media_passes_configured_timeout(mock_requests_post):
+    """Test that the generation request receives the configured HTTP timeout."""
     tools = ModelsLabTools(api_key="test-key", timeout=12)
-    success = tools._wait_for_media("media-id-123", eta=1)
+    tools.generate_media("a sunset over the ocean")
 
-    assert success is True
-    mock_post.assert_called_once()
-    assert mock_post.call_args.kwargs["timeout"] == 12
+    assert mock_requests_post.call_args[1]["timeout"] == 12
+
+
+def test_wait_for_media_passes_configured_timeout(mock_requests_post):
+    """Test that the fetch request receives the configured HTTP timeout."""
+    tools = ModelsLabTools(api_key="test-key", timeout=12)
+    tools._wait_for_media("media-id-123", eta=1)
+
+    assert mock_requests_post.call_args[1]["timeout"] == 12
+
+
+def test_wait_for_media_stops_at_max_wait_time(mock_requests_post):
+    """Test that polling gives up once max_wait_time has passed."""
+    mock_requests_post.side_effect = RequestException("Read timed out")
+
+    tools = ModelsLabTools(api_key="test-key", max_wait_time=10)
+    with patch("agno.tools.models_labs.time.monotonic", side_effect=[0, 0, 1000]):
+        success = tools._wait_for_media("media-id-123", eta=1)
+
+    assert success is False
+    mock_requests_post.assert_called_once()

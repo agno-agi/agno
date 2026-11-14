@@ -46,7 +46,7 @@ class ModelsLabTools(Toolkit):
         model_id: Optional[str] = None,
         width: int = 512,
         height: int = 512,
-        timeout: int = 30,
+        timeout: int = 120,
         **kwargs,
     ):
         file_type_str = file_type.value.upper()
@@ -143,13 +143,17 @@ class ModelsLabTools(Toolkit):
         time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
         log_info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
 
+        deadline = time.monotonic() + time_to_wait
         for seconds_waited in range(time_to_wait):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
                 fetch_response = requests.post(
                     f"{self.fetch_url}/{media_id}",
                     json={"key": self.api_key},
                     headers={"Content-Type": "application/json"},
-                    timeout=self.timeout,
+                    timeout=min(self.timeout, remaining),
                 )
                 fetch_result = fetch_response.json()
 
