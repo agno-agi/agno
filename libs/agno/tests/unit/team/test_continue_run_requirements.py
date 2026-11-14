@@ -702,6 +702,28 @@ class TestToolResultRequiresHumanInput:
         tool = _make_tool_execution(result={"key": "requires human input"})
         assert _tool_result_requires_human_input(tool) is False
 
+    def test_empty_delegate_result_with_child_run(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            child_run_id="member-run-1",
+            result="",
+        )
+        assert _tool_result_requires_human_input(tool) is True
+
+    def test_empty_delegate_result_without_child_run(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(tool_name="delegate_task_to_member", result="")
+        assert _tool_result_requires_human_input(tool) is False
+
+    def test_empty_non_delegate_result_with_child_run(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(tool_name="some_other_tool", child_run_id="member-run-1", result="")
+        assert _tool_result_requires_human_input(tool) is False
+
 
 # ===========================================================================
 # 13. _prepare_member_hitl_continuation improvements
@@ -760,6 +782,23 @@ class TestPrepareMemberHitlContinuation:
         _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
 
         assert "Done" in tool.result
+
+    def test_updates_hidden_paused_delegate_result(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            child_run_id="member-run-1",
+            result="",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool.result
+        assert "Done" in run_messages.messages[0].content
 
     def test_updates_multiple_matching_tools(self):
         from agno.team._run import _prepare_member_hitl_continuation
