@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from contextvars import ContextVar
-from inspect import signature
+from inspect import iscoroutinefunction, signature
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
