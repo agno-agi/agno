@@ -69,3 +69,13 @@ Earlier config output in this log records the previous schema.
 **Result:** All partition and upgrade tests pass. Agent runs against a model were not exercised.
 
 ---
+
+### shared_filesystem.py
+
+**Status:** PASS
+
+**Description:** Served the app with uvicorn on a spare port (no model call) and requested the browser routes with curl. AgentOS holds `FileSystem(db, namespace="shared-notes")` through `AgentOS(filesystems=[shared_notes])`; the assistant holds its own `filesystem=True` store and not the shared notes. Seeded `handbook/style.md` in the shared notes. Authorization is off in this example.
+
+**Result:** `/config` listed two namespaces: `assistant` with `agents=[{"id": "assistant"}]` and `shared-notes` with `agents=[]`. With no `agent_id`, `/filesystem/files` returned the seeded file with `agent_ids=[]`, `/filesystem/entries?namespace=shared-notes` listed the `handbook` directory, `/filesystem/content` returned the file text and `/filesystem/search` found it on line 1. `/filesystem/entries?agent_id=assistant` still returned 200. `POST`, `PUT` and `DELETE` on `/filesystem/content` returned 405. The routes with authorization on, user isolation and the startup refusal are covered by the unit tests in `libs/agno/tests/unit/os/routers/test_filesystem_router.py`. Agent runs against a model were not exercised.
+
+---

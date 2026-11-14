@@ -57,6 +57,38 @@ each namespace's linked `agents`, with `access: "read_only"` on read-only agents
 and omitted `access` defaulting to `"full"`. To browse one of an
 agent's several stores, pass its `namespace` to the `/filesystem` routes.
 
+## A filesystem on the OS
+
+Pass a `FileSystem` to AgentOS to browse it without any agent holding it, the same
+way `AgentOS(knowledge=[...])` serves a knowledge base (`shared_filesystem.py`):
+
+```python
+shared_notes = FileSystem(db, namespace="shared-notes")
+agent_os = AgentOS(db=db, agents=[assistant], filesystems=[shared_notes])
+```
+
+`/config` lists the namespace with an empty `agents` list, and the `/filesystem`
+routes browse it by `namespace` with no `agent_id`. If an agent holds the same
+backend and namespace, it is one entry with that agent in `agents`.
+
+- With authorization on, `filesystem:read` is enough to read a namespace the OS
+  holds. A namespace only an agent holds still needs read access to that agent.
+  Passing a filesystem to AgentOS therefore opens it to every caller with
+  `filesystem:read`, also when an agent holds the same backend and namespace.
+- The namespace may be literal or use `{user_id}`. AgentOS refuses `{agent_id}` and
+  `{team_id}` at startup: the OS has no agent or team to fill them from.
+- AgentOS also refuses at startup two filesystems passed to it with the same
+  namespace on different backends: a request by namespace could not choose one.
+- AgentOS leaves `user_scoped` as given on a filesystem passed to it. Unset, the
+  store is shared, also under `user_isolation`. Set `user_scoped=True` and each
+  caller browses their own partition.
+- To put one store on the page and on an agent, pass the same `FileSystem` object
+  to both. Two objects on one store can disagree on `user_scoped`, and a request
+  with no `agent_id` then reads the store as the OS's object describes it.
+- If an agent uses the same namespace on another backend, a request by namespace
+  alone returns 409. Pass `agent_id` for the agent's, and give the filesystem on
+  the OS its own namespace to read it by name.
+
 ## Namespaces and isolation
 
 The agent receives its filesystem tools automatically. The managed namespace is
@@ -102,14 +134,15 @@ identity fails closed. AgentOS exposes read-only browser routes:
 Filesystems are addressed by namespace, not by agent. `entries`, `content` and
 `search` take `namespace`, `agent_id`, or both:
 
-- `namespace` alone browses that filesystem when an agent the caller can read holds it.
+- `namespace` alone browses that filesystem when the OS holds it, or an agent the caller can read holds it.
 - `agent_id` alone browses that agent's first filesystem (the setting, then `tools` order).
 - Both together pick one of an agent's several filesystems, and settle the rare case
   of one namespace used on two backends, which otherwise returns 409.
 
-Access always derives from the agents the caller may read: a namespace none of them
-holds returns 404, the same as one that does not exist. Responses carry the resolved
-`namespace` and the accessible `agent_ids` holding it.
+Access to a namespace an agent holds derives from the agents the caller may read: a
+namespace that neither the OS nor one of those agents holds returns 404, the same as
+one that does not exist. Responses carry the resolved `namespace` and the accessible
+`agent_ids` holding it, which is empty when only the OS holds it.
 
 `GET /filesystem/files` accepts optional `agent_id`, `namespace`, and `query` filters, plus
 `page` and `limit`. The namespace filter matches an exact resolved namespace and
@@ -117,15 +150,16 @@ cannot widen access beyond the caller's agents and user scope. Shared files are
 returned once with their accessible `agent_ids`. Remote agents are skipped in a
 global listing; selecting one explicitly returns an unsupported response.
 
-`GET /config` exposes `filesystem.namespaces` discovered from concrete local
-agents. Each entry includes backend metadata, limits, linked agents with access
+`GET /config` exposes `filesystem.namespaces` discovered from the filesystems
+passed to AgentOS and from concrete local agents. Each entry includes backend metadata, limits, linked agents with access
 in `agents`, and the canonical namespace resolved for the caller. Use that namespace directly as a
 `/filesystem` filter. When identity is unavailable, placeholders remain in config;
 browsing requires the missing identity. Factory and stored agents are resolved
 when browsing but are not included in config discovery.
 
-With authorization enabled, file routes require `agents:read` or the corresponding
-per-agent read scope; config requests require `config:read`. Content previews use the row's
+With authorization enabled, file routes require `filesystem:read`. A namespace an
+agent holds also requires `agents:read` or that agent's read scope; a namespace the
+OS holds does not. Config requests require `config:read`. Content previews use the row's
 `namespace` and relative `path`, with `offset` and `limit` for continuation.
 The API provides no write or delete routes.
 
