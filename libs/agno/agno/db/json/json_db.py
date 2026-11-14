@@ -2747,7 +2747,9 @@ class JsonDb(BaseDb):
 
             # Apply pagination
             if limit is not None:
-                start_idx = max((page or 1) - 1, 0) * limit
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
                 filtered = filtered[start_idx : start_idx + limit]
 
             # Add total_spans and error_count to each trace
@@ -2852,7 +2854,9 @@ class JsonDb(BaseDb):
 
             # Apply pagination
             if limit is not None:
-                start_idx = max((page or 1) - 1, 0) * limit
+                start_idx = 0
+                if page is not None:
+                    start_idx = (page - 1) * limit
                 stats_list = stats_list[start_idx : start_idx + limit]
 
             # Convert ISO strings to datetime objects
@@ -2960,7 +2964,7 @@ class JsonDb(BaseDb):
                 filtered.append(s)
 
             # Apply limit
-            if limit is not None:
+            if limit:
                 filtered = filtered[:limit]
 
             return [Span.from_dict(s) for s in filtered]
