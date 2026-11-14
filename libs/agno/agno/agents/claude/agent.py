@@ -245,6 +245,11 @@ class ClaudeAgent(BaseExternalAgent):
 
     _sdk_name: ClassVar[str] = "claude-agent-sdk"
     _sandbox_runtime: ClassVar[Optional[str]] = "claude"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
+        "options_kwargs": "deprecated; use the named parameters instead",
+    }
     # Key under which the SDK session id is stored in the Agno session.
     _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
@@ -850,6 +855,10 @@ class ClaudeAgent(BaseExternalAgent):
             tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
             record_input = input
             before = False
+        forked_from_message_index = source.forked_from_message_index
+        # A fork cut before the messages it copied keeps only copied ones, so the work continued here is its own
+        if forked_from_message_index is not None and forked_from_message_index > len(kept):
+            forked_from_message_index = len(kept)
         continuation = ExternalContinuation(
             messages=kept,
             tools=tools,
@@ -857,7 +866,7 @@ class ClaudeAgent(BaseExternalAgent):
             record_input=record_input,
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
-            forked_from_message_index=index if fork else source.forked_from_message_index,
+            forked_from_message_index=index if fork else forked_from_message_index,
             source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation

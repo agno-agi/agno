@@ -1,4 +1,4 @@
-"""Ask OS Manager about this source directory and Agno documentation.
+"""Ask Super Agent about this source directory and Agno documentation.
 
 Ask: "Read basic_manager.py and explain how this OS is configured."
 Then: "Check the Agno docs and explain how to add a knowledge base."

@@ -548,6 +548,33 @@ def _has_jwt_middleware(app: Any) -> bool:
     return False
 
 
+def _has_authorization_middleware(app: Any) -> bool:
+    """Whether an agno auth middleware on the app, such as one added to a base_app, enforces authorization."""
+    try:
+        from agno.os.middleware.jwt import AuthMiddleware, jwt_kwargs_enable_authorization, jwt_kwargs_have_key_source
+    except ImportError:
+        return False
+    jwt_env_configured = _is_jwt_configured()
+    for mw in getattr(app, "user_middleware", None) or []:
+        cls = getattr(mw, "cls", None)
+        if not (isinstance(cls, type) and issubclass(cls, AuthMiddleware)):
+            continue
+        kwargs = getattr(mw, "kwargs", None) or {}
+        # A plain security-key / service-account layer (no JWT source) enforces no roles
+        if not jwt_env_configured and not jwt_kwargs_have_key_source(kwargs):
+            continue
+        if jwt_kwargs_enable_authorization(kwargs):
+            return True
+    return False
+
+
+def _authorization_enforced(app: Any) -> bool:
+    """Whether the app enforces authorization, by the AgentOS flag or by an auth middleware added after get_app()."""
+    return bool(getattr(getattr(app, "state", None), "authorization_enabled", False)) or _has_authorization_middleware(
+        app
+    )
+
+
 def get_effective_auth_mode(
     settings: Optional[AgnoAPISettings],
     authorization: bool = False,
