@@ -25,7 +25,10 @@ def merge_parallel_session_states(original_state: Dict[str, Any], modified_state
     Smart merge for parallel session states that only applies actual changes.
     This prevents parallel steps from overwriting each other's changes.
     """
-    if not original_state or not modified_states:
+    # Note: an empty ``original_state`` ({}) is the normal starting state for a
+    # fresh workflow/team, so guard on None rather than falsiness — otherwise
+    # every parallel-step change would be discarded.
+    if original_state is None or not modified_states:
         return
 
     # Collect all actual changes (keys where value differs from original)
