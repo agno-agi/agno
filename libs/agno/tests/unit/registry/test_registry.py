@@ -849,7 +849,7 @@ class TestRuntimeOnlyFieldRestoration:
         """The invariant, so a new Function field cannot be silently dropped on
         reload: every field to_dict() omits is either restored from the live
         source or handled explicitly."""
-        explicit = {"entrypoint", "owning_toolkit", "source_toolkit"}
+        explicit = {"entrypoint", "owning_toolkit", "source_toolkit", "bound_toolkit"}
 
         unaccounted = set(Function.model_fields) - set(SERIALIZED_FIELDS) - explicit - set(RUNTIME_ONLY_FIELDS)
 

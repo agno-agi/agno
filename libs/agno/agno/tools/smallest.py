@@ -15,13 +15,14 @@ from agno.utils.log import log_error, log_info
 
 SMALLEST_TTS_URL = "https://api.smallest.ai/waves/v1/tts"
 SMALLEST_VOICES_URLS = {
-    "lightning_v3.1": "https://api.smallest.ai/waves/v1/lightning-v3.1/get_voices",
+    # The standard catalog route retires on 2026-11-30; offer Pro voices for migration.
+    "lightning_v3.1": "https://api.smallest.ai/waves/v1/lightning-v3.1-pro/get_voices",
     "lightning_v3.1_pro": "https://api.smallest.ai/waves/v1/lightning-v3.1-pro/get_voices",
 }
 
 SmallestModel = Literal[
-    "lightning_v3.1",  # 12 languages, supports cloned voices
-    "lightning_v3.1_pro",  # premium voice pool, 29 languages
+    "lightning_v3.1",  # legacy model, retires on 2026-11-30
+    "lightning_v3.1_pro",  # premium voice pool, 31 languages
 ]
 SMALLEST_MODELS = get_args(SmallestModel)
 
@@ -39,9 +40,9 @@ MIME_TYPES: Dict[str, str] = {
 class SmallestTools(Toolkit):
     def __init__(
         self,
-        voice_id: str = "magnus",
+        voice_id: str = "kaitlyn",
         api_key: Optional[str] = None,
-        model: SmallestModel = "lightning_v3.1",
+        model: SmallestModel = "lightning_v3.1_pro",
         language: str = "en",
         sample_rate: int = 24000,
         speed: float = 1.0,
@@ -91,8 +92,9 @@ class SmallestTools(Toolkit):
 
     def get_voices(self) -> str:
         """
-        Get all the voices available for the configured Smallest AI model. The standard
-        Lightning v3.1 and Lightning v3.1 Pro models have separate voice catalogs.
+        Get voices from the Lightning v3.1 Pro catalog for both model options.
+        The standard model and its catalog route retire on 2026-11-30 at 18:30 UTC;
+        switch to the Pro model to use these voices before that date.
 
         Returns:
             result (str): JSON string containing a list of voices with their metadata.

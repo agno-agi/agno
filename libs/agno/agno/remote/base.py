@@ -48,6 +48,14 @@ if TYPE_CHECKING:
         MetricsRefreshResponse,
         MetricsRefreshStatusResponse,
         MetricsResponse,
+        OSLatencyMetricsResponse,
+        OSMetricsRefreshResponse,
+        OSMetricsRefreshStatusResponse,
+        OSModelMetricsResponse,
+        OSRunMetricsResponse,
+        OSSessionMetricsResponse,
+        OSTokenMetricsResponse,
+        OSUserMetricsResponse,
     )
     from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
     from agno.os.schema import (
@@ -65,6 +73,30 @@ if TYPE_CHECKING:
     from agno.tools.component import ComponentTool
 
 
+def take_local_run_options(
+    kwargs: Dict[str, Any],
+    *,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Any]]:
+    """Remove the run options that only exist in this process from kwargs bound for a remote AgentOS.
+
+    A RunContext cannot cross the wire, so its dependencies, metadata and knowledge filters fill
+    the ones the caller left unset, as they would for a local run. Returns those three values.
+    """
+    kwargs.pop("background_tasks", None)
+    kwargs.pop("debug_mode", None)
+    run_context = kwargs.pop("run_context", None)
+    if run_context is None:
+        return dependencies, metadata, knowledge_filters
+    return (
+        dependencies if dependencies is not None else run_context.dependencies,
+        metadata if metadata is not None else run_context.metadata,
+        knowledge_filters if knowledge_filters is not None else run_context.knowledge_filters,
+    )
+
+
 @dataclass
 class RemoteDb:
     id: str
@@ -74,6 +106,7 @@ class RemoteDb:
     memory_table_name: Optional[str] = None
     learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
+    component_metrics_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
@@ -100,7 +133,7 @@ class RemoteDb:
         knowledge_table_name = None
         memory_table_name = None
         learnings_table_name = None
-        metrics_table_name = None
+        component_metrics_table_name = None
         eval_table_name = None
         traces_table_name = None
 
@@ -122,7 +155,7 @@ class RemoteDb:
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
+            component_metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
 
         if config and config.evals and config.evals.dbs is not None:
             eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
@@ -139,7 +172,7 @@ class RemoteDb:
             knowledge_table_name=knowledge_table_name,
             memory_table_name=memory_table_name,
             learnings_table_name=learnings_table_name,
-            metrics_table_name=metrics_table_name,
+            component_metrics_table_name=component_metrics_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )
@@ -279,6 +312,42 @@ class RemoteDb:
 
     async def get_metrics_refresh_status(self, **kwargs: Any) -> "MetricsRefreshStatusResponse":
         return await self.client.get_metrics_refresh_status(**kwargs)
+
+    async def get_os_session_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSSessionMetricsResponse":
+        return await self.client.get_os_session_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_token_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSTokenMetricsResponse":
+        return await self.client.get_os_token_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_user_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSUserMetricsResponse":
+        return await self.client.get_os_user_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_model_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSModelMetricsResponse":
+        return await self.client.get_os_model_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_run_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSRunMetricsResponse":
+        return await self.client.get_os_run_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def get_os_latency_metrics(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any
+    ) -> "OSLatencyMetricsResponse":
+        return await self.client.get_os_latency_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
+
+    async def refresh_os_metrics(self, **kwargs: Any) -> "OSMetricsRefreshResponse":
+        return await self.client.refresh_os_metrics(**kwargs)
+
+    async def get_os_metrics_refresh_status(self, **kwargs: Any) -> "OSMetricsRefreshStatusResponse":
+        return await self.client.get_os_metrics_refresh_status(**kwargs)
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:
