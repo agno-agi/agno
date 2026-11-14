@@ -57,6 +57,7 @@ Agno WAV audio artifact. Incompatible audio formats fail explicitly.
 
 - `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)
 - `mcp/` - MCP server examples
+- `renor/` - Long-term agent memory through the Renor MCP server
 - `tool_decorator/` - Custom tool patterns
 - `tool_hooks/` - Pre/post processing
 - `async/` - Async execution
