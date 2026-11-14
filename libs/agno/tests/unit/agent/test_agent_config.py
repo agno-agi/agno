@@ -1943,3 +1943,183 @@ class TestAgentFollowupConfigRoundtrip:
             assert secret not in serialized
             for forbidden in ("api_key", "base_url", "client", "http://"):
                 assert forbidden not in serialized
+
+
+# =============================================================================
+# Session summary, compression and compaction round trip
+# =============================================================================
+
+
+class TestAgentManagerRoundtrip:
+    """session_summary_manager, compression_manager and compaction survive to_dict/from_dict."""
+
+    def test_session_summary_manager_roundtrip(self):
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        model = OpenAIResponses(id="gpt-4.1-mini")
+        manager = SessionSummaryManager(
+            id="summaries",
+            model=model,
+            session_summary_prompt="Summarize the session.",
+            summary_request_message="Summarize now.",
+            last_n_runs=5,
+            conversation_limit=20,
+        )
+        config = Agent(id="a", session_summary_manager=manager).to_dict()
+        assert config["session_summary_manager"]["model"] == {
+            "id": model.id,
+            "name": model.name,
+            "provider": model.provider,
+        }
+
+        restored = Agent.from_dict(config).session_summary_manager
+        assert isinstance(restored, SessionSummaryManager)
+        assert restored.id == "summaries"
+        assert restored.session_summary_prompt == "Summarize the session."
+        assert restored.summary_request_message == "Summarize now."
+        assert restored.last_n_runs == 5
+        assert restored.conversation_limit == 20
+        assert isinstance(restored.model, OpenAIResponses)
+        assert restored.model.id == "gpt-4.1-mini"
+
+    def test_string_models_roundtrip(self):
+        from agno.compression.manager import CompressionManager
+        from agno.session.summary import SessionSummaryManager
+
+        agent = Agent(
+            id="a",
+            session_summary_manager=SessionSummaryManager(model="openai:gpt-4.1-mini"),
+            compression_manager=CompressionManager(model="openai:gpt-4.1-mini"),
+        )
+        config = agent.to_dict()
+        assert config["session_summary_manager"]["model"] == "openai:gpt-4.1-mini"
+        assert config["compression_manager"]["model"] == "openai:gpt-4.1-mini"
+        reconstructed = Agent.from_dict(config)
+        assert reconstructed.session_summary_manager.model.id == "gpt-4.1-mini"
+        assert reconstructed.compression_manager.model.id == "gpt-4.1-mini"
+
+    def test_compression_manager_roundtrip(self):
+        from agno.compression.manager import CompressionManager
+
+        manager = CompressionManager(
+            compress_tool_results_limit=5,
+            compress_token_limit=1000,
+            compress_tool_call_instructions="Keep ids.",
+        )
+        reconstructed = Agent.from_dict(Agent(id="a", compression_manager=manager).to_dict())
+        restored = reconstructed.compression_manager
+        assert isinstance(restored, CompressionManager)
+        assert restored.compress_tool_results is True
+        assert restored.compress_tool_results_limit == 5
+        assert restored.compress_token_limit == 1000
+        assert restored.compress_tool_call_instructions == "Keep ids."
+
+    def test_compaction_roundtrip(self):
+        from agno.compaction import Compaction
+
+        compaction = Compaction(
+            id="fold",
+            instructions="Keep every ticket id.",
+            compact_at_tokens=50_000,
+            uncompacted_tokens=4_000,
+            compacted_token_budget=800,
+            store_compacted_messages=False,
+            min_fold_ratio=3.0,
+        )
+        restored = Agent.from_dict(Agent(id="a", compaction=compaction).to_dict()).compaction
+        assert isinstance(restored, Compaction)
+        assert restored.id == "fold"
+        assert restored.instructions == "Keep every ticket id."
+        assert restored.compact_at_tokens == 50_000
+        assert restored.uncompacted_tokens == 4_000
+        assert restored.uncompacted_runs is None
+        assert restored.compacted_token_budget == 800
+        assert restored.store_compacted_messages is False
+        assert restored.search_compacted_messages is False
+        assert restored.min_fold_ratio == 3.0
+
+    def test_compaction_defaults_stay_defaults(self):
+        from agno.compaction import Compaction
+        from agno.compaction.compaction import _Unset, _UnsetTokens
+
+        config = Agent(id="a", compaction=Compaction()).to_dict()
+        assert "compact_at_tokens" not in config["compaction"]
+        assert "uncompacted_runs" not in config["compaction"]
+        restored = Agent.from_dict(config).compaction
+        assert isinstance(restored.compact_at_tokens, _UnsetTokens)
+        assert isinstance(restored.uncompacted_runs, _Unset)
+
+    def test_compaction_without_threshold_keeps_overflow_recovery(self):
+        from agno.compaction import Compaction
+
+        config = Agent(id="a", compaction=Compaction(compact_at_tokens=None, on_context_overflow=True)).to_dict()
+        assert config["compaction"]["compact_at_tokens"] is None
+        restored = Agent.from_dict(config).compaction
+        assert restored.compact_at_tokens is None
+        assert restored.on_context_overflow is True
+
+    def test_boolean_compaction_roundtrip(self):
+        config = Agent(id="a", compaction=True).to_dict()
+        assert config["compaction"] is True
+        assert Agent.from_dict(config).compaction is True
+        assert "compaction" not in Agent(id="b").to_dict()
+
+    def test_owner_model_is_not_pinned_into_managers(self):
+        from agno.compaction import Compaction
+        from agno.compression.manager import CompressionManager
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        agent = Agent(
+            id="a",
+            model=OpenAIResponses(id="gpt-4.1"),
+            db=SqliteDb(db_url="sqlite://"),
+            session_summary_manager=SessionSummaryManager(session_summary_prompt="Summarize."),
+            compression_manager=CompressionManager(compress_tool_results_limit=5),
+            compaction=Compaction(compact_at_tokens=50_000),
+        )
+        agent.initialize_agent()
+        assert agent.session_summary_manager.model is agent.model
+
+        config = agent.to_dict()
+        for key in ("session_summary_manager", "compression_manager", "compaction"):
+            assert "model" not in config[key], key
+
+    def test_token_counter_is_not_stored(self):
+        from agno.compaction import Compaction
+
+        compaction = Compaction(token_counter=lambda messages, tools: 0)
+        with patch("agno.compaction.compaction.log_warning") as warn:
+            config = Agent(id="a", compaction=compaction).to_dict()
+        assert "token_counter" not in config["compaction"]
+        warn.assert_called_once()
+        assert Agent.from_dict(config).compaction.token_counter is None
+
+    def test_registry_model_is_reused(self):
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        live = OpenAIResponses(id="gpt-4.1-mini", base_url="http://localhost:1/v1")
+        config = Agent(id="a", session_summary_manager=SessionSummaryManager(model=live)).to_dict()
+        restored = Agent.from_dict(config, registry=Registry(models=[live])).session_summary_manager
+        assert restored.model is live
+
+    def test_no_credentials_serialized(self):
+        from agno.compaction import Compaction
+        from agno.compression.manager import CompressionManager
+        from agno.models.openai import OpenAIResponses
+        from agno.session.summary import SessionSummaryManager
+
+        secret = "sk-review-not-a-real-key"
+        live = OpenAIResponses(id="gpt-4.1-mini", api_key=secret, base_url="http://localhost:1/v1")
+        agent = Agent(
+            id="a",
+            session_summary_manager=SessionSummaryManager(model=live),
+            compression_manager=CompressionManager(model=live),
+            compaction=Compaction(model=live),
+        )
+        serialized = repr(agent.to_dict())
+        assert secret not in serialized
+        assert "http://" not in serialized
