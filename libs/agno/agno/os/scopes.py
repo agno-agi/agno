@@ -505,6 +505,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /os/metrics/refresh": ["metrics:write"],
         "GET /os/metrics/refresh/status": ["metrics:read"],
         # Evaluation endpoints
+        "GET /eval-suites": ["evals:read"],
+        "GET /eval-suites/*": ["evals:read"],
+        "POST /eval-suites": ["evals:write"],
         "GET /eval-runs": ["evals:read"],
         "GET /eval-runs/*": ["evals:read"],
         "POST /eval-runs": ["evals:write"],
