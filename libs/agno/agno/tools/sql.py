@@ -161,14 +161,12 @@ class SQLTools(Toolkit):
             if not result.returns_rows:  # type: ignore[attr-defined]
                 return []
 
-            try:
-                if limit is None:
-                    rows = result.fetchall()
-                elif limit > 0:
-                    rows = result.fetchmany(limit)
-                else:
-                    rows = []
-                return [row._asdict() for row in rows]
-            except Exception:
-                logger.exception("Error while executing SQL")
-                return []
+            # Fetch errors are not caught here: run_sql_query reports them,
+            # and returning [] would make a failed fetch look like no rows.
+            if limit is None:
+                rows = result.fetchall()
+            elif limit > 0:
+                rows = result.fetchmany(limit)
+            else:
+                rows = []
+            return [row._asdict() for row in rows]
