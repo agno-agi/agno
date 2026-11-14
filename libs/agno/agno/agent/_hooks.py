@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.run import RunContext
 from agno.run.agent import RunInput, RunOutput, RunOutputEvent
+from agno.run.base import get_extra_kwargs
 from agno.session import AgentSession
 from agno.utils.events import (
     create_post_hook_completed_event,
@@ -58,8 +59,10 @@ def execute_pre_hooks(
 
     if hooks is None:
         return
-    # Prepare arguments for this hook
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_input": run_input,
         "run_context": run_context,
         "agent": agent,
@@ -68,8 +71,6 @@ def execute_pre_hooks(
         "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode: run guardrails synchronously, buffer everything else.
     # Guardrails MUST block so InputCheckError/OutputCheckError can propagate.
@@ -169,8 +170,10 @@ async def aexecute_pre_hooks(
 
     if hooks is None:
         return
-    # Prepare arguments for this hook
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_input": run_input,
         "agent": agent,
         "session": session,
@@ -179,8 +182,6 @@ async def aexecute_pre_hooks(
         "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see execute_pre_hooks for pattern explanation.
     if agent._run_hooks_in_background is True and background_tasks is not None:
@@ -277,8 +278,10 @@ def execute_post_hooks(
     if hooks is None:
         return
 
-    # Prepare arguments for this hook
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_output": run_output,
         "agent": agent,
         "session": session,
@@ -287,8 +290,6 @@ def execute_post_hooks(
         "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see execute_pre_hooks for pattern explanation.
     if agent._run_hooks_in_background is True and background_tasks is not None:
@@ -378,8 +379,10 @@ async def aexecute_post_hooks(
     if hooks is None:
         return
 
-    # Prepare arguments for this hook
+    # Hook arguments: the caller's extra run arguments first, so the framework's own always win
     all_args = {
+        **get_extra_kwargs(run_context),
+        **kwargs,
         "run_output": run_output,
         "agent": agent,
         "session": session,
@@ -388,8 +391,6 @@ async def aexecute_post_hooks(
         "debug_mode": debug_mode if debug_mode is not None else agent.debug_mode,
         "metadata": run_context.metadata if run_context else None,
     }
-
-    all_args.update(kwargs)
 
     # Global background mode — see execute_pre_hooks for pattern explanation.
     if agent._run_hooks_in_background is True and background_tasks is not None:

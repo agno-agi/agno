@@ -122,7 +122,22 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
-INTERNAL_RUN_OPTIONS = frozenset({"run_context", "debug_mode", "yield_run_output", "background_tasks", "websocket"})
+# Names a form field must never set: run options only code in this process can supply, and arguments
+# the run routes bind themselves (the component, its input, and the bearer token from the header)
+INTERNAL_RUN_OPTIONS = frozenset(
+    {
+        "run_context",
+        "debug_mode",
+        "yield_run_output",
+        "background_tasks",
+        "websocket",
+        "input",
+        "agent",
+        "team",
+        "workflow",
+        "auth_token",
+    }
+)
 
 
 def _check_object_json_schema(schema: Dict[str, Any]) -> None:
@@ -167,7 +182,6 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     known_fields = set(sig.parameters.keys())
     kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
 
-    # Run options that only code in this process can supply, never a caller's form field
     for name in INTERNAL_RUN_OPTIONS.intersection(kwargs):
         kwargs.pop(name)
         log_warning(f"Ignoring form field '{name}': it is not a request parameter")

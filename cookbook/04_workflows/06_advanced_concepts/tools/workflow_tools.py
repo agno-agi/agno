@@ -137,6 +137,7 @@ workflow_tools = WorkflowTools(
 agent = Agent(
     model=OpenAIChat(id="gpt-5-mini"),
     tools=[workflow_tools],
+    instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
     markdown=True,
 )
 
@@ -147,7 +148,6 @@ if __name__ == "__main__":
     asyncio.run(
         agent.aprint_response(
             "Create a blog post with the following title: Quantum Computing in 2025",
-            instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
             markdown=True,
             stream=True,
         )

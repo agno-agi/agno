@@ -63,6 +63,7 @@ from agno.run.approval import (
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 from agno.run.background import _background_tasks
+from agno.run.base import apply_extra_kwargs
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
@@ -1343,7 +1344,7 @@ def run_dispatch(
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
     from agno.agent._init import has_async_db
@@ -1365,6 +1366,7 @@ def run_dispatch(
             "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
         )
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -1442,6 +1444,7 @@ def run_dispatch(
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
+    apply_extra_kwargs(run_context, kwargs)
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -1489,7 +1492,6 @@ def run_dispatch(
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=agent_session,
-            **kwargs,
         )
         return response_iterator
     else:
@@ -1506,7 +1508,6 @@ def run_dispatch(
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=agent_session,
-            **kwargs,
         )
         return response
 
@@ -2734,7 +2735,7 @@ def arun_dispatch(  # type: ignore
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background: bool = False,
-    **kwargs: Any,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
@@ -2748,6 +2749,7 @@ def arun_dispatch(  # type: ignore
             "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
         )
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -2834,6 +2836,7 @@ def arun_dispatch(  # type: ignore
         metadata=opts.metadata,
         output_schema=opts.output_schema,
     )
+    apply_extra_kwargs(run_context, kwargs)
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -2887,7 +2890,6 @@ def arun_dispatch(  # type: ignore
                 add_session_state_to_context=opts.add_session_state_to_context,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             agent,
@@ -2901,7 +2903,6 @@ def arun_dispatch(  # type: ignore
             add_session_state_to_context=opts.add_session_state_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
     # Pass the new run_response to _arun
@@ -2921,7 +2922,6 @@ def arun_dispatch(  # type: ignore
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=_pre_session,
-            **kwargs,
         )  # type: ignore[assignment]
     else:
         return _arun(  # type: ignore
@@ -2937,7 +2937,6 @@ def arun_dispatch(  # type: ignore
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             pre_session=_pre_session,
-            **kwargs,
         )
 
 
@@ -3326,7 +3325,7 @@ def continue_run_dispatch(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
-    **kwargs,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
 
@@ -3372,6 +3371,7 @@ def continue_run_dispatch(
     if isinstance(agent.media_storage, AsyncMediaStorage):
         raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -3442,6 +3442,7 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    apply_extra_kwargs(run_context, kwargs)
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -3649,7 +3650,6 @@ def continue_run_dispatch(
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
         return response_iterator
     else:
@@ -3664,7 +3664,6 @@ def continue_run_dispatch(
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
         return response
 
@@ -4241,7 +4240,7 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
-    **kwargs,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
 
@@ -4277,6 +4276,7 @@ def acontinue_run_dispatch(  # type: ignore
     if run_response is None and (run_id is not None and (session_id is None and agent.session_id is None)):
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
+    kwargs: Dict[str, Any] = dict(extra_kwargs or {})
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -4346,6 +4346,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    apply_extra_kwargs(run_context, kwargs)
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -4382,7 +4383,6 @@ def acontinue_run_dispatch(  # type: ignore
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
-                **kwargs,
             )
 
     if opts.stream:
@@ -4405,7 +4405,6 @@ def acontinue_run_dispatch(  # type: ignore
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
     else:
         return _acontinue_run(  # type: ignore
@@ -4425,7 +4424,6 @@ def acontinue_run_dispatch(  # type: ignore
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
-            **kwargs,
         )
 
 
