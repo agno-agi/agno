@@ -63,7 +63,7 @@ from agno.team._default_tools import (
 )
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.team.task import TaskList, TaskStatus, save_task_list
-from agno.tools.function import Function
+from agno.tools.function import Function, ToolResult
 from agno.utils.events import (
     create_team_task_created_event,
     create_team_task_updated_event,
@@ -123,6 +123,11 @@ def _get_task_management_tools(
     _files: List[File] = list(files) if files else []
 
     from agno.team._init import _initialize_member
+
+    def _task_outcome(text: str) -> Union[str, ToolResult]:
+        # When streaming, the outcome replaces the member text streamed while the task ran
+        return ToolResult(content=text) if stream else text
+
     from agno.team._run import _record_opted_out_media, _update_team_media
     from agno.team._tools import (
         _determine_team_member_interactions,
@@ -474,7 +479,9 @@ def _get_task_management_tools(
     # ------------------------------------------------------------------
     # Tool: execute_task (sync)
     # ------------------------------------------------------------------
-    def execute_task(task_id: str, member_id: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def execute_task(
+        task_id: str, member_id: str
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Execute a task by delegating it to a team member. The member will receive the task
         description and return a result.
 
@@ -608,7 +615,7 @@ def _get_task_management_tools(
             task.result = f"Member execution error: {e}"
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            yield f"Task [{task.id}] failed due to member execution error: {e}"
+            yield _task_outcome(f"Task [{task.id}] failed due to member execution error: {e}")
             return
 
         # Check HITL pause
@@ -620,7 +627,9 @@ def _get_task_management_tools(
             _post_process_member_run(
                 member_run_response, member_agent, member_task_description, member_session_state_copy
             )
-            yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
+            yield _task_outcome(
+                f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
+            )
             return
 
         # Process result
@@ -633,7 +642,7 @@ def _get_task_management_tools(
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] failed: {task.result}"
+            yield _task_outcome(f"Task [{task.id}] failed: {task.result}")
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
@@ -641,21 +650,21 @@ def _get_task_management_tools(
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] completed. Result: {content}"
+            yield _task_outcome(f"Task [{task.id}] completed. Result: {content}")
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] completed with no content."
+            yield _task_outcome(f"Task [{task.id}] completed with no content.")
 
     # ------------------------------------------------------------------
     # Tool: execute_task (async)
     # ------------------------------------------------------------------
     async def aexecute_task(
         task_id: str, member_id: str
-    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Execute a task by delegating it to a team member. The member will receive the task
         description and return a result.
 
@@ -792,7 +801,7 @@ def _get_task_management_tools(
             task.result = f"Member execution error: {e}"
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            yield f"Task [{task.id}] failed due to member execution error: {e}"
+            yield _task_outcome(f"Task [{task.id}] failed due to member execution error: {e}")
             return
 
         if member_run_response is not None and member_run_response.is_paused:
@@ -806,7 +815,9 @@ def _get_task_management_tools(
                 member_task_description,
                 member_session_state_copy,
             )
-            yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
+            yield _task_outcome(
+                f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
+            )
             return
 
         use_team_logger()
@@ -823,7 +834,7 @@ def _get_task_management_tools(
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] failed: {task.result}"
+            yield _task_outcome(f"Task [{task.id}] failed: {task.result}")
         elif member_run_response is not None and member_run_response.content:
             content = str(member_run_response.content)
             task.status = TaskStatus.completed
@@ -831,19 +842,21 @@ def _get_task_management_tools(
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] completed. Result: {content}"
+            yield _task_outcome(f"Task [{task.id}] completed. Result: {content}")
         else:
             task.status = TaskStatus.completed
             task.result = "No content returned"
             save_task_list(run_context.session_state, task_list)
             if stream_events:
                 yield _emit_task_updated(task, "in_progress", result=task.result)
-            yield f"Task [{task.id}] completed with no content."
+            yield _task_outcome(f"Task [{task.id}] completed with no content.")
 
     # ------------------------------------------------------------------
     # Tool: execute_tasks_parallel (sync)
     # ------------------------------------------------------------------
-    def execute_tasks_parallel(task_ids: List[str]) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def execute_tasks_parallel(
+        task_ids: List[str],
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Execute multiple independent tasks in parallel by delegating each to its assigned member.
         All tasks must be pending with no unresolved dependencies.
 
@@ -1042,14 +1055,14 @@ def _get_task_management_tools(
         for event in completion_events:
             yield event
 
-        yield "\n".join(results_text)
+        yield _task_outcome("\n".join(results_text))
 
     # ------------------------------------------------------------------
     # Tool: execute_tasks_parallel (async)
     # ------------------------------------------------------------------
     async def aexecute_tasks_parallel(
         task_ids: List[str],
-    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, ToolResult, str]]:
         """Execute multiple independent tasks in parallel by delegating each to its assigned member.
         All tasks must be pending with no unresolved dependencies.
 
@@ -1240,7 +1253,7 @@ def _get_task_management_tools(
         for event in completion_events:
             yield event
 
-        yield "\n".join(results_text)
+        yield _task_outcome("\n".join(results_text))
 
     # ------------------------------------------------------------------
     # Build and return Function list
