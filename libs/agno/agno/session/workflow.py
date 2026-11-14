@@ -168,8 +168,9 @@ class WorkflowSession:
         if not self.runs:
             return []
 
-        # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+        # Get completed top-level runs only (exclude current/pending run). A run with a
+        # parent_run_id, such as a nested workflow step's run, belongs to its parent's turn.
+        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
 
         if num_runs is not None:
             if num_runs <= 0:
@@ -525,12 +526,13 @@ class WorkflowSession:
         if not self.runs:
             return []
 
-        runs = self.runs
+        # Skip nested workflow runs, which share the parent's session (see get_workflow_history)
+        runs = [run for run in self.runs if run.parent_run_id is None]
 
         if last_n_runs is not None:
             if last_n_runs <= 0:
                 return []
-            runs = self.runs[-last_n_runs:]
+            runs = runs[-last_n_runs:]
 
         return [
             WorkflowChatInteraction(input=run.input, output=run.content) for run in runs if run.input and run.content
