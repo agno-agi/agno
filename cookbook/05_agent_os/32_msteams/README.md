@@ -139,7 +139,12 @@ Each user in each conversation starts on
 `msteams:<entity_id>:<conversation.id>:<user_id>`, where `user_id` is the Entra
 `aadObjectId` when available and the channel-scoped id otherwise. Channel thread
 ids include `;messageid=<root>`, so threads are isolated too. Send `/new` to create
-`<scope>:<hex8>` in that conversation only; the previous session is preserved.
+`<scope>:<ms13><hex4>` in that conversation only; the previous session is preserved.
+The suffix begins with 13-digit, zero-padded milliseconds followed by four random
+hex characters. Resets within one second sort by that millisecond prefix; resets
+within the same millisecond still use the random suffix as their tie-break.
+An addressed command such as `@bot /new` resets without invoking the entity;
+ordinary messages retain the bot's display name.
 Lookup scans the latest 50 sessions for that user and entity. If an older reset
 falls outside this window, the conversation falls back to its base scope, never
 to a different conversation.
@@ -169,8 +174,10 @@ a reference. `send_alert` raises `RuntimeError` in a running event loop; await
 Both return `True` on delivery and `False` when the entity has no database, when
 the session lookup fails, or when none of that user's sessions carries a
 personal-chat reference (typically because they have never messaged the bot personally). Failing to
-deliver to a reference that does exist is the one case that raises instead of
-returning `False`, so a caller that loops on the return value has to handle both.
+deliver to a reference that does exist raises instead of returning `False`.
+Blank text raises `ValueError("text must not be blank")` before any session
+lookup. Conversation-reference saving is best effort: a failed save does not
+prevent the reply, and a later personal message tries to save the reference again.
 Call it from scheduled jobs, background tasks, or other request handlers; see
 `proactive_alert.py` for a working example of both paths.
 
@@ -189,8 +196,8 @@ it and the channel-scoped `from.id` otherwise:
    INFO Processing Teams message from user <id-prefix>
    ```
 
-   The trailing identifier is a prefix of the run's `user_id`. The message text
-   is logged separately at debug level.
+   The trailing identifier is a prefix of the run's `user_id`; message text is
+   not logged, including at debug level.
 
 4. Read the full identifier out of that example's session database. Each example
    writes its own: `basic.py` uses `tmp/teams_basic.db`, `proactive_alert.py`
@@ -236,6 +243,14 @@ Signing-key endorsements are checked against the activity's `channelId` when
 both are present. Teams routes authenticate themselves and are therefore outside
 AgentOS's central authorization middleware.
 
+JWT validation authenticates Microsoft delivery for this bot. Access is controlled
+through Teams admin and Azure application settings; this interface adds no tenant
+or user allow-list. Set those platform permissions for the intended audience.
+
+MSTeams logs never include message text, attachment URLs, tokens, secrets,
+attachment names or arbitrary exception text. Logs retain shortened user ids,
+run ids/status, HTTP status codes, exception classes and Microsoft error codes.
+
 For local development against the Bot Framework Emulator, the library
 supports:
 
@@ -257,14 +272,50 @@ Inbound images and supported documents are downloaded with a 1 GB cap
 (`max_file_size`, default `1_073_741_824` bytes). Downloads exceeding the cap are
 skipped with a notice; the text is still sent. Archives are skipped. An
 `application/octet-stream` response is resolved from the attachment's filename.
-The model provider may impose a lower upload limit.
+There is no aggregate attachment-size cap across a message. The model provider
+may impose a lower upload limit.
 
 The bot token is only attached to `contentUrl` requests on the verified
 `serviceUrl` host. Pre-authorized `content.downloadUrl` links never receive it.
 Images hosted elsewhere may therefore be skipped; verify with your Teams setup.
+Only HTTPS attachment URLs are downloaded, including after redirects. Other
+schemes are reported as unreadable. Cross-origin redirects drop `Authorization`.
+There is no private-network blocking or DNS/IP filtering; HTTPS alone is not an
+SSRF boundary.
 
 HITL approval, outbound/generated media, and streaming replies are not supported
-yet. A paused run produces an approval-unavailable notice, not its partial output.
+yet. Runs explicitly request `stream=False` even when the entity's default is
+streaming. A paused run produces an approval-unavailable notice, not its partial
+output. Long replies are sent in order as parts of at most 80,000 bytes of UTF-16
+text, preferring line breaks. This bounds text per part, not the serialized JSON
+payload, and does not make delivery atomic: an earlier part can succeed before
+a later part fails.
+
+## Delivery and Resource Ownership
+
+Duplicate detection is per-process and per mounted interface, after JWT
+validation and before dispatch. The tracker remembers `activity.id` values for
+600 seconds, with at most 4,096 entries. Capacity eviction can admit an earlier
+retry; a retry reaching another worker or replica can run again. The TTL follows
+Slack's pattern, not a verified Microsoft retry schedule.
+
+Accepted work runs in-process in a background task and can be lost at shutdown.
+Overlapping runs in a scope are allowed. An in-flight run finishes on its old
+session when `/new` is received; subsequent messages select the reset session.
+This is best-effort delivery, not durable or exactly-once execution.
+
+Each HTTP operation creates and closes its own `httpx.AsyncClient` with a context
+manager. Bot tokens are cached per interface configuration, but concurrent cache
+misses can issue duplicate token requests. That trade-off is accepted: there is
+no shared HTTP client, single-flight token refresh or `aclose()` lifecycle hook.
+Synchronous session DB operations are offloaded from the event loop.
+
+## Remote Entities
+
+Remote agents, teams and workflows can provide ordinary replies. Their `RemoteDb`
+is not local session storage: the interface performs no local-session lookup or
+conversation-reference save for them, `/new` returns the storage-required
+message, and alerts return `False`.
 
 ## Multiple Instances
 
