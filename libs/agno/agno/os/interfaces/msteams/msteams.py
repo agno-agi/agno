@@ -27,6 +27,7 @@ class MSTeams(BaseInterface):
     # layer must NOT re-validate the request.
     authenticates_own_requests = True
 
+    agent: Optional[Union[Agent, RemoteAgent]]
     router: APIRouter
 
     def __init__(
