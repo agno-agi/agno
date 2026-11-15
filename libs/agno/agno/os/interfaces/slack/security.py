@@ -2,6 +2,7 @@ from os import getenv
 from typing import TYPE_CHECKING, Any, List, Optional, Set
 
 from agno.os.interfaces.slack.helpers import post_ephemeral, slack_error_code
+from agno.os.middleware.jwt import is_reserved_principal
 from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
@@ -85,7 +86,8 @@ async def directory_principal(
         row = await user_store.aget(email)
         if row is None and email.lower() != email:
             row = await user_store.aget(email.lower())
-        if row is not None:
+        # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
+        if row is not None and not is_reserved_principal(row["id"]):
             ctx.lookup_cache.set(key, row["id"])
             return row["id"]
         # Every row the search finds: under one page, rows that only contain the email could push this user's out
@@ -103,6 +105,7 @@ async def directory_principal(
         return None
     # A user whose id is the email (os.agno.com tokens carry the email as sub) is that person: the identity
     # provider issued that id, while an email field can come from any token's claims
+    rows = [row for row in rows if not is_reserved_principal(str(row.get("id") or ""))]
     matches = [row for row in rows if str(row.get("id") or "").lower() == email.lower()]
     if not matches:
         matches = [row for row in rows if str(row.get("email") or "").lower() == email.lower()]

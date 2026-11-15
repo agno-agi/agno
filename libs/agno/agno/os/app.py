@@ -1202,8 +1202,7 @@ class AgentOS:
                 if self.authorization and self._authz_provider is None:
                     log_warning(
                         "Slack serving Super Agent under authorization requires managed roles: Slack requests carry "
-                        "no token, so every Slack sender is refused. Define a default role: "
-                        "Authorization(..., trust_token_scopes=True).define_role(..., default=True)."
+                        "no token, so every Slack sender is refused."
                     )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:

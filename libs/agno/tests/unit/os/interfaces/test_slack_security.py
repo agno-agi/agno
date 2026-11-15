@@ -316,6 +316,14 @@ class TestDirectoryPrincipal:
         assert (event_context.user_id, ephemeral) == ("alice", None)
 
     @pytest.mark.asyncio
+    async def test_reserved_principal_rows_are_never_a_slack_member(self, tmp_path):
+        ctx, directory = _super_agent_slack(tmp_path)
+        directory.remove("alice")
+        directory.upsert("sa:deploy", email="alice@example.com")
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+    @pytest.mark.asyncio
     async def test_email_shared_by_two_directory_users_is_refused(self, tmp_path):
         ctx, directory = _super_agent_slack(tmp_path)
         directory.upsert("alice-2", email="ALICE@example.com")

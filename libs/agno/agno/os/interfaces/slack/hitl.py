@@ -168,6 +168,7 @@ async def _decidable_row(
         card_ts=row.card_ts,
         awaiting_ts=row.awaiting_ts,
         card_blocks=(payload.get("message") or {}).get("blocks") or [],
+        team_id=(payload.get("team") or {}).get("id"),
     )
     if event_context is None:
         return None

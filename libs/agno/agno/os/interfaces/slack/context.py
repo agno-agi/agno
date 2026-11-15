@@ -251,7 +251,7 @@ async def event_context_from_run(
     lookup_email = user_id if "@" in user_id else None
     if not owner and user_id and resolves_from_directory(ctx):
         # A directory principal is the JWT subject, which may not be an email; its directory row carries the email
-        lookup_email = await directory_email(ctx, user_id) or lookup_email
+        lookup_email = lookup_email or await directory_email(ctx, user_id)
     if not owner and lookup_email:
         try:
             response = await (client or ctx.web()).users_lookupByEmail(email=lookup_email)

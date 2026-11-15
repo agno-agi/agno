@@ -40,6 +40,7 @@ class FakeSlack:
         self.root: Dict[str, Any] = {"user": root_user, "ts": THREAD}
         self.thread: List[Dict[str, Any]] = list(replies or [])
         self.emails: Dict[str, str] = {}
+        self.teams: Dict[str, str] = {}
         self.chat_postMessage = AsyncMock(side_effect=self._post)
         self.conversations_replies = AsyncMock(side_effect=self._replies)
         self.users_info = AsyncMock(side_effect=self._users_info)
@@ -61,7 +62,7 @@ class FakeSlack:
         }
 
     async def _users_info(self, user: str) -> Dict[str, Any]:
-        return {"user": {"profile": {"email": self.emails.get(user)}}}
+        return {"user": {"team_id": self.teams.get(user), "profile": {"email": self.emails.get(user)}}}
 
     def posted(self) -> List[Dict[str, Any]]:
         return [call.kwargs for call in self.chat_postMessage.await_args_list]
@@ -129,6 +130,7 @@ def _save_turn(
     session_id: str = SESSION_ID,
     session_owner: Optional[str] = None,
     message_ts: Optional[str] = THREAD,
+    team_id: Optional[str] = None,
 ) -> None:
     """The Super Agent turn as its session stores it: the run that started the Task from a Slack message."""
     run = TeamRunOutput(
@@ -137,7 +139,7 @@ def _save_turn(
         team_id=ENTITY_ID,
         user_id=user_id,
         status=RunStatus.completed,
-        metadata={"slack_message_ts": message_ts} if message_ts else None,
+        metadata={"slack_message_ts": message_ts, "slack_team_id": team_id} if message_ts else None,
     )
     owner = session_owner or user_id
     db.upsert_session(TeamSession(session_id=session_id, team_id=ENTITY_ID, user_id=owner, session_data={}))
@@ -463,6 +465,7 @@ def _authorized_company(
     message_ts: str = THREAD,
     session_owner: Optional[str] = None,
     user_directory: Optional[bool] = None,
+    team_id: Optional[str] = None,
 ):
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
     auth.define_role("asker", ["teams:run", "tasks:read"])
@@ -473,7 +476,7 @@ def _authorized_company(
     db = SqliteDb(db_file=db_file)
     agent_os = _company_os(db, authorization=auth, user_directory=user_directory)
     _finish_attempt(db, task, "run-1", run_user)
-    _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner)
+    _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner, team_id=team_id)
     return db, agent_os
 
 
@@ -523,6 +526,27 @@ async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_
         agent_os.user_directory.upsert(principal, email=f"{principal}@example.com")
     slack = FakeSlack(root_user=root_user)
     slack.emails.update({"U_ALICE": "alice@example.com", "U_CAROL": "carol@example.com"})
+    await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
+    assert bool(slack.posted()) is posted
+
+
+@pytest.mark.parametrize(
+    "workspace, posted",
+    [
+        ("T_HOME", True),
+        # A Slack Connect message names the sender's own org; the workspace it arrived in is another
+        ("T_OTHER", False),
+    ],
+    ids=["home-workspace", "other-workspace"],
+)
+@pytest.mark.asyncio
+async def test_directory_identity_checks_message_workspace(tmp_path, workspace, posted):
+    db, agent_os = _authorized_company(tmp_path, "alice", user_directory=True, team_id=workspace)
+    agent_os.user_directory.upsert("alice", email="alice@example.com")
+    slack = FakeSlack(root_user="U_ALICE")
+    slack.root["team"] = "T_HOME"
+    slack.emails["U_ALICE"] = "alice@example.com"
+    slack.teams["U_ALICE"] = "T_HOME"
     await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
     assert bool(slack.posted()) is posted
 

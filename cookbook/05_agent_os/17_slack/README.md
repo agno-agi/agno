@@ -395,7 +395,7 @@ after `get_app()` refuses each message instead:
 - **`resolve_user_identity=True` with `user_directory=True`**: each message
   looks the sender up with Slack's `users.info` (it needs the `users:read.email`
   scope) and runs as the one directory user whose id, or else email, is the
-  member's Slack email, compared without case. Directory users are added when
+  member's ASCII Slack email, compared without case. Directory users are added when
   they first sign in to AgentOS, or by an admin through the user directory API.
 - **`users=`**: an explicit allowlist, `users={"U0123ABC": "alice"}`. A member
   it leaves out is refused, even when a directory user has their email.
@@ -403,29 +403,12 @@ after `get_app()` refuses each message instead:
 A Slack request carries no token, so token scopes grant a Slack sender nothing:
 permissions come from managed roles, re-checked on every message, approval,
 Stop, and Task result. With `authorization=True` and no roles, the API starts,
-logs a warning, and refuses every Slack sender. For users who sign in with
-os.agno.com tokens, keep their token scopes and give every directory user a
-default role:
-
-```python
-authz = Authorization(trust_token_scopes=True, roles_claim="role")
-# Every directory user holds this role, so a Slack sender runs with it
-authz.define_role(
-    "member",
-    ["agents:run", "teams:run", "workflows:run", "projects:write", "tasks:read", "tasks:write", "wiki:read"],
-    default=True,
-)
-
-agent_os = AgentOS(..., authorization=authz, user_directory=True, manager=OSManager(model=model))
-agent_os.interfaces.append(Slack(team=agent_os.manager, resolve_user_identity=True))
-```
-
-`roles_claim="role"` keeps a browser token's own role in charge, so the default
-role does not widen what a token with a narrower role may do over HTTP.
+logs a warning, and refuses every Slack sender.
 
 A directory user's id is matched first, since the identity provider issued it
 (os.agno.com tokens carry the email as `sub`); the email column, which comes from
-a token's email claim, is used only when no id matches. With an identity
+a token's email claim, is used only when no id matches. Rely on this only when
+people cannot choose their own `sub`; otherwise use `users=`. With an identity
 provider that lets people set an unverified email, point
 `UserDirectory(email_claim=...)` at a verified claim, or use `users=`.
 
