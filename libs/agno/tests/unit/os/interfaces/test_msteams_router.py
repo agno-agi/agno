@@ -16,6 +16,63 @@ from agno.os.interfaces.msteams.router import (
 from agno.session.agent import AgentSession
 
 
+@pytest.mark.parametrize("text", ["hello", "/new"])
+def test_sync_session_db_calls_run_off_event_loop(text):
+    import threading
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    loop_threads = []
+    db_threads = []
+    db = MagicMock(spec=BaseDb)
+
+    def get_sessions(**kwargs):
+        db_threads.append(threading.get_ident())
+        return [], 0
+
+    def upsert_session(session):
+        db_threads.append(threading.get_ident())
+        return session
+
+    async def typing(*args, **kwargs):
+        loop_threads.append(threading.get_ident())
+
+    db.get_sessions.side_effect = get_sessions
+    db.upsert_session.side_effect = upsert_session
+    agent = SimpleNamespace(
+        id="agent", name="Agent", db=db, arun=AsyncMock(return_value=RunOutput(run_id="run", content="ok"))
+    )
+    client, env = _build_test_client(agent=agent)
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", side_effect=typing),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+        ):
+            response = client.post(
+                "/messages",
+                json={
+                    "type": "message",
+                    "text": text,
+                    "serviceUrl": "https://svc",
+                    "from": {"id": "u"},
+                    "conversation": {"id": "c", "conversationType": "groupChat"},
+                },
+            )
+        assert response.status_code == 200
+        assert len(db_threads) == 1
+        assert len(loop_threads) == 1
+        assert db_threads[0] != loop_threads[0]
+        if text == "/new":
+            db.upsert_session.assert_called_once()
+            agent.arun.assert_not_called()
+        else:
+            db.get_sessions.assert_called_once()
+            agent.arun.assert_awaited_once()
+    finally:
+        env.stop()
+
+
 def _stub_agent_with_db():
     fake_db = MagicMock(spec=BaseDb)
     return SimpleNamespace(id="agent-1", name="Stub Agent", db=fake_db)

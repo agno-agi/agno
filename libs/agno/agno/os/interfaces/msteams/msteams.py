@@ -117,7 +117,7 @@ class MSTeams(BaseInterface):
                 if isinstance(db, AsyncBaseDb):
                     result = await db.get_sessions(**session_filter, page=page)  # type: ignore[arg-type]
                 else:
-                    result = db.get_sessions(**session_filter, page=page)  # type: ignore[arg-type]
+                    result = await asyncio.to_thread(db.get_sessions, **session_filter, page=page)  # type: ignore[arg-type]
                 sessions, total = result if isinstance(result, tuple) else (result, len(result))
                 for session in cast(List[dict], sessions):
                     data = session.get("session_data")

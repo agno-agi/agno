@@ -215,7 +215,7 @@ def attach_routes(
                     if session_config.is_async_db:
                         await session_config.db.upsert_session(new_session)
                     else:
-                        session_config.db.upsert_session(new_session)
+                        await asyncio.to_thread(session_config.db.upsert_session, new_session)
                     await send_teams_message_async(
                         service_url,
                         conversation_id,
@@ -263,7 +263,7 @@ def attach_routes(
                     if session_config.is_async_db:
                         results = await session_config.db.get_sessions(**session_filter)
                     else:
-                        results = session_config.db.get_sessions(**session_filter)
+                        results = await asyncio.to_thread(session_config.db.get_sessions, **session_filter)
                     rows = results[0] if isinstance(results, tuple) else results
                     candidates = [row for row in rows if row["session_id"].startswith(session_scope)]
                     if candidates:

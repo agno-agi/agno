@@ -6,6 +6,31 @@ import pytest
 from agno.db.base import BaseDb
 
 
+@pytest.mark.asyncio
+async def test_alert_sync_paging_runs_off_event_loop():
+    import threading
+
+    teams, agent, env = _build_teams_interface()
+    loop_thread = threading.get_ident()
+    db_threads = []
+
+    def get_sessions(**kwargs):
+        db_threads.append(threading.get_ident())
+        if kwargs["page"] == 1:
+            return [{"session_data": {}}] * 50, 51
+        return [_make_session_with_ref()], 51
+
+    agent.db.get_sessions.side_effect = get_sessions
+    try:
+        with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as send:
+            assert await teams.asend_alert("u", "hello") is True
+        assert len(db_threads) == 2
+        assert all(thread != loop_thread for thread in db_threads)
+        send.assert_awaited_once()
+    finally:
+        env.stop()
+
+
 def _build_teams_interface(env=None):
     """MagicMock(spec=BaseDb) so ``isinstance(db, BaseDb)`` succeeds without
     implementing BaseDb's ~50 abstract methods."""
