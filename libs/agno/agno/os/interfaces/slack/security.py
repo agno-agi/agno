@@ -29,13 +29,20 @@ def resolve_signing_secret(signing_secret: Optional[str] = None) -> str:
 
 
 def principal_required(ctx: "SlackContext", app: Any = None) -> bool:
-    """Whether a Slack user's runs need an AgentOS principal: users= is set, or Super Agent runs under authorization."""
+    """Whether a Slack user's runs need a principal: users=, or Super Agent or directory roles under authorization."""
     from agno.os.auth import _authorization_enforced
 
-    # The middleware may be added after get_app(), so it is checked on each request
-    return ctx.users is not None or (
-        ctx.company is not None and _authorization_enforced(app if app is not None else ctx.app)
+    app = app if app is not None else ctx.app
+    state = getattr(app, "state", None)
+    # A sender is resolved from the user directory by Slack email; a Slack request carries no token,
+    # so only managed roles can grant that sender a run
+    directory_roles = (
+        ctx.resolve_user_identity
+        and getattr(state, "user_store", None) is not None
+        and getattr(state, "role_store", None) is not None
     )
+    # The middleware may be added after get_app(), so it is checked on each request
+    return ctx.users is not None or ((ctx.company is not None or directory_roles) and _authorization_enforced(app))
 
 
 def resolves_from_directory(ctx: "SlackContext", app: Any = None) -> bool:

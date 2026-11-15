@@ -87,6 +87,7 @@ class Slack(BaseInterface):
             buffer_size: Characters buffered before a streamed update is flushed
             max_file_size: Largest attached file downloaded, in bytes
             resolve_user_identity: Use the sender's Slack email as user_id, or their directory id under authorization
+                with managed roles (always for Super Agent)
             respond_to_other_apps: Answer messages posted by other bots
             markdown: Format replies as Slack mrkdwn
             unfurl_links: Let Slack expand link previews in replies
