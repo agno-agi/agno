@@ -18,7 +18,12 @@ from agno.os.interfaces.slack.helpers import (
     strip_bot_mention,
 )
 from agno.os.interfaces.slack.runs import SlackRuns
-from agno.os.interfaces.slack.security import resolve_signing_secret, resolve_token
+from agno.os.interfaces.slack.security import (
+    directory_email,
+    resolve_signing_secret,
+    resolve_token,
+    resolves_from_directory,
+)
 from agno.team import RemoteTeam
 from agno.utils.log import log_warning
 
@@ -234,7 +239,7 @@ async def event_context_from_run(
     """An event context for a stored run with no parked one, e.g. after a restart.
 
     The owner is the Slack id written on the card, else the Slack user mapped to the run's user,
-    else the Slack user whose email is the run's user.
+    else the Slack user whose email is the run's user or its directory user's email.
     """
     session_id = getattr(run_output, "session_id", None) or ""
     user_id = getattr(run_output, "user_id", None) or ""
@@ -243,9 +248,13 @@ async def event_context_from_run(
     session_channel, _, thread_ts = session_id.removeprefix(prefix).rpartition(":")
     if not owner and user_id and ctx.users is not None:
         owner = next((slack_id for slack_id, principal in ctx.users.items() if principal == user_id), None)
-    if not owner and "@" in user_id:
+    lookup_email = user_id if "@" in user_id else None
+    if not owner and user_id and resolves_from_directory(ctx):
+        # A directory principal is the JWT subject, which may not be an email; its directory row carries the email
+        lookup_email = await directory_email(ctx, user_id) or lookup_email
+    if not owner and lookup_email:
         try:
-            response = await (client or ctx.web()).users_lookupByEmail(email=user_id)
+            response = await (client or ctx.web()).users_lookupByEmail(email=lookup_email)
             owner = (response.get("user") or {}).get("id")
         except Exception as e:
             log_warning(f"Failed to look up the Slack user of a run: {str(e)}")

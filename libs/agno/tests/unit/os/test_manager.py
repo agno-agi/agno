@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+from typing import List
 
 import pytest
 from fastapi.testclient import TestClient
@@ -199,6 +200,50 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_authorization
     os.interfaces.append(interface_class(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
     with pytest.raises(ValueError, match="requires Slack identity mapping"):
         os.get_app()
+
+
+@pytest.mark.parametrize(
+    "user_directory, roles, error",
+    [
+        (True, True, None),
+        # Without a directory, resolve_user_identity has no principal to resolve a sender to
+        (False, True, "requires Slack identity mapping"),
+        # Token scopes alone: the API starts, and a warning says no Slack sender can be authorized
+        (True, False, None),
+    ],
+    ids=["directory-and-roles", "resolve-without-directory", "scopes-only"],
+)
+def test_slack_serving_the_manager_resolves_senders_from_the_user_directory_under_authorization(
+    db, monkeypatch, user_directory, roles, error
+):
+    pytest.importorskip("slack_bolt")
+    from agno.os import Authorization
+    from agno.os.interfaces.slack import Slack
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    authorization = Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
+    if roles:
+        authorization.define_role("member", ["teams:run", "tasks:read"], default=True)
+    os = AgentOS(
+        id="manager-test",
+        db=db,
+        telemetry=False,
+        authorization=authorization,
+        user_directory=user_directory or None,
+        manager=OSManager(model=OfflineModel()),
+    )
+    # Each sender's principal is the directory user with their Slack email
+    os.interfaces.append(
+        Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", resolve_user_identity=True)
+    )
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            os.get_app()
+        return
+    warnings: List[str] = []
+    monkeypatch.setattr("agno.os.app.log_warning", warnings.append)
+    os.get_app()
+    assert any("requires managed roles" in message for message in warnings) is not roles
 
 
 def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jwt_middleware(db):

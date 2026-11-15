@@ -157,13 +157,14 @@ def company(tmp_path):
     db.close()
 
 
-def _company_os(db: SqliteDb, authorization: Any = None) -> AgentOS:
+def _company_os(db: SqliteDb, authorization: Any = None, user_directory: Optional[bool] = None) -> AgentOS:
     agent_os = AgentOS(
         id="slack-company",
         db=db,
         registry=Registry(agents=[Agent(id="writer", db=db)]),
         company=CompanyConfig(),
         authorization=authorization,
+        user_directory=user_directory,
         telemetry=False,
     )
     agent_os._company_app = agent_os.get_app()
@@ -456,7 +457,13 @@ async def test_multi_page_sweep_doubles_each_read_from_the_top(company, monkeypa
 # ---------------------------------------------------------------------------
 # Participants: the run's user wrote the Slack message that started the run, in that thread
 # ---------------------------------------------------------------------------
-def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, session_owner: Optional[str] = None):
+def _authorized_company(
+    tmp_path,
+    run_user: str,
+    message_ts: str = THREAD,
+    session_owner: Optional[str] = None,
+    user_directory: Optional[bool] = None,
+):
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
     auth.define_role("asker", ["teams:run", "tasks:read"])
     auth.define_role("runner", ["teams:run"])
@@ -464,7 +471,7 @@ def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, sessi
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
-    agent_os = _company_os(db, authorization=auth)
+    agent_os = _company_os(db, authorization=auth, user_directory=user_directory)
     _finish_attempt(db, task, "run-1", run_user)
     _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner)
     return db, agent_os
@@ -495,6 +502,28 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
     db, agent_os = _authorized_company(tmp_path, run_user, message_ts, session_owner="alice")
     slack = FakeSlack(root_user=root_user, replies=[{"user": "U_BOB", "ts": BOB_REPLY}])
     await _delivery(agent_os, db, slack, users=USERS).sweep()
+    assert bool(slack.posted()) is posted
+
+
+@pytest.mark.parametrize(
+    "run_user, root_user, posted",
+    [
+        ("alice", "U_ALICE", True),
+        # Alice's message, Bob's run
+        ("bob", "U_ALICE", False),
+        # Carol wrote the message but can no longer read Tasks
+        ("carol", "U_CAROL", False),
+    ],
+    ids=["message-author", "other-users-message", "access-revoked"],
+)
+@pytest.mark.asyncio
+async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_user, root_user, posted):
+    db, agent_os = _authorized_company(tmp_path, run_user, user_directory=True)
+    for principal in ("alice", "bob", "carol"):
+        agent_os.user_directory.upsert(principal, email=f"{principal}@example.com")
+    slack = FakeSlack(root_user=root_user)
+    slack.emails.update({"U_ALICE": "alice@example.com", "U_CAROL": "carol@example.com"})
+    await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
     assert bool(slack.posted()) is posted
 
 

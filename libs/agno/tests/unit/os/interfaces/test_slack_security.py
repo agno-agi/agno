@@ -1,6 +1,6 @@
 import json
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -10,9 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
-from agno.os import AgentOS
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS, OSManager
 from agno.os.authz import Authorization
-from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.slack import Slack, security
+from agno.os.interfaces.slack.handlers import _NOT_LINKED_MESSAGE, handle_message
 from agno.os.interfaces.slack.security import (
     can_act,
     resolve_principal_authorization,
@@ -26,6 +29,7 @@ from .conftest import (
     TOKEN,
     build_app,
     make_agent_mock,
+    make_async_client_mock,
     make_ctx,
     make_event_body,
     make_event_context,
@@ -125,6 +129,15 @@ class TestCanAct:
         )
         assert await can_act(ctx, "U9", event_context, client=async_client_mock) is False
 
+    @pytest.mark.asyncio
+    async def test_can_act_directory_user_compared_as_principal(self, tmp_path, async_client_mock):
+        ctx, _ = _super_agent_slack(tmp_path)
+        event_context = make_event_context(owner="U_OWNER", user_id="alice", team_id="T123")
+        async_client_mock.users_info = AsyncMock(return_value=_member())
+        assert await can_act(ctx, "U_ALT", event_context, client=async_client_mock) is True
+        async_client_mock.users_info = AsyncMock(return_value=_member(email="bob@example.com"))
+        assert await can_act(ctx, "U_BOB", event_context, client=async_client_mock) is False
+
 
 class TestResolvePrincipalAuthorization:
     @pytest.mark.asyncio
@@ -184,3 +197,145 @@ class TestResolvePrincipalAuthorization:
         app.state.user_store.ais_disabled = AsyncMock(return_value=True)
         with pytest.raises(PermissionError, match="User is disabled"):
             await resolve_principal_authorization(app, "alice", "agents", "agent-1")
+
+
+def _member(email="Alice@Example.com", team_id="T123", **fields):
+    return {"ok": True, "user": {"id": "U123", "team_id": team_id, "profile": {"email": email}, **fields}}
+
+
+def _super_agent_slack(tmp_path, users=None, default_role=False):
+    """A Slack interface serving Super Agent under authorization, with a user directory and role grants."""
+    auth = Authorization(verification_keys=[JWT_KEY], algorithm="HS256")
+    auth.define_role("asker", ["teams:run", "tasks:read"]).assign("alice", "asker")
+    if default_role:
+        auth.define_role("member", ["teams:run"], default=True)
+    agent_os = AgentOS(
+        id="slack-security",
+        db=SqliteDb(db_file=str(tmp_path / "os.db")),
+        authorization=auth,
+        user_directory=True,
+        # Never called: the run itself is not started
+        manager=OSManager(model=OpenAIResponses(id="gpt-5.6-luna", api_key="test")),
+        telemetry=False,
+    )
+    slack = Slack(
+        team=agent_os.manager, token=TOKEN, signing_secret=SIGNING_SECRET, resolve_user_identity=True, users=users
+    )
+    agent_os.interfaces.append(slack)
+    app = agent_os.get_app()
+    directory = agent_os.user_directory
+    directory.upsert("alice", email="alice@example.com")
+    directory.upsert("bob", email="bob@example.com")
+    # The router binds the request's app, as for a signed event
+    return slack.ctx.bind(app), directory
+
+
+async def _handle(ctx, member, user="U123"):
+    client = make_async_client_mock()
+    if isinstance(member, Exception):
+        client.users_info = AsyncMock(side_effect=member)
+    else:
+        client.users_info = AsyncMock(return_value=member)
+    with patch("agno.os.interfaces.slack.handlers.executor.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(user=user), client, ctx)
+    event_context = run_event.call_args.args[0] if run_event.called else None
+    ephemeral = client.chat_postEphemeral.call_args.kwargs["text"] if client.chat_postEphemeral.called else None
+    return event_context, ephemeral
+
+
+class TestDirectoryPrincipal:
+    @pytest.mark.asyncio
+    async def test_sender_runs_as_their_directory_user_with_its_roles(self, tmp_path):
+        ctx, _ = _super_agent_slack(tmp_path)
+        event_context, ephemeral = await _handle(ctx, _member())
+        # The run is the directory user's, the JWT subject, not the Slack email
+        assert (event_context.user_id, event_context.owner, ephemeral) == ("alice", "U123", None)
+        await event_context.authority.arequire("teams", "run", ctx.entity_id)
+
+    @pytest.mark.parametrize(
+        "member",
+        [
+            _member(email=None),
+            # The Kelvin sign case-folds to "k"
+            _member(email="\u212aate@example.com"),
+            _member(email="carol@example.com"),
+            # A Slack Connect member from another organization, a deleted account, a bot
+            _member(team_id="T_OTHER"),
+            _member(team_id="T_OTHER", enterprise_user={"teams": ["T_OTHER", "T_X"]}),
+            _member(is_stranger=True),
+            _member(deleted=True),
+            _member(is_bot=True),
+            RuntimeError("users.info failed"),
+        ],
+        ids=[
+            "no-email",
+            "non-ascii-email",
+            "unknown-email",
+            "other-workspace",
+            "other-enterprise",
+            "stranger",
+            "deleted",
+            "bot",
+            "lookup-failed",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_unresolved_sender_is_refused(self, tmp_path, member):
+        ctx, _ = _super_agent_slack(tmp_path)
+        event_context, ephemeral = await _handle(ctx, member)
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+    @pytest.mark.asyncio
+    async def test_enterprise_grid_member_of_the_event_workspace_resolves(self, tmp_path):
+        # An Enterprise Grid member's home team differs from the workspace the message was sent in
+        ctx, _ = _super_agent_slack(tmp_path)
+        member = _member(team_id="T_HOME", enterprise_user={"teams": ["T_HOME", "T123"]})
+        event_context, ephemeral = await _handle(ctx, member)
+        assert (event_context.user_id, ephemeral) == ("alice", None)
+
+    @pytest.mark.asyncio
+    async def test_sender_is_the_directory_user_whose_id_is_the_email(self, tmp_path):
+        # os.agno.com tokens carry the email as sub and no email claim, so the row's id is the email
+        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
+        directory.remove("alice")
+        directory.provision_from_claims("Alice@Example.com", {"sub": "Alice@Example.com"})
+        # Another row claiming the same email cannot take the member's identity or block it
+        directory.upsert("mallory", email="alice@example.com")
+        event_context, ephemeral = await _handle(ctx, _member())
+        # The default role authorizes the onboarded directory user with no role of their own
+        assert (event_context.user_id, ephemeral) == ("Alice@Example.com", None)
+
+    @pytest.mark.asyncio
+    async def test_rows_containing_the_email_do_not_push_the_member_out(self, tmp_path, monkeypatch):
+        # A search page holds two rows here; newer rows whose email only contains the member's fill the first page
+        monkeypatch.setattr(security, "_DIRECTORY_PAGE_SIZE", 2)
+        ctx, directory = _super_agent_slack(tmp_path)
+        for i in range(3):
+            directory.upsert(f"flood-{i}", email=f"x{i}alice@example.com")
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context.user_id, ephemeral) == ("alice", None)
+
+    @pytest.mark.asyncio
+    async def test_email_shared_by_two_directory_users_is_refused(self, tmp_path):
+        ctx, directory = _super_agent_slack(tmp_path)
+        directory.upsert("alice-2", email="ALICE@example.com")
+        # A substring of another email is not a match
+        directory.upsert("malice", email="malice@example.com")
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+    @pytest.mark.asyncio
+    async def test_disabled_or_roleless_directory_user_is_refused(self, tmp_path):
+        ctx, directory = _super_agent_slack(tmp_path)
+        # bob is in the directory but holds no role
+        event_context, ephemeral = await _handle(ctx, _member(email="bob@example.com"), user="U_BOB")
+        assert (event_context, ephemeral) == (None, "Not run: Permission required: teams:superagent:run")
+        directory.set_disabled("alice", True)
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context, ephemeral) == (None, "Not run: User is disabled")
+
+    @pytest.mark.asyncio
+    async def test_users_allowlist_is_not_widened_by_the_directory(self, tmp_path):
+        ctx, _ = _super_agent_slack(tmp_path, users={"U_OTHER": "alice"})
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)

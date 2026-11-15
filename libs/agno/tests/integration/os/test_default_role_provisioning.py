@@ -136,6 +136,28 @@ def test_no_role_default_applies_only_to_a_known_directory_user(tmp_path):
     assert roles.roles_of("known") == []  # decision-time only, nothing written
 
 
+@pytest.mark.parametrize("subject", ["__oauth__:client-1", "sa:bot", "__scheduler__"])
+async def test_a_reserved_principal_in_the_directory_never_gets_the_default_role(tmp_path, subject):
+    """The MCP identity bridge provisions a built-in OAuth client (``__oauth__:<id>``) into the
+    directory, but a reserved server principal cannot hold a role, so the no-role default must not
+    reach it either -- on the sync and the async resolution."""
+    from agno.os.authz import Authorization
+    from agno.os.authz.user_directory import UserDirectory
+
+    url = f"sqlite:///{tmp_path}/authz.db"
+    roles = Authorization(db_url=url)
+    roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
+    users = UserDirectory(db_url=url)
+    users.upsert(subject)
+    users.upsert("known")
+    engine = roles._store()._engine
+
+    assert engine.check_scope("agents:x:read", subject=subject) is False
+    assert await engine.acheck_scope("agents:x:read", subject=subject) is False
+    assert engine.check_scope("agents:x:read", subject="known") is True
+    assert await engine.acheck_scope("agents:x:read", subject="known") is True
+
+
 def test_no_default_role_means_a_roleless_directory_user_is_denied(tmp_path):
     """With no ``is_default`` role, even a known directory user with no role is denied -- the
     fallback never invents access where no default was chosen."""

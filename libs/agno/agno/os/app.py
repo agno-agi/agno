@@ -1182,13 +1182,28 @@ class AgentOS:
             if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
                 from agno.os.auth import _has_authorization_middleware
 
+                # Each Slack sender needs a principal: from users=, or by Slack email from the user directory
+                directory_mapped = (
+                    getattr(interface, "resolve_user_identity", False) and self.user_directory is not None
+                )
                 # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
+                if (
+                    getattr(interface, "users", None) is None
+                    and not directory_mapped
+                    and (self.authorization or _has_authorization_middleware(app))
                 ):
                     raise ValueError(
                         "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                        "pass Slack(users={slack_user_id: principal_id})."
+                        "pass Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) "
+                        "with AgentOS(user_directory=True) to resolve each sender by email from the user directory."
+                    )
+                # A Slack request carries no token, so only managed roles can authorize a Slack sender;
+                # the API still starts, and each Slack sender is refused until roles are defined
+                if self.authorization and self._authz_provider is None:
+                    log_warning(
+                        "Slack serving Super Agent under authorization requires managed roles: Slack requests carry "
+                        "no token, so every Slack sender is refused. Define a default role: "
+                        "Authorization(..., trust_token_scopes=True).define_role(..., default=True)."
                     )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:
