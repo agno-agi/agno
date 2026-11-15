@@ -442,22 +442,6 @@ async def test_event_context_from_run_owner_by_email():
 
 
 @pytest.mark.asyncio
-async def test_event_context_from_run_owner_by_directory_users_email():
-    # Super Agent under authorization: the run's user is the directory principal, its email is on the row
-    ctx = make_ctx(resolve_user_identity=True)
-    ctx.company = AsyncMock()
-    user_store = AsyncMock()
-    user_store.aget = AsyncMock(return_value={"id": "alice", "email": "alice@example.com"})
-    # The flag AgentOS sets when it enforces authorization
-    ctx.app = SimpleNamespace(state=SimpleNamespace(authorization_enabled=True, user_store=user_store))
-    client = make_async_client_mock()
-    client.users_lookupByEmail = AsyncMock(return_value={"user": {"id": "U_ALICE"}})
-    event_context = await event_context_from_run(ctx, _run("alice"), client=client)
-    client.users_lookupByEmail.assert_awaited_once_with(email="alice@example.com")
-    assert (event_context.owner, event_context.user_id) == ("U_ALICE", "alice")
-
-
-@pytest.mark.asyncio
 async def test_event_context_from_run_plain_slack_id_and_legacy_session():
     event_context = await event_context_from_run(make_ctx(), _run("U123", session_id="agent-1:3.0"), channel="C1")
     assert (event_context.owner, event_context.channel, event_context.thread_ts) == ("U123", "C1", "3.0")

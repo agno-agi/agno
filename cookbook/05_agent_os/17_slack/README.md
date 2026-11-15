@@ -394,9 +394,9 @@ after `get_app()` refuses each message instead:
 
 - **`resolve_user_identity=True` with `user_directory=True`**: each message
   looks the sender up with Slack's `users.info` (it needs the `users:read.email`
-  scope) and runs as the one directory user whose id, or else email, is the
-  member's ASCII Slack email, compared without case. Directory users are added when
-  they first sign in to AgentOS, or by an admin through the user directory API.
+  scope) and runs as the directory user whose id is the member's ASCII Slack
+  email, compared without case. Directory users are added when they first sign
+  in to AgentOS, or by an admin through the user directory API.
 - **`users=`**: an explicit allowlist, `users={"U0123ABC": "alice"}`. A member
   it leaves out is refused, even when a directory user has their email.
 
@@ -405,12 +405,15 @@ permissions come from managed roles, re-checked on every message, approval,
 Stop, and Task result. With `authorization=True` and no roles, the API starts,
 logs a warning, and refuses every Slack sender.
 
-A directory user's id is matched first, since the identity provider issued it
-(os.agno.com tokens carry the email as `sub`); the email column, which comes from
-a token's email claim, is used only when no id matches. Rely on this only when
-people cannot choose their own `sub`; otherwise use `users=`. With an identity
-provider that lets people set an unverified email, point
-`UserDirectory(email_claim=...)` at a verified claim, or use `users=`.
+Only a directory user's id is matched, since the identity provider issued it
+(os.agno.com tokens carry the email as `sub`). The email column is never matched:
+it is copied from a token's email claim, which nothing verifies. With an identity
+provider whose `sub` is not the email, use `users=`.
+
+In this mode AgentOS trusts Slack for the email. Whoever can set a member's
+profile email in the Slack workspace can act as the directory user with that id,
+an admin included. `users=` maps Slack member IDs and does not depend on profile
+emails.
 
 ## Limits
 
@@ -485,7 +488,7 @@ Stop and the card's Deny ends the run; that stop path was checked with a signed
 | Streaming returns `internal_error` | Agent view is off, `assistant:write` is missing, or the app was not reinstalled |
 | No suggested prompts | `app_home_opened` is not subscribed, the Messages tab is off, the app is in the assistant view (a `not_agent_app` warning in the log), or the Slack client needs a reload |
 | Stop does nothing | `agent_session_stopped` is not subscribed |
-| "Your Slack account is not linked" | `users=` is set and the sender is not in it; or, for Super Agent under authorization without `users=`, no single directory user has the sender's Slack email |
+| "Your Slack account is not linked" | `users=` is set and the sender is not in it; or, for Super Agent under authorization without `users=`, no directory user's id is the sender's Slack email |
 | Workspace search reports no action token | The run did not start from a Slack message, or the app lacks the `search:read.*` scopes |
 | HITL buttons do nothing | Interactivity is off or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |

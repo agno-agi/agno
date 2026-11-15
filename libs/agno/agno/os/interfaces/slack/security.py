@@ -39,7 +39,7 @@ def principal_required(ctx: "SlackContext", app: Any = None) -> bool:
 
 
 def resolves_from_directory(ctx: "SlackContext", app: Any = None) -> bool:
-    """Whether principals come from the AgentOS user directory by Slack email rather than from users=."""
+    """Whether a principal is the AgentOS directory user whose id is the Slack email, rather than from users=."""
     return ctx.users is None and ctx.resolve_user_identity and principal_required(ctx, app)
 
 
@@ -51,14 +51,15 @@ async def directory_principal(
     app: Any = None,
     errors: Optional[Set[str]] = None,
 ) -> Optional[str]:
-    """The one directory user a Slack member is, by id then email; None for no single match or a failed lookup."""
+    """The directory user whose id is a Slack member's email; None for no such user or a failed lookup."""
     key = f"principal:{team_id or ''}:{user}"
     cached = ctx.lookup_cache.get(key)
     if cached is not None:
         return cached
     state = getattr(app if app is not None else ctx.app, "state", None)
     user_store = getattr(state, "user_store", None)
-    if user_store is None or not user:
+    # The sender is checked against the workspace the event arrived in, so an event that names none is refused
+    if user_store is None or not user or not team_id:
         return None
     try:
         response = await client.users_info(user=user)
@@ -75,61 +76,44 @@ async def directory_principal(
     # A Slack Connect member from another organization belongs to another workspace; an Enterprise Grid
     # member also belongs to each workspace listed on their enterprise_user
     teams = (member.get("enterprise_user") or {}).get("teams")
-    if team_id and member.get("team_id") != team_id and not (isinstance(teams, list) and team_id in teams):
+    if member.get("team_id") != team_id and not (isinstance(teams, list) and team_id in teams):
         return None
     email = (member.get("profile") or {}).get("email")
     # Case folding maps some non-ASCII letters onto ASCII ones, so only an ASCII email is compared
     if not email or not email.isascii():
         return None
     try:
-        # A user whose id is the email (os.agno.com tokens carry the email as sub) is read directly, with no search
+        # The identity provider issued the directory id (os.agno.com tokens carry the email as sub). The email
+        # column is never matched: it is copied from a token claim that nothing verifies
         row = await user_store.aget(email)
         if row is None and email.lower() != email:
             row = await user_store.aget(email.lower())
-        # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
-        if row is not None and not is_reserved_principal(row["id"]):
-            ctx.lookup_cache.set(key, row["id"])
-            return row["id"]
-        # Every row the search finds: under one page, rows that only contain the email could push this user's out
-        rows: List[dict] = []
-        while True:
-            page = await user_store.alist(search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows))
-            rows.extend(page)
-            if len(page) < _DIRECTORY_PAGE_SIZE:
-                break
+        if row is None:
+            # An id that differs from the email only in case. Every page is read: under one page, rows that
+            # only contain the email could push this user's out
+            rows: List[dict] = []
+            while True:
+                page = await user_store.alist(search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows))
+                rows.extend(page)
+                if len(page) < _DIRECTORY_PAGE_SIZE:
+                    break
+            matches = [found for found in rows if str(found.get("id") or "").lower() == email.lower()]
+            if len(matches) > 1:
+                log_warning(
+                    f"Slack user {user} matches {len(matches)} directory ids differing only in case; none is used"
+                )
+            row = matches[0] if len(matches) == 1 else None
     except Exception as e:
         # Directory unreachable: no principal, so the sender is refused rather than run unchecked
         log_warning(f"user directory lookup failed for Slack user {user}: {type(e).__name__}")
         if errors is not None:
             errors.add("")
         return None
-    # A user whose id is the email (os.agno.com tokens carry the email as sub) is that person: the identity
-    # provider issued that id, while an email field can come from any token's claims
-    rows = [row for row in rows if not is_reserved_principal(str(row.get("id") or ""))]
-    matches = [row for row in rows if str(row.get("id") or "").lower() == email.lower()]
-    if not matches:
-        matches = [row for row in rows if str(row.get("email") or "").lower() == email.lower()]
-    if len(matches) != 1:
-        if matches:
-            log_warning(f"Slack user {user} matches {len(matches)} directory users by email; none is used")
+    # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
+    if row is None or is_reserved_principal(row["id"]):
         return None
-    principal = matches[0]["id"]
-    ctx.lookup_cache.set(key, principal)
-    return principal
-
-
-async def directory_email(ctx: "SlackContext", principal: str) -> Optional[str]:
-    """The email on a directory user's row; None without a directory, a row, or on a failed read."""
-    state = getattr(ctx.app, "state", None)
-    user_store = getattr(state, "user_store", None)
-    if user_store is None:
-        return None
-    try:
-        row = await user_store.aget(principal)
-    except Exception as e:
-        log_warning(f"user directory read failed: {type(e).__name__}")
-        return None
-    return (row or {}).get("email")
+    ctx.lookup_cache.set(key, row["id"])
+    return row["id"]
 
 
 async def sender_principal(ctx: "SlackContext", client: Any, user: str, team_id: Optional[str] = None) -> Optional[str]:

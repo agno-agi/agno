@@ -1182,7 +1182,7 @@ class AgentOS:
             if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
                 from agno.os.auth import _has_authorization_middleware
 
-                # Each Slack sender needs a principal: from users=, or by Slack email from the user directory
+                # Each Slack sender needs a principal: from users=, or the directory user whose id is their Slack email
                 directory_mapped = (
                     getattr(interface, "resolve_user_identity", False) and self.user_directory is not None
                 )
@@ -1195,7 +1195,8 @@ class AgentOS:
                     raise ValueError(
                         "Slack serving Super Agent under authorization requires Slack identity mapping: "
                         "pass Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) "
-                        "with AgentOS(user_directory=True) to resolve each sender by email from the user directory."
+                        "with AgentOS(user_directory=True) to run each sender as the directory user whose id is "
+                        "their Slack email."
                     )
                 # A Slack request carries no token, so only managed roles can authorize a Slack sender;
                 # the API still starts, and each Slack sender is refused until roles are defined

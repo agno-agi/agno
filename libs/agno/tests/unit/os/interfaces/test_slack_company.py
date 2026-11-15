@@ -471,6 +471,8 @@ def _authorized_company(
     auth.define_role("asker", ["teams:run", "tasks:read"])
     auth.define_role("runner", ["teams:run"])
     auth.assign("alice", "asker").assign("bob", "asker").assign("carol", "runner")
+    # Directory ids are emails: a Slack sender is the directory user whose id is their Slack email
+    auth.assign("alice@example.com", "asker").assign("bob@example.com", "asker").assign("carol@example.com", "runner")
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
@@ -511,21 +513,22 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
 @pytest.mark.parametrize(
     "run_user, root_user, posted",
     [
-        ("alice", "U_ALICE", True),
+        ("alice@example.com", "U_ALICE", True),
         # Alice's message, Bob's run
-        ("bob", "U_ALICE", False),
+        ("bob@example.com", "U_ALICE", False),
         # Carol wrote the message but can no longer read Tasks
-        ("carol", "U_CAROL", False),
+        ("carol@example.com", "U_CAROL", False),
     ],
     ids=["message-author", "other-users-message", "access-revoked"],
 )
 @pytest.mark.asyncio
 async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_user, root_user, posted):
-    db, agent_os = _authorized_company(tmp_path, run_user, user_directory=True)
+    db, agent_os = _authorized_company(tmp_path, run_user, user_directory=True, team_id="T_HOME")
     for principal in ("alice", "bob", "carol"):
-        agent_os.user_directory.upsert(principal, email=f"{principal}@example.com")
+        agent_os.user_directory.upsert(f"{principal}@example.com")
     slack = FakeSlack(root_user=root_user)
     slack.emails.update({"U_ALICE": "alice@example.com", "U_CAROL": "carol@example.com"})
+    slack.teams.update({"U_ALICE": "T_HOME", "U_CAROL": "T_HOME"})
     await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
     assert bool(slack.posted()) is posted
 
@@ -536,13 +539,15 @@ async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_
         ("T_HOME", True),
         # A Slack Connect message names the sender's own org; the workspace it arrived in is another
         ("T_OTHER", False),
+        # A run that recorded no workspace cannot be checked
+        (None, False),
     ],
-    ids=["home-workspace", "other-workspace"],
+    ids=["home-workspace", "other-workspace", "no-workspace"],
 )
 @pytest.mark.asyncio
 async def test_directory_identity_checks_message_workspace(tmp_path, workspace, posted):
-    db, agent_os = _authorized_company(tmp_path, "alice", user_directory=True, team_id=workspace)
-    agent_os.user_directory.upsert("alice", email="alice@example.com")
+    db, agent_os = _authorized_company(tmp_path, "alice@example.com", user_directory=True, team_id=workspace)
+    agent_os.user_directory.upsert("alice@example.com")
     slack = FakeSlack(root_user="U_ALICE")
     slack.root["team"] = "T_HOME"
     slack.emails["U_ALICE"] = "alice@example.com"
