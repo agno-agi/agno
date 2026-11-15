@@ -5,42 +5,6 @@
 
 ---
 
-### 01_create_cultural_knowledge.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 01 create cultural knowledge. Ran successfully and produced expected output.
-**Result:** Completed successfully in 6s.
-
----
-
-### 02_use_cultural_knowledge_in_agent.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 02 use cultural knowledge in agent. Ran successfully and produced expected output.
-**Result:** Completed successfully in 10s.
-
----
-
-### 03_automatic_cultural_management.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 03 automatic cultural management. Ran successfully and produced expected output.
-**Result:** Completed successfully in 26s.
-
----
-
-### 04_manually_add_culture.py
-
-**Status:** PASS
-**Tier:** untagged
-**Description:** Demonstrates 04 manually add culture. Ran successfully and produced expected output.
-**Result:** Completed successfully in 8s.
-
----
-
 ### advanced_compression.py
 
 **Status:** TIMEOUT
@@ -191,5 +155,53 @@
 **Tier:** untagged
 **Description:** Demonstrates tool call compression. Timed out after 120s - likely making many API calls or stuck.
 **Result:** Timed out after 120s.
+
+---
+
+### redis_event_stream_resume.py
+
+**Status:** PASS (live, real Redis)
+**Tier:** untagged
+**Description:** Demonstrates cross-process streaming resume with RedisEventStream: a producer starts a background streaming run writing events to Redis Streams; a separate observer (own RedisEventStream instance and client, sharing only Redis) replays missed events and tails live ones to completion. Verified with real OpenAI calls and fakeredis substituted for the Redis client (shared FakeServer = two clients of one Redis) - the exact cookbook code path minus the server: observer replayed missed events, tailed to terminal state, saw COMPLETED and the full output. Rerun against real Redis (./cookbook/scripts/run_redis.sh) when available.
+**Result:** PASS against real Redis (redis-stack via run_redis.sh): observer replayed missed events and tailed 51 events to completion, saw COMPLETED and full output.
+
+---
+
+### background_streaming_resume.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates background streaming (background=True, stream=True) with disconnect and resume via the pluggable event stream (get_event_stream). Run live with real OpenAI calls: consumed 3 SSE events, disconnected, run continued in background; replay() returned the 8 missed events and tail() streamed to the terminal state (index 10), with final status COMPLETED and the full poem retrievable via aget_run_output. Also documents RedisEventStream configuration for multi-container resume.
+**Result:** Live run PASS end to end (replay, live tail, terminal detection, final output).
+
+---
+
+### background_execution_concurrency.py
+
+**Status:** PASS (live, real Postgres)
+**Tier:** untagged
+**Description:** Demonstrates the process-wide concurrency limit for background runs: 5 runs submitted (one session each), at most 2 execute at once, the rest wait as PENDING. Run live against pgvector Postgres with real OpenAI calls: all 5 completed in 14s, cap held. Also covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
+**Result:** PASS end to end.
+**Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
+
+---
+
+### followup_instructions.py
+
+**Status:** PASS
+
+**Description:** An agent limited to Python documentation, with `followups=FollowupConfig(max_followups=3, ...)` (up to 3) carrying a separate follow-up model and domain instructions, asked for a sea poem it should decline.
+
+**Result:** 2026-09-29, three live runs with gpt-5.5: the agent declined each time, and every follow-up stayed within Python documentation (docstring conventions, pydoc, library docs); none re-offered the poem. Separately, the prompt builder was checked live on four refusal scenarios in all three count modes (exactly 3, up to 3, 1 to 3), 5 runs each on gpt-5.6-luna and gpt-5.5: 2 to 7 of about 60 suggestions per mode pointed at the declined topic (a weather source, whether a Rust SDK is planned), against 51/60 and 26/60 with the previous prompt, and none re-offered the declined request itself.
+
+---
+
+### reasoning_agent_events.py
+
+**Status:** PASS
+
+**Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`.
+
+**Result:** Reasoning events stream and the final answer prints.
 
 ---

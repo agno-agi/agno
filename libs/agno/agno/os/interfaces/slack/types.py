@@ -37,6 +37,7 @@ class RowActionContext:
     channel: str
     card_ts: str
     blocks: List[Dict[str, Any]]
+    owner: Optional[str] = None
 
 
 @dataclass
@@ -49,6 +50,7 @@ class SubmitContext:
     user_id: str
     team_id: Optional[str]
     state_values: SlackState
+    owner: Optional[str] = None
 
 
 @dataclass

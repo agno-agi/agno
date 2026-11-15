@@ -15,7 +15,7 @@ from agno.models.tokenlab import TokenLab
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=TokenLab(id="gpt-5.4-mini"),
+    model=TokenLab(id="gpt-5.6-luna"),
     markdown=True,
 )
 

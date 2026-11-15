@@ -41,7 +41,7 @@ a clear summary.
 # ---------------------------------------------------------------------------
 video_agent = Agent(
     name="Video Analyst",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     instructions=instructions,
     markdown=True,
 )

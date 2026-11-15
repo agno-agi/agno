@@ -51,6 +51,10 @@ class RecursiveChunking(ChunkingStrategy):
             meta_data["chunk_size"] = len(chunk)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
 
+            # Stop once a chunk reaches the end of the content
+            if end >= len(content):
+                break
+
             new_start = end - self.overlap
             if new_start <= start:  # Prevent infinite loop
                 new_start = min(

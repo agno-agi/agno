@@ -1,0 +1,7 @@
+node_modules/
+dist/
+src/generated/
+package-lock.json
+
+# The repository-wide *.config.* rule would otherwise hide this source file.
+!vite.config.ts

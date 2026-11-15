@@ -24,14 +24,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 urgent_handler = Agent(
     name="Urgent Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle urgent requests with high priority. Be concise and action-oriented.",
     markdown=True,
 )
 
 normal_handler = Agent(
     name="Normal Handler",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You handle normal requests thoroughly and thoughtfully.",
     markdown=True,
 )

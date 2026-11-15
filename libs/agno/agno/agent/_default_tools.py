@@ -16,7 +16,6 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.culture.manager import CultureManager
 from agno.db.base import BaseDb, SessionType
 from agno.filters import FilterExpr
 from agno.knowledge.types import KnowledgeFilter
@@ -26,7 +25,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -35,7 +34,9 @@ from agno.utils.log import (
 from agno.utils.timer import Timer
 
 
-def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def get_update_user_memory_function(
+    agent: Agent, user_id: Optional[str] = None, run_response: Optional[RunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """Use this function to submit a task to modify the Agent's memory.
         Describe the task in detail and be specific.
@@ -48,7 +49,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = agent.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = agent.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
 
         return response
 
@@ -64,7 +67,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = await agent.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await agent.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:
@@ -73,31 +78,6 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
         update_user_memory_function = update_user_memory  # type: ignore
 
     return Function.from_callable(update_user_memory_function, name="update_user_memory")
-
-
-def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = False) -> Function:
-    def update_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = agent.culture_manager.update_culture_task(task=task)
-
-        return response
-
-    async def aupdate_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge asynchronously."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = await agent.culture_manager.aupdate_culture_task(task=task)
-        return response
-
-    if async_mode:
-        update_cultural_knowledge_function = aupdate_cultural_knowledge
-    else:
-        update_cultural_knowledge_function = update_cultural_knowledge  # type: ignore
-
-    return Function.from_callable(
-        update_cultural_knowledge_function,
-        name="create_or_update_cultural_knowledge",
-    )
 
 
 def create_knowledge_search_tool(
@@ -174,6 +154,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -206,6 +187,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -240,6 +222,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -268,6 +251,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -380,12 +364,13 @@ def make_update_session_state_entrypoint(agent: Agent) -> Callable:
     return _entrypoint
 
 
-def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
+def add_to_knowledge(agent: Agent, query: str, result: str, user_id: Optional[str] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
         query (str): The query or topic to add.
         result (str): The actual content or information to store.
+        user_id (Optional[str]): The owner to store the document under. None writes to the shared bucket.
     Returns:
         str: A string indicating the status of the addition.
     """
@@ -404,8 +389,39 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    insert_fn(name=document_name, text_content=document_content, reader=TextReader())
+    insert_kwargs: Dict[str, Any] = {
+        "name": document_name,
+        "text_content": document_content,
+        "reader": TextReader(),
+    }
+
+    insert_kwargs.update(get_user_id_kwarg(insert_fn, user_id, required=True))
+    insert_fn(**insert_kwargs)
     return "Successfully added to knowledge base"
+
+
+def create_add_to_knowledge_tool(agent: Agent, run_context: Optional[RunContext] = None) -> Function:
+    """Create a closure that binds the run's owner to the add_to_knowledge tool."""
+
+    def add_to_knowledge_base(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        try:
+            return add_to_knowledge(
+                agent, query=query, result=result, user_id=run_context.user_id if run_context else agent.user_id
+            )
+        except Exception as e:
+            log_warning(f"Adding to knowledge base failed: {str(e)}")
+            return f"Error adding to knowledge base: {type(e).__name__}"
+
+    return Function.from_callable(add_to_knowledge_base, name="add_to_knowledge")
 
 
 def _get_message_text(msg: Message) -> Optional[str]:

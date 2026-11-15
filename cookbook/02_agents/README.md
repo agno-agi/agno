@@ -13,17 +13,23 @@ Practical examples for building agents with Agno, organized by feature area.
 | 05 | [05_state_and_session](./05_state_and_session/) | Session state, chat history, persistence | 12 |
 | 06 | [06_memory_and_learning](./06_memory_and_learning/) | Memory manager, learning machine | 2 |
 | 07 | [07_knowledge](./07_knowledge/) | RAG, custom retrievers, knowledge filters | 8 |
-| 08 | [08_guardrails](./08_guardrails/) | PII detection, prompt injection, custom guardrails | 5 |
+| 08 | [08_guardrails](./08_guardrails/) | PII detection, prompt injection, custom guardrails | 6 |
 | 09 | [09_hooks](./09_hooks/) | Pre/post hooks, tool hooks, stream hooks | 5 |
 | 10 | [10_human_in_the_loop](./10_human_in_the_loop/) | Confirmation flows, user input, external execution | 7 |
 | 11 | [11_approvals](./11_approvals/) | Approval workflows, audit trails | 11 |
 | 12 | [12_multimodal](./12_multimodal/) | Image, audio, video processing | 10 |
 | 13 | [13_reasoning](./13_reasoning/) | Multi-step reasoning, reasoning models | 2 |
-| 14 | [14_advanced](./14_advanced/) | Caching, compression, events, retries, concurrency, culture | 20 |
+| 14 | [14_advanced](./14_advanced/) | Caching, compression, events, retries, concurrency | 19 |
 | 15 | [15_dependencies](./15_dependencies/) | Dependency injection in tools and context | 3 |
 | 16 | [16_skills](./16_skills/) | Agent skills with scripts and reference docs | 1 |
+| 17 | [17_fallback_models](./17_fallback_models/) | Fallback models when the primary fails | 4 |
+| 18 | [18_checkpointing](./18_checkpointing/) | Checkpointing and crash recovery | 3 |
+| 19 | [19_regenerate](./19_regenerate/) | Redo the last response of a run | 1 |
+| 20 | [20_time_travel](./20_time_travel/) | Rewind a run and resume from an earlier point | 2 |
+| 21 | [21_fork_session](./21_fork_session/) | Fork a whole session into a new one | 1 |
+| 22 | [22_result_offloading](./22_result_offloading/) | Large tool results stored as files, envelopes in the transcript | 2 |
 
-**Total: 111 files across 16 directories**
+**Total: 125 files across 22 directories**
 
 ## Prerequisites
 

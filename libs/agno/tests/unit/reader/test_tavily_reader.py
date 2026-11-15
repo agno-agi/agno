@@ -53,8 +53,8 @@ def test_extract_basic(mock_extract_response):
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
         assert documents[0].id == "https://example.com_1"
-        # Content is joined with spaces instead of newlines
-        expected_content = "# Test Website This is test content from an extracted website."
+        # Repeated newlines collapse to a single newline
+        expected_content = "# Test Website\nThis is test content from an extracted website."
         assert documents[0].content == expected_content
 
         # Verify TavilyClient was called correctly
@@ -62,7 +62,8 @@ def test_extract_basic(mock_extract_response):
         mock_client.extract.assert_called_once()
         call_args = mock_client.extract.call_args[1]
         assert call_args["urls"] == ["https://example.com"]
-        assert call_args["depth"] == "basic"
+        assert call_args["extract_depth"] == "basic"
+        assert call_args["format"] == "markdown"
 
 
 def test_extract_with_api_key_and_params():
@@ -99,7 +100,7 @@ def test_extract_with_advanced_depth():
 
         # Verify advanced depth was used
         call_args = mock_client.extract.call_args[1]
-        assert call_args["depth"] == "advanced"
+        assert call_args["extract_depth"] == "advanced"
 
 
 def test_extract_empty_response():
@@ -242,7 +243,7 @@ def test_read_method(mock_extract_response):
         documents = reader.read("https://example.com")
 
         assert len(documents) == 1
-        expected_content = "# Test Website This is test content from an extracted website."
+        expected_content = "# Test Website\nThis is test content from an extracted website."
         assert documents[0].content == expected_content
 
         mock_client.extract.assert_called_once()
@@ -297,6 +298,20 @@ async def test_async_extract_basic(mock_extract_response):
 
         # Verify to_thread was called with the right arguments
         mock_to_thread.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_extract_forwards_extract_options():
+    with patch("agno.knowledge.reader.tavily_reader.TavilyClient") as MockTavilyClient:
+        mock_client = MockTavilyClient.return_value
+        mock_client.extract.return_value = {"results": [{"url": "https://example.com", "raw_content": "Test content"}]}
+
+        reader = TavilyReader(chunk=False, extract_depth="advanced", extract_format="text")
+        await reader._async_extract("https://example.com")
+
+        call_args = mock_client.extract.call_args[1]
+        assert call_args["extract_depth"] == "advanced"
+        assert call_args["format"] == "text"
 
 
 @pytest.mark.asyncio

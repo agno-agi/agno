@@ -102,7 +102,7 @@ def test_prompt_caching_with_agent():
     print(f"System prompt length: {len(large_system_prompt)} characters")
 
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
+        model=Claude(id="claude-sonnet-5-5", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
     )
@@ -149,7 +149,7 @@ async def test_async_prompt_caching():
     large_system_prompt = _get_large_system_prompt()
 
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
+        model=Claude(id="claude-sonnet-5-5", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
     )
@@ -398,7 +398,7 @@ def test_build_system_shared_between_request_and_count_tokens():
 def test_agent_system_message_stays_string():
     """Agent system message is a plain string; Claude-level blocks live on the model."""
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
+        model=Claude(id="claude-sonnet-5-5", cache_system_prompt=True),
         description="Test agent",
         instructions=["Be helpful"],
         add_datetime_to_context=True,

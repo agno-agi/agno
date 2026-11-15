@@ -1,4 +1,3 @@
-import base64
 import time
 from os import getenv
 from typing import Any, Optional
@@ -180,10 +179,10 @@ class GeminiTools(Toolkit):
 
                 media_id = str(uuid4())
 
-                # Create VideoArtifact with base64 encoded content
+                # Create VideoArtifact with raw bytes
                 video_artifact = Video(
                     id=media_id,
-                    content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
+                    content=generated_video.video_bytes,
                     original_prompt=prompt,
                     mime_type=generated_video.mime_type or "video/mp4",
                 )

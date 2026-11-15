@@ -16,6 +16,7 @@ class PubmedTools(Toolkit):
         results_expanded: bool = False,
         enable_search_pubmed: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.max_results: Optional[int] = max_results
@@ -26,7 +27,7 @@ class PubmedTools(Toolkit):
         if enable_search_pubmed or all:
             tools.append(self.search_pubmed)
 
-        super().__init__(name="pubmed", tools=tools, **kwargs)
+        super().__init__(name="pubmed", tools=tools, timeout=timeout, **kwargs)
 
     def fetch_pubmed_ids(self, query: str, max_results: int, email: str) -> List[str]:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -37,14 +38,16 @@ class PubmedTools(Toolkit):
             "email": email,
             "usehistory": "y",
         }
-        response = httpx.get(url, params=params)  # type: ignore
+        response = httpx.get(url, params=params, timeout=self.timeout)  # type: ignore
+        response.raise_for_status()
         root = ElementTree.fromstring(response.content)
         return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
 
     def fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         params = {"db": "pubmed", "id": ",".join(pubmed_ids), "retmode": "xml"}
-        response = httpx.get(url, params=params)
+        response = httpx.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
         return ElementTree.fromstring(response.content)
 
     def parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Any]]:
@@ -148,7 +151,8 @@ class PubmedTools(Toolkit):
         """
         try:
             log_debug(f"Searching PubMed for: {query}")
-            max_results = max_results or self.max_results or 10
+            if max_results is None:
+                max_results = self.max_results if self.max_results is not None else 10
             ids = self.fetch_pubmed_ids(query, max_results, self.email)
             details_root = self.fetch_details(ids)
             articles = self.parse_details(details_root)
@@ -177,9 +181,7 @@ class PubmedTools(Toolkit):
                     article_text = (
                         f"Title: {article.get('Title')}\n"
                         f"Published: {article.get('Published')}\n"
-                        f"Summary: {summary[:200]}..."
-                        if len(summary) > 200
-                        else f"Summary: {summary}"
+                        f"Summary: {summary[:200] + '...' if len(summary) > 200 else summary}"
                     )
                 results.append(article_text)
 

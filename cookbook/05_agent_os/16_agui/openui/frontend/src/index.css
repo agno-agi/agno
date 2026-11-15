@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@import "@openuidev/react-ui/components.css";
+@import "@openuidev/react-ui/styles/index.css";
+
+:root {
+  color-scheme: light;
+  font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 8% 8%, oklch(0.92 0.08 80 / 65%), transparent 30rem),
+    oklch(0.985 0.012 92);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.agno-openui-welcome .openui-agent-welcome-screen__title {
+  letter-spacing: -0.035em;
+}
+
+.agno-openui-welcome .openui-agent-welcome-screen__description {
+  max-width: 34rem;
+  text-wrap: balance;
+}

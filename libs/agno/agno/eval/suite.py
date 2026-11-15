@@ -13,6 +13,7 @@ twin `acli()`) is a pure consumer of that public API.
 import asyncio
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from inspect import isawaitable, iscoroutine, iscoroutinefunction
@@ -24,7 +25,9 @@ from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.reliability import ReliabilityEval
+from agno.filters import FilterExpr
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
@@ -32,6 +35,8 @@ from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowErrorEvent
 from agno.scorer.base import Score, Scorer
 from agno.team.team import Team
+from agno.utils.log import log_debug
+from agno.utils.message import get_text_from_message
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -62,7 +67,8 @@ class Case:
     """One eval case: an input to one agent or team, plus optional judge/reliability checks."""
 
     name: str
-    input: str
+    # The run input: a str, or a Message, e.g. to attach an image by url or filepath to the turn.
+    input: Union[str, Message]
     # The agent or team under test: pass exactly one of agent= or team= (separate fields,
     # mirroring AccuracyEval, so a Team never rides in a param named 'agent'). A Team routes
     # reliability through team_response=.
@@ -107,6 +113,17 @@ class Case:
     scorer: Optional[Scorer] = None
     expected: Optional[Any] = None
 
+    # Run arguments - the session, user, state, dependencies, metadata and knowledge filters of
+    # the run, forwarded as-is except session_state and dependencies, which are copied per run. session_id runs the
+    # case in that session instead of a generated one, e.g. to continue the turns its setup ran;
+    # the suite never clears it.
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    session_state: Optional[Dict[str, Any]] = None
+    dependencies: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
         if self.agent is None and self.team is None:
@@ -136,8 +153,8 @@ class CaseResult:
     # stays None.
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
-    # The generated eval session id - links the case to its stored session/trace when
-    # db= is set. Empty for skipped cases: no session was created.
+    # The eval session id (Case.session_id, else generated) - links the case to its stored
+    # session/trace when db= is set. Empty for skipped cases: no session was created.
     session_id: str = ""
     duration_seconds: float = 0.0
     judge_passed: Optional[bool] = None  # None = check not configured
@@ -246,6 +263,25 @@ _STATUS_ERRORS = {
 }
 
 
+def _copy_dependencies(dependencies: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep copy each value for one run; values deepcopy cannot handle keep the original reference."""
+    copied = {}
+    for key, value in dependencies.items():
+        try:
+            copied[key] = deepcopy(value)
+        except Exception:
+            copied[key] = value
+    return copied
+
+
+def _input_text(case: Case) -> str:
+    # The judge takes text: a Message's text parts, joined, with media parts skipped. The
+    # content is passed, not the Message, which get_text_from_message would dump as json.
+    if isinstance(case.input, str):
+        return case.input
+    return get_text_from_message(case.input.content) if case.input.content is not None else ""
+
+
 def _component_id(case: Case) -> str:
     # Exactly one of agent/team is set (enforced at construction); fall back to the case name.
     if case.agent is not None:
@@ -340,13 +376,18 @@ async def _run_case_body(
             stream_events=True,
             yield_run_output=True,
             session_id=result.session_id,
+            user_id=case.user_id,
+            session_state=deepcopy(case.session_state),
+            dependencies=_copy_dependencies(case.dependencies) if case.dependencies is not None else None,
+            metadata=case.metadata,
+            knowledge_filters=case.knowledge_filters,
         ):
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
                 # Response AND evidence fields are committed immediately: the stream can
-                # stall after the final output (e.g. a hung telemetry call in transport
-                # cleanup) and a timeout then must not discard what the run produced.
+                # stall after the final output (e.g. a hung persistence or user cleanup
+                # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
                 _extract_evidence(result, event)
@@ -398,6 +439,11 @@ async def _run_case_body(
         return
 
     if case.criteria:
+        input_text = _input_text(case)
+        if not input_text:
+            # The judge takes text only, so a Message with no text leaves it grading the reply
+            # against an empty question. Passing the media to the judge is not supported yet.
+            log_debug(f"Judging without a question, the input has no text: {case.name}")
         try:
             judge = await AgentAsJudgeEval(
                 name=case.name,
@@ -410,10 +456,10 @@ async def _run_case_body(
                 model=case.judge_model or judge_model,
                 db=db,
                 show_spinner=False,
-                # The eval awaits its telemetry POST before returning; on a blackholed
-                # network that burns case-timeout budget after the verdict is computed.
+                # Preserve EvalSuite's existing policy: its internally-created evals
+                # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
-            ).arun(input=case.input, output=result.output or "")
+            ).arun(input=input_text, output=result.output or "")
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
         else:
@@ -472,8 +518,9 @@ async def _arun_case(
         tags=case.tags,
         agent_id=_component_id(case) if case.agent is not None else None,
         team_id=_component_id(case) if case.team is not None else None,
-        # Dedicated session per case so eval traffic doesn't pollute the agent or team's history
-        session_id=f"eval-{case.name}-{uuid4().hex[:8]}",
+        # Dedicated session per case so eval traffic doesn't pollute the agent or team's history,
+        # unless the case names the session to run in
+        session_id=case.session_id or f"eval-{case.name}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
 
@@ -811,8 +858,16 @@ async def acli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
-    """Async variant of cli() for callers already inside an event loop."""
+    """Async variant of cli() for callers already inside an event loop.
+
+    mcp_tools: MCP toolkits (e.g. the case components' registry tools) to
+    connect in this loop before the cases run and close again afterwards --
+    what the AgentOS lifespan does for a server, for an eval process. Connect
+    failures are logged per tool and the cases still run; a tool that never
+    connected is not closed.
+    """
     import argparse
 
     from rich.console import Console
@@ -865,6 +920,91 @@ async def acli(
                 return 1
         return 0
 
+    # Connected here, after the --list and no-match early returns, so only an
+    # actual run pays for (and has to tear down) live MCP sessions.
+    connected_mcp_tools: List[Any] = []
+
+    def _genuinely_cancelled() -> bool:
+        # Detectable on Python 3.11+; below that a genuine cancel during this
+        # bookkeeping is absorbed like a connect failure.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        return cancelling is not None and cancelling() > 0
+
+    async def _drop_partial_mcp_state(tool: Any) -> None:
+        # A failed connect can leave partially-entered transport contexts that
+        # poison a later reconnect; connect()'s own cleanup does not always
+        # run (a CancelledError bypasses it, and initialize() failures return
+        # with the dead session still attached).
+        safe_cleanup = getattr(tool, "_safe_cleanup", None)
+        if safe_cleanup is None:
+            return
+        try:
+            maybe = safe_cleanup()
+            if isawaitable(maybe):
+                await maybe
+        except BaseException:
+            pass
+
+    async def _close_connected_mcp_tools() -> None:
+        cancelled: Optional[BaseException] = None
+        for tool in connected_mcp_tools:
+            try:
+                await tool.close()
+            except asyncio.CancelledError as exc:
+                # Keep releasing the remaining tools, then let the host's
+                # cancel land instead of reporting a normal exit.
+                if _genuinely_cancelled():
+                    cancelled = exc
+            except BaseException:
+                pass
+            if cancelled is None and _genuinely_cancelled():
+                # The real MCPTools.close() swallows everything it is handed,
+                # a delivered cancel included -- the task-level counter is the
+                # only trace left of it.
+                cancelled = asyncio.CancelledError()
+        if cancelled is not None:
+            raise cancelled
+
+    try:
+        for tool in mcp_tools or []:
+            if getattr(tool, "initialized", False):
+                # Connected by someone else (a server lifespan, the caller
+                # itself); not ours to manage -- connect() would no-op and
+                # closing it afterwards would tear down a session we never
+                # opened.
+                continue
+            try:
+                await tool.connect()
+            except BaseException as exc:
+                # BaseException: the mcp client surfaces an unreachable server
+                # as CancelledError out of its cancel scopes, bypassing
+                # connect()'s own fail-soft handler. Unlike a private loop,
+                # this coroutine runs on the caller's loop where cancellation
+                # can also be genuine -- re-raise that so the host's cancel
+                # still lands.
+                if isinstance(exc, asyncio.CancelledError) and _genuinely_cancelled():
+                    await _drop_partial_mcp_state(tool)
+                    raise
+                await _drop_partial_mcp_state(tool)
+                console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(repr(exc))}")
+            else:
+                if getattr(tool, "initialized", True):
+                    connected_mcp_tools.append(tool)
+                else:
+                    # connect() is fail-soft and can return without a usable
+                    # session (initialize() failures leave the toolkit
+                    # uninitialized); close() would no-op on it, so it is not
+                    # connected for our purposes.
+                    await _drop_partial_mcp_state(tool)
+                    tool_name = getattr(tool, "name", type(tool).__name__)
+                    console.print(
+                        f"[yellow]warning:[/yellow] failed to connect MCP tool: "
+                        f"{escape(str(tool_name))} did not yield a usable session"
+                    )
+    except BaseException:
+        await _close_connected_mcp_tools()
+        raise
+
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
     try:
         suite = await arun_cases(
@@ -879,6 +1019,7 @@ async def acli(
     finally:
         # Restore the terminal (stop the spinner) even on error or Ctrl-C.
         renderer.close()
+        await _close_connected_mcp_tools()
 
     _print_summary(console, suite)
 
@@ -895,6 +1036,7 @@ def cli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
 
@@ -902,6 +1044,16 @@ def cli(
     --json-output write), 2 no cases matched the selector. Built purely on the
     public runner API - call it from a template's __main__.py with
     `sys.exit(cli(CASES, db=my_db))`. Inside an already-running event loop, use
-    `await acli(...)` instead.
+    `await acli(...)` instead. mcp_tools are connected in the run's loop before
+    the cases and closed afterwards (see acli).
     """
-    return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))
+    return asyncio.run(
+        acli(
+            cases,
+            db=db,
+            judge_model=judge_model,
+            default_timeout=default_timeout,
+            argv=argv,
+            mcp_tools=mcp_tools,
+        )
+    )

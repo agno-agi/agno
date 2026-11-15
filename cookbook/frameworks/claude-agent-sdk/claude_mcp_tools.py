@@ -51,13 +51,12 @@ try:
     # ----- Agent with custom MCP tools -----
     agent = ClaudeAgent(
         name="Claude City Agent",
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5-5",
         mcp_servers={"city-tools": server},
         allowed_tools=[
             "mcp__city-tools__get_weather",
             "mcp__city-tools__get_population",
         ],
-        max_turns=5,
     )
 
     agent.print_response("What's the weather and population of Tokyo?", stream=True)

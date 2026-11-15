@@ -8,6 +8,81 @@ import pytest
 from agno.tools.file import FileTools
 
 
+@pytest.mark.parametrize(("start", "end"), [(-1, 1), (0, -1), (3, 1), (4, 4), (1, 8)])
+def test_replace_file_chunk_rejects_invalid_ranges_without_writing(tmp_path, start, end):
+    file_path = tmp_path / "sample.txt"
+    original = b"a\nb\nc\nd"
+    file_path.write_bytes(original)
+    tools = FileTools(base_dir=tmp_path)
+
+    result = tools.replace_file_chunk("sample.txt", start, end, "replacement")
+
+    assert result.startswith("Error patching file:")
+    assert file_path.read_bytes() == original
+
+
+def test_replace_file_chunk_replaces_inclusive_valid_range(tmp_path):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("a\nb\nc\nd", encoding="utf-8")
+    tools = FileTools(base_dir=tmp_path)
+
+    assert tools.replace_file_chunk("sample.txt", 1, 2, "replacement") == "sample.txt"
+    assert file_path.read_text(encoding="utf-8") == "a\nreplacement\nd"
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "line_count"),
+    [
+        ("a\nb\nc\n", "\n", 3),
+        ("", "\n", 0),
+        ("\n", "\n", 1),
+        ("a\n\n", "\n", 2),
+        ("a||b||", "||", 2),
+        ("||", "||", 1),
+        ("a|||", "||", 2),
+        ("aaa", "aa", 2),
+        ("a\nb\nc", "\n", 3),
+        ("你好\n世界\n", "\n", 2),
+    ],
+)
+def test_replace_file_chunk_rejects_ranges_past_real_lines(tmp_path, original, separator, line_count):
+    file_path = tmp_path / "sample.txt"
+    original_bytes = original.encode("utf-8")
+    file_path.write_bytes(original_bytes)
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    result = tools.replace_file_chunk("sample.txt", 0, line_count, "replacement")
+
+    assert result == f"Error patching file: end_line must be less than {line_count}"
+    assert file_path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "start", "end", "expected"),
+    [
+        ("a\nb\nc\n", "\n", 1, 2, "a\nreplacement\n"),
+        ("a\nb\nc\n", "\n", 0, 2, "replacement\n"),
+        ("\n", "\n", 0, 0, "replacement\n"),
+        ("a\n\n", "\n", 1, 1, "a\nreplacement\n"),
+        ("a\n\n\n", "\n", 0, 0, "replacement\n\n\n"),
+        ("a||b||", "||", 1, 1, "a||replacement||"),
+        ("a||b||||", "||", 1, 1, "a||replacement||||"),
+        ("a\nb\nc", "\n", 1, 2, "a\nreplacement"),
+        ("你好\n世界\n", "\n", 1, 1, "你好\nreplacement\n"),
+        ("a\nb||c||", "||", 1, 1, "a\nb||replacement||"),
+        ("a|||", "||", 1, 1, "a||replacement"),
+        ("aaa", "aa", 1, 1, "aareplacement"),
+    ],
+)
+def test_replace_file_chunk_preserves_real_line_boundaries(tmp_path, original, separator, start, end, expected):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(original.encode("utf-8"))
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    assert tools.replace_file_chunk("sample.txt", start, end, "replacement") == "sample.txt"
+    assert file_path.read_bytes() == expected.encode("utf-8")
+
+
 def test_save_and_read_file():
     """Test saving and reading a file."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -172,20 +247,20 @@ def test_replace_file_chunk():
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
-def test_check_escape():
-    """Test check_escape service function"""
+def test_check_path():
+    """Test the path-containment check used by all file operations"""
     with tempfile.TemporaryDirectory() as tempdirname:
         base_dir = Path(tempdirname)
         f = FileTools(base_dir=base_dir)
-        flag, path = f.check_escape(".")
+        flag, path = f._check_path(".", base_dir)
         assert flag
         assert path.resolve() == base_dir.resolve()
-        flag, path = f.check_escape("..")
+        flag, path = f._check_path("..", base_dir)
         assert not (flag)
-        flag, path = f.check_escape("a/b/..")
+        flag, path = f._check_path("a/b/..", base_dir)
         assert flag
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
-        flag, path = f.check_escape("a/b/../../..")
+        flag, path = f._check_path("a/b/../../..", base_dir)
         assert not (flag)
 
 
@@ -414,6 +489,39 @@ def test_default_excludes_env_family():
 
         listed = sorted(json.loads(file_tools.list_files()))
         assert listed == ["env.yaml", "environment.py", "keep.txt"]
+
+
+def test_default_excludes_credential_files():
+    """The default list is shared with Workspace, where it is an access boundary."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        for name in ("id_rsa", "server.pem", "credentials.json", "secrets.yaml", ".npmrc", "terraform.tfvars"):
+            (base_dir / name).write_text("SECRET=1")
+        # Ordinary source with a credential-shaped name stays visible: the patterns are
+        # deliberately not `credentials.*` / `secrets.*`.
+        for name in ("credentials.py", "secrets.py", "key.py", "keep.txt"):
+            (base_dir / name).write_text("import os")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["credentials.py", "keep.txt", "key.py", "secrets.py"]
+
+
+def test_default_excludes_keep_committed_env_templates_visible():
+    """A '!' entry exempts a component from every exclude pattern."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.production").write_text("SECRET=2")
+        (base_dir / ".env.example").write_text("OPENAI_API_KEY=")
+        (base_dir / ".env.sample").write_text("OPENAI_API_KEY=")
+        (base_dir / "example.env").write_text("OPENAI_API_KEY=")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == [".env.example", ".env.sample", "example.env"]
 
 
 def test_default_excludes_agent_scratch_and_plural_venvs():
