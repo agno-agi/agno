@@ -1,5 +1,27 @@
 # Test Log
 
+### tensorust_tools.py
+
+**Status:** PASS (unit tests and live toolkit calls); live agent run pending
+
+**Description:** Ownership, private credit and screening lookups through
+`TensorustTools` with no API key, so every tool returns the free preview.
+Set the credentials for the agent's model; `TENSORUST_API_KEY` is optional.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_tensorust.py` (22 passed)
+covers the JSON-RPC payload for each tool, keyless and keyed requests (bearer
+header plus `full=true`), env vars, the https check, tool registration flags,
+the merged sanctions and restricted-vendor screen, JSON-RPC and tool errors,
+HTTP and network failures, and the async variants. Every sync tool and
+`ascreen_counterparty` were also called against the live endpoint without a
+key: Invitation Homes resolved to its SEC card, Pluralsight returned one BDC
+mark at 80.8% of par, Peraton returned its contractor credit card, Huawei
+matched 2 OFAC entries and the Section 889 / 1260H / FCC Covered lists, and
+CPT 99284 / uhc.com / TX returned 12,535 determinations. The LLM-driven
+conversation was not run (no model credentials in this environment).
+
+---
+
 ### sixtydb_tools.py
 
 **Status:** PASS (local HTTP and cookbook checks); live agent run pending
