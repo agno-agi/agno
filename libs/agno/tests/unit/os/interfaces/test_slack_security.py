@@ -1,5 +1,6 @@
 import json
 import time
+from typing import List
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,6 +15,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, OSManager
 from agno.os.authz import Authorization
+from agno.os.authz._role_store import RoleStore
 from agno.os.interfaces.slack import Slack, security
 from agno.os.interfaces.slack.context import event_context_from_run
 from agno.os.interfaces.slack.handlers import _NOT_LINKED_MESSAGE, handle_message
@@ -26,6 +28,8 @@ from agno.os.interfaces.slack.security import (
 from agno.os.middleware.jwt import JWTMiddleware
 
 from .conftest import (
+    BOT_ID,
+    BOT_USER_ID,
     SIGNING_SECRET,
     TOKEN,
     build_app,
@@ -252,8 +256,10 @@ def _super_agent_slack(tmp_path, users=None, default_role=False):
     return slack.ctx.bind(app), directory
 
 
-def _agent_slack(tmp_path, authorization):
-    """A Slack interface serving an Agent under authorization, with a user directory and resolve_user_identity."""
+def _agent_slack(
+    tmp_path, authorization, authorize_senders=False, users=None, saved_role=False, default_role=False, apps=None
+):
+    """A Slack interface serving an Agent, under authorization unless it is None, with a user directory."""
     if authorization == "roles-claim":
         auth = Authorization(verification_keys=[JWT_KEY], algorithm="HS256", roles_claim="role")
     else:
@@ -261,30 +267,50 @@ def _agent_slack(tmp_path, authorization):
             verification_keys=[JWT_KEY], algorithm="HS256", trust_token_scopes=authorization == "trusted-scopes"
         )
     auth.define_role("asker", ["agents:run"])
+    if saved_role:
+        auth.assign("alice@example.com", "asker")
+    if default_role:
+        auth.define_role("member", ["agents:run"], default=True)
+    # Each apps= principal holds the run role
+    for principal in (apps or {}).values():
+        auth.assign(principal, "asker")
     agent = Agent(id="agent-1")
     agent_os = AgentOS(
         id="slack-security",
         db=SqliteDb(db_file=str(tmp_path / "os.db")),
         agents=[agent],
-        authorization=auth,
+        authorization=auth if authorization else None,
         user_directory=True,
         telemetry=False,
     )
-    slack = Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, resolve_user_identity=True)
+    slack = Slack(
+        agent=agent,
+        token=TOKEN,
+        signing_secret=SIGNING_SECRET,
+        resolve_user_identity=True,
+        authorize_senders=authorize_senders,
+        users=users,
+        apps=apps,
+        respond_to_other_apps=apps is not None,
+    )
     agent_os.interfaces.append(slack)
     app = agent_os.get_app()
     agent_os.user_directory.upsert("alice@example.com")
-    return slack.ctx.bind(app)
+    ctx = slack.ctx.bind(app)
+    # The bot's own ids, which auth.test sets at the first request; without them another app is never answered
+    ctx.bot_id, ctx.bot_user_id = BOT_ID, BOT_USER_ID
+    return ctx
 
 
-async def _handle(ctx, member, user="U123"):
+async def _handle(ctx, member, user="U123", **event_fields):
     client = make_async_client_mock()
     if isinstance(member, Exception):
         client.users_info = AsyncMock(side_effect=member)
     else:
         client.users_info = AsyncMock(return_value=member)
+    client.bots_info = AsyncMock(return_value={"ok": True, "bot": {"name": "Deploy hook"}})
     with patch("agno.os.interfaces.slack.handlers.executor.run_event", new_callable=AsyncMock) as run_event:
-        await handle_message(make_event_body(user=user), client, ctx)
+        await handle_message(make_event_body(user=user, **event_fields), client, ctx)
     event_context = run_event.call_args.args[0] if run_event.called else None
     ephemeral = client.chat_postEphemeral.call_args.kwargs["text"] if client.chat_postEphemeral.called else None
     return event_context, ephemeral
@@ -374,37 +400,41 @@ class TestDirectoryPrincipal:
         # The default role authorizes the onboarded directory user with no role of their own
         assert (event_context.user_id, ephemeral) == ("Alice@Example.com", None)
 
+    @pytest.mark.parametrize("member_id", ["alice@example.com", "ALICE@example.com"])
     @pytest.mark.asyncio
-    async def test_id_differing_only_in_case_is_found_past_rows_that_contain_the_email(self, tmp_path, monkeypatch):
-        # A search page holds two rows here; rows sorted first that only contain the member's email fill the first page
-        monkeypatch.setattr(security, "_DIRECTORY_PAGE_SIZE", 2)
+    async def test_id_differing_only_in_case_is_found_among_ids_containing_the_email(self, tmp_path, member_id):
         ctx, directory = _super_agent_slack(tmp_path, default_role=True)
         directory.remove("alice@example.com")
-        directory.upsert("ALICE@example.com")
-        for i in range(3):
-            directory.upsert(f"{i}alice@example.com")
+        directory.upsert(member_id)
+        directory.upsert("0alice@example.com")
         event_context, ephemeral = await _handle(ctx, _member())
-        assert (event_context.user_id, ephemeral) == ("ALICE@example.com", None)
+        assert (event_context.user_id, ephemeral) == (member_id, None)
 
+    @pytest.mark.parametrize(
+        "email, store_match",
+        [
+            # Postgres lower() folds the Kelvin sign to "k"; SQLite's does not
+            ("kate@example.com", "\u212aate@example.com"),
+            # A collation that ignores trailing spaces
+            ("alice@example.com", "alice@example.com "),
+        ],
+        ids=["non-ascii-id", "trailing-space-id"],
+    )
     @pytest.mark.asyncio
-    async def test_member_is_found_when_a_row_is_deleted_between_search_pages(self, tmp_path, monkeypatch):
-        # A search page holds two rows here; rows sorted first that only contain the member's email fill the first page
-        monkeypatch.setattr(security, "_DIRECTORY_PAGE_SIZE", 2)
-        ctx, directory = _super_agent_slack(tmp_path)
-        for i in range(2):
-            directory.upsert(f"{i}alice@example.com")
-        search = directory.alist
-
-        async def alist(**kwargs):
-            page = await search(**kwargs)
-            # A row on the first page is deleted before the next is read, so the member's row shifts onto it
-            if kwargs["offset"] == 0:
-                directory.remove(page[0]["id"])
-            return page
-
-        monkeypatch.setattr(directory, "alist", alist)
-        event_context, ephemeral = await _handle(ctx, _member())
-        assert (event_context.user_id, ephemeral) == ("alice@example.com", None)
+    async def test_id_a_store_matches_that_is_not_the_email_is_never_counted(
+        self, tmp_path, monkeypatch, email, store_match
+    ):
+        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
+        directory.remove("alice@example.com")
+        lookup = AsyncMock(return_value=[store_match])
+        monkeypatch.setattr(directory, "aids_matching", lookup)
+        event_context, ephemeral = await _handle(ctx, _member(email=email))
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+        # Beside the member's own id it neither takes their identity nor blocks it
+        directory.upsert(email)
+        lookup.return_value = [store_match, email]
+        event_context, ephemeral = await _handle(ctx, _member(email=email))
+        assert (event_context.user_id, ephemeral) == (email, None)
 
     @pytest.mark.asyncio
     async def test_reserved_principal_rows_are_never_a_slack_member(self, tmp_path):
@@ -435,6 +465,35 @@ class TestDirectoryPrincipal:
             directory.provision_from_claims(user_id, {"sub": user_id})
         event_context, ephemeral = await _handle(ctx, _member(email=slack_email))
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+    @pytest.mark.parametrize(
+        "member, warning",
+        [
+            # Per member: the email matches two directory ids that differ only in case
+            (
+                _member(email="carol@example.com"),
+                "Slack user U123 matches 2 directory ids differing only in case; none is used",
+            ),
+            # Per interface: Slack returned no email
+            (
+                _member(email=None),
+                "Slack returned no email for a member; without the users:read.email scope Slack returns none, "
+                "so the directory lookup refuses every sender",
+            ),
+        ],
+        ids=["case-twins", "no-email"],
+    )
+    @pytest.mark.asyncio
+    async def test_directory_warning_is_logged_once(self, tmp_path, monkeypatch, member, warning):
+        ctx, directory = _super_agent_slack(tmp_path)
+        for user_id in ("carol@example.com", "Carol@example.com"):
+            directory.provision_from_claims(user_id, {"sub": user_id})
+        warnings: List[str] = []
+        monkeypatch.setattr(security, "log_warning", warnings.append)
+        for _ in range(2):
+            event_context, ephemeral = await _handle(ctx, member)
+            assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+        assert [message for message in warnings if message.startswith("Slack")] == [warning]
 
     @pytest.mark.asyncio
     async def test_disabled_or_roleless_directory_user_is_refused(self, tmp_path):
@@ -468,7 +527,285 @@ class TestAgentSendersAreNotChecked:
     async def test_agent_under_authorization_answers_every_member_as_their_slack_email(
         self, tmp_path, authorization, email
     ):
-        # For an Agent, resolve_user_identity only names the run's user; its senders are checked only with users=
+        # Without authorize_senders, resolve_user_identity only names an Agent's run user; only users= checks senders
         ctx = _agent_slack(tmp_path, authorization)
         event_context, ephemeral = await _handle(ctx, _member(email=email))
         assert (event_context.user_id, event_context.authority, ephemeral) == (email, None, None)
+
+
+class TestAuthorizeSenders:
+    @pytest.mark.parametrize(
+        "authorization, settings, email, expected",
+        [
+            # The run's user is the directory id, not the email as Slack spells it
+            ("roles", {"saved_role": True}, "Alice@Example.com", ("alice@example.com", None)),
+            # The default role authorizes the onboarded directory user with no role of their own
+            ("roles", {"default_role": True}, "Alice@Example.com", ("alice@example.com", None)),
+            # A Slack request carries no role claim, so the saved role decides
+            ("roles-claim", {"saved_role": True}, "Alice@Example.com", ("alice@example.com", None)),
+            ("trusted-scopes", {"saved_role": True}, "Alice@Example.com", ("alice@example.com", None)),
+            # A directory user with no role
+            ("roles", {}, "Alice@Example.com", (None, "Not run: Permission required: agents:agent-1:run")),
+            # A member with no directory user
+            ("roles", {"saved_role": True}, "carol@example.com", (None, _NOT_LINKED_MESSAGE)),
+            # users= is an allowlist the directory does not widen
+            (
+                "roles",
+                {"saved_role": True, "users": {"U_OTHER": "alice@example.com"}},
+                "Alice@Example.com",
+                (None, _NOT_LINKED_MESSAGE),
+            ),
+            # Without authorization the flag checks no one
+            (None, {}, "carol@example.com", ("carol@example.com", None)),
+        ],
+        ids=[
+            "saved-role",
+            "default-role",
+            "roles-claim",
+            "trusted-scopes",
+            "no-role",
+            "unknown-email",
+            "users",
+            "authorization-off",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_agent_checks_each_sender_as_super_agent_does(
+        self, tmp_path, authorization, settings, email, expected
+    ):
+        ctx = _agent_slack(tmp_path, authorization, authorize_senders=True, **settings)
+        event_context, ephemeral = await _handle(ctx, _member(email=email))
+        assert (event_context.user_id if event_context else None, ephemeral) == expected
+
+    @pytest.mark.parametrize(
+        "authorization, settings, warned, error",
+        [
+            # Without users= or resolve_user_identity, no sender has a principal
+            (
+                "scopes",
+                {"authorize_senders": True},
+                False,
+                "Slack serving 'agent-1' under authorization requires Slack identity mapping",
+            ),
+            # Token scopes alone: the API starts, and a warning says no Slack sender can be authorized
+            ("scopes", {"authorize_senders": True, "resolve_user_identity": True}, True, None),
+            ("scopes", {"users": {"U1": "alice"}}, True, None),
+            # The middleware on a base_app checks token scopes though AgentOS(authorization=...) is unset
+            ("base-app", {"users": {"U1": "alice"}}, True, None),
+            # A provider the base_app seeds before get_app() decides each Slack sender
+            ("base-app-provider", {"users": {"U1": "alice"}}, False, None),
+            # A Slack request carries no role claim, so a saved role can authorize a Slack sender
+            ("roles-claim", {"users": {"U1": "alice"}}, False, None),
+            # A bot whose senders are not checked starts with no warning
+            ("scopes", {}, False, None),
+        ],
+        ids=[
+            "no-identity-mapping",
+            "authorize-senders",
+            "users",
+            "base-app",
+            "base-app-provider",
+            "roles-claim",
+            "unchecked",
+        ],
+    )
+    def test_agent_startup_warns_when_no_slack_sender_can_be_authorized(
+        self, tmp_path, monkeypatch, authorization, settings, warned, error
+    ):
+        agent = Agent(id="agent-1")
+        db = SqliteDb(db_file=str(tmp_path / "os.db"))
+        auth = None
+        base_app = None
+        if authorization.startswith("base-app"):
+            base_app = FastAPI()
+            base_app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+            if authorization == "base-app-provider":
+                base_app.state.authorization_provider = RoleStore(db=db).provider
+        else:
+            roles_claim = "role" if authorization == "roles-claim" else None
+            auth = Authorization(verification_keys=[JWT_KEY], algorithm="HS256", roles_claim=roles_claim)
+        agent_os = AgentOS(
+            id="slack-security",
+            db=db,
+            agents=[agent],
+            authorization=auth,
+            base_app=base_app,
+            user_directory=True,
+            telemetry=False,
+            interfaces=[Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, **settings)],
+        )
+        if error is not None:
+            with pytest.raises(ValueError, match=error):
+                agent_os.get_app()
+            return
+        warnings: List[str] = []
+        monkeypatch.setattr("agno.os.app.log_warning", warnings.append)
+        agent_os.get_app()
+        warning = (
+            "Slack serving 'agent-1' under authorization requires managed roles: Slack requests carry no token, "
+            "so every Slack sender is refused."
+        )
+        # Logged once at startup
+        assert [message for message in warnings if message.startswith("Slack serving")] == ([warning] if warned else [])
+
+
+class TestApps:
+    @pytest.mark.parametrize(
+        "sender, member, settings, expected",
+        [
+            # A bot user's post names its app id
+            (
+                {"user": "U_APP", "bot_id": "B_APP", "app_id": "A_APP"},
+                _member(is_bot=True),
+                {"authorize_senders": True},
+                "deploy-bot",
+            ),
+            # An incoming webhook names no app id, so it is mapped by its bot id
+            (
+                {"user": "", "bot_id": "B_HOOK", "subtype": "bot_message"},
+                _member(is_bot=True),
+                {"authorize_senders": True},
+                "deploy-bot",
+            ),
+            # An app apps= does not map is skipped without an ephemeral
+            (
+                {"user": "U_APP", "bot_id": "B_APP", "app_id": "A_OTHER"},
+                _member(is_bot=True),
+                {"authorize_senders": True},
+                None,
+            ),
+            # users= is for people, so an app it names is skipped too
+            (
+                {"user": "U_APP", "bot_id": "B_APP", "app_id": "A_OTHER"},
+                _member(is_bot=True),
+                {"authorize_senders": True, "users": {"U_APP": "deploy-bot"}},
+                None,
+            ),
+            # A person posting through an app's user token carries the app's ids; users.info says no bot
+            ({"bot_id": "B_APP", "app_id": "A_APP"}, _member(), {"authorize_senders": True}, "alice@example.com"),
+            # apps= is its own list, so an Agent that checks no sender still answers only the apps it maps
+            ({"user": "U_APP", "bot_id": "B_APP", "app_id": "A_APP"}, _member(is_bot=True), {}, "deploy-bot"),
+            ({"user": "U_APP", "bot_id": "B_APP", "app_id": "A_OTHER"}, _member(is_bot=True), {}, None),
+        ],
+        ids=[
+            "bot-user",
+            "webhook",
+            "unmapped",
+            "only-in-users",
+            "user-token",
+            "unchecked-mapped",
+            "unchecked-unmapped",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_only_another_app_runs_as_its_apps_principal(self, tmp_path, sender, member, settings, expected):
+        apps = {"A_APP": "deploy-bot", "B_HOOK": "deploy-bot"}
+        ctx = _agent_slack(tmp_path, "roles", saved_role=True, apps=apps, **settings)
+        event_context, ephemeral = await _handle(ctx, member, **sender)
+        assert (event_context.user_id if event_context else None, ephemeral) == (expected, None)
+        if event_context is not None:
+            await event_context.authority.arequire("agents", "run", ctx.entity_id)
+
+    @pytest.mark.asyncio
+    async def test_refused_app_gets_no_ephemeral(self, tmp_path):
+        ctx = _agent_slack(tmp_path, "roles", authorize_senders=True, apps={"B_HOOK": "deploy-bot"})
+        directory = ctx.app.state.user_store
+        directory.upsert("deploy-bot")
+        directory.set_disabled("deploy-bot", True)
+        event_context, ephemeral = await _handle(
+            ctx, _member(is_bot=True), user="", bot_id="B_HOOK", subtype="bot_message"
+        )
+        assert (event_context, ephemeral) == (None, None)
+
+    @pytest.mark.parametrize(
+        "settings, warned",
+        [
+            ({"respond_to_other_apps": True}, True),
+            ({"respond_to_other_apps": True, "apps": {"A_APP": "deploy-bot"}}, False),
+            # users= is for people, so it answers no app either
+            ({"respond_to_other_apps": True, "users": {"U_APP": "deploy-bot"}}, True),
+            ({}, False),
+        ],
+        ids=["no-apps", "apps", "users", "other-apps-off"],
+    )
+    def test_agent_startup_warns_when_no_other_app_can_be_answered(self, tmp_path, monkeypatch, settings, warned):
+        agent = Agent(id="agent-1")
+        agent_os = AgentOS(
+            id="slack-security",
+            db=SqliteDb(db_file=str(tmp_path / "os.db")),
+            agents=[agent],
+            authorization=Authorization(verification_keys=[JWT_KEY], algorithm="HS256"),
+            user_directory=True,
+            telemetry=False,
+            interfaces=[
+                Slack(
+                    agent=agent,
+                    token=TOKEN,
+                    signing_secret=SIGNING_SECRET,
+                    resolve_user_identity=True,
+                    authorize_senders=True,
+                    **settings,
+                )
+            ],
+        )
+        warnings: List[str] = []
+        monkeypatch.setattr("agno.os.app.log_warning", warnings.append)
+        agent_os.get_app()
+        warning = (
+            "Slack serving 'agent-1' answers no other app: pass Slack(apps={app_id: principal_id}) to "
+            "run another app's messages as an AgentOS principal."
+        )
+        # Logged once at startup
+        assert [message for message in warnings if "answers no other app" in message] == ([warning] if warned else [])
+
+    @pytest.mark.parametrize(
+        "authorization, settings, warning",
+        [
+            (
+                True,
+                {"apps": {"A_APP": "deploy-bot"}, "authorize_senders": True, "resolve_user_identity": True},
+                "Slack serving 'agent-1' sets apps= but respond_to_other_apps is off, so no other app's message "
+                "reaches it: pass Slack(respond_to_other_apps=True) to answer the apps it maps.",
+            ),
+            (
+                False,
+                {"authorize_senders": True, "resolve_user_identity": True},
+                "Slack serving 'agent-1' sets authorize_senders=True without authorization, so its senders are not "
+                "checked. To check them, set AgentOS(authorization=True) and configure JWT_VERIFICATION_KEY or "
+                "JWT_JWKS_FILE.",
+            ),
+            # With users= set, users= checks senders without authorization
+            (False, {"authorize_senders": True, "resolve_user_identity": True, "users": {"U1": "alice"}}, None),
+            (
+                True,
+                {
+                    "apps": {"A_APP": "deploy-bot"},
+                    "authorize_senders": True,
+                    "resolve_user_identity": True,
+                    "respond_to_other_apps": True,
+                },
+                None,
+            ),
+        ],
+        ids=["apps-other-apps-off", "authorization-off", "authorization-off-with-users", "used"],
+    )
+    def test_agent_startup_warns_when_a_slack_setting_does_nothing(
+        self, tmp_path, monkeypatch, authorization, settings, warning
+    ):
+        agent = Agent(id="agent-1")
+        agent_os = AgentOS(
+            id="slack-security",
+            db=SqliteDb(db_file=str(tmp_path / "os.db")),
+            agents=[agent],
+            authorization=Authorization(verification_keys=[JWT_KEY], algorithm="HS256") if authorization else None,
+            user_directory=True,
+            telemetry=False,
+            interfaces=[Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, **settings)],
+        )
+        warnings: List[str] = []
+        monkeypatch.setattr("agno.os.app.log_warning", warnings.append)
+        agent_os.get_app()
+        # Logged once at startup
+        assert [message for message in warnings if message.startswith("Slack serving 'agent-1' sets")] == (
+            [warning] if warning else []
+        )

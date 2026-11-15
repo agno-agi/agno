@@ -9,7 +9,13 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run, principal_required, sender_principal
+from agno.os.interfaces.slack.security import (
+    app_principal,
+    authorize_run,
+    is_other_app,
+    principal_required,
+    sender_principal,
+)
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
@@ -56,16 +62,29 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
     """Run a user's message under their principal's authority; an unlinked or refused user gets an ephemeral."""
-    # Super Agent under authorization needs the sender's principal, from users= or the user directory
-    if not principal_required(ctx):
+    # users=, or Super Agent or authorize_senders under authorization, needs the sender's principal
+    checked = principal_required(ctx)
+    raw = extract_event_context(event_context.event)
+    # apps= is its own list, as users= is, so another app is checked whenever it is set
+    if (checked or ctx.apps is not None) and await is_other_app(ctx, client, raw["user"], raw["bot_id"]):
+        # Another app runs only as the principal apps= maps it to
+        principal = app_principal(ctx, raw["bot_id"], raw["app_id"])
+        if principal is None:
+            log_debug("Slack event skipped: another app with no principal")
+            return False
+        # Another app cannot see an ephemeral, so a refused one gets none
+        recipient = None
+    elif not checked:
         return True
-    principal = await sender_principal(ctx, client, event_context.owner, event_context.team_id)
-    if principal is None:
-        await post_ephemeral(
-            client, event_context.channel, event_context.owner, _NOT_LINKED_MESSAGE, event_context.thread_ts
-        )
-        return False
-    if not await authorize_run(ctx, event_context, principal, client, event_context.owner, event_context.thread_ts):
+    else:
+        principal = await sender_principal(ctx, client, event_context.owner, event_context.team_id)
+        if principal is None:
+            await post_ephemeral(
+                client, event_context.channel, event_context.owner, _NOT_LINKED_MESSAGE, event_context.thread_ts
+            )
+            return False
+        recipient = event_context.owner
+    if not await authorize_run(ctx, event_context, principal, client, recipient, event_context.thread_ts):
         return False
     event_context.user_id = principal
     return True

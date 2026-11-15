@@ -7,9 +7,11 @@ from weakref import ReferenceType, ref
 
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
-from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
+from agno.os.interfaces.slack.helpers import extract_event_context, slack_delivery_kwargs, slack_error_code
 from agno.os.interfaces.slack.security import (
+    app_principal,
     directory_principal,
+    is_other_app,
     resolve_principal_authorization,
     resolves_from_directory,
 )
@@ -40,7 +42,7 @@ class CompanyBridge:
 
     def __init__(self, agent_os: Any, deliver: bool = True):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
-        # Whether this interface posts Task results; one per bot token and users=/resolve_user_identity setting does
+        # Whether this interface posts Task results; one per bot token and users=/apps=/resolve_user_identity does
         self.deliver = deliver
 
     @property
@@ -247,9 +249,18 @@ class TaskDelivery:
             message = next((m for m in response.get("messages") or [] if m.get("ts") == message_ts), None)
             if message is None:
                 return None
-            sender = (message.get("user") or "", message.get("bot_id") or "")
+            raw = extract_event_context(message)
+            sender = (raw["user"], raw["bot_id"], raw["app_id"])
             self.ctx.lookup_cache.set(key, sender)
-        user, bot_id = sender
+        user, bot_id, app_id = sender
+        # With apps=, another app is resolved from it alone, as for the message that started the Task
+        if self.ctx.apps is not None:
+            lookup_errors: Set[str] = set()
+            if await is_other_app(self.ctx, client, user, bot_id, lookup_errors):
+                return app_principal(self.ctx, bot_id, app_id)
+            # A failed users.info: retry rather than refuse the Task
+            if lookup_errors:
+                raise RuntimeError(f"Could not resolve Slack sender {user}")
         if self.ctx.users is not None:
             return self.ctx.users.get(user or bot_id)
         if resolves_from_directory(self.ctx, app):

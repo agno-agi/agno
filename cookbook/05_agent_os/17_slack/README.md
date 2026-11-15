@@ -114,7 +114,7 @@ The manifest asks for these bot scopes:
 | `channels:read`, `groups:read` | Resolve public and private channel names |
 | `files:read`, `files:write` | Download incoming files and upload results |
 | `users:read` | Resolve Slack users and bots |
-| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`), and the directory user Super Agent runs as under authorization |
+| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`), and the directory user a sender runs as under authorization with Super Agent or `authorize_senders=True` |
 
 The history scopes are needed for two reasons. Slack delivers a message event
 only when the app holds the history scope of that conversation type. And Super
@@ -200,11 +200,13 @@ once.
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
 returns it and adds the display name to run metadata. For an Agent, Team or
-Workflow this only names the run's user: its senders are checked only with
-`users=`. Super Agent under authorization runs as the member's AgentOS directory
-user instead (see [Super Agent](#super-agent)).
-Sessions are stored under the run's `user_id`; map a member with `users=` to
-see the thread under their principal.
+Workflow without `authorize_senders=True` this only names the run's user; its
+senders are checked only with `users=`. Under authorization, Super Agent and an
+Agent, Team or Workflow with `authorize_senders=True` run as the member's
+AgentOS directory user instead, or as their `users=` principal (see
+[Super Agent](#super-agent)).
+Sessions are stored under the run's `user_id`, so a member mapped with `users=`
+or run as their directory user sees the thread under that principal.
 
 Claude Code and Codex take one turn per session at a time: a message that
 arrives while one is working gets a short "still working" reply. An Agent or
@@ -270,6 +272,29 @@ export SLACK_APPROVER_ID="U..."
   disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
   `get_app()`, must list `/slack/events` and `/slack/interactions` in its
   `excluded_route_paths`.
+- **`authorize_senders=True`**: under authorization, an Agent, Team or Workflow
+  checks each sender the way Super Agent does. See [Super Agent](#super-agent)
+  for how a sender is found (the directory, `users=`, or `apps=`), when
+  `get_app()` refuses to start, and what each action checks. It is off by
+  default.
+- **`apps=`**: maps Slack app IDs (`A...`, the app's Basic Information page) to
+  AgentOS principals, `apps={"A0123ABC": "deploy-bot"}`, for the messages other
+  apps post with `respond_to_other_apps=True`. An app posts under several bot
+  IDs, but each post by its bot user names its app ID. A post from one of its
+  incoming webhooks names only that webhook's bot ID (`B...`, read from one of
+  its posts), so map that bot ID too, even for the same app. Anyone with a
+  webhook's URL posts as it, so map a webhook only to a principal with the access
+  you'd give that URL. With `apps=` set, another app's message runs as the
+  principal `apps=` maps it to, whether or not the interface checks its senders;
+  under authorization that principal needs a role that can run the Agent, Team
+  or Workflow. An app it does not map, or whose principal is refused, is
+  skipped without a reply. Without `apps=`, an interface that checks its
+  senders answers no other app, and one that checks none answers every other
+  app. `users=` is for people, so an app listed there is not answered. A person
+  posting through a user token is checked as that person.
+  Telling an app's bot user from a person reads Slack's `users.info`, which
+  needs the `users:read` scope; without it, or while that lookup fails, a bot
+  user is checked as a person.
 
 ## Workspace Search Action
 
@@ -298,6 +323,9 @@ export ANALYST_SLACK_SIGNING_SECRET="..."
 
 Bot-authored messages are dropped by default. `respond_to_other_apps=True` opts
 one interface into messages from peer apps; its own messages are still dropped.
+With `apps=` set, an interface answers only the peer apps it maps; without it,
+an interface that checks its senders answers none (see
+[Approvers and User Mapping](#approvers-and-user-mapping)).
 `peer_agents.py` uses an asymmetric topology: the coordinator keeps
 `respond_to_other_apps=False`, and the researcher sets it to `True`. That allows
 one-way delegation without a ping-pong loop.
@@ -402,13 +430,19 @@ after `get_app()` refuses each message instead:
 - **`users=`**: an explicit allowlist, `users={"U0123ABC": "alice"}`. A member
   it leaves out is refused, even when a directory user's id is their email.
 
+Another app is never looked up in the directory or in `users=`. With or without
+authorization, its message runs as the principal
+`apps={"A0123ABC": "deploy-bot"}` maps its app ID (an incoming webhook's bot ID)
+to; any other app, or one whose principal is refused, is skipped without a
+reply. `get_app()` logs a warning that no other app is
+answered when `respond_to_other_apps=True` is set without `apps=`.
+
 A Slack request carries no token, so token scopes and roles from a token's role
 claim grant a Slack sender nothing: permissions come from roles stored for the
-user. A directory user with no role of their own
-holds the default role, when one is flagged with `define_role(..., default=True)`;
-without a default role, each person needs a role assigned. With
-`authorization=True` and no roles, the API starts, logs a warning, and refuses
-every Slack sender.
+user. A directory user with no role of their own holds the default role, when
+one is flagged with `define_role(..., default=True)`; without a default role,
+each person needs a role assigned. With `authorization=True` and no roles, the
+API starts, logs a warning, and refuses every Slack sender.
 
 What each action checks:
 
@@ -438,21 +472,31 @@ emails.
 - **A changed Slack email takes up to 10 minutes.** The directory user a Slack
   member resolves to is cached like other Slack lookups; disabled users and roles
   are read fresh on every message, approval and Task result.
+- **Managed roles and the user directory need PostgreSQL or SQLite.** AgentOS
+  stores them only in `PostgresDb` or `SqliteDb` (or their async versions), and
+  refuses to start with managed roles or `user_directory=True` on another
+  database. To keep the rest in another database, pass a PostgreSQL or SQLite
+  one as `Authorization(..., db=...)` and
+  `AgentOS(user_directory=UserDirectory(db=...))`.
 - **One worker per Slack app.** Event dedupe, approval claims, and the index of
   running turns that Stop uses are kept in process. Run each Slack app on a
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
   signature, not the AgentOS key. Without AgentOS `authorization=`, every member
   of the workspace can use the agent through Slack. With it, an Agent, Team or
-  Workflow still answers every member unless `users=` is set.
+  Workflow still answers every member unless `users=` or
+  `authorize_senders=True` is set, and every other app it is opted into unless
+  one of those or `apps=` is set.
+- **`users=` maps people only.** An app listed in `users=` is not answered; list
+  it in `apps=`.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on
   `authorization=` with `user_directory=True` and `resolve_user_identity=True`,
   or with `users=`.
 - **A Task result can be posted twice.** Slack interfaces that share a bot token
-  but differ in `users=` or `resolve_user_identity` each post Task results, so a
-  Task both accept can be posted twice.
+  but differ in `users=`, `apps=` or `resolve_user_identity` each post Task
+  results, so a Task both accept can be posted twice.
 - **An approval decided outside Slack does not post into the thread.** When a
   Claude Code or Codex approval is decided through the AgentOS API or UI, the run
   finishes, but nothing is posted into the Slack thread; the next click on the
@@ -507,7 +551,8 @@ Stop and the card's Deny ends the run; that stop path was checked with a signed
 | Streaming returns `internal_error` | Agent view is off, `assistant:write` is missing, or the app was not reinstalled |
 | No suggested prompts | `app_home_opened` is not subscribed, the Messages tab is off, the app is in the assistant view (a `not_agent_app` warning in the log), or the Slack client needs a reload |
 | Stop does nothing | `agent_session_stopped` is not subscribed |
-| "Your Slack account is not linked" | `users=` is set and the sender is not in it; or, for Super Agent under authorization without `users=`, no directory user's id is the sender's Slack email |
+| "Your Slack account is not linked" | `users=` is set and the sender is not in it; or, for Super Agent or `authorize_senders=True` under authorization without `users=`, no directory user's id is the sender's Slack email |
+| Another app's message gets no reply | `respond_to_other_apps` is off; or, `apps=` is set and does not map the app (its app ID, or a webhook's bot ID); or, the interface checks its senders and has no `apps=`. An app listed only in `users=` is not answered |
 | Workspace search reports no action token | The run did not start from a Slack message, or the app lacks the `search:read.*` scopes |
 | HITL buttons do nothing | Interactivity is off or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |

@@ -5,6 +5,10 @@ Control Who Runs, Approves, and Stops in Slack
 Map Slack users to AgentOS principals with users=, and name the Slack users who
 may approve or stop anyone's run with approvers=.
 
+With Slack(authorize_senders=True, resolve_user_identity=True) and
+AgentOS(user_directory=True), each sender runs as the directory user whose id
+is their Slack email (needs users:read.email) instead of a users= entry.
+
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY, JWT_VERIFICATION_KEY, SLACK_OPERATOR_ID, SLACK_APPROVER_ID
 SLACK_OPERATOR_ID and SLACK_APPROVER_ID are Slack member IDs (U...; profile > Copy member ID): the operator is mapped to an AgentOS principal, the approver may approve or stop anyone's run
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/access_control.py

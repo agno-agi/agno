@@ -400,6 +400,9 @@ class UserDirectory:
     def _mem_ids(self, include_disabled: bool) -> List[str]:
         return sorted(r["id"] for r in self._filtered_mem_rows(include_disabled, None))
 
+    def _mem_ids_matching(self, id: str) -> List[str]:
+        return sorted(r["id"] for r in self._filtered_mem_rows(True, None) if r["id"].lower() == id.lower())
+
     def _mem_created_by_day(self, starting_at: Optional[int], ending_before: Optional[int]) -> List[Dict[str, int]]:
         seconds_per_day = 24 * 60 * 60
         counts: Dict[int, int] = {}
@@ -427,6 +430,14 @@ class UserDirectory:
             return self._mem_ids(include_disabled)
 
         return list(self._db.list_authz_user_ids(include_disabled=include_disabled))
+
+    def ids_matching(self, id: str) -> List[str]:
+        """Every user id equal to ``id`` ignoring case. One exact comparison rather
+        than a :meth:`list` search, so ids that differ only in case are all read at once."""
+        if self._mem is not None:
+            return self._mem_ids_matching(id)
+
+        return list(self._db.list_authz_user_ids_matching(user_id=id))
 
     def created_by_day(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
@@ -702,6 +713,12 @@ class UserDirectory:
         if self._mem is not None:
             return self._mem_ids(include_disabled)
         return list(await self._adb("list_authz_user_ids", include_disabled=include_disabled))
+
+    async def aids_matching(self, id: str) -> List[str]:
+        """Async twin of :meth:`ids_matching`."""
+        if self._mem is not None:
+            return self._mem_ids_matching(id)
+        return list(await self._adb("list_authz_user_ids_matching", user_id=id))
 
     async def acreated_by_day(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None

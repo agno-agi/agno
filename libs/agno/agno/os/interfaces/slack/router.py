@@ -160,6 +160,8 @@ def attach_routes(
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
     context: Optional[SlackContext] = None,
+    authorize_senders: bool = False,
+    apps: Optional[Dict[str, str]] = None,
 ) -> APIRouter:
     """
     Mount the Slack event and interaction routes on the router.
@@ -197,6 +199,8 @@ def attach_routes(
             unfurl_media=unfurl_media,
             approvers=approvers,
             users=users,
+            authorize_senders=authorize_senders,
+            apps=apps,
         )
         # Without AgentOS nothing else closes the runs
         router.add_event_handler("shutdown", partial(aclose_runs, context))

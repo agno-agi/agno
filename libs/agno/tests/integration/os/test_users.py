@@ -120,6 +120,21 @@ def test_store_created_by_day_and_ids(tmp_path, db_url):
     assert store.count_by_status() == {"total": 3, "disabled": 1}
 
 
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_ids_matching_ignores_case_only(tmp_path, db_url):
+    """Every id equal to the given one ignoring case, disabled ones included; an id that
+    only contains it is not a match, and LIKE metacharacters are plain text."""
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'users.db'}"
+    store = UserDirectory(db_url=url)
+    for user_id in ("Alice@Example.com", "alice@example.com", "malice@example.com", "alice_example.com"):
+        store.upsert(user_id)
+    store.set_disabled("alice@example.com", True)
+
+    assert set(store.ids_matching("ALICE@example.com")) == {"Alice@Example.com", "alice@example.com"}
+    assert store.ids_matching("alice_example.com") == ["alice_example.com"]
+    assert store.ids_matching("%@example.com") == []
+
+
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
     store = UserDirectory()

@@ -231,6 +231,25 @@ def test_disabled_user_denied_over_async_directory(tmp_path):
     assert r.status_code == 403  # disabled -> denied even with a valid token
 
 
+def test_directory_ids_matching_async(tmp_path):
+    """aids_matching reads the same ids in memory, on a sync DB driven from the async path,
+    and on an async DB."""
+
+    async def scenario():
+        adb = AsyncSqliteDb(db_file=str(tmp_path / "async.db"))
+        for users in (
+            UserDirectory(),
+            UserDirectory(db=SqliteDb(db_file=str(tmp_path / "sync.db"))),
+            UserDirectory(db=adb),
+        ):
+            for user_id in ("Alice@Example.com", "alice@example.com", "malice@example.com"):
+                await users.aupsert(user_id)
+            assert set(await users.aids_matching("ALICE@example.com")) == {"Alice@Example.com", "alice@example.com"}
+        await adb.close()
+
+    asyncio.run(scenario())
+
+
 def test_user_management_metrics_async_on_async_db(tmp_path):
     """The reads behind /users/metrics have async twins that work on an async DB, the
     served endpoint works on one, and the sync collector on a sync DB agrees with the

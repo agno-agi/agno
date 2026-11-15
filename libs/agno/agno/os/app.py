@@ -1155,12 +1155,16 @@ class AgentOS:
 
         # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
         # so only the first posts them, also when get_app runs again
-        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+        def delivery_key(
+            interface: BaseInterface,
+        ) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool, Optional[FrozenSet[Tuple[str, str]]]]:
             users = interface.ctx.users  # type: ignore[attr-defined]
+            apps = interface.ctx.apps  # type: ignore[attr-defined]
             return (
                 interface.ctx.token,  # type: ignore[attr-defined]
                 None if users is None else frozenset(users.items()),
                 interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+                None if apps is None else frozenset(apps.items()),
             )
 
         delivery_keys = {
@@ -1179,34 +1183,71 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
-            if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
-                from agno.os.auth import _has_authorization_middleware
+            if interface.type == "slack":
+                from agno.os.auth import (
+                    _default_authorization_provider,
+                    _has_authorization_middleware,
+                    resolve_authorization_provider,
+                )
 
+                super_agent = interface.team is not None and interface.team is self.manager
+                users = getattr(interface, "users", None)
+                served = "Super Agent" if super_agent else f"'{interface.ctx.entity_id}'"  # type: ignore[attr-defined]
+                # Super Agent and authorize_senders=True check senders under authorization; users= checks them always
+                senders_checked = super_agent or getattr(interface, "authorize_senders", False)
                 # Each Slack sender needs a principal: from users=, or the directory user whose id is their Slack email
                 directory_mapped = (
                     getattr(interface, "resolve_user_identity", False) and self.user_directory is not None
                 )
                 # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if (
-                    getattr(interface, "users", None) is None
-                    and not directory_mapped
-                    and (self.authorization or _has_authorization_middleware(app))
-                ):
+                authorization_enforced = bool(self.authorization) or _has_authorization_middleware(app)
+                # Without users=, a checked sender is found in the directory
+                checked_without_users = senders_checked and users is None
+                if checked_without_users and not directory_mapped and authorization_enforced:
                     raise ValueError(
-                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
+                        f"Slack serving {served} under authorization requires Slack identity mapping: "
                         "pass Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) "
                         "with AgentOS(user_directory=True) to run each sender as the directory user whose id is "
                         "their Slack email."
                     )
-                # A Slack request carries no token, so only managed roles can authorize a Slack sender;
-                # the API still starts, and each Slack sender is refused until roles are defined
-                if self.authorization and self._authz_provider is None:
+                # A Slack request carries no token, so the default scope provider refuses every Slack sender
+                if (
+                    (senders_checked or users is not None)
+                    and authorization_enforced
+                    and self._authz_provider is None
+                    and resolve_authorization_provider(app) is _default_authorization_provider()
+                ):
                     log_warning(
-                        "Slack serving Super Agent under authorization requires managed roles: Slack requests carry "
+                        f"Slack serving {served} under authorization requires managed roles: Slack requests carry "
                         "no token, so every Slack sender is refused."
                     )
+                apps = getattr(interface, "apps", None)
+                respond_to_other_apps = getattr(interface, "respond_to_other_apps", False)
+                # A bot that checks senders (users=, or a check under authorization) answers another app only via apps=
+                if (
+                    respond_to_other_apps
+                    and apps is None
+                    and (users is not None or (senders_checked and authorization_enforced))
+                ):
+                    log_warning(
+                        f"Slack serving {served} answers no other app: pass Slack(apps={{app_id: principal_id}}) to "
+                        "run another app's messages as an AgentOS principal."
+                    )
+                # apps= is read only for the other apps' messages the bot answers
+                if apps is not None and not respond_to_other_apps:
+                    log_warning(
+                        f"Slack serving {served} sets apps= but respond_to_other_apps is off, so no other app's "
+                        "message reaches it: pass Slack(respond_to_other_apps=True) to answer the apps it maps."
+                    )
+                # authorize_senders=True checks senders only under authorization; users= checks them without it
+                if getattr(interface, "authorize_senders", False) and users is None and not authorization_enforced:
+                    log_warning(
+                        f"Slack serving {served} sets authorize_senders=True without authorization, so its senders "
+                        "are not checked. To check them, set AgentOS(authorization=True) and configure "
+                        "JWT_VERIFICATION_KEY or JWT_JWKS_FILE."
+                    )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
-                if getattr(interface, "company", None) is None:
+                if super_agent and getattr(interface, "company", None) is None:
                     from agno.os.interfaces.slack.company import CompanyBridge
 
                     key = delivery_key(interface)

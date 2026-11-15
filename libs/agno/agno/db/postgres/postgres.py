@@ -10216,6 +10216,10 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_sql.list_user_ids(self.db_engine, table, include_disabled)
 
+    def list_authz_user_ids_matching(self, user_id: str) -> List[str]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_sql.list_user_ids_matching(self.db_engine, table, user_id)
+
     def count_authz_users_by_day(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
     ) -> List[Dict[str, int]]:

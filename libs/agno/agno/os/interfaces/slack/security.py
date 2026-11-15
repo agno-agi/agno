@@ -1,15 +1,12 @@
 from os import getenv
-from typing import TYPE_CHECKING, Any, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional, Set
 
 from agno.os.interfaces.slack.helpers import post_ephemeral, slack_error_code
 from agno.os.middleware.jwt import is_reserved_principal
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.os.interfaces.slack.context import EventContext, SlackContext
-
-# Directory users read per search page when resolving a Slack sender
-_DIRECTORY_PAGE_SIZE = 1000
 
 
 def resolve_token(token: Optional[str] = None) -> str:
@@ -29,12 +26,13 @@ def resolve_signing_secret(signing_secret: Optional[str] = None) -> str:
 
 
 def principal_required(ctx: "SlackContext", app: Any = None) -> bool:
-    """Whether a Slack user's runs need an AgentOS principal: users= is set, or Super Agent runs under authorization."""
+    """Whether a sender needs an AgentOS principal: users=, or Super Agent or authorize_senders under authorization."""
     from agno.os.auth import _authorization_enforced
 
     # The middleware may be added after get_app(), so it is checked on each request
     return ctx.users is not None or (
-        ctx.company is not None and _authorization_enforced(app if app is not None else ctx.app)
+        (ctx.company is not None or ctx.authorize_senders)
+        and _authorization_enforced(app if app is not None else ctx.app)
     )
 
 
@@ -81,36 +79,38 @@ async def directory_principal(
     if member.get("team_id") != team_id and not (isinstance(teams, list) and team_id in teams):
         return None
     email = (member.get("profile") or {}).get("email")
+    if not email:
+        # Slack leaves the email out without the users:read.email scope; warned once, not per message
+        if "users_read_email" not in ctx.failing:
+            log_warning(
+                "Slack returned no email for a member; without the users:read.email scope Slack returns none, "
+                "so the directory lookup refuses every sender"
+            )
+        ctx.failing.add("users_read_email")
+        return None
     # Case folding maps some non-ASCII letters onto ASCII ones, so only an ASCII email is compared
-    if not email or not email.isascii():
+    if not email.isascii():
         return None
     try:
-        # Every page is read: under one page, rows that only contain the email could push this user's out
-        rows: List[dict] = []
-        while True:
-            page = await user_store.alist(
-                search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows), sort_by="id", order="asc"
-            )
-            rows.extend(page)
-            if len(page) < _DIRECTORY_PAGE_SIZE:
-                break
-        # A row deleted between pages shifts the rest up one, so the ids spelled as the email are also read directly
-        for spelling in dict.fromkeys([email, email.lower()]):
-            row = await user_store.aget(spelling)
-            if row is not None:
-                rows.append(row)
+        ids = await user_store.aids_matching(email)
     except Exception as e:
         # Directory unreachable: no principal, so the sender is refused rather than run unchecked
         log_warning(f"user directory lookup failed for Slack user {user}: {type(e).__name__}")
         if errors is not None:
             errors.add("")
         return None
-    # Only the id, which the identity provider issued, is compared; two ids that differ only in case are both refused
-    matches = {str(row.get("id") or "") for row in rows if str(row.get("id") or "").lower() == email.lower()}
+    # Only an ASCII id, which the identity provider issued, is compared; ids that differ only in case are all refused
+    matches = {match for match in ids if match.isascii() and match.lower() == email.lower()}
     if len(matches) != 1:
         if matches:
-            log_warning(f"Slack user {user} matches {len(matches)} directory ids differing only in case; none is used")
+            # Warned once per member, not on every message
+            if f"directory_ids:{user}" not in ctx.failing:
+                log_warning(
+                    f"Slack user {user} matches {len(matches)} directory ids differing only in case; none is used"
+                )
+            ctx.failing.add(f"directory_ids:{user}")
         return None
+    ctx.failing.discard(f"directory_ids:{user}")
     principal = matches.pop()
     # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
     if is_reserved_principal(principal):
@@ -126,6 +126,24 @@ async def sender_principal(ctx: "SlackContext", client: Any, user: str, team_id:
     if resolves_from_directory(ctx):
         return await directory_principal(ctx, client, user, team_id)
     return None
+
+
+async def is_other_app(
+    ctx: "SlackContext", client: Any, user: str, bot_id: str, errors: Optional[Set[str]] = None
+) -> bool:
+    """Whether a message is another app's: a bot id with no user, or a user the cached users.info reports as a bot."""
+    if not bot_id:
+        return False
+    if not user:
+        return True
+    await ctx.lookup_cache.user_identity(client, user, errors)
+    return bool((ctx.lookup_cache.user_info(user) or {}).get("is_bot"))
+
+
+def app_principal(ctx: "SlackContext", bot_id: str, app_id: str) -> Optional[str]:
+    """Another app's principal: its app id in apps= (a webhook's bot id)."""
+    # One app posts under several bot ids but names the same app id; an incoming webhook names no app id
+    return ctx.apps.get(app_id or bot_id) if ctx.apps is not None else None
 
 
 async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext", client: Any = None) -> bool:
@@ -185,10 +203,10 @@ async def authorize_run(
     event_context: "EventContext",
     principal: str,
     client: Any,
-    user: str,
+    user: Optional[str],
     thread_ts: Optional[str] = None,
 ) -> bool:
-    """Set the run's platform authority for a mapped principal; a refused principal gets the "Not run" ephemeral."""
+    """Set the run's platform authority for a mapped principal; a refused person gets the "Not run" ephemeral."""
     try:
         if ctx.company is not None:
             event_context.authority = await ctx.company.authorize(ctx.app, principal, ctx.entity_id)
@@ -197,6 +215,9 @@ async def authorize_run(
                 ctx.app, principal, ctx.resource, ctx.entity_id
             )
     except PermissionError as e:
-        await post_ephemeral(client, event_context.channel, user, f"Not run: {e}", thread_ts)
+        if user is None:
+            log_debug(f"Slack event skipped: another app with a refused principal ({e})")
+        else:
+            await post_ephemeral(client, event_context.channel, user, f"Not run: {e}", thread_ts)
         return False
     return True

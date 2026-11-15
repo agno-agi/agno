@@ -381,6 +381,10 @@ def _user_ids_stmt(table: Any, include_disabled: bool) -> Any:
     return select(table.c.id).where(*_user_filters(table, include_disabled, None)).order_by(table.c.id.asc())
 
 
+def _user_ids_matching_stmt(table: Any, user_id: str) -> Any:
+    return select(table.c.id).where(func.lower(table.c.id) == func.lower(user_id)).order_by(table.c.id.asc())
+
+
 def _users_by_day_stmt(table: Any, starting_at: Optional[int], ending_before: Optional[int]) -> Any:
     seconds_per_day = 24 * 60 * 60
     day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
@@ -414,6 +418,13 @@ def list_user_ids(engine: Engine, table: Any, include_disabled: bool = True) -> 
     :func:`list_users` would fetch rows nobody reads."""
     with engine.connect() as conn:
         return [str(row[0]) for row in conn.execute(_user_ids_stmt(table, include_disabled))]
+
+
+def list_user_ids_matching(engine: Engine, table: Any, user_id: str) -> List[str]:
+    """Every directory id equal to ``user_id`` ignoring case. The primary-key index is
+    case-sensitive, so this reads the id column of every row."""
+    with engine.connect() as conn:
+        return [str(row[0]) for row in conn.execute(_user_ids_matching_stmt(table, user_id))]
 
 
 def count_users_by_day(
@@ -818,6 +829,13 @@ async def alist_user_ids(engine: "AsyncEngine", table: Any, include_disabled: bo
     """Async twin of :func:`list_user_ids`."""
     async with engine.connect() as conn:
         result = await conn.execute(_user_ids_stmt(table, include_disabled))
+        return [str(row[0]) for row in result]
+
+
+async def alist_user_ids_matching(engine: "AsyncEngine", table: Any, user_id: str) -> List[str]:
+    """Async twin of :func:`list_user_ids_matching`."""
+    async with engine.connect() as conn:
+        result = await conn.execute(_user_ids_matching_stmt(table, user_id))
         return [str(row[0]) for row in result]
 
 

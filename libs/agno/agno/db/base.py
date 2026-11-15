@@ -2698,6 +2698,10 @@ class BaseDb(ABC):
         """Every directory id, for bulk lookups keyed on the id."""
         raise NotImplementedError
 
+    def list_authz_user_ids_matching(self, user_id: str) -> List[str]:
+        """Every directory id equal to ``user_id`` ignoring case."""
+        raise NotImplementedError
+
     def count_authz_users_by_day(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
     ) -> List[Dict[str, int]]:
@@ -4770,6 +4774,10 @@ class AsyncBaseDb(ABC):
 
     async def list_authz_user_ids(self, include_disabled: bool = True) -> List[str]:
         """Every directory id, for bulk lookups keyed on the id."""
+        raise NotImplementedError
+
+    async def list_authz_user_ids_matching(self, user_id: str) -> List[str]:
+        """Every directory id equal to ``user_id`` ignoring case."""
         raise NotImplementedError
 
     async def count_authz_users_by_day(

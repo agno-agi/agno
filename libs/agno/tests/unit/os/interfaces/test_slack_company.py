@@ -179,12 +179,14 @@ def _delivery(
     slack: FakeSlack,
     users: Optional[Dict[str, str]] = None,
     resolve_user_identity: bool = False,
+    apps: Optional[Dict[str, str]] = None,
 ):
     ctx = SimpleNamespace(
         company=CompanyBridge(agent_os),
         entity=Team(id=ENTITY_ID, members=[], db=db),
         entity_id=ENTITY_ID,
         users=users,
+        apps=apps,
         resolve_user_identity=resolve_user_identity,
         web=lambda: slack,
         lookup_cache=LookupCache(),
@@ -618,6 +620,32 @@ async def test_failed_identity_lookup_is_retried(tmp_path, monkeypatch, run_user
     assert slack.posted() == [] and (task["id"], 1) in delivery._retry
     await delivery.sweep()
     assert len(slack.posted()) == 1 and delivery._retry == {}
+
+
+@pytest.mark.parametrize(
+    "apps, posted",
+    [
+        ({"A_APP": "alice"}, 1),
+        # users= is for people, so the app it names gets no result
+        ({"A_OTHER": "bob"}, 0),
+    ],
+    ids=["apps", "only-in-users"],
+)
+@pytest.mark.asyncio
+async def test_app_message_author_is_resolved_from_apps_after_a_failed_lookup(tmp_path, monkeypatch, apps, posted):
+    monkeypatch.setattr(company_module, "_RETRY_MIN", 0.0)
+    db, agent_os = _authorized_company(tmp_path, "alice")
+    # Another app's bot user wrote the message, and users= names it too
+    slack = FakeSlack(root_user="U_APP")
+    slack.root["bot_id"] = "B_APP"
+    slack.root["app_id"] = "A_APP"
+    slack.users_info = AsyncMock(side_effect=[slack_error("ratelimited"), {"user": {"id": "U_APP", "is_bot": True}}])
+    delivery = _delivery(agent_os, db, slack, users={**USERS, "U_APP": "alice"}, apps=apps)
+
+    await delivery.sweep()
+    assert slack.posted() == [] and len(delivery._retry) == 1
+    await delivery.sweep()
+    assert len(slack.posted()) == posted and delivery._retry == {}
 
 
 @pytest.mark.asyncio
