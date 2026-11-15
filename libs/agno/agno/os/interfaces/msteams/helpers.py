@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,6 +15,29 @@ _LOGIN_BASE = "https://login.microsoftonline.com"
 _BOT_SCOPE = "https://api.botframework.com/.default"
 
 _TOKEN_EXPIRY_SKEW_SECONDS = 60
+
+
+class _ActivityDeduplicator:
+    """Bounded, best-effort deduplication per process; another worker may run a retry again."""
+
+    DEDUP_TTL_SECONDS = 600.0
+    DEDUP_MAX_ENTRIES = 4096
+
+    def __init__(self) -> None:
+        self._seen: OrderedDict[str, float] = OrderedDict()
+
+    def is_duplicate(self, activity_id: str) -> bool:
+        now = time.monotonic()
+        expired = [aid for aid, ts in self._seen.items() if now - ts > self.DEDUP_TTL_SECONDS]
+        for aid in expired:
+            del self._seen[aid]
+        if activity_id in self._seen:
+            return True
+        self._seen[activity_id] = now
+        # Capacity eviction can admit a retry before its TTL expires.
+        while len(self._seen) > self.DEDUP_MAX_ENTRIES:
+            self._seen.popitem(last=False)
+        return False
 
 
 @dataclass
@@ -111,14 +135,21 @@ def _clean_mention_text(
     *,
     strip_bot_mention: bool = False,
 ) -> str:
-    if not text:
+    if not isinstance(text, str) or not text:
         return ""
-    if recipient and recipient.get("id") and (recipient.get("name") or strip_bot_mention):
-        for entity in entities or []:
+    recipient = recipient if isinstance(recipient, dict) else {}
+    entities = entities if isinstance(entities, list) else []
+    bot_name = recipient.get("name")
+    if recipient.get("id") and ((isinstance(bot_name, str) and bot_name) or strip_bot_mention):
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
             if (
                 entity.get("type") == "mention"
-                and (entity.get("mentioned") or {}).get("id") == recipient["id"]
-                and entity.get("text")
+                and isinstance(entity.get("mentioned"), dict)
+                and entity["mentioned"].get("id") == recipient["id"]
+                and isinstance(entity.get("text"), str)
+                and entity["text"]
             ):
                 text = text.replace(entity["text"], "" if strip_bot_mention else recipient["name"])
     return _MENTION_TAG_RE.sub(r"@\1", text).strip()
@@ -129,15 +160,19 @@ def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
     nor attachments."""
     activity_type = activity.get("type")
     if activity_type != "message":
-        log_info(f"Ignoring non-message activity type: {activity_type}")
+        log_info("Ignoring non-message activity")
         return None
 
     text = _clean_mention_text(activity.get("text"), activity.get("recipient"), activity.get("entities"))
 
     image_atts: List[dict] = []
     file_atts: List[dict] = []
-    for att in activity.get("attachments", []) or []:
-        content_type = (att.get("contentType") or "").lower()
+    attachments = activity.get("attachments")
+    for att in attachments if isinstance(attachments, list) else []:
+        if not isinstance(att, dict):
+            continue
+        content_type = att.get("contentType")
+        content_type = content_type.lower() if isinstance(content_type, str) else ""
         # Teams sends inline images as image/* attachments; files come through
         # as 'application/vnd.microsoft.teams.file.download.info' or similar
         if content_type.startswith("image/"):
@@ -158,9 +193,10 @@ def _attachment_download_url(att: dict) -> Optional[str]:
     """Prefer ``content.downloadUrl``: ``contentUrl`` points at SharePoint, which
     wants user credentials and answers the bot token with a login page."""
     content = att.get("content")
-    if isinstance(content, dict) and content.get("downloadUrl"):
+    if isinstance(content, dict) and isinstance(content.get("downloadUrl"), str) and content["downloadUrl"]:
         return content["downloadUrl"]
-    return att.get("contentUrl")
+    url = att.get("contentUrl")
+    return url if isinstance(url, str) else None
 
 
 class _AttachmentTooLarge(ValueError):
@@ -178,6 +214,13 @@ async def _download_attachment(
     max_file_size: int = 1_073_741_824,
     name: str = "image",
 ) -> Tuple[Optional[bytes], Optional[str]]:
+    if not url.lower().startswith("https://"):
+        return None, None
+
+    async def require_https(request: httpx.Request) -> None:
+        if request.url.scheme != "https":
+            raise httpx.UnsupportedProtocol("Attachment URLs must use HTTPS", request=request)
+
     headers: Dict[str, str] = {}
     if use_bot_token:
         try:
@@ -186,10 +229,12 @@ async def _download_attachment(
                 headers["Authorization"] = f"Bearer {token}"
         except Exception as e:
             status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-            log_warning(f"Attachment token failed: {name}, status={status}, {type(e).__name__}")
+            log_warning(f"Attachment token failed: status={status}, {type(e).__name__}")
 
     try:
-        async with httpx.AsyncClient(timeout=config.request_timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=config.request_timeout, event_hooks={"request": [require_https]}
+        ) as client:
             async with client.stream("GET", url, headers=headers, follow_redirects=True) as resp:
                 resp.raise_for_status()
                 length = resp.headers.get("content-length", "")
@@ -206,7 +251,7 @@ async def _download_attachment(
         raise
     except Exception as e:
         status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
-        log_warning(f"Attachment download failed: {name}, status={status}, {type(e).__name__}")
+        log_warning(f"Attachment download failed: status={status}, {type(e).__name__}")
         return None, None
 
 
@@ -232,13 +277,18 @@ async def download_attachments_async(
             continue
         content_info = att.get("content")
         preauthorized = isinstance(content_info, dict) and bool(content_info.get("downloadUrl"))
-        use_token = bool(service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized)
         try:
+            use_token = bool(
+                service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized
+            )
             content, mime = await _download_attachment(
                 url, config, use_bot_token=use_token, max_file_size=max_file_size, name=att.get("name") or "image"
             )
         except _AttachmentTooLarge:
             skipped.append(f"{att.get('name') or 'image'} (too large)")
+            continue
+        except ValueError:
+            skipped.append("image")
             continue
         if not content:
             skipped.append("image")
@@ -252,19 +302,25 @@ async def download_attachments_async(
     files: List[File] = []
     for att in parsed.file_attachments:
         name = att.get("name")
+        name = name if isinstance(name, str) else None
         url = _attachment_download_url(att)
         if not url:
             skipped.append(name or "file")
             continue
         content_info = att.get("content")
         preauthorized = isinstance(content_info, dict) and bool(content_info.get("downloadUrl"))
-        use_token = bool(service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized)
         try:
+            use_token = bool(
+                service_url and urlparse(url).hostname == urlparse(service_url).hostname and not preauthorized
+            )
             content, mime = await _download_attachment(
                 url, config, use_bot_token=use_token, max_file_size=max_file_size, name=name or "file"
             )
         except _AttachmentTooLarge:
             skipped.append(f"{name or 'file'} (too large)")
+            continue
+        except ValueError:
+            skipped.append(name or "file")
             continue
         if not content:
             skipped.append(name or "file")
@@ -355,10 +411,19 @@ async def _post_activity(
             except Exception:
                 return None
     except httpx.HTTPStatusError as e:
-        log_error(f"Bot Connector rejected activity: {e.response.status_code} {e.response.text}")
+        code = None
+        try:
+            payload = e.response.json()
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict):
+                code = error.get("code")
+        except ValueError:
+            pass
+        safe_code = code if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", code) else "unknown"
+        log_error(f"Bot Connector rejected activity: {e.response.status_code}, code={safe_code}")
         raise
     except Exception as e:
-        log_error(f"Unexpected error posting activity: {str(e)}")
+        log_error(f"Unexpected error posting activity: {type(e).__name__}")
         raise
 
 
@@ -377,7 +442,32 @@ async def typing_indicator_async(
     try:
         await _post_activity(service_url, conversation_id, activity, config, reply_to_activity_id)
     except Exception as e:
-        log_warning(f"Typing indicator failed (non-fatal): {str(e)}")
+        log_warning(f"Typing indicator failed (non-fatal): {type(e).__name__}")
+
+
+def _split_message(text: str, limit_bytes: int = 80_000) -> List[str]:
+    if limit_bytes < 2:
+        raise ValueError("limit_bytes must be at least 2")
+    parts = []
+    start = 0
+    while start < len(text):
+        end = start
+        size = 0
+        while end < len(text):
+            char_size = 4 if ord(text[end]) > 0xFFFF else 2
+            if size + char_size > limit_bytes:
+                break
+            size += char_size
+            end += 1
+        if end == start:
+            raise ValueError("limit_bytes is too small for a character")
+        if end < len(text):
+            newline = text.rfind("\n", start, end)
+            if newline >= start:
+                end = newline + 1
+        parts.append(text[start:end])
+        start = end
+    return parts
 
 
 async def send_teams_message_async(
@@ -410,15 +500,14 @@ async def send_teams_message_async(
         # collapses the reasoning steps into one run-on paragraph.
         message = "  \n".join([f"_{line}_" for line in message.split("\n")])
 
-    activity: dict = {
-        "type": "message",
-        "text": message,
-        "textFormat": "markdown",
-    }
-    if reply_to_activity_id:
-        activity["replyToId"] = reply_to_activity_id
-
-    if bot_identity:
-        activity["from"] = bot_identity
-
-    await _post_activity(service_url, conversation_id, activity, config, reply_to_activity_id)
+    for part in _split_message(message):
+        activity: dict = {
+            "type": "message",
+            "text": part,
+            "textFormat": "markdown",
+        }
+        if reply_to_activity_id:
+            activity["replyToId"] = reply_to_activity_id
+        if bot_identity:
+            activity["from"] = bot_identity
+        await _post_activity(service_url, conversation_id, activity, config, reply_to_activity_id)

@@ -73,6 +73,398 @@ def test_sync_session_db_calls_run_off_event_loop(text):
         env.stop()
 
 
+@pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
+def test_streaming_entity_configuration_still_sends_one_final_reply(kind):
+    from unittest.mock import AsyncMock
+
+    from agno.agent import Agent
+    from agno.models.base import Model
+    from agno.models.message import MessageMetrics
+    from agno.models.response import ModelResponse
+    from agno.team import Team
+    from agno.workflow import Step, Workflow
+
+    class ReplyModel(Model):
+        def __init__(self):
+            super().__init__(id="offline", name="Offline", provider="test")
+
+        def invoke(self, *args, **kwargs):
+            return ModelResponse(role="assistant", content="final reply", response_usage=MessageMetrics())
+
+        async def ainvoke(self, *args, **kwargs):
+            return self.invoke()
+
+        def invoke_stream(self, *args, **kwargs):
+            yield self.invoke()
+
+        async def ainvoke_stream(self, *args, **kwargs):
+            yield self.invoke()
+
+        def _parse_provider_response(self, response, **kwargs):
+            return response
+
+        def _parse_provider_response_delta(self, response):
+            return response
+
+    member = Agent(id="member", name="Member", model=ReplyModel(), telemetry=False)
+    if kind == "agent":
+        entity = Agent(id="agent", model=ReplyModel(), stream=True, telemetry=False)
+    elif kind == "team":
+        entity = Team(id="team", model=ReplyModel(), members=[member], stream=True, telemetry=False)
+    else:
+        entity = Workflow(id="workflow", steps=[Step(name="Reply", agent=member)], stream=True, telemetry=False)
+    client, env = _build_test_client(**{kind: entity})
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock) as send,
+        ):
+            response = client.post(
+                "/messages",
+                json={
+                    "type": "message",
+                    "id": "request",
+                    "text": "hello",
+                    "serviceUrl": "https://svc",
+                    "from": {"id": "u"},
+                    "conversation": {"id": "c"},
+                },
+            )
+        assert response.status_code == 200
+        send.assert_awaited_once()
+        assert send.call_args.args[2] == "final reply"
+        assert entity.stream is True
+    finally:
+        env.stop()
+
+
+def test_jwt_failure_does_not_log_untrusted_key_id(caplog):
+    import json
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from agno.os.interfaces.msteams import security
+    from agno.os.interfaces.msteams.helpers import MSTeamsConfig
+
+    secret_url = "https://example.com/doc?sig=SECRET123"
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
+    jwk.update(kid="known-key", use="sig")
+    token = jwt.encode(
+        {
+            "aud": "app",
+            "iss": "https://api.botframework.com",
+            "exp": int(time.time()) + 600,
+            "serviceurl": "https://svc",
+        },
+        key,
+        algorithm="RS256",
+        headers={"kid": secret_url},
+    )
+    router = APIRouter()
+    attach_routes(
+        router,
+        agent=SimpleNamespace(id="agent", name="Agent", db=None),
+        config=MSTeamsConfig(app_id="app", app_password="secret", tenant_id="tenant"),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    with (
+        patch.object(security, "_jwk_client", security._BotFrameworkJWKClient(security._OPENID_METADATA_URL)),
+        patch.object(security, "_fetch_openid_metadata", return_value={"jwks_uri": "https://example.com/keys"}),
+        patch("jwt.PyJWKClient.fetch_data", return_value={"keys": [jwk]}),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/messages",
+            json={"type": "conversationUpdate", "serviceUrl": "https://svc"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 403
+    assert secret_url not in caplog.text
+    assert "SECRET123" not in caplog.text
+    assert token not in caplog.text
+
+
+@pytest.mark.parametrize("mode", ["ok", "error", "raise", "lookup", "save", "reset", "send", "unsupported"])
+def test_activity_logs_never_include_content_or_exception_text(mode, caplog):
+    import logging
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.utils import log
+
+    secret_url = "https://example.com/doc?sig=SECRET123"
+    db = MagicMock(spec=BaseDb)
+    db.get_sessions.return_value = ([], 0)
+    if mode == "lookup":
+        db.get_sessions.side_effect = RuntimeError(secret_url)
+    if mode == "reset":
+        db.upsert_session.side_effect = RuntimeError(secret_url)
+    output = RunOutput(
+        run_id="failed-run",
+        content=secret_url if mode == "error" else "ok",
+        status=RunStatus.error if mode == "error" else RunStatus.completed,
+    )
+    agent = SimpleNamespace(
+        id="agent",
+        name="Agent",
+        db=db,
+        arun=AsyncMock(return_value=output),
+        aget_session=AsyncMock(return_value=SimpleNamespace(session_data={})),
+        asave_session=AsyncMock(side_effect=RuntimeError(secret_url) if mode == "save" else None),
+    )
+    if mode == "raise":
+        agent.arun.side_effect = RuntimeError(secret_url)
+    client, env = _build_test_client(agent=agent)
+    activity = {
+        "type": secret_url if mode == "unsupported" else "message",
+        "id": "logging",
+        "text": secret_url,
+        "serviceUrl": "https://svc",
+        "from": {"id": "user"},
+        "conversation": {"id": "personal", "conversationType": "personal"},
+        "attachments": [{"name": "doc.pdf", "contentUrl": secret_url}],
+    }
+    if mode == "reset":
+        activity["text"] = "/new"
+    try:
+        with (
+            patch.object(log, "debug_on", True),
+            caplog.at_level(logging.DEBUG, logger=log.logger.name),
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch(
+                "agno.os.interfaces.msteams.router.download_attachments_async",
+                new_callable=AsyncMock,
+                return_value=({}, []),
+            ),
+            patch(
+                "agno.os.interfaces.msteams.router.send_teams_message_async",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError(secret_url) if mode == "send" else None,
+            ),
+        ):
+            assert client.post("/messages", json=activity).status_code == 200
+        assert secret_url not in caplog.text
+        assert "SECRET123" not in caplog.text
+        if mode == "error":
+            assert "failed-run" in caplog.text
+            assert "status" in caplog.text
+    finally:
+        env.stop()
+
+
+@pytest.mark.parametrize("second_id,expected,count", [("same", "duplicate", 1), ("different", "processing", 2)])
+def test_redelivered_activity_runs_only_once(second_id, expected, count):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    entity = SimpleNamespace(
+        id="a", name="Agent", db=None, arun=AsyncMock(return_value=RunOutput(run_id="r", content="ok"))
+    )
+    client, env = _build_test_client(agent=entity)
+    activity = {
+        "type": "message",
+        "id": "same",
+        "text": "hello",
+        "serviceUrl": "https://svc",
+        "from": {"id": "u"},
+        "conversation": {"id": "c"},
+    }
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+        ):
+            assert client.post("/messages", json=activity).json() == {"status": "processing"}
+            activity["id"] = second_id
+            assert client.post("/messages", json=activity).json() == {"status": expected}
+        assert entity.arun.await_count == count
+    finally:
+        env.stop()
+
+
+def test_rejected_token_does_not_mark_activity_id():
+    from unittest.mock import AsyncMock
+
+    client, env = _build_test_client(agent=_stub_agent_with_db())
+    activity = {"type": "conversationUpdate", "id": "retry-after-rejection"}
+    try:
+        with patch(
+            "agno.os.interfaces.msteams.router.validate_bot_framework_jwt",
+            new_callable=AsyncMock,
+            side_effect=[None, {}, {}],
+        ):
+            assert client.post("/messages", json=activity).status_code == 403
+            assert client.post("/messages", json=activity).json() == {"status": "processing"}
+            assert client.post("/messages", json=activity).json() == {"status": "duplicate"}
+    finally:
+        env.stop()
+
+
+def test_duplicate_tracker_is_per_mounted_interface():
+    first, env1 = _build_test_client(agent=_stub_agent_with_db())
+    second, env2 = _build_test_client(agent=_stub_agent_with_db())
+    activity = {"type": "conversationUpdate", "id": "same-for-two-bots"}
+    try:
+        assert first.post("/messages", json=activity).json() == {"status": "processing"}
+        assert first.post("/messages", json=activity).json() == {"status": "duplicate"}
+        assert second.post("/messages", json=activity).json() == {"status": "processing"}
+    finally:
+        env2.stop()
+        env1.stop()
+
+
+@pytest.mark.parametrize("field", ["conversation", "from", "recipient", "attachments", "entities"])
+@pytest.mark.parametrize("value", ["bad", 12, [None, "bad"]])
+def test_webhook_treats_wrong_nested_types_as_missing(field, value):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    entity = SimpleNamespace(
+        id="agent", name="Agent", db=None, arun=AsyncMock(return_value=RunOutput(run_id="r", content="final reply"))
+    )
+    client, env = _build_test_client(agent=entity)
+    activity = {
+        "type": "message",
+        "id": "malformed",
+        "text": "hello",
+        "serviceUrl": "https://svc",
+        "conversation": {"id": "c"},
+        "from": {"id": "u"},
+        "recipient": {"id": "bot", "name": "Bot"},
+        field: value,
+    }
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock) as send,
+        ):
+            assert client.post("/messages", json=activity).status_code == 200
+        if field in ("conversation", "from"):
+            entity.arun.assert_not_called()
+            send.assert_not_called()
+        else:
+            entity.arun.assert_awaited_once()
+            send.assert_awaited_once()
+            assert send.call_args.args[2] == "final reply"
+    finally:
+        env.stop()
+
+
+def test_failed_reference_save_still_replies_and_next_personal_message_repairs_it(tmp_path):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_file=str(tmp_path / "repair.db"))
+    scope = "msteams:agent:personal:user"
+    saves = []
+
+    async def arun(text, **kwargs):
+        current = db.get_session(session_id=kwargs["session_id"], session_type=SessionType.AGENT)
+        if current is None:
+            db.upsert_session(
+                AgentSession(
+                    session_id=kwargs["session_id"], user_id="user", agent_id="agent", session_data={"keep": "value"}
+                )
+            )
+        return RunOutput(run_id="run", session_id=kwargs["session_id"], content="reply")
+
+    async def get_session(session_id):
+        assert session_id == scope
+        return db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+
+    async def save_session(session):
+        saves.append(session.session_id)
+        if len(saves) == 1:
+            raise RuntimeError("storage unavailable")
+        db.upsert_session(session)
+
+    entity = SimpleNamespace(
+        id="agent", name="Agent", db=db, arun=arun, aget_session=get_session, asave_session=save_session
+    )
+    client, env = _build_test_client(agent=entity)
+    activity = {
+        "type": "message",
+        "id": "first",
+        "text": "hello",
+        "serviceUrl": "https://svc",
+        "from": {"id": "user"},
+        "recipient": {"id": "bot"},
+        "conversation": {"id": "personal", "conversationType": "personal"},
+    }
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock) as send,
+        ):
+            assert client.post("/messages", json=activity).status_code == 200
+            stored = db.get_session(session_id=scope, session_type=SessionType.AGENT)
+            assert stored.session_data == {"keep": "value"}
+            assert send.call_args.args[2] == "reply"
+            activity["id"] = "second"
+            assert client.post("/messages", json=activity).status_code == 200
+            stored = db.get_session(session_id=scope, session_type=SessionType.AGENT)
+            assert stored.session_data["keep"] == "value"
+            assert stored.session_data["msteams_conversation_ref"]["conversation_id"] == "personal"
+            assert send.await_count == 2
+            assert all(call.args[2] == "reply" for call in send.call_args_list)
+        assert saves == [scope, scope]
+    finally:
+        env.stop()
+
+
+def test_remote_entity_replies_without_local_session_features():
+    import asyncio
+    from unittest.mock import AsyncMock, PropertyMock
+
+    from agno.agent import RemoteAgent
+    from agno.os.interfaces.msteams import MSTeams
+    from agno.remote.base import RemoteDb
+    from agno.run.agent import RunOutput
+
+    remote_db = RemoteDb(id="remote-db", client=MagicMock())
+    entity = RemoteAgent(base_url="https://remote.example", agent_id="remote-agent")
+    with (
+        patch.object(RemoteAgent, "name", new_callable=PropertyMock, return_value="Remote"),
+        patch.object(RemoteAgent, "db", new_callable=PropertyMock, return_value=remote_db),
+        patch.object(
+            entity, "arun", new_callable=AsyncMock, return_value=RunOutput(run_id="r", content="remote reply")
+        ) as run,
+    ):
+        client, env = _build_test_client(agent=entity)
+        activity = {
+            "type": "message",
+            "id": "normal",
+            "text": "hello",
+            "serviceUrl": "https://svc",
+            "from": {"id": "u"},
+            "conversation": {"id": "c", "conversationType": "personal"},
+        }
+        try:
+            with (
+                patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+                patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock) as send,
+            ):
+                assert client.post("/messages", json=activity).status_code == 200
+                assert send.call_args.args[2] == "remote reply"
+                activity.update(id="reset", text="/new")
+                assert client.post("/messages", json=activity).status_code == 200
+                assert send.call_args.args[2] == "Session reset requires storage to be configured."
+                assert asyncio.run(MSTeams(agent=entity).asend_alert("u", "alert")) is False
+            run.assert_awaited_once()
+            assert run.call_args.kwargs["stream"] is False
+            assert remote_db.client.mock_calls == []
+        finally:
+            env.stop()
+
+
 def _stub_agent_with_db():
     fake_db = MagicMock(spec=BaseDb)
     return SimpleNamespace(id="agent-1", name="Stub Agent", db=fake_db)
@@ -257,6 +649,54 @@ def test_webhook_rejects_malformed_json():
 
 
 # === Session selection ===
+
+
+def test_two_same_second_resets_use_the_later_reset(tmp_path):
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunOutput
+
+    db = SqliteDb(db_file=str(tmp_path / "reset_order.db"))
+    agent = SimpleNamespace(
+        id="agent-1", name="Agent", db=db, arun=AsyncMock(return_value=RunOutput(run_id="run", content="ok"))
+    )
+    client, env = _build_test_client(agent=agent)
+    activity = {
+        "type": "message",
+        "serviceUrl": "https://svc",
+        "from": {"id": "user-1"},
+        "conversation": {"id": "channel;messageid=root", "conversationType": "channel"},
+        "text": "/new",
+    }
+    scope = "msteams:agent-1:channel;messageid=root:user-1"
+    try:
+        with (
+            patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
+            patch("agno.os.interfaces.msteams.router.time", return_value=1_700_000_060),
+            patch(
+                "agno.os.interfaces.msteams.router.time_ns",
+                create=True,
+                side_effect=[1_700_000_060_000_000_000, 1_700_000_060_001_000_000],
+            ),
+            patch(
+                "agno.os.interfaces.msteams.router.uuid4",
+                side_effect=[SimpleNamespace(hex="f" * 32), SimpleNamespace(hex="0" * 32)],
+            ),
+        ):
+            for activity_id in ["reset-first", "reset-second"]:
+                activity["id"] = activity_id
+                assert client.post("/messages", json=activity).status_code == 200
+            agent.arun.assert_not_called()
+            activity.update(id="after-resets", text="after both resets")
+            assert client.post("/messages", json=activity).status_code == 200
+        agent.arun.assert_awaited_once()
+        assert agent.arun.call_args.kwargs["session_id"] == f"{scope}:17000000600010000"
+        rows, total = db.get_sessions(session_type=SessionType.AGENT, deserialize=False)
+        assert total == 2
+        assert {row["session_id"] for row in rows} == {f"{scope}:1700000060000ffff", f"{scope}:17000000600010000"}
+    finally:
+        env.stop()
 
 
 def test_new_session_survives_a_same_second_save_on_the_old_one(tmp_path):
@@ -639,19 +1079,23 @@ def test_conversation_scoped_reset_and_reference(tmp_path, kind, reset_text):
             patch("agno.os.interfaces.msteams.router.typing_indicator_async", new_callable=AsyncMock),
             patch("agno.os.interfaces.msteams.router.send_teams_message_async", new_callable=AsyncMock),
         ):
-            for conv, conv_type in [(own_conv, kind), ("other", "groupChat"), (own_conv, kind)]:
+            for index, (conv, conv_type) in enumerate([(own_conv, kind), ("other", "groupChat"), (own_conv, kind)]):
+                activity["id"] = f"message-{index}"
                 activity["conversation"] = {"id": conv, "conversationType": conv_type}
                 assert client.post("/messages", json=activity).status_code == 200
             own_scope = f"msteams:agent-1:{own_conv}:user-1"
             assert seen == [own_scope, "msteams:agent-1:other:user-1", own_scope]
             assert seen_text == ["Display hello @Other"] * 3
+            activity["id"] = "reset"
             activity["text"] = reset_text
             assert client.post("/messages", json=activity).status_code == 200
             assert len(seen) == 3, "A reset command must not invoke the entity"
+            activity["id"] = "after-reset"
             activity["text"] = "after reset"
             assert client.post("/messages", json=activity).status_code == 200
             assert seen[-1].startswith(own_scope + ":")
-            assert len(seen[-1].removeprefix(own_scope + ":")) == 8
+            assert len(seen[-1].removeprefix(own_scope + ":")) == 17
+            activity["id"] = "other-conversation"
             activity["conversation"] = {"id": "other", "conversationType": "groupChat"}
             assert client.post("/messages", json=activity).status_code == 200
             assert seen[-1] == "msteams:agent-1:other:user-1"

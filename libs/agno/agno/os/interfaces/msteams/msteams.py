@@ -90,7 +90,9 @@ class MSTeams(BaseInterface):
         return self.router
 
     async def asend_alert(self, user_id: str, text: str) -> bool:
-        """Send to the user's saved personal chat; return False when none can be resolved."""
+        """Send to a saved personal chat; reject blank text and return False when no chat is found."""
+        if not text.strip():
+            raise ValueError("text must not be blank")
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
         if not isinstance(db, (BaseDb, AsyncBaseDb)):
@@ -130,7 +132,7 @@ class MSTeams(BaseInterface):
                     break
                 page += 1
         except Exception as e:
-            log_warning(f"MSTeams.asend_alert: session lookup failed: {str(e)}")
+            log_warning(f"MSTeams.asend_alert: session lookup failed: {type(e).__name__}")
             return False
         if not ref:
             return False

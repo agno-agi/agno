@@ -79,5 +79,5 @@ async def validate_bot_framework_jwt(
             return None
         return claims
     except Exception as e:
-        log_warning(f"Bot Framework JWT validation failed: {str(e)}")
+        log_warning(f"Bot Framework JWT validation failed: {type(e).__name__}")
         return None

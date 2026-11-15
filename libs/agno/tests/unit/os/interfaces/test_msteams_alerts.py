@@ -31,6 +31,24 @@ async def test_alert_sync_paging_runs_off_event_loop():
         env.stop()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["", " ", "\t\n"])
+@pytest.mark.parametrize("has_db", [True, False])
+async def test_blank_alert_is_rejected_before_any_lookup(text, has_db):
+    teams, agent, env = _build_teams_interface()
+    db = agent.db
+    db.get_sessions.return_value = []
+    if not has_db:
+        agent.db = None
+    try:
+        with pytest.raises(ValueError, match="^text must not be blank$"):
+            await teams.asend_alert("user", text)
+        db.get_sessions.assert_not_called()
+        assert teams._config is None
+    finally:
+        env.stop()
+
+
 def _build_teams_interface(env=None):
     """MagicMock(spec=BaseDb) so ``isinstance(db, BaseDb)`` succeeds without
     implementing BaseDb's ~50 abstract methods."""
@@ -237,15 +255,17 @@ async def test_send_alert_returns_false_when_entity_has_no_db():
 
 
 @pytest.mark.asyncio
-async def test_send_alert_swallows_lookup_errors():
+async def test_send_alert_swallows_lookup_errors(caplog):
     """A clean boolean, so a batch of alerts does not abort mid-way."""
     teams, agent, env_patch = _build_teams_interface()
     try:
-        agent.db.get_sessions = MagicMock(side_effect=RuntimeError("db down"))
+        agent.db.get_sessions = MagicMock(side_effect=RuntimeError("https://example.com/doc?sig=SECRET123"))
         with patch("agno.os.interfaces.msteams.msteams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
             ok = await teams.asend_alert(user_id="user-1", text="hi")
         assert ok is False
         mock_send.assert_not_called()
+        assert "RuntimeError" in caplog.text
+        assert "SECRET123" not in caplog.text
     finally:
         env_patch.stop()
 

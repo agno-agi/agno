@@ -20,6 +20,150 @@ from agno.os.interfaces.msteams.helpers import (
 )
 
 
+def test_activity_deduplication_expires_without_refreshing_duplicate_ttl():
+    from agno.os.interfaces.msteams import helpers
+
+    tracker = helpers._ActivityDeduplicator()
+    with patch("agno.os.interfaces.msteams.helpers.time.monotonic", side_effect=[0, 599, 601]):
+        assert tracker.is_duplicate("activity") is False
+        assert tracker.is_duplicate("activity") is True
+        assert tracker.is_duplicate("activity") is False
+
+
+def test_activity_deduplication_is_bounded():
+    from agno.os.interfaces.msteams import helpers
+
+    tracker = helpers._ActivityDeduplicator()
+    with patch("agno.os.interfaces.msteams.helpers.time.monotonic", return_value=0):
+        for i in range(4097):
+            assert tracker.is_duplicate(str(i)) is False
+        assert len(tracker._seen) == 4096
+        assert tracker.is_duplicate("4096") is True
+        assert tracker.is_duplicate("0") is False
+        assert len(tracker._seen) == 4096
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url", ["http://svc/file.pdf", "ftp://svc/file.pdf", "file:///file.pdf", "data:text/plain,hello"]
+)
+async def test_non_https_attachment_is_unreadable_without_io(url):
+    import httpx
+
+    parsed = extract_activity_content(
+        {"type": "message", "text": "keep text", "attachments": [{"contentUrl": url, "name": "file.pdf"}]}
+    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"pdf"))
+    client = httpx.AsyncClient(transport=transport)
+    try:
+        with (
+            patch("httpx.AsyncClient", return_value=client) as factory,
+            patch("agno.os.interfaces.msteams.helpers._get_bot_token", new_callable=AsyncMock) as token,
+        ):
+            kwargs, skipped = await download_attachments_async(parsed, _make_config(), service_url="https://svc")
+        assert kwargs == {}
+        assert skipped == ["file.pdf"]
+        assert parsed.text == "keep text"
+        token.assert_not_called()
+        factory.assert_not_called()
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination,downloaded", [("https://other/file.pdf", True), ("http://other/file.pdf", False)])
+async def test_attachment_redirect_never_forwards_auth_to_other_origin(destination, downloaded):
+    import httpx
+
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if request.url.host == "svc":
+            return httpx.Response(302, headers={"Location": destination})
+        return httpx.Response(200, content=b"pdf", headers={"Content-Type": "application/pdf"})
+
+    factory = httpx.AsyncClient
+    transport = httpx.MockTransport(handle)
+    with (
+        patch("httpx.AsyncClient", side_effect=lambda **kwargs: factory(transport=transport, **kwargs)),
+        patch("agno.os.interfaces.msteams.helpers._get_bot_token", new_callable=AsyncMock, return_value="bot-token"),
+    ):
+        kwargs, skipped = await download_attachments_async(
+            ActivityContent(text="hi", file_attachments=[{"contentUrl": "https://svc/start", "name": "file.pdf"}]),
+            _make_config(),
+            service_url="https://svc",
+        )
+    assert requests[0].headers["Authorization"] == "Bearer bot-token"
+    assert len(requests) == (2 if downloaded else 1)
+    if downloaded:
+        assert "Authorization" not in requests[1].headers
+        assert kwargs["files"][0].content == b"pdf"
+        assert skipped == []
+    else:
+        assert kwargs == {}
+        assert skipped == ["file.pdf"]
+
+
+@pytest.mark.parametrize("field", ["recipient", "attachments", "entities"])
+@pytest.mark.parametrize("value", ["bad", 12, [None, "bad"]])
+def test_content_parser_ignores_wrongly_typed_nested_fields(field, value):
+    activity = {"type": "message", "text": "keep text", "recipient": {"id": "bot", "name": "Bot"}, field: value}
+    assert extract_activity_content(activity).text == "keep text"
+
+
+@pytest.mark.parametrize(
+    "text", ["a" * 100001, "\U0001f4a1" * 50001, "line\n" * 21000], ids=["ascii", "astral", "lines"]
+)
+def test_split_message_preserves_text_within_utf16_limit(text):
+    from agno.os.interfaces.msteams import helpers
+
+    parts = helpers._split_message(text)
+    assert "".join(parts) == text
+    assert len(parts) >= 3
+    assert all(part and len(part.encode("utf-16-le")) <= 80_000 for part in parts)
+
+
+def test_split_message_prefers_line_breaks():
+    from agno.os.interfaces.msteams import helpers
+
+    first_line = "a" * 39990 + "\n"
+    assert helpers._split_message(first_line + "b" * 20000) == [first_line, "b" * 20000]
+    assert helpers._split_message("") == []
+    with pytest.raises(ValueError):
+        helpers._split_message("text", limit_bytes=0)
+
+
+@pytest.mark.asyncio
+async def test_long_reply_parts_are_sent_in_order_with_reply_metadata():
+    text = "a" * 40000 + "b" * 40000 + "c" * 20001
+    bot = {"id": "bot"}
+    with patch("agno.os.interfaces.msteams.helpers._post_activity", new_callable=AsyncMock) as post:
+        await send_teams_message_async(
+            "https://svc", "conversation", text, _make_config(), reply_to_activity_id="incoming", bot_identity=bot
+        )
+    assert post.await_count == 3
+    activities = [call.args[2] for call in post.call_args_list]
+    assert [activity["text"] for activity in activities] == ["a" * 40000, "b" * 40000, "c" * 20001]
+    assert all(activity["from"] == bot and activity["replyToId"] == "incoming" for activity in activities)
+    assert all(len(activity["text"].encode("utf-16-le")) <= 80_000 for activity in activities)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_image", [False, True])
+async def test_malformed_attachment_url_keeps_message_text(as_image):
+    attachment = {"contentUrl": "https://[invalid", "name": "file.pdf"}
+    parsed = ActivityContent(
+        text="keep text",
+        image_attachments=[attachment] if as_image else [],
+        file_attachments=[] if as_image else [attachment],
+    )
+    kwargs, skipped = await download_attachments_async(parsed, _make_config(), service_url="https://svc")
+    assert kwargs == {}
+    assert skipped == ["image" if as_image else "file.pdf"]
+    assert parsed.text == "keep text"
+
+
 def _make_config(**overrides) -> MSTeamsConfig:
     base = {
         "app_id": "app-id",
@@ -891,12 +1035,29 @@ async def test_failed_download_logs_no_url_or_exception_text(status, caplog):
         )
     assert kwargs == {}
     assert skipped == ["report.pdf"]
-    assert "report.pdf" in caplog.text
+    assert "report.pdf" not in caplog.text
     error_class = "InvalidURL" if status == "invalid-url" else "HTTPStatusError" if status else "ReadError"
     assert error_class in caplog.text
     if status == 403:
         assert "403" in caplog.text
     assert url not in caplog.text
+    assert "SECRET123" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_download_failure_does_not_log_caller_controlled_name(caplog):
+    import httpx
+
+    secret_url = "https://example.com/doc?sig=SECRET123"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(403)))
+    with patch("httpx.AsyncClient", return_value=client):
+        kwargs, skipped = await download_attachments_async(
+            ActivityContent(text="hi", file_attachments=[{"name": secret_url, "contentUrl": secret_url}]),
+            _make_config(),
+        )
+    assert kwargs == {}
+    assert skipped == [secret_url]
+    assert secret_url not in caplog.text
     assert "SECRET123" not in caplog.text
 
 
@@ -935,6 +1096,49 @@ def test_clean_mention_leaves_plain_text_alone():
 
 
 # === _post_activity error path ===
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["json", "text", "transport"])
+async def test_connector_errors_log_only_status_code_and_error_class(failure, caplog):
+    import httpx
+
+    secret_url = "https://example.com/doc?sig=SECRET123"
+    cfg = _make_config()
+
+    async def post(self, url, **kwargs):
+        request = httpx.Request("POST", url)
+        if failure == "transport":
+            raise httpx.ReadError(secret_url, request=request)
+        if failure == "json":
+            return httpx.Response(403, request=request, json={"error": {"code": "BadArgument", "message": secret_url}})
+        return httpx.Response(403, request=request, text=secret_url)
+
+    with (
+        patch("httpx.AsyncClient.post", new=post),
+        patch("agno.os.interfaces.msteams.helpers._get_bot_token", new_callable=AsyncMock, return_value="TOKEN123"),
+    ):
+        with pytest.raises(httpx.HTTPError):
+            await _post_activity("https://svc", "c", {"type": "message", "text": secret_url}, cfg)
+    assert secret_url not in caplog.text
+    assert "SECRET123" not in caplog.text
+    assert "TOKEN123" not in caplog.text
+    if failure == "json":
+        assert "403" in caplog.text and "BadArgument" in caplog.text
+    if failure == "transport":
+        assert "ReadError" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_typing_failure_does_not_log_exception_text(caplog):
+    with patch(
+        "agno.os.interfaces.msteams.helpers._post_activity",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("https://example.com/doc?sig=SECRET123"),
+    ):
+        await typing_indicator_async("https://svc", "c", _make_config())
+    assert "RuntimeError" in caplog.text
+    assert "SECRET123" not in caplog.text
 
 
 @pytest.mark.asyncio

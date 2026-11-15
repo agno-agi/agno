@@ -1,5 +1,5 @@
 import asyncio
-from time import time
+from time import time, time_ns
 from typing import Any, Literal, NamedTuple, Optional, Type, Union
 from uuid import uuid4
 
@@ -11,6 +11,7 @@ from agno.agent.remote import RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.interfaces.msteams.helpers import (
     MSTeamsConfig,
+    _ActivityDeduplicator,
     _clean_mention_text,
     build_conversation_ref,
     download_attachments_async,
@@ -25,7 +26,7 @@ from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
@@ -104,6 +105,7 @@ def attach_routes(
     entity_id = getattr(entity, "id", None) or entity_name
 
     session_config = _resolve_session_config(entity, entity_type)
+    deduplicator = _ActivityDeduplicator()
 
     # The interface passes its own config so the cached bot token is shared with
     # the proactive-alert path; built here only when the router is used directly.
@@ -134,7 +136,7 @@ def attach_routes(
         try:
             activity = await request.json()
         except Exception as e:
-            log_warning(f"Malformed activity payload: {str(e)}")
+            log_warning(f"Malformed activity payload: {type(e).__name__}")
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
         if not isinstance(activity, dict):
@@ -147,27 +149,41 @@ def attach_routes(
             log_warning("Rejected inbound Teams activity: JWT validation failed")
             raise HTTPException(status_code=403, detail="Invalid Bot Framework token")
 
+        activity_id = activity.get("id")
+        if isinstance(activity_id, str) and activity_id and deduplicator.is_duplicate(activity_id):
+            return MSTeamsWebhookResponse(status="duplicate")
+
         background_tasks.add_task(process_activity, activity)
         return MSTeamsWebhookResponse(status="processing")
 
     async def process_activity(activity: dict):
         activity_type = activity.get("type")
         service_url = activity.get("serviceUrl")
-        conversation = activity.get("conversation") or {}
+        conversation = activity.get("conversation")
+        conversation = conversation if isinstance(conversation, dict) else {}
         conversation_id = conversation.get("id")
         activity_id = activity.get("id")
-        sender = activity.get("from") or {}
+        sender = activity.get("from")
+        sender = sender if isinstance(sender, dict) else {}
         user_id = sender.get("aadObjectId") or sender.get("id")
-        bot_identity: Optional[dict] = activity.get("recipient") or None
+        recipient = activity.get("recipient")
+        bot_identity: Optional[dict] = recipient if isinstance(recipient, dict) else None
 
         if activity_type in ("conversationUpdate", "contactRelationUpdate"):
             return
 
         if activity_type != "message":
-            log_info(f"Ignoring activity type: {activity_type}")
+            log_info("Ignoring non-message activity")
             return
 
-        if not service_url or not conversation_id or not user_id:
+        if (
+            not isinstance(service_url, str)
+            or not service_url
+            or not isinstance(conversation_id, str)
+            or not conversation_id
+            or not isinstance(user_id, str)
+            or not user_id
+        ):
             log_warning("Activity missing serviceUrl / conversation.id / from.id, skipping")
             return
 
@@ -203,7 +219,7 @@ def attach_routes(
                     )
                     return
                 try:
-                    new_session_id = f"{session_scope}:{uuid4().hex[:8]}"
+                    new_session_id = f"{session_scope}:{time_ns() // 1_000_000:013d}{uuid4().hex[:4]}"
                     now = int(time())
                     new_session = session_config.session_class(
                         session_id=new_session_id,
@@ -225,7 +241,7 @@ def attach_routes(
                         bot_identity=bot_identity,
                     )
                 except Exception as e:
-                    log_warning(f"Failed to persist /new session: {str(e)}")
+                    log_warning(f"Failed to persist /new session: {type(e).__name__}")
                     await send_teams_message_async(
                         service_url,
                         conversation_id,
@@ -237,7 +253,6 @@ def attach_routes(
                 return
 
             log_info(f"Processing Teams message from user {user_id[:12]}")
-            log_debug(f"Message content: {parsed.text}")
 
             default_session_id = session_scope
             session_id = default_session_id
@@ -267,11 +282,11 @@ def attach_routes(
                     rows = results[0] if isinstance(results, tuple) else results
                     candidates = [row for row in rows if row["session_id"].startswith(session_scope)]
                     if candidates:
-                        # A reset sorts after its base scope on a same-second tie.
+                        # Millisecond-prefixed reset ids sort chronologically on same-second ties.
                         newest = max(candidates, key=lambda row: (row["created_at"], row["session_id"]))
                         session_id = newest["session_id"]
                 except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {str(e)}")
+                    log_warning(f"Session lookup failed, using default: {type(e).__name__}")
 
             media_kwargs, skipped_media = await download_attachments_async(
                 parsed, config, service_url=service_url, max_file_size=max_file_size
@@ -307,7 +322,7 @@ def attach_routes(
 
             typing_task = asyncio.create_task(_keep_typing())
             try:
-                response = await entity.arun(parsed.text, **run_kwargs)  # type: ignore[union-attr]
+                response = await entity.arun(parsed.text, stream=False, **run_kwargs)  # type: ignore[union-attr]
             finally:
                 typing_task.cancel()
 
@@ -326,7 +341,7 @@ def attach_routes(
                         # asave_session narrows to its own type, which mypy cannot see.
                         await entity.asave_session(current)  # type: ignore[union-attr, arg-type]
                 except Exception as e:
-                    log_warning(f"Could not persist conversation reference (non-fatal): {str(e)}")
+                    log_warning(f"Could not persist conversation reference (non-fatal): {type(e).__name__}")
 
             if getattr(response, "is_paused", False):
                 log_warning(f"MSTeams run {response.run_id} needs approval")
@@ -349,7 +364,7 @@ def attach_routes(
                     reply_to_activity_id=activity_id,
                     bot_identity=bot_identity,
                 )
-                log_error(response.content)
+                log_error(f"MSTeams run {response.run_id} failed with status {response.status}")
                 return
 
             if show_reasoning and hasattr(response, "reasoning_content") and response.reasoning_content:
@@ -376,7 +391,7 @@ def attach_routes(
                 )
 
         except Exception as e:
-            log_error(f"Error processing Teams activity: {str(e)}")
+            log_error(f"Error processing Teams activity: {type(e).__name__}")
             try:
                 await send_teams_message_async(
                     service_url,
@@ -387,6 +402,6 @@ def attach_routes(
                     bot_identity=bot_identity,
                 )
             except Exception as send_error:
-                log_error(f"Error sending error message: {str(send_error)}")
+                log_error(f"Error sending error message: {type(send_error).__name__}")
 
     return router
