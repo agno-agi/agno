@@ -1,7 +1,6 @@
 """
 Crusoe Tool Use
 ===============
-
 Cookbook example for `crusoe/tool_use.py`.
 """
 
@@ -16,25 +15,30 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Crusoe(id="nvidia/Nemotron-3-Super-120B-A12B"),
+    model=Crusoe(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools()],
     markdown=True,
 )
-
-# Print the response in the terminal
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("Whats happening in France?")
+    agent.print_response("What's the latest news about AI?")
 
     # --- Sync + Streaming ---
-    agent.print_response("Whats happening in France?", stream=True)
+    agent.print_response("What's the current weather in Tokyo?", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("Whats happening in France?"))
+    asyncio.run(
+        agent.aprint_response("What is the latest price about BTCUSDT on Binance?")
+    )
 
     # --- Async + Streaming ---
-    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
+    asyncio.run(
+        agent.aprint_response(
+            "Search for the latest developments in quantum computing and summarize them",
+            stream=True,
+        )
+    )

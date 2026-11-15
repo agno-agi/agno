@@ -1,8 +1,7 @@
 """
 Crusoe Basic
 ============
-
-Cookbook example for `crusoe/basic.py`.
+Cookbook example for Crusoe, OpenAILike model provider.
 """
 
 import asyncio
@@ -14,25 +13,28 @@ from agno.models.crusoe import Crusoe
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(
-    model=Crusoe(),
-    markdown=True,
-)
+agent = Agent(model=Crusoe(id="openai/gpt-oss-120b"), markdown=True)
 
-# Print the response in the terminal
+string_agent = Agent(model="crusoe:openai/gpt-oss-120b", markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("write a two sentence horror story")
+    agent.print_response("Explain quantum computing in simple terms")
 
     # --- Sync + Streaming ---
-    agent.print_response("write a two sentence horror story", stream=True)
+    string_agent.print_response(
+        "Explain quantum computing in simple terms", stream=True
+    )
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("write a two sentence horror story"))
+    asyncio.run(agent.aprint_response("Share a 2 sentence horror story"))
 
     # --- Async + Streaming ---
-    asyncio.run(agent.aprint_response("write a two sentence horror story", stream=True))
+    asyncio.run(
+        agent.aprint_response(
+            "Write a short poem about artificial intelligence", stream=True
+        )
+    )
