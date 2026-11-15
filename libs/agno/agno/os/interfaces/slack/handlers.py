@@ -56,7 +56,7 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
     """Run a user's message under their principal's authority; an unlinked or refused user gets an ephemeral."""
-    # Under authorization the sender needs a principal, from users= or the user directory
+    # Super Agent under authorization needs the sender's principal, from users= or the user directory
     if not principal_required(ctx):
         return True
     principal = await sender_principal(ctx, client, event_context.owner, event_context.team_id)

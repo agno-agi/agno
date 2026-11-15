@@ -230,38 +230,6 @@ def _super_agent_slack(tmp_path, users=None, default_role=False):
     return slack.ctx.bind(app), directory
 
 
-def _plain_bot_slack(tmp_path, authorization="roles", resolve_user_identity=True):
-    """A Slack interface serving an agent, with a user directory and, for "roles", role grants under authorization."""
-    auth = None
-    if authorization is not None:
-        auth = Authorization(
-            verification_keys=[JWT_KEY], algorithm="HS256", trust_token_scopes=authorization == "trusted-scopes"
-        )
-    if authorization == "roles":
-        auth.define_role("asker", ["agents:run"]).assign("alice", "asker")
-    agent = Agent(id="agent-1")
-    agent_os = AgentOS(
-        id="slack-security",
-        db=SqliteDb(db_file=str(tmp_path / "os.db")),
-        agents=[agent],
-        authorization=auth,
-        user_directory=True,
-        telemetry=False,
-    )
-    slack = Slack(
-        agent=agent,
-        token=TOKEN,
-        signing_secret=SIGNING_SECRET,
-        resolve_user_identity=resolve_user_identity,
-    )
-    agent_os.interfaces.append(slack)
-    app = agent_os.get_app()
-    directory = agent_os.user_directory
-    directory.upsert("alice", email="alice@example.com")
-    directory.upsert("bob", email="bob@example.com")
-    return slack.ctx.bind(app), directory
-
-
 async def _handle(ctx, member, user="U123"):
     client = make_async_client_mock()
     if isinstance(member, Exception):
@@ -379,30 +347,3 @@ class TestDirectoryPrincipal:
         ctx, _ = _super_agent_slack(tmp_path, users={"U_OTHER": "alice"})
         event_context, ephemeral = await _handle(ctx, _member())
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
-
-
-class TestPlainBotDirectoryPrincipal:
-    @pytest.mark.asyncio
-    async def test_sender_runs_as_their_directory_user_and_others_are_refused(self, tmp_path):
-        ctx, _ = _plain_bot_slack(tmp_path)
-        event_context, ephemeral = await _handle(ctx, _member(email="carol@example.com"), user="U_CAROL")
-        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
-        # bob is in the directory but holds no role
-        event_context, ephemeral = await _handle(ctx, _member(email="bob@example.com"), user="U_BOB")
-        assert (event_context, ephemeral) == (None, "Not run: Permission required: agents:agent-1:run")
-        event_context, ephemeral = await _handle(ctx, _member())
-        assert (event_context.user_id, event_context.owner, ephemeral) == ("alice", "U123", None)
-        await event_context.authority.arequire("agents", "run", ctx.entity_id)
-
-    @pytest.mark.parametrize(
-        "authorization, resolve_user_identity",
-        [("roles", False), ("scopes", True), ("trusted-scopes", True), (None, True)],
-        ids=["no-identity-mapping", "scopes-only", "trusted-scopes-only", "authorization-off"],
-    )
-    @pytest.mark.asyncio
-    async def test_sender_is_not_checked_without_identity_mapping_managed_roles_or_authorization(
-        self, tmp_path, authorization, resolve_user_identity
-    ):
-        ctx, _ = _plain_bot_slack(tmp_path, authorization=authorization, resolve_user_identity=resolve_user_identity)
-        event_context, ephemeral = await _handle(ctx, _member(email="carol@example.com"))
-        assert (event_context.authority, ephemeral) == (None, None)

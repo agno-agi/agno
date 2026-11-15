@@ -1179,48 +1179,38 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
-            if interface.type == "slack":
+            if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
                 from agno.os.auth import _has_authorization_middleware
 
-                serves_super_agent = interface.team is not None and interface.team is self.manager
                 # Each Slack sender needs a principal: from users=, or by Slack email from the user directory
                 directory_mapped = (
                     getattr(interface, "resolve_user_identity", False) and self.user_directory is not None
                 )
                 # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
+                if (
+                    getattr(interface, "users", None) is None
+                    and not directory_mapped
+                    and (self.authorization or _has_authorization_middleware(app))
                 ):
-                    if serves_super_agent and not directory_mapped:
-                        raise ValueError(
-                            "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                            "pass Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) "
-                            "with AgentOS(user_directory=True) to resolve each sender by email from the user directory."
-                        )
-                    # Other Slack interfaces check senders only with users=, or the user directory and managed roles:
-                    # the user_store and role_store seeded onto app.state, which each Slack message reads
-                    if not serves_super_agent and not (directory_mapped and self._authz_role_store is not None):
-                        entity_id = interface.ctx.entity_id  # type: ignore[attr-defined]
-                        log_warning(
-                            f"Slack serving '{entity_id}' under authorization checks no Slack sender, so every "
-                            "Slack member can run it: pass Slack(users={slack_user_id: principal_id}), or "
-                            "Slack(resolve_user_identity=True) with AgentOS(user_directory=True) and managed roles."
-                        )
-                if serves_super_agent:
-                    # A Slack request carries no token, so only managed roles can authorize a Slack sender;
-                    # the API still starts, and each Slack sender is refused until roles are defined
-                    if self.authorization and self._authz_provider is None:
-                        log_warning(
-                            "Slack serving Super Agent under authorization requires managed roles: Slack requests carry "
-                            "no token, so every Slack sender is refused."
-                        )
-                    # Slack serving the Manager team reaches Company through the AgentOS that owns it
-                    if getattr(interface, "company", None) is None:
-                        from agno.os.interfaces.slack.company import CompanyBridge
+                    raise ValueError(
+                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
+                        "pass Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) "
+                        "with AgentOS(user_directory=True) to resolve each sender by email from the user directory."
+                    )
+                # A Slack request carries no token, so only managed roles can authorize a Slack sender;
+                # the API still starts, and each Slack sender is refused until roles are defined
+                if self.authorization and self._authz_provider is None:
+                    log_warning(
+                        "Slack serving Super Agent under authorization requires managed roles: Slack requests carry "
+                        "no token, so every Slack sender is refused."
+                    )
+                # Slack serving the Manager team reaches Company through the AgentOS that owns it
+                if getattr(interface, "company", None) is None:
+                    from agno.os.interfaces.slack.company import CompanyBridge
 
-                        key = delivery_key(interface)
-                        interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
-                        delivery_keys.add(key)
+                    key = delivery_key(interface)
+                    interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
+                    delivery_keys.add(key)
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(

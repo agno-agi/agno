@@ -246,52 +246,6 @@ def test_slack_serving_the_manager_resolves_senders_from_the_user_directory_unde
     assert any("requires managed roles" in message for message in warnings) is not roles
 
 
-@pytest.mark.parametrize(
-    "directory_mapped, authorization, warned",
-    [(False, "roles", True), (True, "roles", False), (True, "scopes", True), (True, "trusted-scopes", True)],
-    ids=["no-identity-mapping", "directory-and-roles", "scopes-only", "trusted-scopes-only"],
-)
-def test_slack_serving_an_agent_warns_when_no_slack_sender_is_checked_under_authorization(
-    db, monkeypatch, directory_mapped, authorization, warned
-):
-    pytest.importorskip("slack_bolt")
-    from agno.os import Authorization
-    from agno.os.interfaces.slack import Slack
-
-    secret = "manager-test-signing-key-at-least-32-characters"
-    if authorization == "scopes":
-        # authorization=True verifies tokens and checks their scopes, with no managed roles
-        monkeypatch.setenv("JWT_VERIFICATION_KEY", secret)
-        auth = True
-    else:
-        auth = Authorization(
-            verification_keys=[secret],
-            algorithm="HS256",
-            audience="manager-test",
-            trust_token_scopes=authorization == "trusted-scopes",
-        )
-        if authorization == "roles":
-            auth.define_role("member", ["agents:run"], default=True)
-    agent = Agent(id="helper", model=OfflineModel())
-    os = AgentOS(
-        id="manager-test",
-        db=db,
-        telemetry=False,
-        agents=[agent],
-        authorization=auth,
-        user_directory=directory_mapped or None,
-    )
-    os.interfaces.append(
-        Slack(agent=agent, token="xoxb-test", signing_secret="slack-secret", resolve_user_identity=directory_mapped)
-    )
-    warnings: List[str] = []
-    monkeypatch.setattr("agno.os.app.log_warning", warnings.append)
-    # The API still starts: a Slack request carries no token, so an agent's Slack senders are checked only with
-    # users=, or the user directory and managed roles
-    os.get_app()
-    assert len([message for message in warnings if "every Slack member can run it" in message]) == int(warned)
-
-
 def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jwt_middleware(db):
     pytest.importorskip("slack_bolt")
     from fastapi import FastAPI

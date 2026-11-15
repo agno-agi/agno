@@ -114,7 +114,7 @@ The manifest asks for these bot scopes:
 | `channels:read`, `groups:read` | Resolve public and private channel names |
 | `files:read`, `files:write` | Download incoming files and upload results |
 | `users:read` | Resolve Slack users and bots |
-| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`), and the directory user a sender runs as under authorization |
+| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`), and the directory user Super Agent runs as under authorization |
 
 The history scopes are needed for two reasons. Slack delivers a message event
 only when the app holds the history scope of that conversation type. And Super
@@ -199,10 +199,9 @@ once.
 
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
-returns it and adds the display name to run metadata. Under authorization with
-managed roles and `user_directory=True`, and for Super Agent under any
-authorization, the run is the member's AgentOS directory user instead, and a
-member with none is refused (see [Super Agent](#super-agent)).
+returns it and adds the display name to run metadata. Super Agent under
+authorization runs as the member's AgentOS directory user instead (see
+[Super Agent](#super-agent)).
 Sessions are stored under the run's `user_id`; map a member with `users=` to
 see the thread under their principal.
 
