@@ -441,6 +441,25 @@ async def test_event_context_from_run_owner_by_email():
     assert event_context.owner == "U_EMAIL"
 
 
+@pytest.mark.parametrize(
+    "metadata, payload_team, workspace",
+    [
+        # An org-installed app's button click names no workspace
+        ({"slack_team_id": "T_RUN"}, None, "T_RUN"),
+        ({"slack_team_id": "T_RUN"}, "T_CLICK", "T_RUN"),
+        # A run saved before its workspace was recorded
+        (None, "T_CLICK", "T_CLICK"),
+        ({}, None, None),
+    ],
+    ids=["no-payload-workspace", "run-workspace-first", "payload-workspace", "no-workspace"],
+)
+@pytest.mark.asyncio
+async def test_event_context_from_run_workspace_is_the_runs(metadata, payload_team, workspace):
+    run = SimpleNamespace(run_id="run-1", session_id="agent-1:C9:3.0", user_id="U123", metadata=metadata)
+    event_context = await event_context_from_run(make_ctx(), run, team_id=payload_team)
+    assert event_context.team_id == workspace
+
+
 @pytest.mark.asyncio
 async def test_event_context_from_run_plain_slack_id_and_legacy_session():
     event_context = await event_context_from_run(make_ctx(), _run("U123", session_id="agent-1:3.0"), channel="C1")

@@ -199,9 +199,10 @@ once.
 
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
-returns it and adds the display name to run metadata. Super Agent under
-authorization runs as the member's AgentOS directory user instead (see
-[Super Agent](#super-agent)).
+returns it and adds the display name to run metadata. For an Agent, Team or
+Workflow this only names the run's user: its senders are checked only with
+`users=`. Super Agent under authorization runs as the member's AgentOS directory
+user instead (see [Super Agent](#super-agent)).
 Sessions are stored under the run's `user_id`; map a member with `users=` to
 see the thread under their principal.
 
@@ -401,9 +402,22 @@ after `get_app()` refuses each message instead:
   it leaves out is refused, even when a directory user has their email.
 
 A Slack request carries no token, so token scopes grant a Slack sender nothing:
-permissions come from managed roles, re-checked on every message, approval,
-Stop, and Task result. With `authorization=True` and no roles, the API starts,
-logs a warning, and refuses every Slack sender.
+permissions come from managed roles. A directory user with no role of their own
+holds the default role, when one is flagged with `define_role(..., default=True)`;
+without a default role, each person needs a role assigned. With
+`authorization=True` and no roles, the API starts, logs a warning, and refuses
+every Slack sender.
+
+What each action checks:
+
+- **A message**: the sender's principal, its disabled flag and its roles.
+- **Approve or Deny**: the person who clicks is the run's owner, is in
+  `approvers=`, or has the owner's principal. The owner's disabled flag and roles
+  are read again, so a disabled owner's run does not resume.
+- **Stop**: the same check of the person who clicks. Roles and the disabled flag
+  are not read, so a person can always stop their own run.
+- **A Task result**: the author of the starting message is resolved again, and
+  the run's user must not be disabled and must still hold `tasks:read`.
 
 Only a directory user's id is matched, since the identity provider issued it
 (os.agno.com tokens carry the email as `sub`). The email column is never matched:
@@ -425,7 +439,8 @@ emails.
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
   signature, not the AgentOS key. Without AgentOS `authorization=`, every member
-  of the workspace can use the agent through Slack.
+  of the workspace can use the agent through Slack. With it, an Agent, Team or
+  Workflow still answers every member unless `users=` is set.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on

@@ -1,5 +1,6 @@
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, OSManager
 from agno.os.authz import Authorization
 from agno.os.interfaces.slack import Slack, security
+from agno.os.interfaces.slack.context import event_context_from_run
 from agno.os.interfaces.slack.handlers import _NOT_LINKED_MESSAGE, handle_message
 from agno.os.interfaces.slack.security import (
     can_act,
@@ -138,6 +140,25 @@ class TestCanAct:
         async_client_mock.users_info = AsyncMock(return_value=_member(email="bob@example.com"))
         assert await can_act(ctx, "U_BOB", event_context, client=async_client_mock) is False
 
+    @pytest.mark.parametrize("run_workspace, allowed", [("T123", True), (None, False)])
+    @pytest.mark.asyncio
+    async def test_can_act_on_a_recovered_run_uses_the_runs_workspace(
+        self, tmp_path, async_client_mock, run_workspace, allowed
+    ):
+        # After a restart, an org-installed app's button click names no workspace
+        ctx, _ = _super_agent_slack(tmp_path)
+        run = SimpleNamespace(
+            run_id="run-1",
+            session_id=f"{ctx.entity_id}:C1:100.1",
+            user_id="alice@example.com",
+            metadata={"slack_team_id": run_workspace} if run_workspace else None,
+        )
+        event_context = await event_context_from_run(ctx, run, owner="U_OWNER", client=async_client_mock, team_id=None)
+        async_client_mock.users_info = AsyncMock(return_value=_member())
+        assert await can_act(ctx, "U_ALT", event_context, client=async_client_mock) is allowed
+        # The owner written on the card needs no lookup
+        assert await can_act(ctx, "U_OWNER", event_context, client=async_client_mock) is True
+
 
 class TestResolvePrincipalAuthorization:
     @pytest.mark.asyncio
@@ -229,6 +250,31 @@ def _super_agent_slack(tmp_path, users=None, default_role=False):
     directory.upsert("bob@example.com")
     # The router binds the request's app, as for a signed event
     return slack.ctx.bind(app), directory
+
+
+def _agent_slack(tmp_path, authorization):
+    """A Slack interface serving an Agent under authorization, with a user directory and resolve_user_identity."""
+    if authorization == "roles-claim":
+        auth = Authorization(verification_keys=[JWT_KEY], algorithm="HS256", roles_claim="role")
+    else:
+        auth = Authorization(
+            verification_keys=[JWT_KEY], algorithm="HS256", trust_token_scopes=authorization == "trusted-scopes"
+        )
+    auth.define_role("asker", ["agents:run"]).assign("bob@example.com", "asker")
+    agent = Agent(id="agent-1")
+    agent_os = AgentOS(
+        id="slack-security",
+        db=SqliteDb(db_file=str(tmp_path / "os.db")),
+        agents=[agent],
+        authorization=auth,
+        user_directory=True,
+        telemetry=False,
+    )
+    slack = Slack(agent=agent, token=TOKEN, signing_secret=SIGNING_SECRET, resolve_user_identity=True)
+    agent_os.interfaces.append(slack)
+    app = agent_os.get_app()
+    agent_os.user_directory.upsert("alice@example.com")
+    return slack.ctx.bind(app)
 
 
 async def _handle(ctx, member, user="U123"):
@@ -373,3 +419,17 @@ class TestDirectoryPrincipal:
         ctx, _ = _super_agent_slack(tmp_path, users={"U_OTHER": "alice@example.com"})
         event_context, ephemeral = await _handle(ctx, _member())
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+
+class TestAgentSendersAreNotChecked:
+    @pytest.mark.parametrize("authorization", ["roles", "roles-claim", "trusted-scopes"])
+    # A directory user with no role, and a member with no directory user
+    @pytest.mark.parametrize("email", ["Alice@Example.com", "carol@example.com"])
+    @pytest.mark.asyncio
+    async def test_agent_under_authorization_answers_every_member_as_their_slack_email(
+        self, tmp_path, authorization, email
+    ):
+        # For an Agent, resolve_user_identity only names the run's user; its senders are checked only with users=
+        ctx = _agent_slack(tmp_path, authorization)
+        event_context, ephemeral = await _handle(ctx, _member(email=email))
+        assert (event_context.user_id, event_context.authority, ephemeral) == (email, None, None)
