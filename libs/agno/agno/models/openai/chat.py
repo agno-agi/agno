@@ -797,7 +797,12 @@ class OpenAIChat(Model):
             return True
 
         if not response.choices:
-            return False
+            # Some OpenAI-compatible servers (e.g. vLLM with
+            # --enable-force-include-usage) emit the final cumulative usage
+            # frame with empty choices. That frame carries the only complete
+            # usage snapshot, so accept it as the completion frame instead
+            # of dropping it.
+            return True
 
         return response.choices[0].finish_reason is not None
 
