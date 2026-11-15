@@ -1,3 +1,4 @@
+import locale
 import sys
 import tempfile
 from pathlib import Path
@@ -302,8 +303,11 @@ def test_run_shell_stderr():
         assert "err" in result
 
 
-def test_run_shell_non_utf8_bytes_do_not_error():
+def test_run_shell_non_utf8_bytes_do_not_error(monkeypatch):
     """Undecodable stdout must not fail the call (#11580)."""
+    # Pin the locale: on a cp1252 machine (e.g. Windows CI) the byte would
+    # otherwise decode as e-acute and this assertion would fail.
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=False: "ascii")
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)

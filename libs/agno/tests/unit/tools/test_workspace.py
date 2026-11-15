@@ -1,5 +1,6 @@
 import asyncio
 import json
+import locale
 import sys
 import tempfile
 from pathlib import Path
@@ -778,13 +779,16 @@ def test_async_run_command():
         assert "marker.txt" in out
 
 
-def test_run_command_non_utf8_bytes_do_not_error():
+def test_run_command_non_utf8_bytes_do_not_error(monkeypatch):
     """Output bytes that are not valid UTF-8 must not fail the tool call (#11580).
 
     run_command used subprocess.run(text=True), so it raised on undecodable
     bytes while arun_command decoded with errors="replace". Both must now
     return the same text.
     """
+    # Pin the locale: on a cp1252 machine (e.g. Windows CI) the byte would
+    # otherwise decode as e-acute and these assertions would fail.
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=False: "ascii")
     utf8_cmd = [
         sys.executable,
         "-c",
@@ -803,8 +807,11 @@ def test_run_command_non_utf8_bytes_do_not_error():
         assert asyncio.run(ws.arun_command(latin1_cmd)) == "caf\ufffd"
 
 
-def test_run_command_non_utf8_stderr_does_not_error():
+def test_run_command_non_utf8_stderr_does_not_error(monkeypatch):
     """Undecodable bytes on stderr must surface as an error message, not a decode failure."""
+    # Pin the locale: on a cp1252 machine (e.g. Windows CI) the byte would
+    # otherwise decode as e-acute and this assertion would fail.
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=False: "ascii")
     latin1_err_cmd = [
         sys.executable,
         "-c",

@@ -1,10 +1,15 @@
 """Tests for agno.skills.utils."""
 
+import locale
+
 from agno.skills.utils import run_script
 
 
-def test_run_script_non_utf8_bytes_do_not_error(tmp_path):
+def test_run_script_non_utf8_bytes_do_not_error(tmp_path, monkeypatch):
     """A script printing undecodable bytes must not fail the call (#11580)."""
+    # Pin the locale: on a cp1252 machine (e.g. Windows CI) the byte would
+    # otherwise decode as e-acute and this assertion would fail.
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=False: "ascii")
     script = tmp_path / "print_bytes.py"
     script.write_text("#!/usr/bin/env python3\nimport sys\nsys.stdout.buffer.write(b'caf' + bytes([0xE9]))\n")
     script.chmod(0o755)
