@@ -52,14 +52,16 @@ async def directory_principal(
     errors: Optional[Set[str]] = None,
 ) -> Optional[str]:
     """The directory user whose id is a Slack member's email; None for no such user or a failed lookup."""
-    key = f"principal:{team_id or ''}:{user}"
+    # The sender is checked against the workspace the event arrived in, so an event that names none is refused
+    if not team_id:
+        return None
+    key = f"principal:{team_id}:{user}"
     cached = ctx.lookup_cache.get(key)
     if cached is not None:
         return cached
     state = getattr(app if app is not None else ctx.app, "state", None)
     user_store = getattr(state, "user_store", None)
-    # The sender is checked against the workspace the event arrived in, so an event that names none is refused
-    if user_store is None or not user or not team_id:
+    if user_store is None or not user:
         return None
     try:
         response = await client.users_info(user=user)
@@ -86,19 +88,24 @@ async def directory_principal(
         # Every page is read: under one page, rows that only contain the email could push this user's out
         rows: List[dict] = []
         while True:
-            page = await user_store.alist(search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows))
+            page = await user_store.alist(
+                search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows), sort_by="id", order="asc"
+            )
             rows.extend(page)
             if len(page) < _DIRECTORY_PAGE_SIZE:
                 break
+        # A row deleted between pages shifts the rest up one, so the ids spelled as the email are also read directly
+        for spelling in dict.fromkeys([email, email.lower()]):
+            row = await user_store.aget(spelling)
+            if row is not None:
+                rows.append(row)
     except Exception as e:
         # Directory unreachable: no principal, so the sender is refused rather than run unchecked
         log_warning(f"user directory lookup failed for Slack user {user}: {type(e).__name__}")
         if errors is not None:
             errors.add("")
         return None
-    # The identity provider issued the directory id (os.agno.com tokens carry the email as sub). The email
-    # column is never matched: it is copied from a token claim that nothing verifies.
-    # Ids that differ only in case are separate accounts, so the sender is none of them
+    # Only the id, which the identity provider issued, is compared; two ids that differ only in case are both refused
     matches = {str(row.get("id") or "") for row in rows if str(row.get("id") or "").lower() == email.lower()}
     if len(matches) != 1:
         if matches:

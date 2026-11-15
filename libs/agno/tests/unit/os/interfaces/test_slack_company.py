@@ -524,8 +524,8 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
 @pytest.mark.asyncio
 async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_user, root_user, posted):
     db, agent_os = _authorized_company(tmp_path, run_user, user_directory=True, team_id="T_HOME")
-    for principal in ("alice", "bob", "carol"):
-        agent_os.user_directory.upsert(f"{principal}@example.com")
+    for principal in ("alice@example.com", "bob@example.com", "carol@example.com"):
+        agent_os.user_directory.upsert(principal)
     slack = FakeSlack(root_user=root_user)
     slack.emails.update({"U_ALICE": "alice@example.com", "U_CAROL": "carol@example.com"})
     slack.teams.update({"U_ALICE": "T_HOME", "U_CAROL": "T_HOME"})

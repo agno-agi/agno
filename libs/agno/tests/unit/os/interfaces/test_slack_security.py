@@ -1,6 +1,5 @@
 import json
 import time
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -145,12 +144,13 @@ class TestCanAct:
     async def test_can_act_on_a_recovered_run_uses_the_runs_workspace(
         self, tmp_path, async_client_mock, run_workspace, allowed
     ):
+        from .test_slack_handlers import _run
+
         # After a restart, an org-installed app's button click names no workspace
         ctx, _ = _super_agent_slack(tmp_path)
-        run = SimpleNamespace(
-            run_id="run-1",
+        run = _run(
+            "alice@example.com",
             session_id=f"{ctx.entity_id}:C1:100.1",
-            user_id="alice@example.com",
             metadata={"slack_team_id": run_workspace} if run_workspace else None,
         )
         event_context = await event_context_from_run(ctx, run, owner="U_OWNER", client=async_client_mock, team_id=None)
@@ -260,7 +260,7 @@ def _agent_slack(tmp_path, authorization):
         auth = Authorization(
             verification_keys=[JWT_KEY], algorithm="HS256", trust_token_scopes=authorization == "trusted-scopes"
         )
-    auth.define_role("asker", ["agents:run"]).assign("bob@example.com", "asker")
+    auth.define_role("asker", ["agents:run"])
     agent = Agent(id="agent-1")
     agent_os = AgentOS(
         id="slack-security",
@@ -376,15 +376,35 @@ class TestDirectoryPrincipal:
 
     @pytest.mark.asyncio
     async def test_id_differing_only_in_case_is_found_past_rows_that_contain_the_email(self, tmp_path, monkeypatch):
-        # A search page holds two rows here; newer rows that only contain the member's email fill the first page
+        # A search page holds two rows here; rows sorted first that only contain the member's email fill the first page
         monkeypatch.setattr(security, "_DIRECTORY_PAGE_SIZE", 2)
         ctx, directory = _super_agent_slack(tmp_path, default_role=True)
         directory.remove("alice@example.com")
         directory.upsert("ALICE@example.com")
         for i in range(3):
-            directory.upsert(f"x{i}alice@example.com")
+            directory.upsert(f"{i}alice@example.com")
         event_context, ephemeral = await _handle(ctx, _member())
         assert (event_context.user_id, ephemeral) == ("ALICE@example.com", None)
+
+    @pytest.mark.asyncio
+    async def test_member_is_found_when_a_row_is_deleted_between_search_pages(self, tmp_path, monkeypatch):
+        # A search page holds two rows here; rows sorted first that only contain the member's email fill the first page
+        monkeypatch.setattr(security, "_DIRECTORY_PAGE_SIZE", 2)
+        ctx, directory = _super_agent_slack(tmp_path)
+        for i in range(2):
+            directory.upsert(f"{i}alice@example.com")
+        search = directory.alist
+
+        async def alist(**kwargs):
+            page = await search(**kwargs)
+            # A row on the first page is deleted before the next is read, so the member's row shifts onto it
+            if kwargs["offset"] == 0:
+                directory.remove(page[0]["id"])
+            return page
+
+        monkeypatch.setattr(directory, "alist", alist)
+        event_context, ephemeral = await _handle(ctx, _member())
+        assert (event_context.user_id, ephemeral) == ("alice@example.com", None)
 
     @pytest.mark.asyncio
     async def test_reserved_principal_rows_are_never_a_slack_member(self, tmp_path):
@@ -393,34 +413,27 @@ class TestDirectoryPrincipal:
         event_context, ephemeral = await _handle(ctx, _member(email="sa:deploy@example.com"))
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
 
+    @pytest.mark.parametrize(
+        "directory_ids, slack_email",
+        [
+            # Two other cases of the email; a substring of another id is not a match
+            (["ALICE@example.com", "alice@EXAMPLE.com", "malice@example.com"], "Alice@Example.com"),
+            # An id spelled as the Slack email does not win over another case
+            (["alice@example.com", "ALICE@example.com"], "alice@example.com"),
+            (["alice@example.com", "ALICE@example.com"], "ALICE@example.com"),
+            (["alice@example.com", "ALICE@example.com"], "Alice@Example.com"),
+            # A first sign-in whose subject is the member's Slack email in another case
+            (["Alice@Example.com", "alice@example.com"], "alice@example.com"),
+        ],
+        ids=["other-cases", "lowercase-email", "uppercase-email", "mixed-case-email", "later-sign-in"],
+    )
     @pytest.mark.asyncio
-    async def test_ids_differing_only_in_case_are_refused(self, tmp_path):
+    async def test_ids_differing_only_in_case_are_refused(self, tmp_path, directory_ids, slack_email):
         ctx, directory = _super_agent_slack(tmp_path, default_role=True)
         directory.remove("alice@example.com")
-        directory.upsert("ALICE@example.com")
-        directory.upsert("alice@EXAMPLE.com")
-        # A substring of another id is not a match
-        directory.upsert("malice@example.com")
-        event_context, ephemeral = await _handle(ctx, _member())
-        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
-
-    @pytest.mark.parametrize("slack_email", ["alice@example.com", "ALICE@example.com", "Alice@Example.com"])
-    @pytest.mark.asyncio
-    async def test_id_spelled_as_the_slack_email_does_not_win_over_another_case(self, tmp_path, slack_email):
-        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
-        # alice@example.com is in the directory too
-        directory.upsert("ALICE@example.com")
+        for user_id in directory_ids:
+            directory.provision_from_claims(user_id, {"sub": user_id})
         event_context, ephemeral = await _handle(ctx, _member(email=slack_email))
-        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
-
-    @pytest.mark.asyncio
-    async def test_later_id_in_another_case_does_not_take_over_the_member(self, tmp_path):
-        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
-        directory.remove("alice@example.com")
-        directory.upsert("Alice@Example.com")
-        # A first sign-in whose subject is the member's Slack email in another case
-        directory.provision_from_claims("alice@example.com", {"sub": "alice@example.com"})
-        event_context, ephemeral = await _handle(ctx, _member(email="alice@example.com"))
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
 
     @pytest.mark.asyncio
@@ -442,8 +455,15 @@ class TestDirectoryPrincipal:
 
 class TestAgentSendersAreNotChecked:
     @pytest.mark.parametrize("authorization", ["roles", "roles-claim", "trusted-scopes"])
-    # A directory user with no role, and a member with no directory user
-    @pytest.mark.parametrize("email", ["Alice@Example.com", "carol@example.com"])
+    @pytest.mark.parametrize(
+        "email",
+        [
+            # A directory user with no role
+            "Alice@Example.com",
+            # A member with no directory user
+            "carol@example.com",
+        ],
+    )
     @pytest.mark.asyncio
     async def test_agent_under_authorization_answers_every_member_as_their_slack_email(
         self, tmp_path, authorization, email

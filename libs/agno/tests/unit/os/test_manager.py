@@ -232,7 +232,7 @@ def test_slack_serving_the_manager_resolves_senders_from_the_user_directory_unde
         user_directory=user_directory or None,
         manager=OSManager(model=OfflineModel()),
     )
-    # Each sender's principal is the directory user with their Slack email
+    # Each sender's principal is the directory user whose id is their Slack email
     os.interfaces.append(
         Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret", resolve_user_identity=True)
     )

@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -409,8 +410,8 @@ async def test_session_stopped_hands_the_stop_to_the_executor():
 # -- event_context_from_run --
 
 
-def _run(user_id: str, session_id: str = "agent-1:C9:3.0"):
-    return SimpleNamespace(run_id="run-1", session_id=session_id, user_id=user_id)
+def _run(user_id: str, session_id: str = "agent-1:C9:3.0", metadata: Optional[dict] = None):
+    return SimpleNamespace(run_id="run-1", session_id=session_id, user_id=user_id, metadata=metadata)
 
 
 @pytest.mark.asyncio
@@ -455,8 +456,7 @@ async def test_event_context_from_run_owner_by_email():
 )
 @pytest.mark.asyncio
 async def test_event_context_from_run_workspace_is_the_runs(metadata, payload_team, workspace):
-    run = SimpleNamespace(run_id="run-1", session_id="agent-1:C9:3.0", user_id="U123", metadata=metadata)
-    event_context = await event_context_from_run(make_ctx(), run, team_id=payload_team)
+    event_context = await event_context_from_run(make_ctx(), _run("U123", metadata=metadata), team_id=payload_team)
     assert event_context.team_id == workspace
 
 

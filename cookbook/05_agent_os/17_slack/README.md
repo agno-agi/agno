@@ -400,10 +400,11 @@ after `get_app()` refuses each message instead:
   member is neither and is refused. Directory users are added when they first
   sign in to AgentOS, or by an admin through the user directory API.
 - **`users=`**: an explicit allowlist, `users={"U0123ABC": "alice"}`. A member
-  it leaves out is refused, even when a directory user has their email.
+  it leaves out is refused, even when a directory user's id is their email.
 
-A Slack request carries no token, so token scopes grant a Slack sender nothing:
-permissions come from managed roles. A directory user with no role of their own
+A Slack request carries no token, so token scopes and roles from a token's role
+claim grant a Slack sender nothing: permissions come from roles stored for the
+user. A directory user with no role of their own
 holds the default role, when one is flagged with `define_role(..., default=True)`;
 without a default role, each person needs a role assigned. With
 `authorization=True` and no roles, the API starts, logs a warning, and refuses
@@ -418,12 +419,14 @@ What each action checks:
 - **Stop**: the same check of the person who clicks. Roles and the disabled flag
   are not read, so a person can always stop their own run.
 - **A Task result**: the author of the starting message is resolved again, and
-  the run's user must not be disabled and must still hold `tasks:read`.
+  the run's user must not be disabled, must still be allowed to run Super Agent
+  and must still hold `tasks:read`.
 
 Only a directory user's id is matched, since the identity provider issued it
 (os.agno.com tokens carry the email as `sub`). The email column is never matched:
-it is copied from a token's email claim, which nothing verifies. With an identity
-provider whose `sub` is not the email, use `users=`.
+it is copied from a token's email claim, which nothing verifies. The directory id
+must be an email the identity provider verified: with one whose `sub` is not the
+email, or one that lets people choose an email-shaped `sub`, use `users=`.
 
 In this mode AgentOS trusts Slack for the email. Whoever can set a member's
 profile email in the Slack workspace can act as the directory user with that id,
