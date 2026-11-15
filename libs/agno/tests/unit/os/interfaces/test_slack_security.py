@@ -404,6 +404,25 @@ class TestDirectoryPrincipal:
         event_context, ephemeral = await _handle(ctx, _member())
         assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
 
+    @pytest.mark.parametrize("slack_email", ["alice@example.com", "ALICE@example.com", "Alice@Example.com"])
+    @pytest.mark.asyncio
+    async def test_id_spelled_as_the_slack_email_does_not_win_over_another_case(self, tmp_path, slack_email):
+        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
+        # alice@example.com is in the directory too
+        directory.upsert("ALICE@example.com")
+        event_context, ephemeral = await _handle(ctx, _member(email=slack_email))
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
+    @pytest.mark.asyncio
+    async def test_later_id_in_another_case_does_not_take_over_the_member(self, tmp_path):
+        ctx, directory = _super_agent_slack(tmp_path, default_role=True)
+        directory.remove("alice@example.com")
+        directory.upsert("Alice@Example.com")
+        # A first sign-in whose subject is the member's Slack email in another case
+        directory.provision_from_claims("alice@example.com", {"sub": "alice@example.com"})
+        event_context, ephemeral = await _handle(ctx, _member(email="alice@example.com"))
+        assert (event_context, ephemeral) == (None, _NOT_LINKED_MESSAGE)
+
     @pytest.mark.asyncio
     async def test_disabled_or_roleless_directory_user_is_refused(self, tmp_path):
         ctx, directory = _super_agent_slack(tmp_path)

@@ -83,37 +83,33 @@ async def directory_principal(
     if not email or not email.isascii():
         return None
     try:
-        # The identity provider issued the directory id (os.agno.com tokens carry the email as sub). The email
-        # column is never matched: it is copied from a token claim that nothing verifies
-        row = await user_store.aget(email)
-        if row is None and email.lower() != email:
-            row = await user_store.aget(email.lower())
-        if row is None:
-            # An id that differs from the email only in case. Every page is read: under one page, rows that
-            # only contain the email could push this user's out
-            rows: List[dict] = []
-            while True:
-                page = await user_store.alist(search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows))
-                rows.extend(page)
-                if len(page) < _DIRECTORY_PAGE_SIZE:
-                    break
-            matches = [found for found in rows if str(found.get("id") or "").lower() == email.lower()]
-            if len(matches) > 1:
-                log_warning(
-                    f"Slack user {user} matches {len(matches)} directory ids differing only in case; none is used"
-                )
-            row = matches[0] if len(matches) == 1 else None
+        # Every page is read: under one page, rows that only contain the email could push this user's out
+        rows: List[dict] = []
+        while True:
+            page = await user_store.alist(search=email, limit=_DIRECTORY_PAGE_SIZE, offset=len(rows))
+            rows.extend(page)
+            if len(page) < _DIRECTORY_PAGE_SIZE:
+                break
     except Exception as e:
         # Directory unreachable: no principal, so the sender is refused rather than run unchecked
         log_warning(f"user directory lookup failed for Slack user {user}: {type(e).__name__}")
         if errors is not None:
             errors.add("")
         return None
-    # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
-    if row is None or is_reserved_principal(row["id"]):
+    # The identity provider issued the directory id (os.agno.com tokens carry the email as sub). The email
+    # column is never matched: it is copied from a token claim that nothing verifies.
+    # Ids that differ only in case are separate accounts, so the sender is none of them
+    matches = {str(row.get("id") or "") for row in rows if str(row.get("id") or "").lower() == email.lower()}
+    if len(matches) != 1:
+        if matches:
+            log_warning(f"Slack user {user} matches {len(matches)} directory ids differing only in case; none is used")
         return None
-    ctx.lookup_cache.set(key, row["id"])
-    return row["id"]
+    principal = matches.pop()
+    # A reserved server principal (sa:, __oauth__:, the scheduler) is never a Slack member
+    if is_reserved_principal(principal):
+        return None
+    ctx.lookup_cache.set(key, principal)
+    return principal
 
 
 async def sender_principal(ctx: "SlackContext", client: Any, user: str, team_id: Optional[str] = None) -> Optional[str]:

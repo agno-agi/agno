@@ -396,8 +396,9 @@ after `get_app()` refuses each message instead:
 - **`resolve_user_identity=True` with `user_directory=True`**: each message
   looks the sender up with Slack's `users.info` (it needs the `users:read.email`
   scope) and runs as the directory user whose id is the member's ASCII Slack
-  email, compared without case. Directory users are added when they first sign
-  in to AgentOS, or by an admin through the user directory API.
+  email, compared without case. When two directory ids differ only in case, the
+  member is neither and is refused. Directory users are added when they first
+  sign in to AgentOS, or by an admin through the user directory API.
 - **`users=`**: an explicit allowlist, `users={"U0123ABC": "alice"}`. A member
   it leaves out is refused, even when a directory user has their email.
 
@@ -433,7 +434,7 @@ emails.
 
 - **A changed Slack email takes up to 10 minutes.** The directory user a Slack
   member resolves to is cached like other Slack lookups; disabled users and roles
-  are checked fresh on every action.
+  are read fresh on every message, approval and Task result.
 - **One worker per Slack app.** Event dedupe, approval claims, and the index of
   running turns that Stop uses are kept in process. Run each Slack app on a
   single worker.
