@@ -39,9 +39,9 @@ media_agent = Agent(
     db=db,
     tools=[
         DalleTools(
-            model="dall-e-3",
+            model="gpt-image-2",
             size="1024x1024",
-            quality="standard",
+            quality="auto",
         ),
         ElevenLabsTools(
             enable_get_voices=False,

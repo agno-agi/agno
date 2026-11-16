@@ -202,7 +202,7 @@ class GeminiInteractions(Model):
     # generation_config. The SDK enforces these are mutually exclusive.
     # Examples:
     #   agent="deep-research-preview-04-2026"
-    #   agent="antigravity-preview-05-2026"
+    #   agent="antigravity-preview-09-2026"
     agent: Optional[str] = None
     # Deep Research agent_config knobs (only sent when `agent` is a deep-research id):
     collaborative_planning: Optional[bool] = None  # turn 1 returns a plan; flip to False to execute

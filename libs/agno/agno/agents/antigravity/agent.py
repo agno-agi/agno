@@ -37,7 +37,7 @@ class AntigravityAgent(BaseExternalAgent):
         id: Unique identifier (auto-generated from name if not set).
         api_key: Gemini API key. Falls back to GEMINI_API_KEY env var.
         base_url: API base URL.
-        agent: Base agent name (default "antigravity-preview-05-2026") or a custom agent id.
+        agent: Base agent name (default "antigravity-preview-09-2026") or a custom agent id.
         sources: Optional list of source dicts (gcs/repository/inline) to seed
             the environment on the first turn of each session.
         timeout: Per-request timeout in seconds.
