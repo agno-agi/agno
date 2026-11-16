@@ -25,8 +25,8 @@ def human_client(
     from openai_codex.async_client import AsyncCodexClient
     from openai_codex.client import CodexClient
 
-    if version("openai-codex") != "0.163.0":
-        raise ValueError("Native human-in-the-loop requires the tested openai-codex==0.163.0 transport")
+    if version("openai-codex") not in ("0.163.0", "0.167.2"):
+        raise ValueError("Native human-in-the-loop requires a tested openai-codex transport (0.163.0 or 0.167.2)")
     loop = asyncio.get_running_loop()
 
     class PermissionClient(CodexClient):
