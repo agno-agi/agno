@@ -1194,7 +1194,9 @@ class AgentOS:
 
                 super_agent = interface.team is not None and interface.team is self.manager
                 users = getattr(interface, "users", None)
-                served = "Super Agent" if super_agent else f"'{interface.ctx.entity_id}'"  # type: ignore[attr-defined]
+                # A custom interface typed "slack" may have no SlackContext
+                ctx = getattr(interface, "ctx", None)
+                served = "Super Agent" if super_agent else f"'{getattr(ctx, 'entity_id', interface.type)}'"
                 # Super Agent and authorize_senders=True check senders under authorization; users= checks them always
                 senders_checked = super_agent or getattr(interface, "authorize_senders", False)
                 # Each Slack sender needs a principal: from users=, or the directory user whose id is their Slack email
