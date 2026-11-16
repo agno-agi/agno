@@ -229,3 +229,13 @@ class TestClientParams:
 
         assert params["api_key"] == "explicit-key"
         assert params["resource"] == "explicit-resource"
+
+
+class TestDefaultModel:
+    def test_default_id_matches_anthropic_claude(self):
+        from agno.models.anthropic import Claude as AnthropicClaude
+
+        model = AzureFoundryClaude(api_key="test-key", resource="my-resource")
+
+        assert model.id == "claude-sonnet-5-5"
+        assert model.id == AnthropicClaude().id

@@ -33,7 +33,7 @@ class Claude(AnthropicClaude):
     For more information, see: https://docs.anthropic.com/en/docs/partner-models/azure-ai
     """
 
-    id: str = "claude-sonnet-4-5"
+    id: str = "claude-sonnet-5-5"
     name: str = "AzureFoundryClaude"
     provider: str = "AzureFoundry"
 
