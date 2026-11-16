@@ -1,7 +1,7 @@
 """Integration tests for the Metrics related methods of the AsyncPostgresDb class"""
 
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -28,6 +28,39 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
         except Exception:
             pass  # Ignore cleanup errors for metrics table
 
+        # Clean up component metrics
+        try:
+            component_metrics_table = await async_postgres_db_real._get_table(
+                "component_metrics", create_table_if_not_found=True
+            )
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(component_metrics_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for component metrics table
+
+        # Clean up aggregate metrics
+        try:
+            aggregate_metrics_table = await async_postgres_db_real._get_table(
+                "aggregate_metrics", create_table_if_not_found=True
+            )
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(aggregate_metrics_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for aggregate metrics table
+
+        # Clean up metrics refreshes
+        try:
+            metrics_refreshes_table = await async_postgres_db_real._get_table(
+                "metrics_refreshes", create_table_if_not_found=True
+            )
+            async with async_postgres_db_real.async_session_factory() as session:
+                await session.execute(metrics_refreshes_table.delete())
+                await session.commit()
+        except Exception:
+            pass  # Ignore cleanup errors for metrics refreshes table
+
         # Clean up sessions
         try:
             sessions_table = await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
@@ -48,6 +81,8 @@ async def _persist(db: AsyncPostgresDb, session) -> None:
     """
     await db.upsert_session(session)
     for run_index, run in enumerate(session.runs or []):
+        # A run is counted on the day it was created, so it is dated with its session
+        run.created_at = session.created_at
         await db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
 
 
@@ -65,8 +100,8 @@ async def test_calculate_metrics_no_sessions(async_postgres_db_real: AsyncPostgr
     """Test calculating metrics when no sessions exist"""
     result = await async_postgres_db_real.calculate_metrics()
 
-    # Should return None since there are no sessions
-    assert result is None
+    # Should return no day since there are no sessions
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -167,44 +202,6 @@ async def test_get_metrics_with_date_filter(async_postgres_db_real: AsyncPostgre
 
 
 @pytest.mark.asyncio
-async def test_metrics_calculation_starting_date(async_postgres_db_real: AsyncPostgresDb):
-    """Test getting metrics calculation starting date"""
-    metrics_table = await async_postgres_db_real._get_table("metrics", create_table_if_not_found=True)
-
-    # When no metrics exist, should look at first session
-    starting_date = await async_postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
-
-    # Should be None since no sessions exist either
-    assert starting_date is None
-
-    # Create a session
-    current_time = int(time.time())
-    agent_run = RunOutput(
-        run_id="test_run_1",
-        agent_id="test_agent_1",
-        user_id="test_user_1",
-        status=RunStatus.completed,
-        messages=[],
-    )
-
-    session = AgentSession(
-        session_id="test_session_1",
-        agent_id="test_agent_1",
-        user_id="test_user_1",
-        runs=[agent_run],
-        created_at=current_time - 86400,  # Yesterday
-    )
-
-    await async_postgres_db_real.upsert_session(session)
-
-    # Now starting date should be based on the session
-    starting_date = await async_postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
-
-    assert starting_date is not None
-    assert isinstance(starting_date, date)
-
-
-@pytest.mark.asyncio
 async def test_multiple_session_types_metrics(async_postgres_db_real: AsyncPostgresDb):
     """Test metrics calculation with multiple session types"""
     current_time = int(time.time())
@@ -239,88 +236,6 @@ async def test_multiple_session_types_metrics(async_postgres_db_real: AsyncPostg
     assert metrics_record["team_sessions_count"] == 0
     assert metrics_record["workflow_sessions_count"] == 0
     assert metrics_record["users_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_get_all_sessions_for_metrics_calculation(async_postgres_db_real: AsyncPostgresDb):
-    """Test getting sessions for metrics calculation"""
-    current_time = int(time.time())
-
-    # Create a few sessions
-    for i in range(3):
-        agent_run = RunOutput(
-            run_id=f"test_run_{i}",
-            agent_id=f"test_agent_{i}",
-            user_id="test_user_1",
-            status=RunStatus.completed,
-            messages=[],
-        )
-
-        session = AgentSession(
-            session_id=f"test_session_{i}",
-            agent_id=f"test_agent_{i}",
-            user_id="test_user_1",
-            runs=[agent_run],
-            created_at=current_time - (3600 * i),  # Spread over time
-        )
-
-        await _persist(async_postgres_db_real, session)
-
-    # Get all sessions for metrics
-    sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation()
-
-    assert len(sessions) == 3
-    assert all("session_type" in session for session in sessions)
-    assert all("user_id" in session for session in sessions)
-    assert all("runs" in session for session in sessions)
-
-
-@pytest.mark.asyncio
-async def test_get_sessions_for_metrics_with_timestamp_filter(async_postgres_db_real: AsyncPostgresDb):
-    """Test getting sessions for metrics with timestamp filtering"""
-    current_time = int(time.time())
-
-    # Create sessions at different times
-    timestamps = [
-        current_time - 7200,  # 2 hours ago
-        current_time - 3600,  # 1 hour ago
-        current_time - 1800,  # 30 minutes ago
-    ]
-
-    for i, timestamp in enumerate(timestamps):
-        agent_run = RunOutput(
-            run_id=f"test_run_{i}",
-            agent_id=f"test_agent_{i}",
-            user_id="test_user_1",
-            status=RunStatus.completed,
-            messages=[],
-        )
-
-        session = AgentSession(
-            session_id=f"test_session_{i}",
-            agent_id=f"test_agent_{i}",
-            user_id="test_user_1",
-            runs=[agent_run],
-            created_at=timestamp,
-        )
-
-        await async_postgres_db_real.upsert_session(session)
-
-    # Get sessions in the last hour only
-    start_timestamp = current_time - 3600
-    sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation(start_timestamp=start_timestamp)
-
-    # Should get 2 sessions (1 hour ago and 30 minutes ago)
-    assert len(sessions) == 2
-
-    # Get sessions with both start and end timestamps
-    end_timestamp = current_time - 1801
-    sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation(
-        start_timestamp=start_timestamp, end_timestamp=end_timestamp
-    )
-
-    # Should get 1 session (1 hour ago only)
-    assert len(sessions) == 1
 
 
 # One more session than a 65,535-parameter query can list next to the model and provider keys
@@ -363,7 +278,7 @@ async def test_calculate_metrics_past_query_parameter_limit(async_postgres_db_re
     assert result[0]["agent_sessions_count"] == SESSIONS_PAST_PARAMETER_LIMIT
     assert result[0]["agent_runs_count"] == SESSIONS_PAST_PARAMETER_LIMIT
     assert result[0]["model_metrics"] == [
-        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SESSIONS_PAST_PARAMETER_LIMIT}
+        {"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": SESSIONS_PAST_PARAMETER_LIMIT, "cost": None}
     ]
 
 

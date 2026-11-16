@@ -1038,6 +1038,21 @@ def test_parallel_tool_batch_has_one_checkpoint_and_forks_whole(fake_sdk, tmp_db
     assert sorted(t.tool_call_id for t in continuation.tools) == ["call-1", "call-2"]
 
 
+def test_continuing_in_place_before_the_fork_point_lowers_it(fake_sdk, tmp_db):
+    from agno.run.base import RunStatus
+
+    messages = [
+        _recorded("user", "u1", 0, "first"),
+        _recorded("assistant", "a1", 1, "reply one"),
+        _recorded("user", "u2", 2, "second"),
+        _recorded("assistant", "a2", 3, "reply two"),
+    ]
+    run = _recorded_run(messages, status=RunStatus.error)
+    run.forked_from_message_index = 4
+    _, _, continuation = ClaudeAgent(db=tmp_db)._build_continuation(run, continue_from=1, fork=False, input="next")
+    assert continuation.forked_from_message_index == 1, "the work continued after the cut is not counted as copied"
+
+
 @pytest.mark.asyncio
 async def test_finished_run_continues_in_the_background_as_a_fork(scripted, tmp_db):
     import asyncio
@@ -1941,11 +1956,23 @@ def test_metrics_page_counts_runs_per_model(fake_sdk, tmp_db):
                 time.sleep(0.01)
             else:
                 raise AssertionError("Automatic background run did not complete")
+        # A read never calculates under AgentOS: the refresh builds the runs' day. A refresh that finds
+        # another one running answers already_running and calculates nothing, so ask again until it runs
+        for _ in range(200):
+            response = client.post("/metrics/refresh")
+            assert response.status_code == 200
+            if isinstance(response.json(), list):
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("Metrics refresh never ran")
         body = client.get("/metrics").json()
         days = body["metrics"] if isinstance(body, dict) else body
         today = days[-1]
         assert today["agent_runs_count"] == 2
-        assert today["model_metrics"] == [{"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2}]
+        assert today["model_metrics"] == [
+            {"model_id": "claude-sonnet-4-6", "model_provider": "Anthropic", "count": 2, "cost": None}
+        ]
 
 
 @pytest.mark.parametrize("stream", [False, True])

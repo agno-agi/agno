@@ -70,6 +70,12 @@ class _Batch:
     def zadd(self, key, members_scores):
         self.commands.append(("zadd", key, members_scores))
 
+    def zrem(self, key, members):
+        self.commands.append(("zrem", key, members))
+
+    def hincrby(self, key, field, amount):
+        self.commands.append(("hincrby", key, field, amount))
+
     def zrange(self, key, range_query, reverse=False):
         self.commands.append(("zrange", key, range_query, reverse))
 

@@ -8,7 +8,8 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Union
+import time
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -153,6 +154,8 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
+# How often the worker retires sandbox computers kept warm past their window.
+_WARM_SWEEP_SECONDS = 180.0
 
 
 def resolve_stop_timeout(config: QueueConfig) -> int:
@@ -614,6 +617,21 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     )
 
 
+def _lease_lost(job_id: str) -> bool:
+    from agno.run.concurrency import get_worker_ownership
+
+    ownership = get_worker_ownership(job_id)
+    return ownership is not None and ownership.cancellation_cause == "lease_lost"
+
+
+def _epoch_text(epoch: Any) -> str:
+    if not isinstance(epoch, (int, float)):
+        return "an unknown time"
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
+
+
 class QueueWorker:
     """Claims and executes durable queue jobs.
 
@@ -646,6 +664,7 @@ class QueueWorker:
         self.authorization_app = authorization_app
         self._company_db: Any = None
         self._company_schedule_db: Any = None
+        self._sandbox_agents: List[Any] = []
         self.store = store
         self.resolve_component = resolve_component
         self.config = config
@@ -688,6 +707,10 @@ class QueueWorker:
         self._heartbeat_thread: Optional[Any] = None
         self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
+        self._warm_sweep_task: Optional[asyncio.Task] = None
+        # Wall and monotonic time of the last heartbeat that renewed every in-flight lease.
+        self._last_renewal: Optional[Tuple[float, float]] = None
+        self._lease_check: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         if self._running:
@@ -801,7 +824,7 @@ class QueueWorker:
 
         self._heartbeat_stop = threading.Event()
         stop_event = self._heartbeat_stop
-        interval = max(1.0, self.config.lock_grace_seconds / 3)
+        interval = self._heartbeat_interval
 
         def _beat() -> None:
             # Same contract as the loop-task heartbeat: beat whatever is in
@@ -818,7 +841,8 @@ class QueueWorker:
                         if job_ids:
                             result = beat(self.worker_id, job_ids)
                             if loop is not None and inspect.iscoroutine(result):
-                                loop.run_until_complete(result)
+                                result = loop.run_until_complete(result)
+                            self._record_renewal(job_ids, result)
                     except Exception as e:
                         log_error(f"Job queue heartbeat error: {e}")
             finally:
@@ -840,7 +864,7 @@ class QueueWorker:
         # entry a harmless no-op.
         for _ in range(3):
             try:
-                return list(self._in_flight.keys())
+                return [job_id for job_id in list(self._in_flight.keys()) if not _lease_lost(job_id)]
             except RuntimeError:
                 continue
         return []
@@ -856,6 +880,8 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._task, timeout=5)
         self._task = None
+        # A warm sweep keeps running through the drain and shares its stop_timeout.
+        deadline = asyncio.get_running_loop().time() + self.stop_timeout
 
         # Drain: give in-flight runs a chance to finish. Stamp the drain
         # cause FIRST: on drain timeout the wait_for cancels the gather,
@@ -864,10 +890,13 @@ class QueueWorker:
         # and the foreground cancellation-persist guards consult the cause
         # while those tasks unwind. Runs that finish healthily inside the
         # window never read it.
-        from agno.run.concurrency import set_cancellation_cause
+        from agno.run.concurrency import get_worker_ownership, set_cancellation_cause
 
         for draining_id in list(self._in_flight.keys()):
-            set_cancellation_cause(draining_id, "drain")
+            # A run that lost its lease is already unwinding without writes; draining it would write.
+            draining = get_worker_ownership(draining_id)
+            if draining is None or draining.cancellation_cause != "lease_lost":
+                set_cancellation_cause(draining_id, "drain")
         if self._in_flight:
             # asyncio.wait, NOT wait_for(gather(...)): wait never cancels its
             # awaitables on timeout, which makes the straggler loop below the
@@ -887,6 +916,15 @@ class QueueWorker:
         if self._in_flight:
             await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
         self._in_flight.clear()
+        # Each retirement is shielded, so a cancelled sweep still removes the computer it released.
+        if self._warm_sweep_task is not None:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining > 0:
+                await asyncio.wait({self._warm_sweep_task}, timeout=remaining)
+            self._warm_sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._warm_sweep_task, timeout=5)
+        self._warm_sweep_task = None
         # The heartbeat exits on its own once nothing is in flight (its loop
         # condition covers the drain and the straggler window); the cancel is
         # a backstop for a loop parked mid-sleep
@@ -895,6 +933,11 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._heartbeat_task, timeout=5)
         self._heartbeat_task = None
+        if self._lease_check is not None and not self._lease_check.done():
+            self._lease_check.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._lease_check
+        self._lease_check = None
         # The heartbeat THREAD is only signalled here, after the drain and
         # straggler cleanup: in-flight runs need live leases for the whole
         # stop_timeout window. join in a worker thread so a beat in a slow
@@ -914,15 +957,25 @@ class QueueWorker:
 
         last_cleanup = _time.monotonic()
         last_sweep: Optional[float] = None
+        last_warm_sweep: Optional[float] = None
         while self._running:
             try:
+                # In its own task: removing many computers must not hold up claims.
+                if (
+                    self._sandbox_agents
+                    and (last_warm_sweep is None or _time.monotonic() - last_warm_sweep >= _WARM_SWEEP_SECONDS)
+                    and (self._warm_sweep_task is None or self._warm_sweep_task.done())
+                ):
+                    self._warm_sweep_task = asyncio.create_task(self._sweep_warm_computers())
+                    last_warm_sweep = _time.monotonic()
                 # The sweep keeps its own cadence (at most once per poll
                 # interval): a local wake exists to claim faster, and under a
                 # submission burst it must not multiply sweep queries too
-                if last_sweep is None or _time.monotonic() - last_sweep >= self.config.poll_interval:
-                    await self._sweep_exhausted()
-                    last_sweep = _time.monotonic()
-                await self._claim_burst()
+                if await self._renew_own_leases():
+                    if last_sweep is None or _time.monotonic() - last_sweep >= self.config.poll_interval:
+                        await self._sweep_exhausted()
+                        last_sweep = _time.monotonic()
+                    await self._claim_burst()
                 # Retention: delete old terminal jobs about once an hour
                 if _time.monotonic() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_jobs", None)):
                     removed = await self.store.cleanup_jobs(self.config.retention_seconds)
@@ -975,13 +1028,134 @@ class QueueWorker:
                 await asyncio.wait_for(event.wait(), timeout=self.config.poll_interval)
         event.clear()
 
+    @property
+    def _heartbeat_interval(self) -> float:
+        return max(1.0, self.config.lock_grace_seconds / 3)
+
+    def _record_renewal(self, job_ids: List[str], renewed: Any) -> None:
+        """Note a heartbeat result; a short count starts a lease check on the loop. Safe from any thread."""
+        if not isinstance(renewed, int):
+            return
+        if renewed >= len(job_ids):
+            self._last_renewal = (time.time(), time.monotonic())
+            return
+        loop = self._loop
+        if loop is not None:
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._start_lease_check, list(job_ids))
+
+    def _start_lease_check(self, job_ids: List[str]) -> None:
+        if self._lease_check is None or self._lease_check.done():
+            self._lease_check = asyncio.create_task(self._check_leases(job_ids))
+
+    async def _check_leases(self, job_ids: List[str]) -> None:
+        """Cancel the executions here whose tickets another worker has swept or reclaimed.
+
+        A short heartbeat count is not proof, since a store error renews nothing too: each
+        ticket is read back, and a ticket that cannot be read cancels nothing.
+        """
+        from agno.run.concurrency import get_worker_ownership
+
+        for job_id in job_ids:
+            task = self._in_flight.get(job_id)
+            ownership = get_worker_ownership(job_id)
+            if (
+                task is None
+                or task.done()
+                or ownership is None
+                or ownership.worker_id != self.worker_id
+                or ownership.cancellation_cause == "lease_lost"
+            ):
+                # An execution already cancelled for a lost lease is left to finish its cleanup.
+                continue
+            try:
+                ticket = await self.store.get_job(job_id)
+            except Exception as e:
+                log_warning(f"Job queue: could not read ticket {job_id} to confirm its lease: {e}")
+                continue
+            # Settling its own ticket also leaves it unlocked, so that is checked after the read.
+            if ticket is None or ownership.ticket_settling or task.done():
+                continue
+            if (
+                ticket.get("status") == "running"
+                and ticket.get("locked_by") == self.worker_id
+                and ticket.get("attempt") == ownership.attempt
+            ):
+                continue
+            log_warning(
+                f"Job queue: job {job_id} attempt {ownership.attempt} is still executing on this worker, but its "
+                f"ticket is now {ticket.get('status')} (locked by {ticket.get('locked_by')}, attempt "
+                f"{ticket.get('attempt')}); cancelling this execution. {self._describe_last_renewal()}"
+            )
+            ownership.cancellation_cause = "lease_lost"
+            task.cancel()
+
+    def _describe_last_renewal(self) -> str:
+        last = self._last_renewal
+        if last is None:
+            return "No full lease renewal was recorded on this worker."
+        wall, monotonic = time.time() - last[0], time.monotonic() - last[1]
+        text = (
+            f"The last full lease renewal was {wall:.0f}s ago by the wall clock and {monotonic:.0f}s ago by the "
+            f"monotonic clock; renewals are due every {self._heartbeat_interval:.0f}s."
+        )
+        if wall - monotonic > self._heartbeat_interval:
+            text += " The wall clock moved further than the monotonic clock, which points to a host or VM pause."
+        return text
+
+    async def _renew_own_leases(self) -> bool:
+        """Renew this worker's leases before any lease is judged stale; False skips the tick's sweep and claims.
+
+        After a host or VM pause the wall clock can jump past lock_grace before the heartbeat
+        beats again, and the sweep or a reclaim would take runs still executing here.
+        """
+        job_ids = [job_id for job_id, task in self._in_flight.items() if not task.done() and not _lease_lost(job_id)]
+        if not job_ids:
+            return True
+        last = self._last_renewal
+        if last is not None and time.time() - last[0] < 2 * self._heartbeat_interval:
+            return True
+        try:
+            renewed = await self.store.heartbeat_jobs(self.worker_id, job_ids)
+        except Exception as e:
+            log_warning(f"Job queue: could not renew this worker's leases ({e}); skipping this tick's sweep and claims")
+            return False
+        self._record_renewal(job_ids, renewed)
+        return not isinstance(renewed, int) or renewed >= len(job_ids)
+
+    def _executing_here(self, job: Dict[str, Any]) -> bool:
+        """Whether this worker is still executing the swept job's attempt."""
+        from agno.run.concurrency import get_worker_ownership
+
+        task = self._in_flight.get(job["id"])
+        ownership = get_worker_ownership(job["id"])
+        return (
+            task is not None
+            and not task.done()
+            and ownership is not None
+            and ownership.worker_id == self.worker_id
+            and ownership.attempt == job.get("attempt")
+        )
+
+    def _begin_ticket_write(self, job_id: str) -> bool:
+        """Mark the execution as settling its own ticket; False once another worker owns the ticket."""
+        from agno.run.concurrency import get_worker_ownership
+
+        ownership = get_worker_ownership(job_id)
+        if ownership is None:
+            return True
+        if ownership.cancellation_cause == "lease_lost":
+            return False
+        ownership.ticket_settling = True
+        return True
+
     async def _heartbeat_loop(self) -> None:
         # FALLBACK only (see start()): sync-wrapped stores and clonable async
         # stores beat from the dedicated thread, which survives a starved
         # event loop. This loop task cannot - acceptable for the in-memory
         # store (single process = the sweeper shares the starved loop) and
         # warned about loudly for unclonable async stores.
-        interval = max(1.0, self.config.lock_grace_seconds / 3)
+        interval = self._heartbeat_interval
         # Runs while claiming OR draining: stop() flips _running BEFORE the
         # drain, and the old `while self._running` condition killed the
         # heartbeat at drain start - contradicting stop()'s own comment and
@@ -992,9 +1166,9 @@ class QueueWorker:
         while self._running or self._in_flight:
             try:
                 await asyncio.sleep(interval)
-                job_ids = list(self._in_flight.keys())
+                job_ids = [job_id for job_id in self._in_flight.keys() if not _lease_lost(job_id)]
                 if job_ids:
-                    await self.store.heartbeat_jobs(self.worker_id, job_ids)
+                    self._record_renewal(job_ids, await self.store.heartbeat_jobs(self.worker_id, job_ids))
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1018,6 +1192,13 @@ class QueueWorker:
             job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id)
             if job is None:
                 break
+            running = self._in_flight.get(job["id"])
+            if running is not None and not running.done():
+                log_error(
+                    f"Job queue: claimed job {job['id']} while it is still executing on this worker; "
+                    "not starting a second execution"
+                )
+                continue
             task = asyncio.create_task(self._execute_claimed(job))
             job_id = job["id"]
             self._in_flight[job_id] = task
@@ -1033,6 +1214,32 @@ class QueueWorker:
     def _prune_in_flight(self) -> None:
         for job_id in [jid for jid, t in self._in_flight.items() if t.done()]:
             self._in_flight.pop(job_id, None)
+
+    async def _sweep_warm_computers(self) -> None:
+        """Retire the sandbox computers kept warm past their window, for every sandboxed agent served here.
+
+        A session that never sends another turn would otherwise keep its paused computer
+        forever. Each release is a per-row compare-and-set, so every replica may sweep.
+        """
+        from agno.sandbox import _harness
+
+        # Resolve every coordinator first, so each one knows all the agents it sweeps for.
+        coordinators: Dict[int, Tuple[Any, Any]] = {}
+        for agent in self._sandbox_agents:
+            try:
+                coordinator = _harness.coordinator(agent)
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            coordinators.setdefault(id(coordinator), (agent, coordinator))
+        for agent, coordinator in coordinators.values():
+            try:
+                removed = await coordinator.asweep_warm()
+            except Exception as e:
+                log_warning(f"Job queue: warm sweep failed for agent {agent.get_id()}: {e}")
+                continue
+            if removed:
+                log_info(f"Job queue warm sweep: retired {removed} warm sandbox computer(s) for agent {agent.get_id()}")
 
     async def _sweep_exhausted(self) -> None:
         """Fail exhausted stale jobs visibly. Ownership FIRST: acquire the
@@ -1050,6 +1257,8 @@ class QueueWorker:
         happened, and any replica may do that honestly."""
         swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
+            if self._executing_here(job):
+                continue
             try:
                 await self._sweep_job(job)
             except Exception as e:
@@ -1138,7 +1347,10 @@ class QueueWorker:
 
             await _project_run_before_settle(self, job, "failed", task_error)
         await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
-        log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
+        log_warning(
+            f"Job queue: swept job {job['id']} to failed; its lease held by {job.get('locked_by')} was last "
+            f"renewed at {_epoch_text(job.get('locked_at'))} by the store clock ({error})"
+        )
 
     async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
         """The component for run-row reads and writes: an unbuildable factory
@@ -2006,6 +2218,8 @@ class QueueWorker:
         backstop for a genuinely unsettled ticket is the sweep - we stop
         refreshing the lock the moment we return, so the ticket is collected
         once the lease expires - but it must be LOUD, never silent."""
+        if not self._begin_ticket_write(job_id):
+            return False
         try:
             if self._company_db is not None and status in {"completed", "failed", "cancelled"}:
                 from agno.company.execution import _project_run, _project_run_before_settle
@@ -2031,9 +2245,9 @@ class QueueWorker:
             return False
         if not applied:
             log_error(
-                f"Job queue: could not settle ticket {job_id} as {status!r} - the claim was reclaimed, or the "
-                "store could not commit the write. The ticket stays RUNNING with an unrefreshed lease and "
-                "will be collected by the sweep."
+                f"Job queue: could not settle ticket {job_id} as {status!r} - another worker swept or reclaimed "
+                "it, or the store could not commit the write. A ticket still RUNNING under this worker is "
+                "collected by the sweep once its lease expires."
             )
         return applied
 
@@ -2044,6 +2258,8 @@ class QueueWorker:
         _asettle_ticket). None means the store declined or could not commit -
         the ticket is left RUNNING for the sweep rather than silently
         assumed requeued."""
+        if not self._begin_ticket_write(job_id):
+            return None
         try:
             if self._company_db is not None:
                 from agno.company.execution import _project_run
@@ -2068,9 +2284,9 @@ class QueueWorker:
             return None
         if outcome is None:
             log_error(
-                f"Job queue: could not retry-or-fail ticket {job_id} - the claim was reclaimed, or the store "
-                "could not commit the write. The ticket stays RUNNING with an unrefreshed lease and will be "
-                "collected by the sweep."
+                f"Job queue: could not retry-or-fail ticket {job_id} - another worker swept or reclaimed it, "
+                "or the store could not commit the write. A ticket still RUNNING under this worker is "
+                "collected by the sweep once its lease expires."
             )
         return outcome
 
@@ -2103,7 +2319,9 @@ class QueueWorker:
             ):
                 from agno.company.execution import _ExecutorAuthorization
 
-                authority = _ExecutorAuthorization(authority)
+                authority = _ExecutorAuthorization(
+                    authority, task_id=payload.get("company_task_id") or (snapshot or {}).get("company_task_id")
+                )
             with authorization_scope(lambda: authority):
                 await self._execute_claimed_inner(job, ownership)
 
@@ -2400,6 +2618,9 @@ class QueueWorker:
             else:
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:
+            if ownership is not None and ownership.cancellation_cause == "lease_lost":
+                # Another worker owns the ticket now: anything written here would contradict its record.
+                raise
             # Shutdown drain: the run was interrupted, not failed by its own
             # doing — requeue if budget remains, else fail visibly. When it
             # would land failed (budget spent), the run-row error is persisted
@@ -3351,6 +3572,8 @@ async def queue_lifespan(app: Any, agent_os: Any):
     )
     worker._company_db = getattr(agent_os, "_company_db", None)
     worker._company_schedule_db = agent_os.db
+    if callable(getattr(agent_os, "_sandboxed_agents", None)):
+        worker._sandbox_agents = agent_os._sandboxed_agents()
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:

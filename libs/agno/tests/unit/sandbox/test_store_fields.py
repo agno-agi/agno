@@ -25,3 +25,11 @@ def test_derived_bindings_table_names_fit_postgres_identifiers():
     second = PostgresDb(db_url=url, session_table="s" * 59 + "t").sandbox_table_name
     assert len(first.encode()) <= 63 and len(second.encode()) <= 63
     assert first != second
+
+
+def test_bindings_table_round_trips_through_the_stored_db_config():
+    url = "postgresql+psycopg://user:password@localhost:1/db"
+    for adapter in (PostgresDb, AsyncPostgresDb):
+        stored = adapter(db_url=url, sandbox_table="explicit").to_dict()
+        assert stored["sandbox_table"] == "explicit"
+        assert adapter.from_dict(stored).sandbox_table_name == "explicit"

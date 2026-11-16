@@ -27,6 +27,113 @@ from tests.integration.db.test_company_routines_parity import create_routine
 system = execution_system
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_kind", ["ready", "routine_draft"])
+async def test_cancelled_project_automation_skips_without_failure_streak(system, tmp_path, task_kind):
+    from agno.company.automation_history import aautomation_failures
+
+    client, db, _, _, _ = system
+    if task_kind == "ready":
+        task = await accepted(client)
+    else:
+        task, _, _ = await routine_proposal(
+            system, tmp_path, required_checks=["has_source_evidence", "executor_registered"]
+        )
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, schedule = await automation(system)
+    for _ in range(2):
+        await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+        result = await tick(executor, db)
+        assert result["status"] == "success", result
+        outcome = next(row for row in result["output"]["tasks"] if row["task_id"] == task["id"])
+        assert outcome["status"] == "skipped", outcome
+        assert outcome["reason"] == (
+            "Cannot start Task work in a cancelled Project"
+            if task_kind == "ready"
+            else "Cannot accept Task work in a cancelled Project"
+        )
+        assert (await _call(db, "get_schedule_runs", schedule["id"]))[1] == 0
+        assert await aautomation_failures(db, db) == []
+    assert (await _call(db, "get_task", task["id"]))["status"] == ("ready" if task_kind == "ready" else "backlog")
+
+
+@pytest.mark.asyncio
+async def test_denied_dispatch_in_cancelled_project_does_not_abort_tick(system, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    client, db, _, _, _ = system
+    stuck = await accepted(client)
+    other = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{stuck['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+    original_dispatch = executor._dispatch
+    complete_projects = AsyncMock(wraps=executor._complete_projects)
+
+    async def dispatch(task):
+        if task["id"] == stuck["id"]:
+            raise PermissionError("Executor run permission revoked")
+        return await original_dispatch(task)
+
+    monkeypatch.setattr(executor, "_dispatch", dispatch)
+    monkeypatch.setattr(executor, "_complete_projects", complete_projects)
+    outcomes = await executor._tick()
+    assert any(row["task_id"] == other["id"] and row.get("action") == "submitted" for row in outcomes)
+    complete_projects.assert_awaited_once()
+    assert (await _call(db, "get_task", stuck["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_policy_refusal_keeps_its_reason_after_project_cancellation(system, monkeypatch):
+    import agno.company.routines as routines
+
+    client, db, _, _, _ = system
+    task = await accepted(client)
+    response = await client.post(
+        f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+    )
+    assert response.status_code == 200, response.text
+    executor, _ = await automation(system)
+
+    async def refuse(*args):
+        raise ValueError("Policy denied")
+
+    monkeypatch.setattr(routines, "_check_automatic_policy", refuse)
+    with pytest.raises(ValueError, match="Policy denied"):
+        await executor._dispatch(await _call(db, "get_task", task["id"]))
+    assert (await _call(db, "get_task", task["id"]))["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_project_cancelled_during_automation_checks_is_skipped(system, tmp_path, monkeypatch):
+    import agno.company.routines as routines
+
+    client, db, _, _, _ = system
+    task, _, _ = await routine_proposal(system, tmp_path)
+    original = routines._has_source_evidence
+
+    async def cancel_during_check(*args):
+        response = await client.post(
+            f"/company/projects/{task['project_id']}/transitions", json={"target": "cancelled", "reason": "Stop"}
+        )
+        assert response.status_code == 200, response.text
+        return await original(*args)
+
+    monkeypatch.setattr(routines, "_has_source_evidence", cancel_during_check)
+    executor, schedule = await automation(system)
+    await _call(db, "update_schedule", schedule["id"], next_run_at=0)
+    result = await tick(executor, db)
+    assert result["status"] == "success", result
+    assert result["output"]["tasks"][0]["status"] == "skipped"
+    assert result["output"]["tasks"][0]["reason"] == "Cannot change Task status in a cancelled Project"
+    assert (await _call(db, "get_task", task["id"]))["status"] == "backlog"
+
+
 def delete_ticket(worker, run_id):
     table = worker.config.db._get_table("jobs")
     with worker.config.db.Session() as session, session.begin():

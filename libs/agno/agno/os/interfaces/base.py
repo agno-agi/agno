@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Union
 from fastapi import APIRouter
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -11,7 +12,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 class BaseInterface(ABC):
     type: str
     version: str = "1.0"
-    agent: Optional[Union[Agent, RemoteAgent]] = None
+    agent: Optional[Union[Agent, RemoteAgent, AgentProtocol]] = None
     team: Optional[Union[Team, RemoteTeam]] = None
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None
 
@@ -38,3 +39,11 @@ class BaseInterface(ABC):
         so entries reflect the interface's *actual* mount prefix.
         """
         return {}
+
+    async def astart(self) -> None:
+        """Start the background work this interface runs (e.g. Slack result delivery) on AgentOS startup. The default runs none."""
+        pass
+
+    async def aclose(self) -> None:
+        """Release the running work this interface holds (e.g. A2A tasks) on AgentOS shutdown. The default holds none."""
+        pass

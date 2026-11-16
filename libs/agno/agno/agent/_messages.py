@@ -460,8 +460,13 @@ def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metric
     if session.session_data is None:
         session.session_data = {}
     runs = session.runs or []
-    # A run that can still change, failed and running runs included, would drop the usage when it is saved again
-    finished = [index for index, run in enumerate(runs) if run.status in (RunStatus.completed, RunStatus.cancelled)]
+    # A run that can still change, failed and running runs included, would drop the usage when it is saved again, and
+    # a run copied into a forked session is counted in the session it was made in
+    finished = [
+        index
+        for index, run in enumerate(runs)
+        if run.status in (RunStatus.completed, RunStatus.cancelled) and not run.forked_from_session_id
+    ]
     latest_run = None
     if finished:
         # Update a copy, never the loaded run: history run objects are shared between reads of the same session
