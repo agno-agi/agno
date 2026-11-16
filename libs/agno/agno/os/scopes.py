@@ -496,6 +496,14 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "GET /metrics": ["metrics:read"],
         "POST /metrics/refresh": ["metrics:write"],
         "GET /metrics/refresh/status": ["metrics:read"],
+        "GET /os/metrics/sessions": ["metrics:read"],
+        "GET /os/metrics/tokens": ["metrics:read"],
+        "GET /os/metrics/users": ["metrics:read"],
+        "GET /os/metrics/models": ["metrics:read"],
+        "GET /os/metrics/runs": ["metrics:read"],
+        "GET /os/metrics/latency": ["metrics:read"],
+        "POST /os/metrics/refresh": ["metrics:write"],
+        "GET /os/metrics/refresh/status": ["metrics:read"],
         # Evaluation endpoints
         "GET /eval-runs": ["evals:read"],
         "GET /eval-runs/*": ["evals:read"],
@@ -566,9 +574,15 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/products/*/wiki": ["wiki:read"],
                 "GET /company/products/*/wiki/*": ["wiki:read"],
                 "PUT /company/products/*/wiki/*": ["wiki:write"],
+                "GET /company/details": ["company:read"],
+                "GET /company/details/access": ["company:read"],
+                "PATCH /company/details": ["company:write"],
                 "GET /company/wiki": ["wiki:read"],
                 "GET /company/wiki/*": ["wiki:read"],
                 "PUT /company/wiki/*": ["wiki:write"],
+                # The shared notes of the Company file tree, read beside the wiki.
+                "GET /company/notes": ["wiki:read"],
+                "GET /company/notes/*": ["wiki:read"],
                 "GET /company/decisions": ["decisions:read"],
                 "POST /company/decisions": ["decisions:write"],
                 # Company Product endpoints
@@ -604,7 +618,10 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "DELETE /company/projects/*": ["projects:delete"],
                 "POST /company/projects/*/restore": ["projects:delete"],
                 "POST /company/projects/*/transitions": ["projects:write"],
-                # Company Task endpoints
+                # Company Task endpoints. A Task's files ask for wiki:read too, as reading them in chat does.
+                # Their rows come before tasks/*, which also matches them and asks for less.
+                "GET /company/tasks/*/files": ["tasks:read", "wiki:read"],
+                "GET /company/tasks/*/files/*": ["tasks:read", "wiki:read"],
                 "GET /company/tasks": ["tasks:read"],
                 "GET /company/tasks/*": ["tasks:read"],
                 "POST /company/tasks": ["tasks:write"],

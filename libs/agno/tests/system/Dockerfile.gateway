@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir \
     agui \
     ag-ui-protocol \
     slack-sdk \
+    "slack-bolt>=1.29.0,<2" \
     aiohttp \
     pyTelegramBotAPI
 

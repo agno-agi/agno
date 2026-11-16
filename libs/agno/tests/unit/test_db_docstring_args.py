@@ -36,7 +36,4 @@ def test_db_docstrings_do_not_document_create_table_if_not_found():
             if STALE_ARG not in accepted:
                 offenders.append(f"{path.relative_to(DB_ROOT)}:{node.lineno} {node.name}()")
 
-    assert not offenders, (
-        "These docstrings document an argument their signature does not accept: "
-        f"{offenders}"
-    )
+    assert not offenders, f"These docstrings document an argument their signature does not accept: {offenders}"

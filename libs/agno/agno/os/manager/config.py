@@ -9,44 +9,49 @@ if TYPE_CHECKING:
 
 from agno.registry._reserved import MANAGER_TEAM_ID
 
-MANAGER_TEAM_NAME = "OS Manager"
+MANAGER_TEAM_NAME = "Super Agent"
 
 
 @dataclass
 class OSManager:
-    """Configure the OS manager and its resources.
+    """Configure Super Agent and its resources.
 
     When authorization is enforced, ordinary component run grants allow access.
     Protected tools check the caller's permissions during manager execution
     and delegated work. Ordinary agents retain their existing tool permissions.
     Direct Python calls and bound interfaces are trusted application entry points.
 
+    Super Agent keeps its own files in ``notes/``, stored in the AgentOS database. ``notes/`` is one
+    folder shared by everyone who talks to Super Agent, including when user isolation is on, so
+    anyone who can chat with Super Agent can read what it noted in another person's chat. With
+    Company on, the same tools read and write the company wiki, each Product's pages and each
+    Task's files, which are stored in the Company database.
+
     Args:
         name: The manager team's display name.
-        model: Model for the manager and its members. Uses the registry's first
+        model: Model for the manager and Platform Builder. Uses the registry's first
             model if omitted. A model is required in one of these places.
         tools: Tools for the manager. These are not added to the registry.
         knowledge: Knowledge base the manager can search.
         learning: Learning machine for remembering users across sessions.
-        root: Directory or WorkspaceContextProvider for Platform Manager to read.
+        root: Directory or WorkspaceContextProvider for the manager to read.
             Default file exclusions apply. Extra exclusions are allowed; custom
             exemptions and allow_paths are not. Omit to disable source access.
-        access_docs: Give OS Manager and Platform Manager access to the Agno documentation MCP
+        access_docs: Give the manager access to the Agno documentation MCP
             server. Enabled by default. Connection failures are nonfatal; pass
             False to disable documentation access in offline deployments.
-        offload_tool_results: Offload large tool results for the manager and its members.
+        offload_tool_results: Offload large tool results for the manager and Platform Builder.
             Enabled by default on SQLite and PostgreSQL. Pass False to disable or
             a ResultStore to customize its settings.
         instructions: Extra instructions for the manager.
         required_env: Environment variables to check during diagnostics.
         num_history_runs: Number of past runs to include in the manager's context.
-        tool_call_limit: Maximum ordinary tool executions per coordinator run,
-            including delegations. Defaults to 8; None disables the limit.
-        member_tool_call_limit: Maximum ordinary tool executions per specialist
-            invocation, including the Company Manager member when attached. Defaults to 24;
-            None disables the limit. Each delegation has its own budget, not a
-            shared run-wide budget. Offloaded-result read-back tools retain their
-            existing exemption from both limits.
+        tool_call_limit: Maximum ordinary tool executions per manager run,
+            including delegations. Defaults to 24; None disables the limit.
+        member_tool_call_limit: Maximum ordinary tool executions per Platform Builder
+            invocation. Defaults to 24; None disables the limit. Each delegation has
+            its own budget, not a shared run-wide budget. Offloaded-result read-back
+            tools retain their existing exemption from both limits.
     """
 
     name: str = MANAGER_TEAM_NAME
@@ -59,8 +64,8 @@ class OSManager:
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = True
     instructions: Optional[str] = None
     required_env: Tuple[str, ...] = ()
-    num_history_runs: int = 7
-    tool_call_limit: Optional[int] = 8
+    num_history_runs: int = 5
+    tool_call_limit: Optional[int] = 24
     member_tool_call_limit: Optional[int] = 24
 
     def __post_init__(self) -> None:

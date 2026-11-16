@@ -617,24 +617,33 @@ def _metrics_record(user_id: str, day: date = UNFINISHED_DAY) -> dict:
     }
 
 
+def _metrics_upsert(table):
+    """The upsert the deprecated metrics table was written with, conflicting on (user_id, date, aggregation_period)."""
+    from sqlalchemy.dialects import sqlite
+
+    stmt = sqlite.insert(table)
+    update_columns = {
+        col.name: stmt.excluded[col.name]
+        for col in table.columns
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
+    }
+    return stmt.on_conflict_do_update(index_elements=["user_id", "date", "aggregation_period"], set_=update_columns)
+
+
 def _upsert_metrics(db, records: list[dict]) -> None:
-    """Write metrics the way ``calculate_metrics`` does: the upsert names
+    """Write metrics the way ``calculate_metrics`` wrote the deprecated table: the upsert names
     (user_id, date, aggregation_period) as its conflict target, so it only lands
     against the v3.0 unique key where a raw INSERT would pass either way."""
-    from agno.db.sqlite.utils import bulk_upsert_metrics
-
     table = db._get_table(table_type="metrics", create_table_if_not_found=True)
     with db.Session() as sess, sess.begin():
-        bulk_upsert_metrics(session=sess, table=table, metrics_records=records)
+        sess.execute(_metrics_upsert(table), records)
 
 
 async def _async_upsert_metrics(db, records: list[dict]) -> None:
     """Async version of ``_upsert_metrics``."""
-    from agno.db.sqlite.utils import abulk_upsert_metrics
-
     table = await db._get_table(table_type="metrics", create_table_if_not_found=True)
     async with db.async_session_factory() as sess, sess.begin():
-        await abulk_upsert_metrics(session=sess, table=table, metrics_records=records)
+        await sess.execute(_metrics_upsert(table), records)
 
 
 def _new_legacy_metrics_db():

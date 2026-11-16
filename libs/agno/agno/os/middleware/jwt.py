@@ -434,6 +434,15 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
+def jwt_kwargs_enable_authorization(kwargs: Dict[str, Any]) -> bool:
+    """Whether ``add_middleware`` kwargs turn on RBAC: the rule AuthMiddleware.__init__ applies.
+
+    That is ``authorization=True``, or ``scope_mappings`` with ``authorization`` unset.
+    """
+    authorization = kwargs.get("authorization")
+    return bool(authorization or (authorization is None and kwargs.get("scope_mappings") is not None))
+
+
 def build_jwt_middleware_kwargs(
     authorization_config: Optional[Any],
     *,

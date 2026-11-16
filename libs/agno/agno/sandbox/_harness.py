@@ -294,6 +294,13 @@ SANDBOX_RUN_OPTIONS = frozenset(
 )
 
 
+async def asubmission_input(
+    agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+) -> Any:
+    """The input with run dependencies added as the block an Agent adds, for a sandbox that takes none."""
+    return await agent._asandbox_input(input, kwargs, run_id, session_id, user_id)
+
+
 def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Validate one submission and return the run options it carries."""
     from agno.sandbox.protocol import validate_request

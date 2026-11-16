@@ -3,6 +3,19 @@
 import time
 from typing import Any, Dict, Optional
 
+
+class CancelledProjectError(ValueError):
+    pass
+
+
+class OpenTaskLimitError(ValueError):
+    """An automatic acceptance would exceed its Routine's limit on open Tasks."""
+
+
+# An accepted Task is open until it is Done or Cancelled.
+OPEN_TASK_STATUSES = ("ready", "in_progress", "in_review")
+
+
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
     "backlog": {"ready", "in_review", "done", "cancelled"},
@@ -118,6 +131,17 @@ def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# What each Task status means to a person reading it.
+TASK_STATUS_MEANING = {
+    "backlog": "proposed, not accepted",
+    "ready": "accepted, not started",
+    "in_progress": "started",
+    "in_review": "finished, waiting for review",
+    "done": "done",
+    "cancelled": "cancelled",
+}
+
+
 def task_next_attempt(task: Dict[str, Any]) -> int:
     """A new run takes the attempt after the highest one recorded on the Task."""
     return max((entry["attempt"] for entry in task.get("transitions") or [] if "attempt" in entry), default=0) + 1
@@ -136,8 +160,12 @@ def task_run_fields(
     user_id: Optional[str],
     run_db_id: Optional[str] = None,
     session_user_id: Optional[str] = None,
+    requested_from: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Reserve execution in the Task lifecycle, retaining the session across attempts."""
+    """Reserve execution in the Task lifecycle, retaining the session across attempts.
+
+    requested_from names the conversation that asked for this attempt (session, run and team ids).
+    """
     from uuid import NAMESPACE_URL, uuid5
 
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
@@ -167,9 +195,15 @@ def task_run_fields(
                 "created_at": now,
                 "attempt": attempt,
                 "run_db_id": run_db_id,
+                **({"requested_from": _requested_from(requested_from)} if requested_from else {}),
             },
         ],
     }
+
+
+def _requested_from(value: Dict[str, Any]) -> Dict[str, str]:
+    """Keep only the conversation identifiers, as strings, so the Task history stays small and safe."""
+    return {key: value[key] for key in ("session_id", "run_id", "team_id") if isinstance(value.get(key), str)}
 
 
 def _acceptance_count(histories, routine_id, policy):
