@@ -400,6 +400,68 @@ class TestSessionCRUD:
         assert result is False
 
 
+# -- Run read tests --
+
+
+def _run_row(run_id: str) -> Dict[str, Any]:
+    return {"run_id": run_id, "session_id": "s1", "run_index": 0, "created_at": 1, "run_type": "agent"}
+
+
+def _exec_like_glide(pipeline, raise_on_error=False):
+    """glide puts a failed command's error in the results unless asked to raise it."""
+    from glide_sync import RequestError
+
+    if raise_on_error:
+        raise RequestError("node down")
+    return [RequestError("node down")]
+
+
+class TestRunReads:
+    """A failed read raises: it must not look like "no runs" or "no such run"."""
+
+    def test_get_runs_raises_when_the_session_index_read_fails(self, valkey_db, mock_client):
+        mock_client.zrange.side_effect = ConnectionError("valkey down")
+        with pytest.raises(ConnectionError):
+            valkey_db.get_runs(session_id="s1")
+
+    def test_get_runs_raises_when_a_batched_record_read_fails(self, valkey_db, mock_client):
+        from glide_sync import RequestError
+
+        mock_client.zrange.return_value = [b"r1"]
+        mock_client.exec.side_effect = _exec_like_glide
+        with pytest.raises(RequestError):
+            valkey_db.get_runs(session_id="s1")
+
+    def test_get_runs_without_a_session_raises_when_a_batched_record_read_fails(self, valkey_db, mock_client):
+        from glide_sync import RequestError
+
+        mock_client.scan.return_value = ("0", [b"test:runs:r1"])
+        mock_client.exec.side_effect = _exec_like_glide
+        with pytest.raises(RequestError):
+            valkey_db.get_runs()
+
+    def test_get_run_raises_when_the_read_fails(self, valkey_db, mock_client):
+        mock_client.get.side_effect = ConnectionError("valkey down")
+        with pytest.raises(ConnectionError):
+            valkey_db.get_run("r1")
+
+    def test_get_run_raises_on_an_undecodable_record(self, valkey_db, mock_client):
+        mock_client.get.return_value = b"not json"
+        with pytest.raises(ValueError):
+            valkey_db.get_run("r1")
+
+    def test_get_runs_skips_an_index_entry_without_a_record(self, valkey_db, mock_client):
+        mock_client.zrange.return_value = [b"r1", b"gone"]
+        mock_client.exec.return_value = [_serialize(_run_row("r1")), None]
+        rows, total = valkey_db.get_runs(session_id="s1", deserialize=False)
+        assert [row["run_id"] for row in rows] == ["r1"]
+        assert total == 1
+
+    def test_get_session_still_returns_none_when_the_read_fails(self, valkey_db, mock_client):
+        mock_client.get.side_effect = ConnectionError("valkey down")
+        assert valkey_db.get_session(session_id="s1", session_type="agent") is None
+
+
 # -- Memory tests --
 
 
