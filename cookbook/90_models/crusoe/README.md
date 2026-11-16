@@ -55,9 +55,9 @@ The endpoint reports its current catalogue at `GET /v1/models`. A few examples:
 - `openai/gpt-oss-120b` (default)
 - `zai-org/GLM-5.3`, `zai-org/GLM-5.3-Flash`
 - `deepseek-ai/DeepSeek-V4.1-Flash`
-- `qwen/Qwen3.8-27B`
+- `Qwen/Qwen3.8-27B`
 - `google/gemma-4-31b-it`
-- `nvidia/nemotron-3.5-super-vl-120b-a12b`
+- `nvidia/NVIDIA-Nemotron-3.5-Super-VL`
 
 The catalogue changes, so read it from `/v1/models` or the Available models page rather than
 hardcoding it.
