@@ -464,6 +464,11 @@ class Toolkit:
         return merged
 
     @property
+    def recorded_name(self) -> str:
+        """The toolkit name each tool call records, sent in run events and kept in metrics."""
+        return self.name
+
+    @property
     def requires_connect(self) -> bool:
         """Whether the toolkit requires connection management."""
         return self._requires_connect

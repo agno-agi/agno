@@ -26,6 +26,18 @@ class BaseFactory(Generic[T]):
     A factory is a registered callable that AgentOS invokes on each request
     with a :class:`RequestContext`, returning a freshly built component.
 
+    With ``QueueConfig(durable=True)``, background runs ride the job queue and
+    the factory is invoked again on whichever worker claims the run, possibly
+    later and on another replica. The ticket stores the context's
+    ``user_id``, ``session_id``, raw ``factory_input`` and trusted claims and
+    scopes; the HTTP request itself cannot be stored, so on the worker
+    ``ctx.request`` is a :class:`QueuedRequest` that raises on any attribute
+    read and fails the run. Build the component from the context's data
+    fields only, pass anything else through ``factory_input`` or claims set by
+    middleware, and expect more than one call per run. Claims are the ones
+    verified when the run was accepted; they are not re-verified on retries or
+    continuations.
+
     Type parameter T is the component type produced by the factory.
 
     Args:

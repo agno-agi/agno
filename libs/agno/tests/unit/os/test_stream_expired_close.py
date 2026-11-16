@@ -6,7 +6,6 @@ to close silently - indistinguishable from a finished stream, telling the
 client a lie about a legitimately accepted run. The streamer now emits one
 explicit ``stream_expired`` SSE event (a real event type - it must reach
 client handlers; unknown types are ignored by standard consumers) and ends.
-The ticket-consulting wrapper LOOP stays parked, evidence-gated.
 """
 
 from types import SimpleNamespace

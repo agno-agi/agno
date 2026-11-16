@@ -212,8 +212,8 @@ def sync_directory_from_request(request: Request, user_id: Optional[str]) -> Non
         # A self-asserted id must never provision (or key off) a system-reserved principal
         # (sa:*, __scheduler__, __oauth__:) -- those are first-party identities, not roster users.
         return
-    if getattr(request.state, "authenticated", False):
-        return  # verified identity -> already provisioned + enforced by the auth middleware
+    if getattr(request.state, "authenticated", False) and not getattr(request.state, "is_internal_service", False):
+        return  # Verified JWT identities were provisioned by the auth middleware.
     state = getattr(getattr(request, "app", None), "state", None)
     if state is None:
         return

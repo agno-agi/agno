@@ -9,13 +9,23 @@ This is a guide on how to handle migrations for your Agno database.
 
 Before attempting this, make sure you have read the [Agno v2 Migration Guide](https://docs.agno.com/how-to/v2-migration) and are familiar with the changes in the new version.
 
-- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2.py`
-- For migrating your Vector Database, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2_vector_db.py`
+- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_to_v2.py`
+- For migrating your Vector Database, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_vectordbs_to_v2.py`
   
 Notice:
 - The script won’t cleanup the old tables, in case you still need them.
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 - Metrics are automatically converted from v1 to v2 format.
+
+## How to migrate from Agno v2 to v3
+
+Before attempting this, make sure you have read the [Agno v3 Migration Guide](https://docs.agno.com/other/v3-migration) and are familiar with the changes in the new version.
+
+- For migrating your database tables, use the [migration manager](#how-to-use-the-migration-manager): `MigrationManager(db).up()` applies the `v3.0.0` migration.
+- For migrating your Vector Database to v3 per-user isolation, use the script for your backend (see the [v2 to v3 Vector DB guide](v2_to_v3/README.md)):
+  - pgvector, SingleStore: `libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py`
+  - Milvus, LanceDB, ClickHouse, SurrealDB: `libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py`
+  - Redis, Couchbase, Cassandra: `libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py`
 
 ## Filesystem table (`agno_fs`) in v3.1
 

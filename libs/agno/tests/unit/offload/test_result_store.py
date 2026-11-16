@@ -559,6 +559,92 @@ def test_search_shows_a_window_around_a_match_on_a_long_line(store):
     assert match.line.startswith("...")
 
 
+@pytest.mark.parametrize("pattern", ["learning", "learn(ing)"])
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_search_finds_later_passages_in_single_line_json(store, pattern, async_mode):
+    import asyncio
+
+    payload = json.dumps(
+        {
+            "results": [
+                {"content": "learning: overview " + "x" * 3000},
+                {"content": "learning: agentic memory " + "y" * 3000},
+                {"content": "learning: persistence " + "z" * 3000},
+            ]
+        }
+    )
+    ref = _offload(store, payload)
+    matches = asyncio.run(store.asearch(ref.result_id, pattern)) if async_mode else store.search(ref.result_id, pattern)
+    assert len(matches) == 3
+    assert [m.line_number for m in matches] == [1, 1, 1]
+    assert all(len(m.line) <= 500 for m in matches)
+    assert "agentic memory" in matches[1].line
+    assert "persistence" in matches[2].line
+    for match in matches:
+        kwargs = dict(start_line=1, start_char=match.char_offset, max_chars=80)
+        page = asyncio.run(store.aread(ref.result_id, **kwargs)) if async_mode else store.read(ref.result_id, **kwargs)
+        assert page.text == payload[match.char_offset : match.char_offset + 80]
+        assert page.next_start_char == match.char_offset + 80
+    assert store.payload(ref.result_id) == payload
+
+
+@pytest.mark.parametrize("pattern", ["needle", "(needle)", "(?=needle)"])
+@pytest.mark.parametrize("count", [20, 21])
+def test_single_line_search_retains_match_limit_and_reports_more(store, pattern, count):
+    ref = _offload(store, ("needle needle" + "x" * 994) * count)
+    matches = store.search(ref.result_id, pattern)
+    assert len(matches) == 20
+    assert matches[-1].more is (count > 20)
+    assert [m.char_offset for m in matches] == [i * 1007 for i in range(20)]
+
+
+@pytest.mark.parametrize("pattern", ["learning", "learn(ing)", "(?=learning)"])
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("padding", [0, 1000])
+def test_search_skips_matches_already_visible_in_excerpt(store, pattern, async_mode, padding):
+    import asyncio
+
+    payload = "learning " * 25 + "x" * padding + "\nlearning: relevant second passage"
+    ref = _offload(store, payload)
+    matches = asyncio.run(store.asearch(ref.result_id, pattern)) if async_mode else store.search(ref.result_id, pattern)
+    assert [match.line_number for match in matches] == [1, 2]
+    assert "relevant second passage" in matches[1].line
+    assert not any(match.more for match in matches)
+
+
+@pytest.mark.parametrize("pattern", ["needle", "(needle)"])
+def test_search_keeps_a_match_extending_beyond_previous_excerpt(store, pattern):
+    payload = "needle" + "x" * 486 + "needle" + "y" * 1000
+    ref = _offload(store, payload)
+    matches = store.search(ref.result_id, pattern)
+    assert [match.char_offset for match in matches] == [0, 492]
+    assert all("needle" in match.line for match in matches)
+    assert not matches[-1].more
+
+
+@pytest.mark.parametrize("pattern", ["", "(?:)", "^|$", "(?:^|$)"])
+def test_zero_width_search_does_not_duplicate_line_end_excerpt(store, pattern):
+    ref = _offload(store, "first line\nsecond line")
+    matches = store.search(ref.result_id, pattern)
+    assert [match.line_number for match in matches] == [1, 2]
+    assert not matches[-1].more
+
+
+@pytest.mark.parametrize("max_chars,expected", [(0, 1), (-1, 1), (17, 17), (100_000, READ_MAX_CHARS)])
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_focused_read_clamps_budget_and_preserves_continuation(store, max_chars, expected, async_mode):
+    import asyncio
+
+    payload = "x" * (READ_MAX_CHARS + 100)
+    ref = _offload(store, payload)
+    kwargs = dict(start_char=7, max_chars=max_chars)
+    page = asyncio.run(store.aread(ref.result_id, **kwargs)) if async_mode else store.read(ref.result_id, **kwargs)
+    assert page.text == payload[7 : 7 + expected]
+    assert page.truncated
+    assert page.next_start_line == 1
+    assert page.next_start_char == 7 + expected
+
+
 def test_a_refused_envelope_stays_small_for_a_huge_last_line(store):
     output = "\n".join(["header"] * 30 + ["x" * 2_000_000])
     envelope = render_refused_envelope(
@@ -566,6 +652,26 @@ def test_a_refused_envelope_stays_small_for_a_huge_last_line(store):
     )
     assert len(envelope) < 5_000
     assert 'stored="false"' in envelope
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+def test_readback_tool_exposes_excerpt_budget_and_keeps_session_checks(store, async_mode):
+    import asyncio
+    from types import SimpleNamespace
+
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    ref = _offload(store, "intro " + "learning details " * 2000)
+    owner = SimpleNamespace(_result_store=store)
+    tool = get_read_result_function(owner, RunContext(run_id="r1", session_id="S1"), async_mode=async_mode)
+    assert "max_chars" in tool.parameters["properties"]
+    kwargs = dict(result_id=ref.result_id, start_char=6, max_chars=34)
+    result = asyncio.run(tool.entrypoint(**kwargs)) if async_mode else tool.entrypoint(**kwargs)
+    assert result.split("\n", 1)[1] == "learning details " * 2
+    denied = get_read_result_function(owner, RunContext(run_id="r2", session_id="other"), async_mode=async_mode)
+    result = asyncio.run(denied.entrypoint(**kwargs)) if async_mode else denied.entrypoint(**kwargs)
+    assert result == f"Error: result {ref.result_id} belongs to a different session"
 
 
 def test_sweep_deletes_index_rows_in_bounded_batches(tmp_path, monkeypatch):
@@ -762,3 +868,33 @@ def test_result_offloaded_before_partitions_stays_readable_and_deletable(store):
     assert store.delete_for_sessions(["S1"]) == 1
     row_namespace = namespace_for("S1")
     assert FileSystem(backend=store.fs.backend, namespace=row_namespace).list() == []
+
+
+def test_context_lines_are_rendered_once_for_matches_on_the_same_line(store):
+    """Several matches on one line share one context block; repeating it per match spent the
+    whole reply budget on a handful of matches."""
+    before = "\n".join(f"before {i}" for i in range(5))
+    after = "\n".join(f"after {i}" for i in range(5))
+    payload = before + "\n" + ("needle needle" + "x" * 994) * 20 + "\n" + after
+    ref = _offload(store, payload)
+    matches = store.search(ref.result_id, "needle", context_lines=5)
+    assert len(matches) == 20
+    assert all(match.line_number == 6 for match in matches)
+    assert matches[0].line.startswith("1: before 0\n") and "11: after 4" in matches[0].line
+    assert all(match.line.startswith("6: ") and "before" not in match.line for match in matches[1:])
+    assert not matches[-1].more
+
+
+def test_a_truncated_excerpt_reports_more_so_a_skipped_match_is_not_lost(store, monkeypatch):
+    """The scan skips a match the previous excerpt would show; when the budget then cuts that
+    excerpt short, the match is out of view and the reply must say there is more."""
+    from agno.offload import store as store_module
+
+    monkeypatch.setattr(store_module, "SEARCH_MAX_CHARS", 100)
+    payload = "needle" + "x" * 300 + "needle" + "y" * 300
+    ref = _offload(store, payload)
+    matches = store.search(ref.result_id, "needle")
+    assert [match.char_offset for match in matches] == [0], "the second match sat inside the first excerpt"
+    # 100 minus the 48 characters reserved for the match header leaves 52 for the excerpt.
+    assert len(matches[0].line) == 52 and matches[0].line.startswith("needle" + "x" * 40)
+    assert matches[0].more is True

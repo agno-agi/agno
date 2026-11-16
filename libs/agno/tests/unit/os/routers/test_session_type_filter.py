@@ -542,6 +542,308 @@ class TestRunTimestampFiltering:
         assert run_ids == ["middle"]
 
 
+def _seed_agent_session_with_runs(db: InMemoryDb, session_id: str, count: int, start_at: int = 1_700_000_000) -> None:
+    _seed_session(
+        db,
+        {
+            "session_id": session_id,
+            "agent_id": "test-agent",
+            "user_id": "user-1",
+            "session_type": "agent",
+            "session_data": {"session_name": "Paginated Runs"},
+            "created_at": start_at,
+            "updated_at": start_at,
+            "runs": [
+                {
+                    "run_id": f"run-{i}",
+                    "agent_id": "test-agent",
+                    "status": "COMPLETED",
+                    "created_at": start_at + i,
+                    "input": {"input_content": f"question {i}"},
+                }
+                for i in range(count)
+            ],
+        },
+    )
+
+
+class TestSessionRunsPagination:
+    """GET /sessions/{id}/runs pagination is opt-in via limit and pages by run_index."""
+
+    @pytest.fixture
+    def client(self):
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "paged", count=5)
+        return _build_client(db)
+
+    def test_no_params_returns_bare_list_with_run_index(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, list)
+        assert [(r["run_id"], r["run_index"]) for r in body] == [(f"run-{i}", i) for i in range(5)]
+
+    def test_limit_returns_newest_runs_in_chronological_order(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"] == {
+            "limit": 2,
+            "total_count": 5,
+            "has_more": True,
+            "oldest_run_index": 3,
+            "newest_run_index": 4,
+        }
+
+    def test_before_run_index_pages_back_to_the_start(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=3")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [1, 2]
+        assert body["meta"]["has_more"] is True
+
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=1")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [0]
+        assert body["meta"]["has_more"] is False
+
+    def test_after_run_index_pages_forward(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&after_run_index=0")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [1, 2]
+        assert body["meta"]["has_more"] is True
+
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&after_run_index=2")
+        body = resp.json()
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"]["has_more"] is False
+
+    def test_limit_larger_than_session_has_no_more(self, client):
+        body = client.get("/sessions/paged/runs?user_id=user-1&limit=50").json()
+        assert len(body["data"]) == 5
+        assert body["meta"]["has_more"] is False
+
+    def test_both_cursors_rejected(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&limit=2&before_run_index=3&after_run_index=0")
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize("cursor", ["before_run_index=3", "after_run_index=0"])
+    def test_cursor_without_limit_rejected(self, client, cursor):
+        resp = client.get(f"/sessions/paged/runs?user_id=user-1&{cursor}")
+        assert resp.status_code == 422
+
+    def test_run_index_is_stable_under_filters(self):
+        """run_index is the position in the full history, not in the filtered result."""
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "filtered", count=5, start_at=1_700_000_000)
+        client = _build_client(db)
+
+        body = client.get("/sessions/filtered/runs?user_id=user-1&created_after=1700000003&limit=10").json()
+        assert [r["run_index"] for r in body["data"]] == [3, 4]
+        assert body["meta"]["total_count"] == 2
+
+    def test_status_filter_applies_before_paging(self):
+        """A status filter narrows the runs first, so a page is full and total_count counts matches."""
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "mixed", count=6)
+        for run in db._sessions["mixed"]["runs"][::2]:
+            run["status"] = "ERROR"
+        client = _build_client(db)
+
+        body = client.get("/sessions/mixed/runs?user_id=user-1&status=error&limit=2").json()
+        assert [r["run_index"] for r in body["data"]] == [2, 4]
+        assert body["meta"] == {
+            "limit": 2,
+            "total_count": 3,
+            "has_more": True,
+            "oldest_run_index": 2,
+            "newest_run_index": 4,
+        }
+
+    def test_invalid_status_rejected_when_paging(self, client):
+        resp = client.get("/sessions/paged/runs?user_id=user-1&status=bogus&limit=2")
+        assert resp.status_code == 400
+
+    def test_single_run_carries_run_index(self, client):
+        resp = client.get("/sessions/paged/runs/run-3?user_id=user-1")
+        assert resp.status_code == 200
+        assert resp.json()["run_index"] == 3
+
+    def test_missing_session_returns_404(self, client):
+        resp = client.get("/sessions/missing/runs?user_id=user-1&limit=2")
+        assert resp.status_code == 404
+
+
+def _seed_team_session(db: InMemoryDb, session_id: str, runs: list) -> None:
+    _seed_session(
+        db,
+        {
+            "session_id": session_id,
+            "team_id": "team",
+            "user_id": "user-1",
+            "session_type": "team",
+            "created_at": 1_700_000_000,
+            "runs": runs,
+        },
+    )
+
+
+def _team_run(run_id: str, created_at: int, **extra) -> dict:
+    return {"run_id": run_id, "team_id": "team", "created_at": created_at, **extra}
+
+
+def _member_run(run_id: str, parent_run_id: str, created_at: int, **extra) -> dict:
+    return {"run_id": run_id, "agent_id": "member", "parent_run_id": parent_run_id, "created_at": created_at, **extra}
+
+
+class TestSessionRunsPaginationGroups:
+    """Pages count top-level runs; member and step runs come along with their parent."""
+
+    def test_members_do_not_consume_the_limit(self):
+        db = InMemoryDb()
+        runs = []
+        for i in range(5):
+            runs += [_member_run(f"m{i}a", f"p{i}", 10 * i), _member_run(f"m{i}b", f"p{i}", 10 * i + 1)]
+            runs.append(_team_run(f"p{i}", 10 * i + 2))
+        _seed_team_session(db, "team-groups", runs)
+        client = _build_client(db)
+
+        body = client.get("/sessions/team-groups/runs?type=team&user_id=user-1&limit=2").json()
+        assert [r["run_id"] for r in body["data"]] == ["m3a", "m3b", "p3", "m4a", "m4b", "p4"]
+        assert body["meta"]["total_count"] == 5
+        assert body["meta"]["has_more"] is True
+
+        older = client.get(
+            f"/sessions/team-groups/runs?type=team&user_id=user-1&limit=2&before_run_index={body['meta']['oldest_run_index']}"
+        ).json()
+        assert [r["run_id"] for r in older["data"]] == ["m1a", "m1b", "p1", "m2a", "m2b", "p2"]
+
+    def test_meta_cursor_does_not_skip_a_parent_stored_between_a_member_and_its_parent(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "interleaved",
+            [_team_run("A", 1), _member_run("B-member", "B", 2), _team_run("C", 3), _team_run("B", 4)],
+        )
+        client = _build_client(db)
+
+        page = client.get("/sessions/interleaved/runs?type=team&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in page["data"]] == ["B-member", "B"]
+        assert page["meta"]["oldest_run_index"] == 3
+
+        older = client.get(
+            f"/sessions/interleaved/runs?type=team&user_id=user-1&limit=1&before_run_index={page['meta']['oldest_run_index']}"
+        ).json()
+        assert [r["run_id"] for r in older["data"]] == ["C"]
+
+    def test_member_without_its_parent_in_the_session_is_a_top_level_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "orphans", [_team_run("p0", 1), _member_run("orphan", "gone", 2), _team_run("p1", 3)])
+        client = _build_client(db)
+
+        body = client.get("/sessions/orphans/runs?type=team&user_id=user-1&limit=10").json()
+        assert [r["run_id"] for r in body["data"]] == ["p0", "orphan", "p1"]
+        assert body["meta"]["total_count"] == 3
+
+    def test_nested_descendants_come_with_the_top_level_run(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "nested",
+            [
+                _team_run("old", 1),
+                {"run_id": "sub-team", "team_id": "sub", "parent_run_id": "top", "created_at": 2},
+                _member_run("sub-member", "sub-team", 3),
+                _team_run("top", 4),
+            ],
+        )
+        client = _build_client(db)
+
+        body = client.get("/sessions/nested/runs?type=team&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in body["data"]] == ["sub-team", "sub-member", "top"]
+
+    def test_filters_select_top_level_runs_and_keep_their_members(self):
+        db = InMemoryDb()
+        _seed_team_session(
+            db,
+            "filtered-groups",
+            [
+                _team_run("p0", 100, status="ERROR"),
+                _member_run("m1", "p1", 150, status="COMPLETED"),
+                _team_run("p1", 300, status="ERROR"),
+                _team_run("p2", 400, status="COMPLETED"),
+            ],
+        )
+        client = _build_client(db)
+
+        body = client.get(
+            "/sessions/filtered-groups/runs?type=team&user_id=user-1&limit=5&status=error&created_after=200"
+        ).json()
+        assert [r["run_id"] for r in body["data"]] == ["m1", "p1"]
+        assert body["meta"]["total_count"] == 1
+
+    def test_workflow_step_runs_come_with_their_workflow_run(self):
+        db = InMemoryDb()
+        _seed_session(
+            db,
+            {
+                "session_id": "wf-groups",
+                "workflow_id": "wf",
+                "user_id": "user-1",
+                "session_type": "workflow",
+                "created_at": 1,
+                "runs": [
+                    {"run_id": "w0", "workflow_id": "wf", "created_at": 1},
+                    {"run_id": "step", "agent_id": "a", "parent_run_id": "w1", "created_at": 2},
+                    {"run_id": "w1", "workflow_id": "wf", "created_at": 3},
+                ],
+            },
+        )
+        client = _build_client(db)
+
+        body = client.get("/sessions/wf-groups/runs?type=workflow&user_id=user-1&limit=1").json()
+        assert [r["run_id"] for r in body["data"]] == ["step", "w1"]
+        assert body["meta"]["total_count"] == 2
+
+    def test_empty_page_has_no_cursors(self):
+        db = InMemoryDb()
+        _seed_agent_session_with_runs(db, "empty-page", count=2)
+        client = _build_client(db)
+
+        body = client.get("/sessions/empty-page/runs?user_id=user-1&limit=2&before_run_index=0").json()
+        assert body["data"] == []
+        assert "oldest_run_index" not in body["meta"]
+        assert "newest_run_index" not in body["meta"]
+
+
+class TestSessionRunPreviewsRunIndex:
+    """GET /sessions/{id}/run-previews carries the same run_index as the runs endpoint."""
+
+    def test_previews_match_runs_for_team_sessions(self):
+        db = InMemoryDb()
+        _seed_session(
+            db,
+            {
+                "session_id": "team-previews",
+                "team_id": "test-team",
+                "user_id": "user-1",
+                "session_type": "team",
+                "created_at": 1_700_000_000,
+                "runs": [
+                    {"run_id": "member-run", "agent_id": "member", "parent_run_id": "team-run", "created_at": 1},
+                    {"run_id": "unlisted-run", "created_at": 2},
+                    {"run_id": "team-run", "team_id": "test-team", "created_at": 3},
+                ],
+            },
+        )
+        client = _build_client(db)
+
+        runs = client.get("/sessions/team-previews/runs?type=team&user_id=user-1").json()
+        previews = client.get("/sessions/team-previews/run-previews?type=team&user_id=user-1").json()
+        assert [(r["run_id"], r["run_index"]) for r in runs] == [("member-run", 0), ("team-run", 2)]
+        assert [(p["run_id"], p["run_index"]) for p in previews] == [("member-run", 0), ("team-run", 2)]
+
+
 class TestTeamSessionRunsParsing:
     """Team session runs should correctly classify agent vs team runs."""
 

@@ -22,18 +22,21 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent._storage import (
+    _followups_from_config,
+    _followups_to_config,
     is_auto_generated_memory_manager_id,
     resolve_learning_reference,
     resolve_memory_manager_reference,
 )
+from agno.agent.followup import FollowupConfig, model_identity
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
-from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -156,37 +159,6 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 
     session_id_to_load = session_id or team.session_id
     return cast(TeamRunOutput, await aget_last_run_output_util(cast(Any, team), session_id=session_id_to_load))
-
-
-# ---------------------------------------------------------------------------
-# Session metrics (internal)
-# ---------------------------------------------------------------------------
-
-
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
-    # Get the session_metrics from the database
-    if session.session_data is not None and "session_metrics" in session.session_data:
-        session_metrics_from_db = session.session_data.get("session_metrics")
-        if session_metrics_from_db is not None:
-            if isinstance(session_metrics_from_db, dict):
-                return SessionMetrics.from_dict(session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, SessionMetrics):
-                return session_metrics_from_db
-            elif isinstance(session_metrics_from_db, RunMetrics):
-                # Convert legacy RunMetrics to SessionMetrics
-                return SessionMetrics(
-                    input_tokens=session_metrics_from_db.input_tokens,
-                    output_tokens=session_metrics_from_db.output_tokens,
-                    total_tokens=session_metrics_from_db.total_tokens,
-                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
-                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
-                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
-                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
-                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
-                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
-                    cost=session_metrics_from_db.cost,
-                )
-    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +796,19 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         else:
             config["reasoning_model"] = str(team.reasoning_model)
 
+    # --- Followup settings ---
+    if team.followups:
+        config["followups"] = _followups_to_config(team.followups)
+    # A FollowupConfig carries the count and model; the top-level fields are stored only without one.
+    if not isinstance(team.followups, FollowupConfig):
+        if team.num_followups != 3:
+            config["num_followups"] = team.num_followups
+        if team.followup_model is not None:
+            if isinstance(team.followup_model, Model):
+                config["followup_model"] = model_identity(team.followup_model)
+            else:
+                config["followup_model"] = str(team.followup_model)
+
     # --- Streaming settings ---
     if team.stream is not None:
         config["stream"] = team.stream
@@ -891,6 +876,23 @@ def _team_type() -> type:
     from agno.team.team import Team
 
     return Team
+
+
+def _refuse_external_member(agent: Any, label: str, strict: bool) -> Any:
+    """None in place of an external adapter resolved as a member; strict loads raise.
+
+    Teams delegate to Agents: an external harness agent has no member protocol,
+    so a stored reference to one can never be honoured.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if not isinstance(agent, BaseExternalAgent):
+        return agent
+    message = f"{label} is a {agent.sdk!r} external agent; external agents cannot be team members."
+    if strict:
+        raise ComponentRehydrationError(message)
+    log_warning(message)
+    return None
 
 
 def _registry_copy(component: Any, label: str, strict: bool, expected_type: type) -> Any:
@@ -1043,13 +1045,16 @@ def from_dict(
                         agent = get_agent_by_id(
                             id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
                         )
+                agent = _refuse_external_member(agent, f"{component_label} member agent '{agent_id}'", strict)
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
                 # Deep copy so the shared registry singleton isn't mutated when the
                 # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
-                    registered_agent = registry.get_agent(agent_id)
+                    registered_agent = _refuse_external_member(
+                        registry.get_agent(agent_id), f"{component_label} member agent '{agent_id}'", strict
+                    )
                     agent = (
                         _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
                         if registered_agent is not None
@@ -1142,6 +1147,10 @@ def from_dict(
     # --- Handle reasoning_model reconstruction ---
     if config.get("reasoning_model") is not None:
         config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
+
+    # --- Handle followup model reconstruction ---
+    if config.get("followup_model") is not None:
+        config["followup_model"] = resolve_model(config["followup_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1392,6 +1401,10 @@ def from_dict(
             offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
             # --- Reasoning settings ---
             reasoning_model=config.get("reasoning_model"),
+            # --- Followup settings ---
+            followups=_followups_from_config(config.get("followups"), registry),
+            num_followups=config.get("num_followups"),
+            followup_model=config.get("followup_model"),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
@@ -1615,6 +1628,9 @@ def load(
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
     """
+    if id in RESERVED_MANAGER_IDS:
+        raise ComponentRehydrationError(_reserved_manager_id_message(id))
+
     if published_only and version is None and label is None:
         # Dispatch semantics on demand: resolve strictly through the live
         # pointer instead of the current-or-latest-draft read fallback.
