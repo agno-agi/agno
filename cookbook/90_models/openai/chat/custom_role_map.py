@@ -17,7 +17,7 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 
 # Using these Mistral model and url as an example.
-model_id = "mistral-medium-2505"
+model_id = "mistral-medium-3-5"
 base_url = "https://api.mistral.ai/v1"
 api_key = getenv("MISTRAL_API_KEY")
 mistral_role_map = {
