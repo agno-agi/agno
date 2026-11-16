@@ -194,6 +194,19 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
     return "\n".join(f"{i + start_line:6d}\t{line}" for i, line in enumerate(lines))
 
 
+def _line_count(text: str) -> int:
+    """Number of lines in ``text``, counting a terminal newline as the end of the last line.
+
+    Matches ``_format_with_line_numbers``, so a size guard built on this counts exactly
+    the lines a whole-file read would render: ``"a\\nb\\n"`` is two lines, not three.
+    """
+    lines = text.split("\n")
+    # Drop the trailing empty element produced by a terminal newline.
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return len(lines)
+
+
 def _validate_exclude_patterns(exclude_patterns: Optional[List[str]]) -> List[str]:
     """Return ``exclude_patterns`` as a list, or the defaults when ``None``.
 
@@ -684,7 +697,7 @@ class Workspace(Toolkit):
                         "Use start_line/end_line to read a chunk, "
                         "or use search_content to find specific text first."
                     )
-                line_count = contents.count("\n") + 1
+                line_count = _line_count(contents)
                 if line_count > self.max_file_lines:
                     return (
                         f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
