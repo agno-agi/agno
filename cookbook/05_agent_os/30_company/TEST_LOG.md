@@ -631,3 +631,23 @@ Three controls, two runs each:
 **Result:** Each script exited 0 and all assertions passed. The cookbooks that call a model (`13`, `14`, `15`) were not rerun.
 
 ---
+
+### 16_company_file_tree.py (2026-11-12, read routes for a Task's files and the notes)
+
+**Status:** PASS
+
+**Description:** Rerun after the script gained a read through the API. No model call. After the tool calls write a Task file and a note, the script lists and reads both with `GET /company/tasks/{id}/files`, `GET /company/tasks/{id}/files/changes.md`, `GET /company/notes` and `GET /company/notes/follow-ups.md`.
+
+**Result:** Exit 0 and all assertions passed. The listings returned `changes.md` and `follow-ups.md`, each path inside its folder, and both reads returned the content the tools wrote. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
+
+---
+
+### 16_company_file_tree.py (2026-11-13, a Task's files ask for two scopes)
+
+**Status:** PASS
+
+**Description:** Rerun after the file routes changed: a Task's files now ask for `tasks:read` and `wiki:read`, a listing returns at most 200 files a page, and a refused path is described in the terms of the path the caller sent. No model call. The script's own change is one comment.
+
+**Result:** Exit 0 and all assertions passed. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
+
+---
