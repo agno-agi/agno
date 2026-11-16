@@ -47,10 +47,15 @@ def test_gpt_image_rejects_dalle_qualities(quality):
         DalleTools(api_key="test-key", quality=quality)
 
 
-@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-1", "gpt-image-1-mini", "dall-e-3", "dall-e-2"])
+@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-1.5", "gpt-image-1-mini"])
 def test_accepts_supported_models(model):
-    quality = "auto"
-    assert DalleTools(api_key="test-key", model=model, quality=quality).model == model
+    assert DalleTools(api_key="test-key", model=model).model == model
+
+
+@pytest.mark.parametrize("model", ["dall-e-3", "dall-e-2", "gpt-image-1"])
+def test_rejects_retired_models(model):
+    with pytest.raises(ValueError, match="Invalid model"):
+        DalleTools(api_key="test-key", model=model)
 
 
 def test_rejects_unknown_model_and_lists_valid_ones():
@@ -67,18 +72,6 @@ def test_gpt_image_accepts_gpt_image_sizes(size):
 def test_gpt_image_rejects_dalle_only_sizes(size):
     with pytest.raises(ValueError, match="Invalid size for gpt-image-2"):
         DalleTools(api_key="test-key", size=size)
-
-
-def test_dalle_3_keeps_dalle_sizes():
-    assert DalleTools(api_key="test-key", model="dall-e-3", size="1792x1024").size == "1792x1024"
-    with pytest.raises(ValueError, match="Invalid size for dall-e-3"):
-        DalleTools(api_key="test-key", model="dall-e-3", size="1536x1024")
-
-
-def test_dalle_3_keeps_dalle_qualities():
-    assert DalleTools(api_key="test-key", model="dall-e-3", quality="hd").quality == "hd"
-    with pytest.raises(ValueError, match="Invalid quality for dall-e-3"):
-        DalleTools(api_key="test-key", model="dall-e-3", quality="high")
 
 
 def test_b64_response_is_decoded_into_image_content():
@@ -103,10 +96,19 @@ def test_b64_response_defaults_to_png_mime_type():
 
 
 def test_url_response_is_still_attached():
-    tools = DalleTools(api_key="test-key", model="dall-e-3", quality="standard")
+    tools = DalleTools(api_key="test-key")
 
     result, _ = _generate(tools, [_image_data(url="https://example.com/cat.png", revised_prompt="a fluffy cat")])
 
     assert result.images[0].url == "https://example.com/cat.png"
     assert result.images[0].revised_prompt == "a fluffy cat"
     assert "https://example.com/cat.png" in result.content
+
+
+def test_init_logs_deprecation_pointing_to_openai_tools():
+    with patch("agno.tools.dalle.log_warning") as log_warning:
+        DalleTools(api_key="test-key")
+
+    message = log_warning.call_args.args[0]
+    assert "DalleTools is deprecated" in message
+    assert "OpenAITools" in message

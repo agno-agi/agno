@@ -113,3 +113,71 @@ def test_generate_image_with_default_model_uses_base64_output():
     assert kwargs["model"] == "gpt-image-2"
     assert "response_format" not in kwargs
     assert result is not None
+
+
+def _fake_image_client(data, output_format=None):
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    fake_client.images.generate.return_value = MagicMock(data=data, output_format=output_format)
+    return fake_client
+
+
+def _b64_item(payload: bytes, revised_prompt=None):
+    import base64
+    from unittest.mock import MagicMock
+
+    return MagicMock(b64_json=base64.b64encode(payload).decode(), revised_prompt=revised_prompt)
+
+
+def test_generate_image_returns_every_image_with_revised_prompt():
+    fake_client = _fake_image_client(
+        [_b64_item(b"one", revised_prompt="a fluffy yak"), _b64_item(b"two")], output_format="webp"
+    )
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        result = OpenAITools(api_key="test-key", image_n=2).generate_image(prompt="a yak")
+
+    assert fake_client.images.generate.call_args.kwargs["n"] == 2
+    assert result.content == "2 images generated successfully."
+    assert [image.content for image in result.images] == [b"one", b"two"]
+    assert [image.revised_prompt for image in result.images] == ["a fluffy yak", None]
+    assert all(image.mime_type == "image/webp" for image in result.images)
+
+
+def test_generate_image_single_image_message_and_png_default():
+    fake_client = _fake_image_client([_b64_item(b"one")])
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        result = OpenAITools(api_key="test-key").generate_image(prompt="a yak")
+
+    assert fake_client.images.generate.call_args.kwargs["n"] == 1
+    assert result.content == "Image generated successfully."
+    assert result.images[0].mime_type == "image/png"
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"image_quality": "standard"}, "Invalid quality for gpt-image-2"),
+        ({"image_size": "1792x1024"}, "Invalid size for gpt-image-2"),
+        ({"image_model": "gpt-image-1-mini", "image_quality": "hd"}, "Invalid quality for gpt-image-1-mini"),
+        ({"image_n": 0}, "Invalid number of images"),
+    ],
+)
+def test_invalid_image_options_raise_at_init(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        OpenAITools(api_key="test-key", **kwargs)
+
+
+def test_valid_gpt_image_options_are_accepted():
+    tools = OpenAITools(api_key="test-key", image_size="1536x1024", image_quality="high", image_n=3)
+    assert (tools.image_size, tools.image_quality, tools.image_n) == ("1536x1024", "high", 3)
+
+
+def test_unknown_image_model_is_not_validated():
+    tools = OpenAITools(api_key="test-key", image_model="gpt-image-3", image_size="2048x2048", image_quality="ultra")
+    assert tools.image_model == "gpt-image-3"
+
+
+def test_image_options_are_not_validated_when_image_generation_is_disabled():
+    tools = OpenAITools(api_key="test-key", enable_image_generation=False, image_quality="standard")
+    assert tools.image_quality == "standard"
