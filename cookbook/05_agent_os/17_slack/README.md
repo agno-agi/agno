@@ -267,6 +267,21 @@ export SLACK_APPROVER_ID="U..."
   disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
   `get_app()`, must list `/slack/events` and `/slack/interactions` in its
   `excluded_route_paths`.
+- **`default_principal=`**: the AgentOS principal whose roles a user not in
+  `users=` runs with, under authorization. The run's `user_id` stays the Slack
+  member ID, so sessions, memory and who started a Task stay per member; only
+  the access is shared. Use it where you cannot list members ahead of time,
+  such as a deployment template, and grant the principal a managed role with
+  what Slack members may do. Without it, under authorization, such a user runs
+  with no roles: they can chat, and every action that needs a permission is
+  refused.
+
+```python
+auth.define_role("slack-member", ["teams:run", "agents:run", "tasks:read", "tasks:write", "wiki:read"])
+auth.assign("slack-bot", "slack-member")
+
+Slack(team=agent_os.manager, default_principal="slack-bot")
+```
 
 ## Workspace Search Action
 
@@ -384,14 +399,15 @@ app = agent_os.get_app()
   when the run's user wrote the Slack message that started it (read back from
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
-Without `users=`, Slack runs Super Agent like any other interface, also under
-`AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)`: every
-member of the workspace can use it, and its runs are not checked against roles.
-Super Agent reaches the whole OS, so serve it this way only in a workspace whose
-members you trust. Under authorization, starting, accepting or deciding Company
-work still needs a signed-in person, so from Slack it needs `users=`. With
-`users=`, each mapped member runs with the mapped principal's roles, and an
-unmapped member is refused. A `JWTMiddleware` you add yourself must list
+Slack serves Super Agent under `AgentOS(authorization=...)` or a
+`JWTMiddleware(authorization=True)` with or without `users=`. Its tools always
+check permissions there:
+
+- a member in `users=` runs with the mapped principal's roles;
+- a member not in `users=` runs with the `default_principal=` roles, or with
+  no roles when it is unset: Super Agent answers, and running agents,
+  Company work and building components are refused;
+- with `users=` set, a member not in it is refused, as before. A `JWTMiddleware` you add yourself must list
 `/slack/*` in `excluded_route_paths`, because Slack signs its requests and sends
 no token; the list replaces the defaults, so keep `/health` and `/docs` in it.
 
@@ -402,8 +418,9 @@ no token; the list replaces the defaults, so keep `/health` and `/docs` in it.
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
   signature, not the AgentOS key. Without `users=`, every member of the
-  workspace can use the agent through Slack, with or without AgentOS
-  `authorization=`.
+  workspace can message the agent through Slack. Under AgentOS
+  `authorization=`, Super Agent's tools still check the member's permissions,
+  from `default_principal=` or none.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on

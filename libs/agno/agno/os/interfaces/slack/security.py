@@ -76,6 +76,36 @@ async def resolve_principal_authorization(app: Any, principal_id: str, resource:
     return authority
 
 
+def no_roles_authorization(app: Any, owner: str) -> Any:
+    """An authority with no roles for a Slack user not in users=, None with authorization off."""
+    from agno.os.auth import _authorization_enforced, resolve_authorization_provider
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.run.authorization import RunAuthorization
+
+    if not _authorization_enforced(app):
+        return None
+    principal_id = f"slack:{owner}"
+    return RunAuthorization(
+        resolve_authorization_provider(app),
+        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}),
+        enforce_tools=False,
+    )
+
+
+async def authorize_unmapped(
+    ctx: "SlackContext",
+    event_context: "EventContext",
+    client: Any,
+    user: str,
+    thread_ts: Optional[str] = None,
+) -> bool:
+    """Set the authority of a run whose owner is not in users=: the default principal's, else one with no roles."""
+    if ctx.default_principal is not None:
+        return await authorize_run(ctx, event_context, ctx.default_principal, client, user, thread_ts)
+    event_context.authority = no_roles_authorization(ctx.app, event_context.owner)
+    return True
+
+
 async def authorize_run(
     ctx: "SlackContext",
     event_context: "EventContext",

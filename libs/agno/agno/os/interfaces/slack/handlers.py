@@ -9,7 +9,7 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run
+from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
@@ -56,9 +56,9 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
     """Run a mapped user's message under their platform authority; an unmapped or refused user gets an ephemeral."""
-    # Without users=, Slack messages run like any interface's: unmapped and unchecked
+    # Without users=, the message runs and its permission checks use the default principal, or no roles
     if ctx.users is None:
-        return True
+        return await authorize_unmapped(ctx, event_context, client, event_context.owner, event_context.thread_ts)
     principal = ctx.users.get(event_context.owner)
     if principal is None:
         await post_ephemeral(

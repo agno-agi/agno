@@ -1265,6 +1265,130 @@ class ManagerAnswerModel(OfflineModel):
         return ModelResponse(content=self.answer, role="assistant", response_usage=MessageMetrics())
 
 
+class _ToolResultModel(ManagerToolModel):
+    """Call one tool, then record what the tool returned."""
+
+    def __init__(self, tool_name, tool_args):
+        super().__init__(tool_name, tool_args)
+        self.tool_results: list = []
+
+    async def ainvoke(self, *args, **kwargs):
+        messages = kwargs.get("messages") or []
+        self.tool_results = [str(message.content) for message in messages if message.role == "tool"]
+        return self.invoke()
+
+
+def _slack_super_agent(db, authorization, **slack_kwargs):
+    """An AgentOS with Super Agent on Slack, a restricted agent, and the app bound into the Slack context."""
+    from agno.os import Authorization
+    from agno.os.interfaces.slack import Slack
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
+    if authorization == "default_principal":
+        auth.define_role("slack-member", ["teams:run", "agents:restricted:run"])
+        auth.assign("slack-bot", "slack-member")
+        slack_kwargs["default_principal"] = "slack-bot"
+    restricted = Agent(id="restricted", model=ManagerAnswerModel("restricted ran"), db=db)
+    os = AgentOS(
+        id="manager-test",
+        db=db,
+        agents=[restricted],
+        telemetry=False,
+        authorization=auth if authorization else False,
+        manager=OSManager(model=OfflineModel()),
+    )
+    interface = Slack(
+        team=os.manager, token="xoxb-test", signing_secret="slack-secret", streaming=False, **slack_kwargs
+    )
+    os.interfaces.append(interface)
+    app = os.get_app()
+    return os, interface.ctx.bind(app)
+
+
+async def _send_slack_message(ctx, text="hello"):
+    from agno.os.interfaces.slack.handlers import handle_message
+
+    from .interfaces.conftest import make_async_client_mock, make_event_body
+
+    client = make_async_client_mock()
+    await handle_message(make_event_body(text=text), client, ctx)
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", [True, False, "default_principal"])
+async def test_slack_super_agent_without_users_answers(db, authorization):
+    pytest.importorskip("slack_bolt")
+    os, ctx = _slack_super_agent(db, authorization)
+    os.manager.model = ManagerAnswerModel("super agent answered")
+    client = await _send_slack_message(ctx)
+    assert [call.kwargs.get("text") for call in client.chat_postMessage.call_args_list] == ["super agent answered"]
+    assert not client.chat_postEphemeral.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authorization, tool, args, refusal",
+    [
+        # A Slack user not in users= runs with no roles under authorization
+        (True, "run_agent", {"agent_id": "restricted", "message": "x"}, "Permission required: agents:restricted:run"),
+        (True, "get_run_activity", {}, "Permission required: agent_os:admin"),
+        # The default principal's role decides instead
+        ("default_principal", "run_agent", {"agent_id": "restricted", "message": "x"}, None),
+        ("default_principal", "get_run_activity", {}, "Permission required: agent_os:admin"),
+        # With authorization off nothing is checked
+        (False, "run_agent", {"agent_id": "restricted", "message": "x"}, None),
+        (False, "get_run_activity", {}, None),
+    ],
+)
+async def test_slack_super_agent_without_users_checks_tool_permissions(db, authorization, tool, args, refusal):
+    pytest.importorskip("slack_bolt")
+    os, ctx = _slack_super_agent(db, authorization)
+    model = _ToolResultModel(tool, args)
+    os.manager.model = model
+    await _send_slack_message(ctx)
+    assert len(model.tool_results) == 1
+    if refusal is None:
+        assert "Permission required" not in model.tool_results[0]
+    else:
+        assert model.tool_results[0] == refusal
+
+
+@pytest.mark.asyncio
+async def test_slack_default_principal_without_the_run_grant_is_refused(db):
+    pytest.importorskip("slack_bolt")
+    os, ctx = _slack_super_agent(db, True, default_principal="nobody")
+    os.manager.model = ManagerAnswerModel("super agent answered")
+    client = await _send_slack_message(ctx)
+    assert not client.chat_postMessage.called
+    assert client.chat_postEphemeral.call_args.kwargs["text"] == "Not run: Permission required: teams:superagent:run"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorization", [True, False])
+async def test_slack_agent_without_users_still_runs(db, authorization):
+    pytest.importorskip("slack_bolt")
+    from agno.os import Authorization
+    from agno.os.interfaces.slack import Slack
+
+    secret = "manager-test-signing-key-at-least-32-characters"
+    agent = Agent(id="plain", model=ManagerAnswerModel("plain answered"), db=db)
+    interface = Slack(agent=agent, token="xoxb-test", signing_secret="slack-secret", streaming=False)
+    os = AgentOS(
+        id="manager-test",
+        db=db,
+        agents=[agent],
+        telemetry=False,
+        authorization=Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
+        if authorization
+        else False,
+        interfaces=[interface],
+    )
+    client = await _send_slack_message(interface.ctx.bind(os.get_app()))
+    assert [call.kwargs.get("text") for call in client.chat_postMessage.call_args_list] == ["plain answered"]
+
+
 @pytest.mark.parametrize("async_mode", [False, True])
 @pytest.mark.parametrize("target", ["delegation", MANAGER_TEAM_ID, BUILDER_ID])
 @pytest.mark.parametrize("setting", ["default", "disabled", "custom"])

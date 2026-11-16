@@ -296,8 +296,25 @@ async def test_handle_message_super_agent_without_users_runs_under_a_jwt_middlew
     client = make_async_client_mock()
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), client, ctx)
-    assert run_event.called
     assert not client.chat_postEphemeral.called
+    # Permission checks see a caller with no roles, not authorization turned off
+    authority = run_event.call_args.args[0].authority
+    assert authority is not None and authority.context.principal_id == "slack:U123"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_without_users_runs_as_the_slack_user_with_the_default_principals_access():
+    ctx = make_ctx(default_principal="slack-bot")
+    authority = object()
+    authorize = AsyncMock(return_value=authority)
+    with (
+        patch("agno.os.interfaces.slack.security.resolve_principal_authorization", authorize),
+        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
+    ):
+        await handle_message(make_event_body(), make_async_client_mock(), ctx)
+    authorize.assert_awaited_once_with(ctx.app, "slack-bot", "agents", "agent-1")
+    event_context = run_event.call_args.args[0]
+    assert (event_context.user_id, event_context.authority) == ("U123", authority)
 
 
 @pytest.mark.asyncio

@@ -65,6 +65,7 @@ class Slack(BaseInterface):
         unfurl_media: bool = True,
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
+        default_principal: Optional[str] = None,
     ):
         """
         Initialize the Slack interface.
@@ -93,6 +94,8 @@ class Slack(BaseInterface):
             unfurl_media: Let Slack expand media previews in replies
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused, and runs use the principal's access
+            default_principal: AgentOS principal whose access a user not in users runs with, under authorization;
+                without it, such a user runs with no roles and every permission check refuses
         """
         self.agent = agent
         self.team = team
@@ -117,6 +120,7 @@ class Slack(BaseInterface):
         self.unfurl_media = unfurl_media
         self.approvers = approvers
         self.users = users
+        self.default_principal = default_principal
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -155,6 +159,7 @@ class Slack(BaseInterface):
             unfurl_media=self.unfurl_media,
             approvers=self.approvers,
             users=self.users,
+            default_principal=self.default_principal,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

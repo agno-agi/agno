@@ -169,7 +169,11 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                authority = await self.company.authorize(app, user_id, self.ctx.entity_id)
+                # A run user not in users= started the Task with the default principal's access
+                principal = (
+                    self.ctx.default_principal if self.ctx.users is None and self.ctx.default_principal else user_id
+                )
+                authority = await self.company.authorize(app, principal, self.ctx.entity_id)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
             except PermissionError as exc:
