@@ -28,6 +28,7 @@ _RUNTIME_FIELDS = {
     "bot_user_id",
     "bolt_app",
     "app",
+    "links",
 }
 
 

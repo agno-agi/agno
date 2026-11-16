@@ -33,6 +33,7 @@ hands each event to the interface. The demo environment installs both.
 | `hitl_external_execution.py` | Show tool arguments and collect an external result |
 | `hitl_incident_commander.py` | Compound incident flow using all pause types |
 | `access_control.py` | `users=` maps Slack users to principals; `approvers=` names who may approve or stop |
+| `link_accounts.py` | Super Agent under authorization, each Slack member matched by email to the AgentOS user they are |
 | `claude_harness.py` | A Claude Code agent with native tool approvals |
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
@@ -200,8 +201,9 @@ once.
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
 returns it and adds the display name to run metadata.
-Sessions are stored under the run's `user_id`; map a member with `users=` to
-see the thread under their principal.
+Sessions are stored under the run's `user_id`; map a member with `users=` (or,
+for Super Agent under authorization, let them be matched by email) to see the
+thread under their principal.
 
 Claude Code and Codex take one turn per session at a time: a message that
 arrives while one is working gets a short "still working" reply. An Agent or
@@ -267,6 +269,36 @@ export SLACK_APPROVER_ID="U..."
   disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
   `get_app()`, must list `/slack/events` and `/slack/interactions` in its
   `excluded_route_paths`.
+
+## Super Agent Under Authorization
+
+A Slack message carries no AgentOS token, so under authorization Super Agent has
+to know which AgentOS user each Slack member is. Without a `users=` map, use
+`Slack(team=agent_os.manager, resolve_user_identity=True)` with
+`AgentOS(user_directory=True)` and a PostgreSQL or SQLite `db`
+(`link_accounts.py`):
+
+- On a member's first message, Slack's `users.info` gives their email. They are
+  matched to the AgentOS user whose ID is that email, if exactly one active user
+  has it. That is the case for anyone who has signed in through os.agno.com,
+  whose tokens name them by email.
+- Only a full member of the workspace the message came from, whose email Slack
+  reports as confirmed, is matched: not a guest, a bot, a deleted account, or
+  someone from another organization in a shared channel.
+- The match is stored, so later messages, approvals, Stop and Task results read
+  it without calling Slack. The member is told once which user they now act as.
+- Each message runs with that user's roles and disabled flag. A Slack message
+  carries no token, so the roles must be stored in AgentOS
+  (`Authorization.define_role` and `assign`, a default role, or the roles API).
+- Anyone not matched is told to sign in with the email their Slack profile uses.
+  Once they have, their next message is matched.
+- `users=`, when set, is the only mapping: a member it leaves out is refused,
+  even when a user has their email.
+
+It needs the `users:read` and `users:read.email` scopes. It trusts the
+workspace's emails: whoever can change a member's Slack email can make them
+act as another AgentOS user, so use it for a workspace your organization
+controls.
 
 ## Workspace Search Action
 
@@ -385,9 +417,11 @@ app = agent_os.get_app()
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
 With `AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)` you
-add yourself, pass `users=`; `get_app()` refuses to serve Super Agent under
-authorization without it, and a middleware added after `get_app()` refuses each
-message instead. Each message then runs with the mapped principal's roles.
+add yourself, pass `users=`, or `resolve_user_identity=True` with the user
+directory (see Super Agent Under Authorization); `get_app()` refuses to serve
+Super Agent under authorization with neither, and a middleware added after
+`get_app()` refuses each message instead. Each message then runs with the
+mapped or matched user's roles.
 
 ## Limits
 
@@ -458,7 +492,7 @@ Stop and the card's Deny ends the run; that stop path was checked with a signed
 | Streaming returns `internal_error` | Agent view is off, `assistant:write` is missing, or the app was not reinstalled |
 | No suggested prompts | `app_home_opened` is not subscribed, the Messages tab is off, the app is in the assistant view (a `not_agent_app` warning in the log), or the Slack client needs a reload |
 | Stop does nothing | `agent_session_stopped` is not subscribed |
-| "Your Slack account is not linked" | `users=` is set and the sender is not in it |
+| "Your Slack account is not linked" | `users=` is set and the sender is not in it, or no active user who has signed in has the sender's confirmed Slack email (check `users:read.email`) |
 | Workspace search reports no action token | The run did not start from a Slack message, or the app lacks the `search:read.*` scopes |
 | HITL buttons do nothing | Interactivity is off or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |

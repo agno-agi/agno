@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from agno.os.interfaces.slack import executor
 from agno.os.interfaces.slack.context import EventContext, SlackContext, new_event_context, resolve_context
@@ -9,10 +9,14 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run
+from agno.os.interfaces.slack.security import authorize_run, maps_senders, sender_principal
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
+_SIGN_IN_FIRST = (
+    " Sign in to this AgentOS with the email your Slack profile uses and message me again, or ask an admin to map"
+    " your Slack account."
+)
 
 # Subtypes that indicate lifecycle events, not user messages
 _IGNORED_SUBTYPES = frozenset(
@@ -54,20 +58,32 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
     return True
 
 
+def _reply_thread(event_context: EventContext) -> Optional[str]:
+    """The thread a private notice goes in: the message's thread, or None for a message outside one.
+
+    Slack does not show an ephemeral posted into a message that has no replies yet, so a notice about a
+    top-level message goes in the channel.
+    """
+    return event_context.event.get("thread_ts") or None
+
+
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
-    """Run a mapped user's message under their platform authority; an unmapped or refused user gets an ephemeral."""
+    """Run a mapped or linked user's message under their platform authority; anyone else gets an ephemeral."""
     from agno.os.auth import _authorization_enforced
 
-    # Super Agent under authorization needs a mapped user; the middleware may be added after get_app()
-    if ctx.users is None and (ctx.company is None or not _authorization_enforced(ctx.app)):
+    # Super Agent under authorization needs a known sender; the middleware may be added after get_app()
+    if not maps_senders(ctx) and (ctx.company is None or not _authorization_enforced(ctx.app)):
         return True
-    principal = ctx.users.get(event_context.owner) if ctx.users is not None else None
+    principal = await sender_principal(ctx, event_context.team_id, event_context.owner, client)
     if principal is None:
-        await post_ephemeral(
-            client, event_context.channel, event_context.owner, _NOT_LINKED_MESSAGE, event_context.thread_ts
-        )
+        # Linked by email: someone who has not signed in yet is found once they have
+        matched_by_email = ctx.users is None and getattr(ctx, "links", None) is not None
+        message = _NOT_LINKED_MESSAGE + (_SIGN_IN_FIRST if matched_by_email else "")
+        await post_ephemeral(client, event_context.channel, event_context.owner, message, _reply_thread(event_context))
         return False
-    if not await authorize_run(ctx, event_context, principal, client, event_context.owner, event_context.thread_ts):
+    if not await authorize_run(
+        ctx, event_context, principal, client, event_context.owner, _reply_thread(event_context)
+    ):
         return False
     event_context.user_id = principal
     return True

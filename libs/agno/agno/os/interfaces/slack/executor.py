@@ -126,6 +126,7 @@ def _run_kwargs(event_context: "EventContext", ctx: "SlackContext", media: tuple
                 # A sandbox request carries run metadata, which agent code inside the sandbox could read
                 "action_token": None if sandboxed else event_context.action_token,
                 "message_ts": event_context.message_ts,
+                "team_id": event_context.team_id,
             },
         ),
         "dependencies": _slack_dependencies(event_context),

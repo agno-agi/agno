@@ -36,7 +36,7 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
-from agno.os.interfaces.slack.security import authorize_run, can_act
+from agno.os.interfaces.slack.security import authorize_run, can_act, maps_senders
 from agno.os.interfaces.slack.types import ParsedDecision, RowActionContext, SubmitContext
 from agno.run.approval import aresolve_approval
 from agno.run.base import RunStatus
@@ -141,7 +141,7 @@ async def _decider_context(
         await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE, thread_ts)
         return None
 
-    if ctx.users is not None:
+    if maps_senders(ctx):
         # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
             return None
