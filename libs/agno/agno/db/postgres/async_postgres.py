@@ -45,6 +45,11 @@ from agno.db.schemas.authz import (
     AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.identity_links import (
+    IDENTITY_LINK_CODES,
+    IDENTITY_LINK_TABLE_NAME_ATTRS,
+    IDENTITY_LINKS,
+)
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
@@ -52,6 +57,7 @@ from agno.db.schemas.service_accounts import (
     validate_service_account_update,
 )
 from agno.db.sql import authz as authz_sql
+from agno.db.sql import identity_links as identity_links_sql
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
@@ -800,6 +806,13 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table_type in AUTHZ_TABLE_NAME_ATTRS:
             return await self._get_or_create_table(
                 table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type in IDENTITY_LINK_TABLE_NAME_ATTRS:
+            return await self._get_or_create_table(
+                table_name=getattr(self, IDENTITY_LINK_TABLE_NAME_ATTRS[table_type]),
                 table_type=table_type,
                 create_table_if_not_found=create_table_if_not_found,
             )
@@ -7488,6 +7501,47 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def delete_authz_user(self, user_id: str) -> None:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         await authz_sql.adelete_user(self.db_engine, table, user_id)
+
+    # --- Identity links ---
+
+    async def create_identity_link_code(
+        self, provider: str, principal_id: str, code_hash: str, expires_at: int
+    ) -> None:
+        table = await self._get_table(table_type=IDENTITY_LINK_CODES, create_table_if_not_found=True)
+        await identity_links_sql.acreate_code(
+            self.db_engine, table, provider, principal_id, code_hash, expires_at, int(time.time())
+        )
+
+    async def redeem_identity_link_code(
+        self, provider: str, code_hash: str, tenant: str, external_id: str, now: int
+    ) -> Optional[str]:
+        codes = await self._get_table(table_type=IDENTITY_LINK_CODES, create_table_if_not_found=True)
+        links = await self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return await identity_links_sql.aredeem_code(
+            self.db_engine, codes, links, provider, code_hash, tenant, external_id, now
+        )
+
+    async def get_identity_link(self, provider: str, tenant: str, external_id: str) -> Optional[str]:
+        table = await self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return await identity_links_sql.aget_link(self.db_engine, table, provider, tenant, external_id)
+
+    async def list_identity_links(
+        self, provider: str, principal_id: Optional[str] = None, external_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return await identity_links_sql.alist_links(self.db_engine, table, provider, principal_id, external_id)
+
+    async def delete_identity_links(
+        self,
+        provider: str,
+        principal_id: Optional[str] = None,
+        tenant: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> int:
+        table = await self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return await identity_links_sql.adelete_links(
+            self.db_engine, table, provider, principal_id, tenant, external_id
+        )
 
     async def is_authz_user_disabled(self, user_id: str) -> bool:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

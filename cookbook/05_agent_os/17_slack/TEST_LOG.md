@@ -290,6 +290,31 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
 
 ---
 
+### link_accounts.py
+
+**Status:** PASS
+
+**Description:** Super Agent under authorization with `link_accounts=True`, a
+default `member` role and the user directory. `--check` signs in a local user,
+creates a link code and checks the role; a Task was then seeded and started as
+that user with the durable queue running. Not yet run against a live Slack
+workspace.
+
+**Result:**
+- The local user was added to the directory on first sign-in with the default
+  role, and `POST /identity-links/slack/codes` answered 201 with a one-time code.
+- That user's authority allowed running Super Agent, `tasks:write`, and running
+  the investigator workflow.
+- The seeded Task (accepted, investigator executor) started as that user with
+  202, ran on the durable queue, and reached In review.
+- Unit tests cover linking in a DM, a code voided when posted in a channel, an
+  expired, reused or superseded code, `unlink`, an unlinked sender told how to
+  link, `users=` taking precedence, Approve/Stop by the same principal, and the
+  routes on SQLite and async SQLite; the store also on PostgreSQL and async
+  PostgreSQL.
+
+---
+
 ## Validation
 
 - `Slack(...)` raises `ValueError` when the token, the signing secret, or the

@@ -50,6 +50,7 @@ class SlackContext:
     unfurl_media: bool = True
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
+    link_accounts: bool = False
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -59,6 +60,8 @@ class SlackContext:
     bot_user_id: Optional[str] = None
     bolt_app: Any = None
     app: Any = None
+    # The linked-account store AgentOS lends a Slack(link_accounts=True) interface
+    links: Any = None
 
     def web(self) -> AsyncWebClient:
         """A client for Slack calls made outside a request (timers, Stop, delivery)."""
@@ -94,6 +97,7 @@ def build_context(
     unfurl_media: bool = True,
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
+    link_accounts: bool = False,
 ) -> SlackContext:
     """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
 
@@ -135,6 +139,7 @@ def build_context(
         unfurl_media=unfurl_media,
         approvers=approvers,
         users=users,
+        link_accounts=link_accounts,
     )
 
 
@@ -243,13 +248,16 @@ async def event_context_from_run(
     session_channel, _, thread_ts = session_id.removeprefix(prefix).rpartition(":")
     if not owner and user_id and ctx.users is not None:
         owner = next((slack_id for slack_id, principal in ctx.users.items() if principal == user_id), None)
+    links = getattr(ctx, "links", None)
+    if not owner and user_id and links is not None:
+        owner = await links.slack_user(user_id, team_id)
     if not owner and "@" in user_id:
         try:
             response = await (client or ctx.web()).users_lookupByEmail(email=user_id)
             owner = (response.get("user") or {}).get("id")
         except Exception as e:
             log_warning(f"Failed to look up the Slack user of a run: {str(e)}")
-    if not owner and ctx.users is None and not ctx.resolve_user_identity:
+    if not owner and ctx.users is None and links is None and not ctx.resolve_user_identity:
         # Without identity resolution the run's user is the Slack id itself
         owner = user_id
     return EventContext(

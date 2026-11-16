@@ -28,6 +28,7 @@ _RUNTIME_FIELDS = {
     "bot_user_id",
     "bolt_app",
     "app",
+    "links",
 }
 
 
@@ -65,6 +66,7 @@ class Slack(BaseInterface):
         unfurl_media: bool = True,
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
+        link_accounts: bool = False,
     ):
         """
         Initialize the Slack interface.
@@ -93,6 +95,9 @@ class Slack(BaseInterface):
             unfurl_media: Let Slack expand media previews in replies
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused, and runs use the principal's access
+            link_accounts: Let each person link their own Slack account to the principal they sign in to AgentOS as
+                (a code from POST /identity-links/slack/codes, sent to the bot as `link <code>` in a direct message);
+                linked senders run with that principal's access, alongside users=. Needs AgentOS authorization
         """
         self.agent = agent
         self.team = team
@@ -117,6 +122,7 @@ class Slack(BaseInterface):
         self.unfurl_media = unfurl_media
         self.approvers = approvers
         self.users = users
+        self.link_accounts = link_accounts
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -155,6 +161,7 @@ class Slack(BaseInterface):
             unfurl_media=self.unfurl_media,
             approvers=self.approvers,
             users=self.users,
+            link_accounts=self.link_accounts,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

@@ -38,6 +38,11 @@ from agno.db.schemas.authz import (
     AUTHZ_USERS,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.identity_links import (
+    IDENTITY_LINK_CODES,
+    IDENTITY_LINK_TABLE_NAME_ATTRS,
+    IDENTITY_LINKS,
+)
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.mcp_oauth import (
     MCP_OAUTH_CLIENTS,
@@ -53,6 +58,7 @@ from agno.db.schemas.service_accounts import (
     validate_service_account_update,
 )
 from agno.db.sql import authz as authz_sql
+from agno.db.sql import identity_links as identity_links_sql
 from agno.db.sql import mcp_oauth as mcp_oauth_sql
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
@@ -948,6 +954,13 @@ class SqliteDb(BaseDb):
         elif table_type in AUTHZ_TABLE_NAME_ATTRS:
             return self._get_or_create_table(
                 table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        elif table_type in IDENTITY_LINK_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, IDENTITY_LINK_TABLE_NAME_ATTRS[table_type]),
                 table_type=table_type,
                 create_table_if_not_found=create_table_if_not_found,
             )
@@ -9176,6 +9189,43 @@ class SqliteDb(BaseDb):
     def delete_authz_user(self, user_id: str) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         authz_sql.delete_user(self.db_engine, table, user_id)
+
+    # --- Identity links ---
+
+    def create_identity_link_code(self, provider: str, principal_id: str, code_hash: str, expires_at: int) -> None:
+        table = self._get_table(table_type=IDENTITY_LINK_CODES, create_table_if_not_found=True)
+        identity_links_sql.create_code(
+            self.db_engine, table, provider, principal_id, code_hash, expires_at, int(time.time())
+        )
+
+    def redeem_identity_link_code(
+        self, provider: str, code_hash: str, tenant: str, external_id: str, now: int
+    ) -> Optional[str]:
+        codes = self._get_table(table_type=IDENTITY_LINK_CODES, create_table_if_not_found=True)
+        links = self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return identity_links_sql.redeem_code(
+            self.db_engine, codes, links, provider, code_hash, tenant, external_id, now
+        )
+
+    def get_identity_link(self, provider: str, tenant: str, external_id: str) -> Optional[str]:
+        table = self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return identity_links_sql.get_link(self.db_engine, table, provider, tenant, external_id)
+
+    def list_identity_links(
+        self, provider: str, principal_id: Optional[str] = None, external_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return identity_links_sql.list_links(self.db_engine, table, provider, principal_id, external_id)
+
+    def delete_identity_links(
+        self,
+        provider: str,
+        principal_id: Optional[str] = None,
+        tenant: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> int:
+        table = self._get_table(table_type=IDENTITY_LINKS, create_table_if_not_found=True)
+        return identity_links_sql.delete_links(self.db_engine, table, provider, principal_id, tenant, external_id)
 
     def is_authz_user_disabled(self, user_id: str) -> bool:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

@@ -33,6 +33,7 @@ hands each event to the interface. The demo environment installs both.
 | `hitl_external_execution.py` | Show tool arguments and collect an external result |
 | `hitl_incident_commander.py` | Compound incident flow using all pause types |
 | `access_control.py` | `users=` maps Slack users to principals; `approvers=` names who may approve or stop |
+| `link_accounts.py` | Super Agent under authorization, with each person linking their own Slack account (`link_accounts=True`) |
 | `claude_harness.py` | A Claude Code agent with native tool approvals |
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
@@ -200,8 +201,9 @@ once.
 By default the run's `user_id` is the Slack member ID. With
 `resolve_user_identity=True`, the interface uses the member's email when Slack
 returns it and adds the display name to run metadata.
-Sessions are stored under the run's `user_id`; map a member with `users=` to
-see the thread under their principal.
+Sessions are stored under the run's `user_id`; map a member with `users=`, or
+let them link their account (`link_accounts=True`), to see the thread under
+their principal.
 
 Claude Code and Codex take one turn per session at a time: a message that
 arrives while one is working gets a short "still working" reply. An Agent or
@@ -267,6 +269,45 @@ export SLACK_APPROVER_ID="U..."
   disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
   `get_app()`, must list `/slack/events` and `/slack/interactions` in its
   `excluded_route_paths`.
+
+## Linking Slack Accounts
+
+`Slack(link_accounts=True)` lets each person link their own Slack account to
+the AgentOS principal they sign in as, instead of an admin keeping a `users=`
+map. It needs AgentOS authorization and a PostgreSQL or SQLite AgentOS `db`.
+
+1. Signed in to AgentOS, from any frontend or with curl, the person creates a
+   one-time code:
+
+   ```bash
+   curl -X POST "$AGENT_OS_URL/identity-links/slack/codes" -H "Authorization: Bearer $TOKEN"
+   ```
+
+2. They send `link <code>` to the bot in a direct message. The bot answers with
+   the principal the account now runs as.
+
+The token proves who they are in AgentOS and Slack's signed event proves which
+Slack account sent the code, so nothing is matched by email and any identity
+provider works. A code expires after 10 minutes, works once, and a new code
+voids the earlier one. A code posted anywhere but a direct message is voided,
+since others could read it.
+
+| Route | Does |
+|---|---|
+| `POST /identity-links/slack/codes` | A one-time code for the caller |
+| `GET /identity-links/slack` | The caller's linked Slack accounts |
+| `DELETE /identity-links/slack` | Unlink the caller's Slack accounts |
+
+These routes sit outside `/slack`, so AgentOS authenticates them like any
+other route. Service accounts cannot link a Slack account.
+
+Each message from a linked account runs as that principal, with its roles and
+disabled flag read on every message; Approve, Deny, Stop and Super Agent Task
+results use the same principal. A Slack message carries no token, so the
+roles must be stored in AgentOS (`Authorization.define_role` and `assign`, or
+the roles API). `users=` still works alongside it and wins for the members it
+lists. Sending `unlink` to the bot in a DM undoes a link. An unlinked sender is
+refused with how to link.
 
 ## Workspace Search Action
 
@@ -385,9 +426,10 @@ app = agent_os.get_app()
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
 With `AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)` you
-add yourself, pass `users=`; `get_app()` refuses to serve Super Agent under
-authorization without it, and a middleware added after `get_app()` refuses each
-message instead. Each message then runs with the mapped principal's roles.
+add yourself, pass `users=` or `link_accounts=True` (see Linking Slack
+Accounts); `get_app()` refuses to serve Super Agent under authorization with
+neither, and a middleware added after `get_app()` refuses each message instead.
+Each message then runs with the mapped or linked principal's roles.
 
 ## Limits
 
@@ -458,7 +500,8 @@ Stop and the card's Deny ends the run; that stop path was checked with a signed
 | Streaming returns `internal_error` | Agent view is off, `assistant:write` is missing, or the app was not reinstalled |
 | No suggested prompts | `app_home_opened` is not subscribed, the Messages tab is off, the app is in the assistant view (a `not_agent_app` warning in the log), or the Slack client needs a reload |
 | Stop does nothing | `agent_session_stopped` is not subscribed |
-| "Your Slack account is not linked" | `users=` is set and the sender is not in it |
+| "Your Slack account is not linked" | `users=` is set and the sender is not in it, or `link_accounts=True` and the sender has not linked yet |
+| "That code is not valid or has expired" | The code was used, voided by a newer code, posted outside a DM, or is older than 10 minutes |
 | Workspace search reports no action token | The run did not start from a Slack message, or the app lacks the `search:read.*` scopes |
 | HITL buttons do nothing | Interactivity is off or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |

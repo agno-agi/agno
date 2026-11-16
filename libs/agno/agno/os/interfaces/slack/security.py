@@ -24,6 +24,23 @@ def resolve_signing_secret(signing_secret: Optional[str] = None) -> str:
     return resolved
 
 
+def maps_senders(ctx: "SlackContext") -> bool:
+    """Whether Slack senders run as AgentOS principals: a users= map, linked accounts, or both."""
+    return ctx.users is not None or getattr(ctx, "links", None) is not None
+
+
+async def sender_principal(ctx: "SlackContext", team_id: Optional[str], user: str) -> Optional[str]:
+    """The principal a Slack member runs as: users= first, then the account they linked; None when neither."""
+    if not user:
+        return None
+    if ctx.users is not None and user in ctx.users:
+        return ctx.users[user]
+    links = getattr(ctx, "links", None)
+    if links is not None:
+        return await links.principal(team_id, user)
+    return None
+
+
 async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext", client: Any = None) -> bool:
     """Whether a Slack user may stop or decide on a run: its owner, an approver, or the same agno user."""
     if not user:
@@ -32,8 +49,8 @@ async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext",
         return True
     if ctx.approvers is not None and user in ctx.approvers:
         return True
-    if ctx.users is not None:
-        principal = ctx.users.get(user)
+    if maps_senders(ctx):
+        principal = await sender_principal(ctx, event_context.team_id, user)
         return principal is not None and principal == event_context.user_id
     if ctx.resolve_user_identity and event_context.user_id:
         # Same derivation as the event context's user, so the owner can act after a restart

@@ -1154,15 +1154,17 @@ class AgentOS:
         # Add A2A interface if relevant
         has_a2a_interface = False
         self._public_interface_routes: List[tuple[str, str]] = []
+        slack_links: Any = None
 
         # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
         # so only the first posts them, also when get_app runs again
-        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool, bool]:
             users = interface.ctx.users  # type: ignore[attr-defined]
             return (
                 interface.ctx.token,  # type: ignore[attr-defined]
                 None if users is None else frozenset(users.items()),
                 interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+                bool(getattr(interface, "link_accounts", False)),
             )
 
         delivery_keys = {
@@ -1181,16 +1183,21 @@ class AgentOS:
                 # Agent Cards declare how to authenticate when the OS requires a bearer token
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
+            if interface.type == "slack" and getattr(interface, "link_accounts", False):
+                slack_links = self._attach_slack_links(interface, app)
             if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
                 from agno.os.auth import _has_authorization_middleware
 
                 # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
+                if (
+                    getattr(interface, "users", None) is None
+                    and not getattr(interface, "link_accounts", False)
+                    and (self.authorization or _has_authorization_middleware(app))
                 ):
                     raise ValueError(
                         "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                        "pass Slack(users={slack_user_id: principal_id})."
+                        "pass Slack(users={slack_user_id: principal_id}), or Slack(link_accounts=True) so each "
+                        "person links their own Slack account."
                     )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:
@@ -1208,6 +1215,11 @@ class AgentOS:
                     for method in route.methods
                 )
             self._add_router(app, interface_router)
+        if slack_links is not None:
+            from agno.os.interfaces.slack.links_router import get_slack_links_router
+
+            # Outside the Slack prefix, so AgentOS authenticates the caller whose account is linked
+            self._add_router(app, get_slack_links_router(slack_links))
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 
@@ -2876,6 +2888,26 @@ class AgentOS:
         app = self.get_app()
 
         return flatten_routes(app.routes)
+
+    def _attach_slack_links(self, interface: BaseInterface, app: FastAPI) -> Any:
+        """Lend a Slack(link_accounts=True) interface the linked-account store on the AgentOS database."""
+        from agno.os.auth import _has_authorization_middleware
+        from agno.os.interfaces.slack.links import SlackLinks, supports_links
+
+        # A link ties a Slack account to the principal of the AgentOS token that asked for its code
+        if not (self.authorization or _has_authorization_middleware(app)):
+            raise ValueError(
+                "Slack(link_accounts=True) needs AgentOS authorization: a person links their Slack account to "
+                "the principal they sign in as. Pass AgentOS(authorization=...)."
+            )
+        if not supports_links(self.db):
+            raise ValueError(
+                "Slack(link_accounts=True) stores links in the AgentOS database, which must be PostgreSQL or SQLite: "
+                f"pass AgentOS(db=...) (got {type(self.db).__name__})."
+            )
+        links = SlackLinks(self.db)
+        interface.ctx.links = links  # type: ignore[attr-defined]
+        return links
 
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.

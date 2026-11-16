@@ -159,6 +159,7 @@ def attach_routes(
     unfurl_media: bool = True,
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
+    link_accounts: bool = False,
     context: Optional[SlackContext] = None,
 ) -> APIRouter:
     """
@@ -197,6 +198,7 @@ def attach_routes(
             unfurl_media=unfurl_media,
             approvers=approvers,
             users=users,
+            link_accounts=link_accounts,
         )
         # Without AgentOS nothing else closes the runs
         router.add_event_handler("shutdown", partial(aclose_runs, context))

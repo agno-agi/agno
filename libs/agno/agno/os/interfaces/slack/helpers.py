@@ -111,6 +111,8 @@ def build_run_metadata(
         metadata["action_token"] = ctx["action_token"]
     if ctx.get("message_ts"):
         metadata["slack_message_ts"] = ctx["message_ts"]
+    if ctx.get("team_id"):
+        metadata["slack_team_id"] = ctx["team_id"]
     return metadata or None
 
 
