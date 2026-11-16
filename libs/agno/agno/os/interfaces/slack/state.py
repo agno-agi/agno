@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Set, Union
 
 from typing_extensions import TypedDict
 
@@ -12,9 +12,10 @@ if TYPE_CHECKING:
     from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
 # Literal not Enum — values flow directly into Slack API dicts as plain strings.
-# "pending" added for HITL pauses — Slack's AI Stream UI treats in_progress cards
-# that outlive the stream idle window as errors, whereas pending cards are valid waits.
-TaskStatus = Literal["pending", "in_progress", "complete", "error"]
+# Slack shows every card that is not "complete" when its stream stops as an error.
+TaskStatus = Literal["in_progress", "complete", "error"]
+
+TerminalStatus = Literal["error", "cancelled", "paused", "workflow_paused"]
 
 
 class TaskUpdateDict(TypedDict):
@@ -38,11 +39,19 @@ class StreamState:
     error_count: int = 0
 
     text_buffer: str = ""
+    # Set by the first RunContent; RunCompleted content is shown only for a run that streamed none
+    content_streamed: bool = False
+    # Text the paused run already showed; a continuation's RunCompleted content starts with it
+    paused_content: str = ""
+    # An Agent's draft before its output model answers; dropped once the final RunContent arrives
+    intermediate_buffer: str = ""
 
     # Counter for unique reasoning task card keys (reasoning_0, reasoning_1, ...)
     reasoning_round: int = 0
 
     task_cards: Dict[str, TaskCard] = field(default_factory=dict)
+    # Tool calls the user denied on an approval card; the harness reports them failed, but they did not fail
+    denied_tool_call_ids: Set[str] = field(default_factory=set)
 
     images: List["Image"] = field(default_factory=list)
     videos: List["Video"] = field(default_factory=list)
@@ -57,13 +66,10 @@ class StreamState:
     # Last StepOutput content; WorkflowCompleted uses as fallback when content is None
     workflow_final_content: str = ""
 
-    # Set by handlers on terminal events; router reads this for the final flush
-    terminal_status: Optional[TaskStatus] = None
+    # Set by handlers on terminal events; the executor reads this for the final flush
+    terminal_status: Optional[TerminalStatus] = None
 
-    # Total chars sent to the current Slack stream; reset on rotation
-    stream_chars_sent: int = 0
-
-    # Stashed by _on_run_paused; router posts Block Kit approval card after stream.stop()
+    # Stashed by _on_run_paused; the executor posts the Block Kit approval card after stream.stop()
     paused_event: Optional[Union["AgentRunPausedEvent", "TeamRunPausedEvent"]] = None
 
     def track_task(self, key: str, title: str, status: TaskStatus = "in_progress") -> None:
@@ -79,21 +85,33 @@ class StreamState:
         if card:
             card.status = "error"
 
-    def resolve_all_pending(self, status: TaskStatus = "complete") -> List[TaskUpdateDict]:
+    def resolve_all_pending(self, status: TaskStatus = "complete", suffix: str = "") -> List[TaskUpdateDict]:
         # Called at stream end to close any cards left in_progress (e.g. if the
         # model finished without emitting a ToolCallCompleted for every start).
         chunks: List[TaskUpdateDict] = []
         for key, card in self.task_cards.items():
             if card.status == "in_progress":
-                card.status = status  # type: ignore[assignment]
-                chunks.append(TaskUpdateDict(type="task_update", id=key, title=card.title, status=status))
+                card.status = status
+                title = f"{card.title}: {suffix}" if suffix else card.title
+                chunks.append(TaskUpdateDict(type="task_update", id=key, title=title, status=status))
         return chunks
+
+    def card_status(self) -> TaskStatus:
+        return "error" if self.terminal_status == "error" else "complete"
 
     def append_content(self, text: str) -> None:
         self.text_buffer += str(text)
 
     def append_error(self, error_msg: str) -> None:
         self.text_buffer += f"\n_Error: {error_msg}_"
+
+    def append_intermediate(self, text: str) -> None:
+        self.intermediate_buffer += str(text)
+
+    def take_intermediate(self) -> str:
+        result = "" if self.content_streamed else self.intermediate_buffer
+        self.intermediate_buffer = ""
+        return result
 
     def has_content(self) -> bool:
         return bool(self.text_buffer)

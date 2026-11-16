@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -427,6 +427,50 @@ def test_read_blocked_start_url_returns_empty_list():
     reader = WebsiteReader(allowed_hosts=["docs.agno.com"], max_depth=1, max_links=1)
     documents = reader.read("http://169.254.169.254/latest/meta-data")
     assert documents == []
+
+
+@pytest.mark.parametrize("allowed_hosts", [["allowed.example"], []])
+def test_public_read_rejects_disallowed_host_before_fetch(allowed_hosts):
+    reader = WebsiteReader(public_only=True, allowed_hosts=allowed_hosts)
+    with patch("agno.knowledge.reader.utils.public_fetch.fetch_public_page") as fetch:
+        assert reader.read("https://outside.example/page") == []
+        fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed_hosts", [["allowed.example"], []])
+async def test_public_async_read_rejects_disallowed_host_before_fetch(allowed_hosts):
+    reader = WebsiteReader(public_only=True, allowed_hosts=allowed_hosts)
+    with patch("agno.knowledge.reader.utils.public_fetch.afetch_public_page", new_callable=AsyncMock) as fetch:
+        assert await reader.async_read("https://outside.example/page") == []
+        fetch.assert_not_called()
+
+
+@pytest.mark.parametrize("allowed_hosts", [["EXAMPLE.COM"], None])
+def test_public_read_fetches_allowed_host(allowed_hosts):
+    reader = WebsiteReader(public_only=True, allowed_hosts=allowed_hosts, chunk=False)
+    url = "https://example.com/page"
+    body = b"<html><body><main>Allowed content</main></body></html>"
+    with patch("agno.knowledge.reader.utils.public_fetch.fetch_public_page", return_value=(url, body)) as fetch:
+        documents = reader.read(url)
+        assert len(documents) == 1
+        assert documents[0].content == "Allowed content"
+        fetch.assert_called_once_with(url)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowed_hosts", [["EXAMPLE.COM"], None])
+async def test_public_async_read_fetches_allowed_host(allowed_hosts):
+    reader = WebsiteReader(public_only=True, allowed_hosts=allowed_hosts, chunk=False)
+    url = "https://example.com/page"
+    body = b"<html><body><main>Allowed content</main></body></html>"
+    with patch(
+        "agno.knowledge.reader.utils.public_fetch.afetch_public_page", new_callable=AsyncMock, return_value=(url, body)
+    ) as fetch:
+        documents = await reader.async_read(url)
+        assert len(documents) == 1
+        assert documents[0].content == "Allowed content"
+        fetch.assert_awaited_once_with(url)
 
 
 @pytest.mark.asyncio

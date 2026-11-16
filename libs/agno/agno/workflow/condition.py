@@ -291,6 +291,7 @@ class Condition:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
@@ -305,7 +306,7 @@ class Condition:
             for step in steps:
                 if callable(step) and hasattr(step, "__name__"):
                     prepared.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-                elif isinstance(step, Agent):
+                elif isinstance(step, (Agent, BaseExternalAgent)):
                     prepared.append(Step(name=step.name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     prepared.append(Step(name=step.name, description=step.description, team=step))
@@ -333,11 +334,13 @@ class Condition:
         current_images = step_input.images or []
         current_videos = step_input.videos or []
         current_audio = step_input.audio or []
+        current_files = step_input.files or []
 
         if isinstance(step_outputs, list):
             all_images = sum([out.images or [] for out in step_outputs], [])
             all_videos = sum([out.videos or [] for out in step_outputs], [])
             all_audio = sum([out.audio or [] for out in step_outputs], [])
+            all_files = sum([out.files or [] for out in step_outputs], [])
             # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
@@ -345,6 +348,7 @@ class Condition:
             all_images = step_outputs.images or []
             all_videos = step_outputs.videos or []
             all_audio = step_outputs.audio or []
+            all_files = step_outputs.files or []
             previous_step_content = step_outputs.content
 
         updated_previous_step_outputs = {}
@@ -361,6 +365,7 @@ class Condition:
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
+            files=current_files + all_files,
         )
 
     def _evaluate_condition(

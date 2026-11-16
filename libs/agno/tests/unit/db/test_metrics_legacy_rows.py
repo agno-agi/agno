@@ -9,7 +9,6 @@ from datetime import date
 
 import pytest
 
-from agno.db.in_memory import InMemoryDb
 from agno.db.json import JsonDb
 
 TARGET_DATE = date(2026, 1, 1)
@@ -47,17 +46,14 @@ NO_OWNER_FIELD = _record(None, 99, record_id=f"{DAY}_daily", users_count=2)
 UNOWNED_BUCKET_SHAPED = _record("", 99, record_id=f"{DAY}__daily", users_count=2)
 
 
-@pytest.fixture(params=["json", "in_memory"])
-def db(request, tmp_path):
-    return JsonDb(db_path=str(tmp_path)) if request.param == "json" else InMemoryDb()
+@pytest.fixture
+def db(tmp_path):
+    return JsonDb(db_path=str(tmp_path))
 
 
 def _seed(db, records):
     """Put records in the store the way the adapter itself holds them."""
-    if isinstance(db, InMemoryDb):
-        db._metrics = list(records)
-    else:
-        db._write_json_file(db.metrics_table_name, list(records))
+    db._write_json_file(db.metrics_table_name, list(records))
 
 
 def _runs(rows):

@@ -302,7 +302,7 @@ def test_authorization_config_extends_default_route_exclusions(test_agent: Agent
         ),
     ).get_app()
 
-    assert sum(middleware.cls is JWTMiddleware for middleware in app.user_middleware) == 1
+    assert sum(issubclass(middleware.cls, JWTMiddleware) for middleware in app.user_middleware) == 1
     client = TestClient(app)
 
     public_response = client.get("/public")

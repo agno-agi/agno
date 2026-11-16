@@ -1,7 +1,8 @@
 import json
 from datetime import date, datetime, time, timezone
+from functools import partial
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -11,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import AgnoError, ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError, RunNotContinuableError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -25,8 +26,10 @@ from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.registry import Registry, ToolSource
+from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
+from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
@@ -119,6 +122,26 @@ def drop_media_references(media_dicts: Any) -> Any:
     return media_dicts
 
 
+INTERNAL_RUN_OPTIONS = frozenset({"run_context", "debug_mode", "yield_run_output", "background_tasks", "websocket"})
+
+
+def _check_object_json_schema(schema: Dict[str, Any]) -> None:
+    """Raise HTTP 422 unless schema is a structurally valid JSON Schema with an explicit object root."""
+    if schema.get("type") != "object":
+        raise HTTPException(status_code=422, detail='Invalid output_schema: root must declare "type": "object"')
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+        from jsonschema.exceptions import SchemaError  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError("`jsonschema` not installed. Please install using `pip install jsonschema`")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid output_schema: {exc.message}") from exc
+    except RecursionError as exc:
+        raise HTTPException(status_code=422, detail="Invalid output_schema: schema is nested too deeply") from exc
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -143,6 +166,11 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     sig = inspect.signature(endpoint_func)
     known_fields = set(sig.parameters.keys())
     kwargs: Dict[str, Any] = {key: value for key, value in form_data.items() if key not in known_fields}
+
+    # Run options that only code in this process can supply, never a caller's form field
+    for name in INTERNAL_RUN_OPTIONS.intersection(kwargs):
+        kwargs.pop(name)
+        log_warning(f"Ignoring form field '{name}': it is not a request parameter")
 
     # Handle JSON parameters. They are passed as strings and need to be deserialized.
     if session_state := kwargs.get("session_state"):
@@ -199,16 +227,23 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
         "input_files": ("files", reconstruct_files),
     }
     for form_key, (kwarg_key, reconstructor) in media_params.items():
-        media_value = kwargs.get(form_key)
-        if not media_value or not isinstance(media_value, str):
+        if form_key not in kwargs:
             continue
-        kwargs.pop(form_key)
+        media_value = kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
-            if reconstructed_media:
-                kwargs[kwarg_key] = reconstructed_media
-        except json.JSONDecodeError as e:
-            log_warning(f"Invalid {form_key} parameter couldn't be loaded: {str(e)}")
+            decoded_media = json.loads(media_value) if isinstance(media_value, str) else media_value
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects"
+            ) from exc
+        if not isinstance(decoded_media, list) or any(not isinstance(item, dict) for item in decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: expected a JSON array of objects")
+        # Storage reconstruction tolerates damaged historical entries. Incoming requests
+        # must instead fail as a whole, before a run can execute with missing inputs.
+        reconstructed_media = reconstructor(drop_media_references(decoded_media)) or []
+        if len(reconstructed_media) != len(decoded_media):
+            raise HTTPException(status_code=422, detail=f"Invalid {form_key}: could not reconstruct every media item")
+        kwargs[kwarg_key] = reconstructed_media
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -250,24 +285,36 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     if isinstance(use_json_schema, str):
         use_json_schema = use_json_schema.lower() == "true"
 
-    if output_schema := kwargs.get("output_schema"):
+    if "output_schema" in kwargs:
+        output_schema = kwargs["output_schema"]
         try:
-            if isinstance(output_schema, str):
-                schema_dict = json.loads(output_schema)
-
-                if use_json_schema:
-                    # Keep as dict schema for direct JSON output
-                    kwargs["output_schema"] = schema_dict
-                else:
-                    # Convert to Pydantic model (default behavior)
-                    dynamic_model = json_schema_to_pydantic_model(schema_dict)
-                    kwargs["output_schema"] = dynamic_model
-        except json.JSONDecodeError as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}: {str(e)}")
-        except Exception as e:
-            kwargs.pop("output_schema")
-            log_warning(f"Failed to create output_schema model: {str(e)}")
+            schema_dict = json.loads(output_schema) if isinstance(output_schema, str) else output_schema
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema") from exc
+        if not isinstance(schema_dict, dict):
+            raise HTTPException(status_code=422, detail="Invalid output_schema: expected a JSON object schema")
+        # Raw mode also accepts provider response formats: {"type": "json_object"} and {"type": "json_schema", ...}
+        object_schema: Optional[Any] = schema_dict
+        if use_json_schema and schema_dict.get("type") == "json_object":
+            object_schema = None
+        elif use_json_schema and schema_dict.get("type") == "json_schema":
+            wrapped = schema_dict.get("json_schema")
+            object_schema = wrapped.get("schema") if isinstance(wrapped, dict) else None
+            if not isinstance(object_schema, dict):
+                raise HTTPException(
+                    status_code=422, detail="Invalid output_schema: json_schema.schema must be an object"
+                )
+        if object_schema is not None:
+            _check_object_json_schema(object_schema)
+        try:
+            if use_json_schema:
+                kwargs["output_schema"] = schema_dict
+            else:
+                kwargs["output_schema"] = json_schema_to_pydantic_model(schema_dict)
+        except (TypeError, ValueError, AttributeError, RecursionError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid output_schema: could not construct output model"
+            ) from exc
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -279,11 +326,26 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     return kwargs
 
 
+def public_scheme(request: Request) -> str:
+    """Request scheme, upgraded to https when a TLS-terminating proxy reports it in ``X-Forwarded-Proto``."""
+    forwarded = {proto.strip().lower() for proto in request.headers.get("x-forwarded-proto", "").split(",")}
+    return "https" if "https" in forwarded else request.url.scheme
+
+
+async def is_form_field_omitted(request: Request, name: str) -> bool:
+    """Whether the client left the form field ``name`` out of the request.
+
+    FastAPI 0.147+ reads an omitted boolean form field as False whatever its default, so a route
+    whose boolean default is not False checks the raw form before trusting the parsed value.
+    """
+    return name not in await request.form()
+
+
 def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        event_dict: Dictionary containing the event data
+        event: The run, team or workflow output event to render as an SSE payload
 
     Returns:
         SSE-formatted response:
@@ -348,6 +410,10 @@ def format_sse_event_with_index(
 # Idle window between tail items before a keepalive (and the settled-ticket
 # truth probe) fires; module-level so tests can shrink it.
 _TAIL_IDLE_RECHECK_SECONDS = 30.0
+# How often a replica-local stream checks whether another replica claimed its queued run.
+_TAIL_CLAIM_RECHECK_SECONDS = 1.0
+# How often a stored run is read once only its queue ticket keeps the wait open.
+_STORED_RUN_TICKET_RECHECK_SECONDS = 10.0
 
 
 def sse_error_frame(message: str) -> str:
@@ -360,25 +426,144 @@ def sse_error_frame(message: str) -> str:
     return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
 
 
-async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
+async def _run_ticket(run_id: str) -> Optional[Dict[str, Any]]:
+    """The durable queue's run ticket for ``run_id``; None without a queue worker or a run ticket."""
+    from agno.os.job_queue import get_active_queue_worker
+
+    worker = get_active_queue_worker()
+    job = await worker.store.get_job(run_id) if worker is not None else None
+    if job is None or job.get("job_type", "run") != "run":
+        return None
+    return job
+
+
+def _ticket_runs_here(job: Dict[str, Any]) -> bool:
+    """Whether this replica's worker holds the ticket, or it is still waiting to be claimed."""
+    from agno.os.job_queue import get_active_queue_worker
+
+    locked_by = job.get("locked_by")
+    return job.get("status") == "queued" or (
+        locked_by is not None and locked_by == getattr(get_active_queue_worker(), "worker_id", None)
+    )
+
+
+async def run_stream_served_here(run_id: str) -> bool:
+    """Whether this replica's event stream carries the run's live events.
+
+    A replica-local stream only sees the runs this replica's worker executes; the entry the
+    submitting replica registered never advances once another replica claims the job.
+    """
+    from agno.os.event_streams import get_event_stream
+
+    if getattr(get_event_stream(), "shared", False) is True:
+        return True
+    try:
+        job = await _run_ticket(run_id)
+    except Exception:
+        return True
+    return job is None or _ticket_runs_here(job)
+
+
+async def run_ticket_active(run_id: str) -> bool:
+    """Whether the durable queue's run ticket for ``run_id`` is still queued or running."""
+    try:
+        job = await _run_ticket(run_id)
+    except Exception:
+        return False
+    return job is not None and job.get("status") in ("queued", "running")
+
+
+async def await_stored_run(
+    read: Callable[[], Awaitable[Any]], run_id: str, deadline_seconds: float, extension_seconds: Optional[float] = None
+) -> Optional[Any]:
+    """The stored run once it completes, pauses, fails or is cancelled; None when it is no longer stored.
+
+    ``deadline_seconds`` bounds the wait for the stored run; a queued or running ticket that still owns the run
+    extends it by ``extension_seconds`` (the entity's sandbox execution_timeout) and the queue's stale-lock grace,
+    else by ``deadline_seconds`` again.
+    """
+    import asyncio
+
+    from agno.os.job_queue import get_active_queue_worker
+
+    ended = (RunStatus.completed, RunStatus.paused, RunStatus.error, RunStatus.cancelled)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_seconds
+    if extension_seconds is None:
+        ticket_deadline = deadline + deadline_seconds
+    else:
+        # A crashed worker's ticket is claimed again only after the queue's stale-lock grace
+        worker = get_active_queue_worker()
+        ticket_deadline = deadline + extension_seconds + (worker.config.lock_grace_seconds if worker is not None else 0)
+    interval = min(1.0, max(0.001, deadline_seconds / 10))
+    while loop.time() < deadline or (loop.time() < ticket_deadline and await run_ticket_active(run_id)):
+        run = await read()
+        if run is None or run.status in ended:
+            return run
+        await asyncio.sleep(interval if loop.time() < deadline else max(interval, _STORED_RUN_TICKET_RECHECK_SECONDS))
+    # A run that ended during the last sleep is not a timeout
+    run = await read()
+    if run is None or run.status in ended:
+        return run
+    raise TimeoutError("Background run timed out; inspect the persisted run")
+
+
+async def _tail_closing_frame(run_id: str, job: Optional[Dict[str, Any]], event_stream: Any) -> Optional[str]:
+    """The stream_expired frame for a tail that nothing else will end, else None.
+
+    Either the ticket settled while the stream never got its terminal event (the producer
+    died between settling the ticket and closing the stream), or another replica runs the
+    job and this replica's stream will never see its events.
+    """
+    from agno.os.job_queue import ticket_status_to_api
+    from agno.run.base import RunStatus
+
+    if job is None:
+        return None
+    if job.get("status") in ("completed", "failed", "cancelled"):
+        stream_status = await event_stream.get_run_status(run_id)
+        if stream_status is not None and stream_status not in (RunStatus.pending, RunStatus.running):
+            return None
+        message = "The run finished but its stream lost the terminal event; poll the run for the complete output."
+    elif getattr(event_stream, "shared", False) is True or _ticket_runs_here(job):
+        return None
+    else:
+        message = (
+            "The run executes on another replica, whose events this replica's stream does not carry; "
+            "poll the run for the complete output."
+        )
+    payload = {
+        "event": "stream_expired",
+        "run_id": run_id,
+        "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+        "message": message,
+    }
+    return f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+
+
+async def queued_run_tail_streamer(
+    run_id: str, from_index: Optional[int] = None, keepalive: str = ": keepalive\n\n"
+) -> Any:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
-    ONE implementation for all three routers. The run executes on whichever
-    replica's worker claims it; this connection just observes. Keepalives
-    cover the queued wait and silent stretches; a disconnect is harmless
-    (resume replays); the complete output is guaranteed via the run row even
-    if this stream is never watched.
+    ONE implementation for all three routers, and for the live path of
+    their /resume endpoints. The run executes on whichever replica's worker
+    claims it; this connection just observes. Keepalives cover the queued
+    wait and silent stretches; a disconnect is harmless (resume replays);
+    the complete output is guaranteed via the run row even if this stream
+    is never watched.
 
-    Honest close (the ticket-consulting wrapper LOOP is parked,
-    evidence-gated - see the ledger): when the tail ends WITHOUT the run
+    Honest close: when nothing will end the tail - the ticket settled
+    without the stream's terminal event, or another replica claimed the
+    job and this replica's stream is local - emit one ``stream_expired``
+    event and end. The same applies when the tail ends WITHOUT the run
     having reached a terminal stream state - the status key expired while
     the job sat queued past the TTL, or a producer died - and the durable
-    ticket still vouches for the run, emit an explicit ``stream_expired``
-    event instead of a silent, terminal-looking close. A real SSE event
-    type, not a comment: it must reach client handlers (unknown types are
-    ignored by standard consumers). Under the deployment-affinity
-    misconfiguration (jobs queued forever) clients will reconnect hourly -
-    expected and diagnostic, not a bug.
+    ticket still vouches for the run. A real SSE event type, not a comment:
+    it must reach client handlers (unknown types are ignored by standard
+    consumers). Under the deployment-affinity misconfiguration (jobs queued
+    forever) clients will reconnect hourly - expected and diagnostic, not a
+    bug.
     """
     import asyncio
     import contextlib
@@ -397,51 +582,40 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
         except Exception as e:
             # A tail that DIES must not look like a tail that FINISHED: emit an
             # error frame so the client can distinguish and reconnect
-            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            log_error(f"Stream tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
                 await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
     pump_task = asyncio.create_task(_pump())
+    # A replica-local stream cannot see another replica claim the job, so it checks often in the
+    # first idle window; a later claim is caught by the idle recheck.
+    watch_claim = getattr(event_stream, "shared", False) is not True
+    watch_until = asyncio.get_running_loop().time() + _TAIL_IDLE_RECHECK_SECONDS
+    idle = 0.0
     try:
         while True:
+            wait = _TAIL_IDLE_RECHECK_SECONDS
+            if watch_claim and asyncio.get_running_loop().time() < watch_until:
+                wait = min(_TAIL_CLAIM_RECHECK_SECONDS, wait)
             try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=wait)
             except asyncio.TimeoutError:
-                # Idle recheck. If the durable ticket has SETTLED while the
-                # stream never received its terminal sentinel (a lost
-                # terminal write - the producer died between settling the
-                # ticket and closing the stream), nothing will ever end this
-                # tail: it used to keepalive silently until the stream state
-                # expired. Tell the client the truth instead, once, and end -
-                # the complete output is guaranteed via the run row.
+                idle += wait
                 closed_frame: Optional[str] = None
                 with contextlib.suppress(Exception):
-                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
-
-                    worker = get_active_queue_worker()
-                    job = await worker.store.get_job(run_id) if worker is not None else None
-                    if (
-                        job is not None
-                        and job.get("job_type", "run") == "run"
-                        and job.get("status") in ("completed", "failed", "cancelled")
-                    ):
-                        stream_status = await event_stream.get_run_status(run_id)
-                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
-                            payload = {
-                                "event": "stream_expired",
-                                "run_id": run_id,
-                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
-                                "message": "The run finished but its stream lost the terminal event; "
-                                "poll the run for the complete output.",
-                            }
-                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                    job = await _run_ticket(run_id)
+                    watch_claim = watch_claim and job is not None and job.get("status") == "queued"
+                    closed_frame = await _tail_closing_frame(run_id, job, event_stream)
                 if closed_frame is not None:
                     yield closed_frame
                     return
-                yield ": keepalive\n\n"
+                if idle >= _TAIL_IDLE_RECHECK_SECONDS:
+                    idle = 0.0
+                    yield keepalive
                 continue
+            idle = 0.0
             if item is None:
                 break
             _ev_index, sse_data = item
@@ -453,19 +627,8 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
         with contextlib.suppress(Exception):
             status = await event_stream.get_run_status(run_id)
             if status is None or status in (RunStatus.pending, RunStatus.running):
-                from agno.os.job_queue import get_active_queue_worker
-
-                worker = get_active_queue_worker()
-                job = await worker.store.get_job(run_id) if worker is not None else None
-                if (
-                    job is not None
-                    and job.get("job_type", "run") == "run"
-                    and job.get("status")
-                    in (
-                        "queued",
-                        "running",
-                    )
-                ):
+                job = await _run_ticket(run_id)
+                if job is not None and job.get("status") in ("queued", "running"):
                     payload = {
                         "event": "stream_expired",
                         "run_id": run_id,
@@ -504,16 +667,49 @@ def stored_event_replay_dicts(
     """
     floor = last_event_index if last_event_index is not None else -1
     dicts: List[Dict[str, Any]] = []
+    last_index = -1
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
         if stored_index is not None and int(stored_index) <= floor:
             continue
-        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if stored_index is not None:
+            index = int(stored_index)
+        else:
+            # Positional fallback, but never behind a stamped event that came before it in the
+            # row (an unstamped terminal event after stamped ones), so the replay stays ordered.
+            index = max(position, last_index + 1)
+        last_index = max(last_index, index)
+        event_dict["event_index"] = index
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
         dicts.append(event_dict)
     return dicts
+
+
+def no_stored_events_replay_meta(run_output: Any, run_id: str, elsewhere: bool = False) -> Dict[str, Any]:
+    """The replay meta for a run found in the database with no stored events.
+
+    A run submitted with stream=false, inline or in the background, never publishes to the
+    event stream and stores no events, so there is nothing to attach to: the message says
+    whether the run is still going (poll the run endpoint) or finished with only its final
+    output, instead of claiming it completed. ``elsewhere`` marks a run another replica
+    executes, whose events this replica's stream does not carry.
+    """
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    if elsewhere and status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} on another replica, whose events this replica's stream does not carry. "
+            "Poll the run endpoint for its result."
+        )
+    elif status in (RunStatus.pending.value, RunStatus.running.value):
+        message = (
+            f"Run is {status} and was submitted without streaming, so it has no event stream to attach to. "
+            "Poll the run endpoint for its result."
+        )
+    else:
+        message = f"Run {status} with no stored events: a run submitted without streaming keeps only its final output."
+    return {"event": "replay", "run_id": run_id, "status": status, "total_events": 0, "message": message}
 
 
 def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
@@ -603,6 +799,51 @@ async def amark_continue_stream_running(
             # leave the stream alone; the continue itself proceeds.
             return
         await event_stream.set_run_status(run_id, RunStatus.running)
+
+
+async def adeliver_native_decisions(
+    agent: Any, run: Any, tools: List[Any], session_id: str, user_id: Optional[str] = None
+) -> Tuple[Any, Optional[int]]:
+    """Deliver a chat's decisions to the native execution waiting on ``run``; nothing new is executed.
+
+    Returns the run as submitted and the event index to tail the live stream from, or None when this
+    replica's event stream does not know the run and the caller follows the stored run instead. A
+    refused decision (already continued, expired, or not matching the request) raises
+    RunNotContinuableError for the caller to answer.
+    """
+    import contextlib
+
+    from agno.agents._hitl import awaiting_decision, read_run, submit_decisions
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    run_id = run.run_id
+    event_stream = get_event_stream()
+    # The live stream is shared only when this replica's event stream knows the run, which a
+    # Redis-backed stream always does; otherwise the continuation follows the stored run.
+    tracked = await event_stream.get_run_status(run_id) is not None
+    cursor = (await event_stream.get_event_count(run_id)) - 1 if tracked else -1
+    # Reopen only a stream that is paused on an unanswered request, before the decision lands, so the
+    # events it releases reach this client. A continuation that will be refused never touches it.
+    reopened = tracked and awaiting_decision(run)
+    if reopened:
+        await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+    try:
+        submitted = await submit_decisions(agent, run_id, session_id, user_id, tools)
+    except Exception as error:
+        if reopened:
+            # The stream follows whichever continuation won: park it again only if the run is still
+            # paused, which is also the safe reading when the run cannot be read.
+            current = None
+            with contextlib.suppress(Exception):
+                current = await read_run(agent, run_id, session_id, user_id)
+            if current is None or current.status == RunStatus.paused:
+                with contextlib.suppress(Exception):
+                    await event_stream.complete_run(run_id, RunStatus.paused)
+        if isinstance(error, (ValueError, TypeError, KeyError)):
+            raise RunNotContinuableError(str(error)) from error
+        raise
+    return submitted, cursor if tracked else None
 
 
 async def acomplete_continue_stream(
@@ -738,6 +979,12 @@ async def get_db(
             and db.learnings_table_name == table_name
             or hasattr(db, "metrics_table_name")
             and db.metrics_table_name == table_name
+            or hasattr(db, "component_metrics_table_name")
+            and db.component_metrics_table_name == table_name
+            or hasattr(db, "aggregate_metrics_table_name")
+            and db.aggregate_metrics_table_name == table_name
+            or hasattr(db, "metrics_refreshes_table_name")
+            and db.metrics_refreshes_table_name == table_name
             or hasattr(db, "eval_table_name")
             and db.eval_table_name == table_name
             or hasattr(db, "knowledge_table_name")
@@ -792,6 +1039,41 @@ async def get_db(
 
     # Return the first (and only) database
     return all_dbs[0]
+
+
+def has_metrics_lock_row(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> bool:
+    """Whether the database keeps the status of its metrics refreshes in a lock row, for every process."""
+    if not isinstance(db, (BaseDb, AsyncBaseDb)):
+        return False
+    return getattr(type(db), "get_metrics_refresh_status", None) not in (
+        BaseDb.get_metrics_refresh_status,
+        AsyncBaseDb.get_metrics_refresh_status,
+    )
+
+
+def keeps_metrics_versions(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Whether the database implements get_metrics_versions, rather than the stub."""
+    return getattr(type(db), "get_metrics_versions", None) not in (
+        BaseDb.get_metrics_versions,
+        AsyncBaseDb.get_metrics_versions,
+    )
+
+
+def get_metrics_calculation(
+    db: Union[BaseDb, AsyncBaseDb],
+    should_stop: Optional[Callable[[], bool]] = None,
+    rebuild_from: Optional[date] = None,
+) -> Callable[[], Any]:
+    """The calculation a refresh runs, stopping once should_stop returns True and rebuilding from rebuild_from."""
+    if has_metrics_lock_row(db):
+        return partial(db.calculate_metrics_dates, should_stop=should_stop, rebuild_from=rebuild_from)
+    return db.calculate_metrics
+
+
+def stop_metrics_refresh_on_read(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
+    """Stop a database that calculates its metrics on read from calculating them: it reads them as just calculated."""
+    if isinstance(db, (BaseDb, AsyncBaseDb)):
+        db.stop_metrics_refresh_on_read()
 
 
 def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:
@@ -1326,6 +1608,16 @@ def find_factory_by_id(
     return None
 
 
+def factory_row_handle(factory: Union[AgentFactory, TeamFactory, WorkflowFactory]) -> Union[Agent, Team, Workflow]:
+    """A component bound to the factory's id and db, for reading and writing its
+    run rows without invoking the factory (no request context, no input)."""
+    if isinstance(factory, AgentFactory):
+        return Agent(id=factory.id, db=factory.db)
+    if isinstance(factory, TeamFactory):
+        return Team(id=factory.id, db=factory.db, members=[])
+    return Workflow(id=factory.id, db=factory.db)
+
+
 def draft_preview_identity(request: Any) -> tuple:
     """(actor, privileged) for the draft-preview gate.
 
@@ -1457,6 +1749,23 @@ def allow_draft_preview(
     return bool(isinstance(component, dict) and component.get("user_id") == actor)
 
 
+def _serve_stored_agent(agent: Any, registry: Optional[Registry]) -> Any:
+    """What AgentOS applies to a stored external agent before serving it.
+
+    A registered adapter gets store_events at AgentOS init so the built-in
+    routes can replay its runs; a stored adapter is rebuilt per request and
+    never passes through that init. Running on the host is the deployer's
+    call, made on the registry, since the stored config decides what runs.
+    """
+    from agno.agents._storage import require_host_execution_allowed
+    from agno.agents.base import BaseExternalAgent
+
+    if isinstance(agent, BaseExternalAgent):
+        require_host_execution_allowed(agent, registry)
+        agent.store_events = True
+    return agent
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
@@ -1517,6 +1826,11 @@ def get_agent_by_id(
                 # RemoteAgent or other
                 return agent
 
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
+
     # Try to get the agent from the database
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
@@ -1531,7 +1845,7 @@ def get_agent_by_id(
                 strict=strict,
                 published_only=published_only,
             )
-            return db_agent
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
@@ -1578,6 +1892,11 @@ async def get_agent_by_id_async(
                 # RemoteAgent or other
                 return agent
 
+    # AgentOS may serve framework-owned agents, but reserved IDs must never
+    # fall back to user-created or legacy catalog components.
+    if agent_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(agent_id)))
+
     if db and isinstance(db, BaseDb):
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
@@ -1591,7 +1910,7 @@ async def get_agent_by_id_async(
                 strict=strict,
                 published_only=published_only,
             )
-            return db_agent
+            return _serve_stored_agent(db_agent, registry)
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
@@ -1655,6 +1974,9 @@ def get_team_by_id(
                     return result
                 return team
 
+    if team_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
+
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
@@ -1708,6 +2030,9 @@ async def get_team_by_id_async(
                     result = await team.resolve_async(ctx, expected_type=Team)
                     return result
                 return team
+
+    if team_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(team_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.team.team import get_team_by_id as get_team_by_id_db
@@ -1791,6 +2116,9 @@ def get_workflow_by_id(
                     return result
                 return workflow
 
+    if workflow_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(workflow_id)))
+
     if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
@@ -1846,6 +2174,9 @@ async def get_workflow_by_id_async(
                     result = await workflow.resolve_async(ctx, expected_type=Workflow)
                     return result
                 return workflow
+
+    if workflow_id in RESERVED_MANAGER_IDS:
+        raise AgnoHTTPException(ComponentRehydrationError(_reserved_manager_id_message(workflow_id)))
 
     if db and isinstance(db, BaseDb):
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
@@ -2071,38 +2402,56 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     return blank
 
 
-def update_cors_middleware(app: FastAPI, new_origins: list):
-    existing_origins: List[str] = []
+def _is_cors_middleware(middleware: Any) -> bool:
+    return isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware)
 
-    # TODO: Allow more options where CORS is properly merged and user can disable this behaviour
 
-    # Extract existing origins from current CORS middleware
-    for middleware in app.user_middleware:
-        if middleware.cls == CORSMiddleware:
-            if hasattr(middleware, "kwargs"):
-                origins_value = middleware.kwargs.get("allow_origins", [])
-                if isinstance(origins_value, list):
-                    existing_origins = origins_value
-                else:
-                    existing_origins = []
-            break
-    # Merge origins
-    merged_origins = list(set(new_origins + existing_origins))
-    final_origins = [origin for origin in merged_origins if origin != "*"]
+def update_cors_middleware(
+    app: FastAPI, new_origins: list, *, origin_regex: Optional[str] = None, merge_existing: bool = True
+):
+    from agno.os.middleware.cors import OriginPolicy, OriginPolicyCORSMiddleware
 
-    # Remove existing CORS
-    app.user_middleware = [m for m in app.user_middleware if m.cls != CORSMiddleware]
+    origins = list(new_origins)
+    patterns = [origin_regex] if origin_regex is not None else []
+    if merge_existing:
+        for middleware in app.user_middleware:
+            if not _is_cors_middleware(middleware):
+                continue
+            existing_policy = middleware.kwargs.get("origin_policy")
+            if isinstance(existing_policy, OriginPolicy):
+                origins.extend(existing_policy.origins)
+                patterns.extend(existing_policy.patterns)
+                continue
+            existing_origins = middleware.kwargs.get("allow_origins", [])
+            if isinstance(existing_origins, (list, tuple)):
+                origins.extend(existing_origins)
+            existing_pattern = middleware.kwargs.get("allow_origin_regex")
+            if isinstance(existing_pattern, str):
+                patterns.append(existing_pattern)
+    final_origins = list(dict.fromkeys(origin for origin in origins if origin != "*"))
+    policy = OriginPolicy(final_origins, list(dict.fromkeys(patterns)))
+    app.user_middleware = [m for m in app.user_middleware if not _is_cors_middleware(m)]
     app.middleware_stack = None
-
-    # Add updated CORS
-    app.add_middleware(
-        CORSMiddleware,  # type: ignore
-        allow_origins=final_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["*"],
-    )
+    if len(policy.patterns) > 1:
+        app.add_middleware(
+            OriginPolicyCORSMiddleware,
+            origin_policy=policy,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=final_origins,
+            allow_origin_regex=policy.patterns[0] if policy.patterns else None,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            expose_headers=["*"],
+        )
+    return policy
 
 
 def flatten_routes(routes: Sequence[Any]) -> List[Any]:
@@ -2265,8 +2614,10 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     if isinstance(step, Step):
         # Check step's agent
         if step.agent:
-            if step.agent.tools and isinstance(step.agent.tools, list):
-                for tool in step.agent.tools:
+            # A harness agent (Claude Code, Codex) has no Agno tools.
+            step_tools = getattr(step.agent, "tools", None)
+            if step_tools and isinstance(step_tools, list):
+                for tool in step_tools:
                     # Alternate method of using isinstance(tool, MCPTools) to avoid imports
                     if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:
@@ -2346,7 +2697,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
     avoid redundant work and infinite recursion on cyclic composition graphs.
     """
-    if id(agent) in visited:
+    if id(agent) in visited or registry.is_component_excluded(agent):
         return
     visited.add(id(agent))
 
@@ -2377,7 +2728,7 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
 
 def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a team's components to the registry, recursing into all of its members."""
-    if id(team) in visited:
+    if id(team) in visited or registry.is_component_excluded(team):
         return
     visited.add(id(team))
 
@@ -2409,7 +2760,7 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
 
 def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
     """Add a workflow's components (coordinator agent and step tree) to the registry."""
-    if id(workflow) in visited:
+    if id(workflow) in visited or registry.is_component_excluded(workflow):
         return
     visited.add(id(workflow))
 
@@ -2508,9 +2859,21 @@ def collect_components_from_os(
     rather than failing the whole walk. Remote and factory components are skipped
     because they expose no locally-walkable instances.
     """
+    from agno.agents.base import BaseExternalAgent
+
     visited: Set[int] = set()
 
     for agent in agents or []:
+        if isinstance(agent, BaseExternalAgent):
+            # What a stored external agent refers to by reference: its sandbox (by id), its
+            # db (by id) and a Pydantic output schema (by class name).
+            if agent.sandbox is not None:
+                registry.add_sandbox(agent.sandbox)
+            if agent.db is not None:
+                registry.add_db(agent.db)
+            if isinstance(agent.output_schema, type):
+                registry.add_schema(agent.output_schema)
+            continue
         if not isinstance(agent, Agent):
             continue
         try:
@@ -2908,6 +3271,8 @@ async def resolve_agent(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -2992,6 +3357,8 @@ async def resolve_team(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -3071,6 +3438,8 @@ async def resolve_workflow(
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
             raise HTTPException(status_code=e.status_code, detail=str(e))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
