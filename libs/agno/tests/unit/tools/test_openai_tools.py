@@ -158,7 +158,7 @@ def test_generate_image_single_image_message_and_png_default():
     "kwargs, message",
     [
         ({"image_quality": "standard"}, "Invalid quality for gpt-image-2"),
-        ({"image_size": "1792x1024"}, "Invalid size for gpt-image-2"),
+        ({"image_model": "gpt-image-1.5", "image_size": "1792x1024"}, "Invalid size for gpt-image-1.5"),
         ({"image_model": "gpt-image-1-mini", "image_quality": "hd"}, "Invalid quality for gpt-image-1-mini"),
         ({"image_n": 0}, "Invalid number of images"),
     ],
@@ -171,6 +171,15 @@ def test_invalid_image_options_raise_at_init(kwargs, message):
 def test_valid_gpt_image_options_are_accepted():
     tools = OpenAITools(api_key="test-key", image_size="1536x1024", image_quality="high", image_n=3)
     assert (tools.image_size, tools.image_quality, tools.image_n) == ("1536x1024", "high", 3)
+
+
+@pytest.mark.parametrize("size", ["1792x1024", "2048x1152", "2048x2048"])
+def test_gpt_image_2_custom_resolution_is_sent_unchanged(size):
+    fake_client = _fake_image_client([_b64_item(b"one")])
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        OpenAITools(api_key="test-key", image_size=size).generate_image(prompt="a yak")
+
+    assert fake_client.images.generate.call_args.kwargs["size"] == size
 
 
 def test_unknown_image_model_is_not_validated():

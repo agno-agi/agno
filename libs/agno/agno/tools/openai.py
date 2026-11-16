@@ -18,17 +18,14 @@ except (ModuleNotFoundError, ImportError):
 OpenAIVoice = Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 OpenAITTSModel = Literal["tts-1", "tts-1-hd"]
 OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
-OpenAIImageSize = Literal["auto", "1024x1024", "1536x1024", "1024x1536"]
-
-_GPT_IMAGE_OPTIONS = {
-    "sizes": ["auto", "1024x1024", "1536x1024", "1024x1536"],
-    "qualities": ["auto", "low", "medium", "high"],
-}
+_GPT_IMAGE_QUALITIES = ["auto", "low", "medium", "high"]
+_FIXED_GPT_IMAGE_SIZES = ["auto", "1024x1024", "1536x1024", "1024x1536"]
 # Sizes and qualities each known image model accepts. Models not listed here are passed through unchecked.
+# gpt-image-2 takes custom resolutions, so its sizes are left for the API to validate.
 IMAGE_MODEL_OPTIONS: Dict[str, Dict[str, List[str]]] = {
-    "gpt-image-2": _GPT_IMAGE_OPTIONS,
-    "gpt-image-1.5": _GPT_IMAGE_OPTIONS,
-    "gpt-image-1-mini": _GPT_IMAGE_OPTIONS,
+    "gpt-image-2": {"qualities": _GPT_IMAGE_QUALITIES},
+    "gpt-image-1.5": {"sizes": _FIXED_GPT_IMAGE_SIZES, "qualities": _GPT_IMAGE_QUALITIES},
+    "gpt-image-1-mini": {"sizes": _FIXED_GPT_IMAGE_SIZES, "qualities": _GPT_IMAGE_QUALITIES},
 }
 
 
@@ -39,8 +36,9 @@ def validate_image_options(model: Optional[str], n: int, size: Optional[str], qu
     options = IMAGE_MODEL_OPTIONS.get(model or "")
     if options is None:
         return
-    if size is not None and size not in options["sizes"]:
-        raise ValueError(f"Invalid size for {model}. Please choose from {', '.join(options['sizes'])}.")
+    sizes = options.get("sizes")
+    if size is not None and sizes is not None and size not in sizes:
+        raise ValueError(f"Invalid size for {model}. Please choose from {', '.join(sizes)}.")
     if quality is not None and quality not in options["qualities"]:
         raise ValueError(f"Invalid quality for {model}. Please choose from {', '.join(options['qualities'])}.")
 
@@ -60,7 +58,7 @@ class OpenAITools(Toolkit):
         text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
         image_model (str, optional): Model to use for image generation. Default is "gpt-image-2".
         image_quality (str, optional): Quality setting for image generation.
-        image_size (str, optional): Size setting for image generation.
+        image_size (str, optional): Size setting for image generation, e.g. "1024x1024" or "auto". gpt-image-2 also accepts custom resolutions.
         image_style (str, optional): Style setting for image generation.
         image_n (int): Number of images to generate per call. Default is 1.
     """
@@ -78,7 +76,7 @@ class OpenAITools(Toolkit):
         text_to_speech_format: OpenAITTSFormat = "mp3",
         image_model: Optional[str] = "gpt-image-2",
         image_quality: Optional[str] = None,
-        image_size: Optional[OpenAIImageSize] = None,
+        image_size: Optional[str] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
         image_n: int = 1,
         **kwargs,

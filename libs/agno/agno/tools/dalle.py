@@ -14,7 +14,7 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
-from agno.tools.openai import IMAGE_MODEL_OPTIONS, OpenAIImageSize, validate_image_options
+from agno.tools.openai import IMAGE_MODEL_OPTIONS, validate_image_options
 
 
 class DalleTools(Toolkit):
@@ -24,7 +24,7 @@ class DalleTools(Toolkit):
         self,
         model: str = "gpt-image-2",
         n: int = 1,
-        size: Optional[OpenAIImageSize] = "1024x1024",
+        size: Optional[str] = "1024x1024",
         quality: Literal["auto", "low", "medium", "high"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,

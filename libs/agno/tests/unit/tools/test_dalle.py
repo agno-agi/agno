@@ -63,15 +63,15 @@ def test_rejects_unknown_model_and_lists_valid_ones():
         DalleTools(api_key="test-key", model="dall-e-4")
 
 
-@pytest.mark.parametrize("size", ["auto", "1024x1024", "1536x1024", "1024x1536"])
-def test_gpt_image_accepts_gpt_image_sizes(size):
+@pytest.mark.parametrize("size", ["auto", "1024x1024", "1536x1024", "1024x1536", "1792x1024", "2048x1152"])
+def test_gpt_image_2_accepts_fixed_and_custom_sizes(size):
     assert DalleTools(api_key="test-key", size=size).size == size
 
 
 @pytest.mark.parametrize("size", ["256x256", "512x512", "1792x1024", "1024x1792"])
-def test_gpt_image_rejects_dalle_only_sizes(size):
-    with pytest.raises(ValueError, match="Invalid size for gpt-image-2"):
-        DalleTools(api_key="test-key", size=size)
+def test_older_gpt_image_models_reject_sizes_outside_fixed_list(size):
+    with pytest.raises(ValueError, match="Invalid size for gpt-image-1.5"):
+        DalleTools(api_key="test-key", model="gpt-image-1.5", size=size)
 
 
 def test_b64_response_is_decoded_into_image_content():
