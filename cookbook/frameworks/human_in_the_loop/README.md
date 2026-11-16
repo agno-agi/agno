@@ -58,7 +58,7 @@ Native policy decides which operations ask, so not every tool call needs confirm
 - **Codex:** `approval_policy="on-request"` or `"untrusted"` can ask; `"never"` does not. `sandbox_mode`
   separately controls filesystem isolation. Leaving `approval_policy` unset uses the native configuration's
   policy. The SDK's `approval_mode="auto_review"` and `"deny_all"` keep their behavior and never pause. Codex
-  permission requests and questions need `openai-codex` 0.163.0 or 0.167.2.
+  permission requests and questions need `openai-codex>=0.163.0`.
 
 ## How it works
 

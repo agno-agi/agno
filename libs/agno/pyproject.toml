@@ -93,7 +93,7 @@ langfuse = ["langfuse"]
 
 # Dependencies for External Agent Harnesses
 claude = ["claude-agent-sdk>=0.2.148"]
-codex = ["openai-codex"]
+codex = ["openai-codex>=0.163.0"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -429,7 +429,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
-    "openai-codex==0.167.2; python_version >= '3.10'",
+    "openai-codex>=0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
