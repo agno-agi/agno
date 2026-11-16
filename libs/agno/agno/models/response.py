@@ -34,6 +34,9 @@ class ToolExecution:
     result: Optional[str] = None
     metrics: Optional[ToolCallMetrics] = None
 
+    # Name of the Toolkit the called function came from, if any
+    toolkit: Optional[str] = None
+
     # In the case where a tool call creates a run of an agent/team/workflow
     child_run_id: Optional[str] = None
 
@@ -62,6 +65,9 @@ class ToolExecution:
     # ID of the approval record created for this tool (set when the run pauses).
     approval_id: Optional[str] = None
 
+    # Enclosing tool invocation, when an external harness delegates work to a subagent.
+    parent_tool_call_id: Optional[str] = None
+
     @property
     def is_paused(self) -> bool:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
@@ -83,8 +89,10 @@ class ToolExecution:
     def from_dict(cls, data: Dict[str, Any]) -> "ToolExecution":
         return cls(
             tool_call_id=data.get("tool_call_id"),
+            parent_tool_call_id=data.get("parent_tool_call_id"),
             tool_name=data.get("tool_name"),
             tool_args=data.get("tool_args"),
+            toolkit=data.get("toolkit"),
             tool_call_error=data.get("tool_call_error"),
             result=data.get("result"),
             child_run_id=data.get("child_run_id"),

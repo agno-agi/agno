@@ -18,7 +18,7 @@ Some integrations now live closer to their topic:
 |-------------|--------------|
 | Observability (Langfuse, Arize Phoenix, AgentOps, LangSmith, …) | [`cookbook/observability`](../observability/) |
 | Memory providers (Mem0, Memori, Zep) | [`cookbook/11_memory/integrations`](../11_memory/integrations/) |
-| RAG stacks (Infinity, LightRAG, LangChain + Qdrant) | [`cookbook/07_knowledge/05_integrations/rag`](../07_knowledge/05_integrations/rag/) |
+| RAG stacks (Infinity, LightRAG, LangChain + Qdrant, LangChain + Pixeltable) | [`cookbook/07_knowledge/05_integrations/rag`](../07_knowledge/05_integrations/rag/) |
 | Discord bot | [`cookbook/integrations/discord`](./discord/) |
 | A2A basic server/client | [`cookbook/05_agent_os/15_a2a`](../05_agent_os/15_a2a/) |
 

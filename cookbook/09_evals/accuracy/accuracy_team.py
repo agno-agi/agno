@@ -9,7 +9,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.eval.accuracy import AccuracyEval, AccuracyResult
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 
 # ---------------------------------------------------------------------------
@@ -18,12 +18,12 @@ from agno.team.team import Team
 english_agent = Agent(
     name="English Agent",
     role="You only answer in English",
-    model=OpenAIChat(id="gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You can only answer in Spanish",
-    model=OpenAIChat(id="gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ spanish_agent = Agent(
 # ---------------------------------------------------------------------------
 multi_language_team = Team(
     name="Multi Language Team",
-    model=OpenAIChat("gpt-5.6-luna"),
+    model=OpenAIResponses("gpt-5.6-luna"),
     members=[english_agent, spanish_agent],
     respond_directly=True,
     markdown=True,
@@ -48,7 +48,7 @@ multi_language_team = Team(
 # ---------------------------------------------------------------------------
 evaluation = AccuracyEval(
     name="Multi Language Team",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-terra"),
     team=multi_language_team,
     input="Comment allez-vous?",
     expected_output="I can only answer in the following languages: English and Spanish.",

@@ -10,16 +10,16 @@ Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/basic.py
 Try: Connect Agno OS to http://localhost:7777 and open File System
 """
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 
-from os import getenv
 db = PostgresDb(
     id="agentos-knowledge-postgres",
     db_url=getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai"),
-
 )
 
 

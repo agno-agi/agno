@@ -1137,10 +1137,10 @@ class LearnedKnowledgeStore(LearningStore):
                 tool_call_limit=self.config.max_updates_per_run,
             )
 
-            if run_metrics is not None and response.response_usage is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
+            # Accumulate learning model metrics, for every model call of the tool loop
+            from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+            accumulate_tool_loop_metrics(extraction_messages[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.learning_saved = True
@@ -1189,10 +1189,10 @@ class LearnedKnowledgeStore(LearningStore):
                 tool_call_limit=self.config.max_updates_per_run,
             )
 
-            if run_metrics is not None and response.response_usage is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
+            # Accumulate learning model metrics, for every model call of the tool loop
+            from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+            accumulate_tool_loop_metrics(extraction_messages[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
             if response.tool_executions:
                 self.learning_saved = True

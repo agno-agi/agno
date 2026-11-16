@@ -159,6 +159,30 @@ def normalize_post_hooks(
     return result_hooks if result_hooks else None
 
 
+def continue_post_hooks(
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
+    async_mode: bool = False,
+) -> Optional[List[Callable[..., Any]]]:
+    """Post-hooks for a continued run, with guardrail and eval objects converted to callables.
+
+    A component that continues a run has often never started one, so its hooks may still hold the
+    objects. If it has started one, they hold each guardrail's check for that run's mode, which a
+    continue of the other mode would skip: the guardrail is converted again for this call.
+    Function hooks pass through unchanged and the component's own list is not replaced: a continue
+    refuses no hook, and does not fix the mode that the first fresh run converts in.
+    """
+    if not hooks:
+        return hooks  # type: ignore[return-value]
+    result_hooks: List[Callable[..., Any]] = []
+    for hook in hooks:
+        if is_guardrail_hook(hook) and getattr(hook, "__name__", None) in ("check", "async_check"):  # type: ignore[arg-type]
+            hook = hook.__self__  # type: ignore[union-attr]
+        if isinstance(hook, (BaseGuardrail, BaseEval)):
+            hook = normalize_post_hooks([hook], async_mode=async_mode)[0]  # type: ignore[index]
+        result_hooks.append(hook)
+    return result_hooks
+
+
 def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
     """Filter arguments to only include those that the hook function accepts."""
     import inspect
