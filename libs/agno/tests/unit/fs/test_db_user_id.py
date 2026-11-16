@@ -2,11 +2,10 @@
 
 import sqlite3
 
+import pytest
 from sqlalchemy import inspect as sa_inspect
 
 from agno.db.sqlite import SqliteDb
-import pytest
-
 from agno.fs import FileSystem, InvalidPathError, SchemaOutdatedError, UnsupportedOperationError
 from agno.fs.db import DbFileSystem
 

@@ -3195,6 +3195,22 @@ class TestSchedules:
         assert after["next_run_at"] <= int(time.time()) + 300
         assert out["data"]["next_run_at"] == after["next_run_at"]
 
+    def test_schedule_can_switch_to_on_demand_without_changing_target(self, studio_schedules, db):
+        self._create_target_agent(studio_schedules)
+        created = self._create_schedule(studio_schedules, cron="")
+        before = db.get_schedule(created["id"])
+        assert before["enabled"] and before["next_run_at"] is None
+        scheduled = _loads(studio_schedules.update_schedule(created["id"], cron="0 9 * * *"))
+        assert scheduled["ok"] and scheduled["data"]["next_run_at"] is not None
+        manual = _loads(studio_schedules.update_schedule(created["id"], cron=""))
+        assert manual["ok"] and manual["data"]["next_run_at"] is None
+        changed_timezone = _loads(studio_schedules.update_schedule(created["id"], timezone="America/New_York"))
+        assert changed_timezone["ok"] and changed_timezone["data"]["next_run_at"] is None
+        after = db.get_schedule(created["id"])
+        for field in ("endpoint", "managed_by", "target_type", "target_id"):
+            assert after[field] == before[field]
+        assert after["enabled"] and after["cron_expr"] == "" and after["next_run_at"] is None
+
     def test_update_schedule_validates_cron_against_the_new_timezone(self, studio_schedules, db):
         # A timezone-only change still recomputes: the same cron in a new zone is
         # a different wall-clock next run.

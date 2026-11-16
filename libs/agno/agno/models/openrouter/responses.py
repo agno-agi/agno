@@ -162,6 +162,4 @@ class OpenRouterResponses(OpenResponses):
         OpenAI's reasoning API format. We check for known reasoning model patterns.
         """
         # Check for OpenAI reasoning models hosted on OpenRouter
-        if self.id.startswith("openai/o3") or self.id.startswith("openai/o4"):
-            return True
-        return False
+        return self.id.startswith(("openai/o3", "openai/o4", "openai/gpt-5", "openai/gpt-6"))
