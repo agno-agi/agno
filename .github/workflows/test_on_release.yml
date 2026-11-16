@@ -10,6 +10,7 @@ on:
       - "ci/split-company-db-tests"
       - "homepage-v2"
       - "feat/slack-agent-view"
+      - "fix/slack-super-agent-without-users"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
