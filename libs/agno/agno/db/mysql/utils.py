@@ -154,12 +154,12 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create database {db_schema}: {str(e)}")
 
 
-def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
+def is_table_available(session: Session, table_name: str, db_schema: str, raise_on_error: bool = False) -> bool:
     """
     Check if a table with the given name exists in the given schema.
 
     Returns:
-        bool: True if the table exists, False otherwise.
+        bool: True if the table exists, False otherwise (also when the check fails, unless raise_on_error).
     """
     try:
         exists_query = text(
@@ -170,6 +170,8 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
 
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
+        if raise_on_error:
+            raise
         return False
 
 
@@ -1052,11 +1054,13 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         log_warning(f"Could not create database {db_schema}: {str(e)}")
 
 
-async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
+async def ais_table_available(
+    session: AsyncSession, table_name: str, db_schema: str, raise_on_error: bool = False
+) -> bool:
     """Async version: Check if a table with the given name exists in the given schema.
 
     Returns:
-        bool: True if the table exists, False otherwise.
+        bool: True if the table exists, False otherwise (also when the check fails, unless raise_on_error).
     """
     try:
         exists_query = text(
@@ -1068,6 +1072,8 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
 
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
+        if raise_on_error:
+            raise
         return False
 
 
