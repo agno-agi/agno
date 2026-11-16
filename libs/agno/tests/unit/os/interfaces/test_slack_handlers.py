@@ -283,7 +283,7 @@ async def test_handle_message_super_agent_authorizes_through_company():
 
 
 @pytest.mark.asyncio
-async def test_handle_message_super_agent_without_users_is_refused_under_a_jwt_middleware():
+async def test_handle_message_super_agent_without_users_runs_under_a_jwt_middleware():
     from agno.agent import Agent
     from agno.os import AgentOS
     from agno.os.middleware.jwt import JWTMiddleware
@@ -296,8 +296,8 @@ async def test_handle_message_super_agent_without_users_is_refused_under_a_jwt_m
     client = make_async_client_mock()
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), client, ctx)
-    assert not run_event.called
-    assert client.chat_postEphemeral.call_args.kwargs["text"] == _NOT_LINKED_MESSAGE
+    assert run_event.called
+    assert not client.chat_postEphemeral.called
 
 
 @pytest.mark.asyncio

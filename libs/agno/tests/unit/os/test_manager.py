@@ -177,7 +177,7 @@ def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
 
 
 @pytest.mark.parametrize("subclass", [False, True])
-def test_slack_serving_the_manager_requires_identity_mapping_under_authorization(db, subclass):
+def test_slack_serving_the_manager_starts_without_identity_mapping_under_authorization(db, subclass):
     pytest.importorskip("slack_bolt")
     from agno.os import Authorization
     from agno.os.interfaces.slack import Slack
@@ -195,13 +195,13 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_authorization
         authorization=Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test"),
         manager=OSManager(model=OfflineModel()),
     )
-    # Without users=, every member of the workspace would run Super Agent with no permission checks
+    # Without users=, Slack runs Super Agent like any interface: unmapped and unchecked
     os.interfaces.append(interface_class(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
-    with pytest.raises(ValueError, match="requires Slack identity mapping"):
-        os.get_app()
+    os.get_app()
+    assert os.interfaces[0].company is not None
 
 
-def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jwt_middleware(db):
+def test_slack_serving_the_manager_starts_without_identity_mapping_under_a_base_app_jwt_middleware(db):
     pytest.importorskip("slack_bolt")
     from fastapi import FastAPI
 
@@ -214,8 +214,8 @@ def test_slack_serving_the_manager_requires_identity_mapping_under_a_base_app_jw
     os = AgentOS(id="manager-test", db=db, telemetry=False, base_app=base_app, manager=OSManager(model=OfflineModel()))
     # The middleware on the base_app checks roles though AgentOS(authorization=...) is unset
     os.interfaces.append(Slack(team=os.manager, token="xoxb-test", signing_secret="slack-secret"))
-    with pytest.raises(ValueError, match="requires Slack identity mapping"):
-        os.get_app()
+    os.get_app()
+    assert os.interfaces[0].company is not None
 
 
 @pytest.mark.asyncio

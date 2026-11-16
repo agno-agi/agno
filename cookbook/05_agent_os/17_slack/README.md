@@ -384,10 +384,16 @@ app = agent_os.get_app()
   when the run's user wrote the Slack message that started it (read back from
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
-With `AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)` you
-add yourself, pass `users=`; `get_app()` refuses to serve Super Agent under
-authorization without it, and a middleware added after `get_app()` refuses each
-message instead. Each message then runs with the mapped principal's roles.
+Without `users=`, Slack runs Super Agent like any other interface, also under
+`AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)`: every
+member of the workspace can use it, and its runs are not checked against roles.
+Super Agent reaches the whole OS, so serve it this way only in a workspace whose
+members you trust. Under authorization, starting, accepting or deciding Company
+work still needs a signed-in person, so from Slack it needs `users=`. With
+`users=`, each mapped member runs with the mapped principal's roles, and an
+unmapped member is refused. A `JWTMiddleware` you add yourself must list
+`/slack/*` in `excluded_route_paths`, because Slack signs its requests and sends
+no token; the list replaces the defaults, so keep `/health` and `/docs` in it.
 
 ## Limits
 
@@ -395,8 +401,9 @@ message instead. Each message then runs with the mapped principal's roles.
   running turns that Stop uses are kept in process. Run each Slack app on a
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
-  signature, not the AgentOS key. Without AgentOS `authorization=`, every member
-  of the workspace can use the agent through Slack.
+  signature, not the AgentOS key. Without `users=`, every member of the
+  workspace can use the agent through Slack, with or without AgentOS
+  `authorization=`.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on
