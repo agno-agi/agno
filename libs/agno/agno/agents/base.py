@@ -1783,8 +1783,8 @@ class BaseExternalAgent:
         if self.db is None:
             raise ValueError(f"{type(self).__name__} has no database to read run {run_id} from")
         if isinstance(self.db, AsyncBaseDb):
-            # An async engine's pooled connections belong to the loop that first used them, and a
-            # query on another loop fails inside get_run, which would then look like a missing run.
+            # An async engine's pooled connections belong to the loop that first used them, so a
+            # query from this sync path would run on another loop and fail inside get_run.
             raise ValueError("Use aopen_run_checkpoint with an async database")
         return self.db.get_run(run_id, deserialize=False)
 
