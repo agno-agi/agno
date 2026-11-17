@@ -572,7 +572,7 @@ class TestRestoredAuthority:
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
-        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1")
+        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1", None)
         assert len(fake.calls) == 1
         assert fake.calls[0]["event_context"].authority is authority
         assert fake.calls[0]["clicker"] == OWNER
@@ -632,10 +632,13 @@ class TestRestoredAuthority:
 
 
 class TestRestoredAuthorityWithoutUsers:
+    @pytest.mark.parametrize("super_agent", [True, False], ids=["super-agent", "agent"])
     @pytest.mark.asyncio
-    async def test_click_after_registry_clear_restores_no_roles_authority(self):
+    async def test_click_after_registry_clear_restores_no_roles_authority(self, super_agent):
         entity = _make_entity(_paused_run([_make_requirement()]))
         ctx = make_ctx(agent=entity)
+        if super_agent:
+            ctx.company = AsyncMock()
         authority = object()
         no_roles = Mock(return_value=authority)
         fake = FakeContinue()
@@ -646,25 +649,29 @@ class TestRestoredAuthorityWithoutUsers:
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
-        no_roles.assert_called_once_with(ctx.app, OWNER)
         assert len(fake.calls) == 1
-        assert fake.calls[0]["event_context"].authority is authority
+        if super_agent:
+            no_roles.assert_called_once_with(ctx.app, OWNER)
+            assert fake.calls[0]["event_context"].authority is authority
+        else:
+            # An agent other than Super Agent resumes unchecked
+            no_roles.assert_not_called()
+            assert fake.calls[0]["event_context"].authority is None
 
     @pytest.mark.asyncio
     async def test_click_after_registry_clear_restores_default_role_authority(self):
         entity = _make_entity(_paused_run([_make_requirement()]))
         ctx = make_ctx(agent=entity, default_role="slack-bot")
         authority = object()
-        authorize = AsyncMock(return_value=authority)
+        ctx.company = AsyncMock()
+        ctx.company.authorize.return_value = authority
         fake = FakeContinue()
 
-        with (
-            patch.object(hitl, "continue_run", new=fake),
-            patch.object(security, "resolve_principal_authorization", new=authorize),
-        ):
+        with patch.object(hitl, "continue_run", new=fake):
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
-        authorize.assert_awaited_once_with(ctx.app, "slack-bot", "agents", "agent-1")
+        # The resumed run stays the owner's own, with the default role's permissions
+        ctx.company.authorize.assert_awaited_once_with(ctx.app, OWNER, "agent-1", ["slack-bot"])
         assert fake.calls[0]["event_context"].authority is authority
         # The run stays the Slack user's own
         assert fake.calls[0]["event_context"].user_id == OWNER

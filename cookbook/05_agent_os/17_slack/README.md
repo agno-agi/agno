@@ -267,18 +267,30 @@ export SLACK_APPROVER_ID="U..."
   refuses only disabled users. A `JWTMiddleware` you add yourself, on a
   `base_app` or after `get_app()`, must list `/slack/events` and
   `/slack/interactions` in its `excluded_route_paths`.
-- **`default_role=`**: the AgentOS principal whose roles a user not in
-  `users=` runs with, under authorization. The run's `user_id` stays the Slack
-  member ID, so sessions, memory and who started a Task stay per member; only
-  the access is shared. Use it where you cannot list members ahead of time, such
-  as a deployment template, and grant the principal a managed role with what
-  Slack members may do. With `users=`, the members it lists keep their own
-  principal and everyone else runs with these roles, so `users=` only needs the
+- **`default_role=`**: the managed role a user not in `users=` gets, under
+  authorization. They still act as themselves: the run's `user_id` and principal
+  stay theirs (the Slack member ID, or their email with
+  `resolve_user_identity=True`), and their sessions, memory and the Company work
+  they do, such as creating, accepting and starting Tasks, are recorded under
+  them; only the permissions come from the role, and the user directory's
+  disabled switch applies to each member. It needs managed roles
+  (`Authorization.define_role`): a custom `authorization_provider` sees the
+  member as the principal and gets the role name in
+  `AuthorizationContext.roles`. Use it where you cannot list members ahead of
+  time, such as a deployment template, and define the role with what Slack
+  members may do. With `resolve_user_identity=True`, a member whose Slack email
+  is an AgentOS user's principal acts as that user, with the role's permissions:
+  their sessions, Company work and disabled switch are that user's. Use it only
+  where Slack emails can be trusted as AgentOS identities. With `users=`, the members it lists keep their
+  own principal and everyone else gets these roles, so `users=` only needs the
   members who need different access. Without it and without `users=`, under
-  authorization, such a user runs with no roles: they can chat, and every action
-  that needs a permission is refused.
+  authorization, Super Agent runs such a user with no roles: they can chat, and
+  every action that needs a permission is refused. An agent, team or workflow
+  other than Super Agent runs them unchecked.
 
 ```python
+# trust_token_scopes keeps os.agno.com sign-ins working once a role is defined
+authz = Authorization(trust_token_scopes=True)
 authz.define_role(
     "slack-member",
     [
@@ -286,17 +298,18 @@ authz.define_role(
         "agents:read",
         "agents:run",
         "workflows:run",
+        "company:read",
         "products:read",
         "projects:read",
+        "projects:write",
         "tasks:read",
         "tasks:write",
         "wiki:read",
         "sources:read",
     ],
 )
-authz.assign("slack-bot", "slack-member")
 
-Slack(team=agent_os.manager, default_role="slack-bot")
+Slack(team=agent_os.manager, default_role="slack-member")
 ```
 
 ## Workspace Search Action

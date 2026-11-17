@@ -94,7 +94,7 @@ class Slack(BaseInterface):
             unfurl_media: Let Slack expand media previews in replies
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
-            default_role: AgentOS principal whose roles a user not in users gets, under authorization
+            default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
         """
         self.agent = agent
         self.team = team
