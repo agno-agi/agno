@@ -670,6 +670,13 @@ class PostgresDb(BaseDb):
             if sqlstate in ("42P07", "23505") and self.table_exists(table_name):
                 log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
             else:
+                # A failed DDL must not leave the half-built Table on the shared
+                # MetaData, otherwise every retry raises "already defined for
+                # this MetaData instance" before reaching the database again.
+                table_key = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
+                failed_table = self.metadata.tables.get(table_key)
+                if failed_table is not None:
+                    self.metadata.remove(failed_table)
                 log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
