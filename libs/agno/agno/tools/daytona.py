@@ -21,7 +21,7 @@ try:
         Sandbox,
     )
 except ImportError:
-    raise ImportError("`daytona` not installed. Please install using `pip install daytona`")
+    raise ImportError("`daytona` not installed. Please install using `pip install 'daytona<1'`")
 
 DEFAULT_INSTRUCTIONS = dedent(
     """\
