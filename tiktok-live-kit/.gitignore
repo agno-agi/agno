@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+*.log
+data/
+.DS_Store
+**/assets/raw/
+
+# iç plan notları, yalnızca yerel makinede tutulur
+docs/PLAN.md

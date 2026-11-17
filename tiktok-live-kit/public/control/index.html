@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok Live Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="control.css">
+</head>
+<body>
+<div class="top">
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><line x1="16" y1="2.5" x2="16" y2="7" stroke="#2b49a3" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="3" r="2" fill="#e2542a"/><rect x="4" y="7" width="24" height="20" rx="6" fill="#2b49a3"/><rect x="8" y="12" width="16" height="9" rx="3" fill="#0b1019"/><circle cx="12.5" cy="16.5" r="1.8" fill="#5aa8ff"/><circle cx="19.5" cy="16.5" r="1.8" fill="#5aa8ff"/><rect x="1.5" y="14" width="2.5" height="6" rx="1.2" fill="#2b49a3"/><rect x="28" y="14" width="2.5" height="6" rx="1.2" fill="#2b49a3"/></svg>
+    TikTok Live Kit
+  </div>
+  <label class="theme">Tema
+    <select id="themeSel"></select>
+  </label>
+  <div class="pill"><span class="dot" id="dotTop"></span><span id="statusTop">Bağlı değil</span></div>
+  <div class="ov">Overlay: <code id="ovUrl"></code> <button class="ghost sm" id="copyOv">Kopyala</button></div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="live">🔴 Canlı</button>
+  <button data-tab="rules">⚙️ Kurallar</button>
+  <button data-tab="lab">🧪 Deneme</button>
+  <button data-tab="stats">📊 İstatistik</button>
+  <button data-tab="guide">📖 Rehber</button>
+</nav>
+</div>
+
+<main>
+  <div class="col">
+    <!-- ===== Live ===== -->
+    <div class="pane" data-pane="live">
+      <section class="starter" data-starter hidden>
+        <h2>Henüz kendi temanız yok</h2>
+        <p><b>Boş şablon</b> çalışıyor. Tema, kanalınıza özel sahne, karakter, efekt ve hediye kurallarıdır; yapay zekâ ile birkaç oturumda hazırlanır.</p>
+        <ol class="steps">
+          <li><b>Fikir düşünün.</b> <code>docs/IDEA.md</code> dosyasını açın: mekân, izleyiciler kim olur, hangi hediye ne yapar, sohbet komutları, ses. Aklınıza gelmezse yapay zekâ sorsun.</li>
+          <li><b>Kit klasöründe yapay zekâyı açın</b> (Claude Code, Codex, Cursor…) ve aşağıdaki cümleyi yapıştırın. Yapay zekâ parça parça sorar, plana çevirir, siz onaylayınca başlar.</li>
+          <li><b>Buraya dönün</b>, yukarıdaki Tema kutusundan yeni temayı seçin, Deneme sekmesinde deneyin.</li>
+        </ol>
+        <div class="prompt"><code data-prompt>AGENTS.md dosyasını oku ve TikTok Live Kit için yeni bir tema yapmak üzere docs/IDEA.md ile bana fikir soruları sor.</code><button class="sm" data-copy-prompt>Kopyala</button></div>
+      </section>
+      <section>
+        <h2>Canlı bağlantı</h2>
+        <div class="row">
+          <select id="provider" title="Veri kaynağı">
+            <option value="auto">Otomatik (TikFinity → doğrudan)</option>
+            <option value="tikfinity">TikFinity Desktop</option>
+            <option value="connector">Doğrudan (TikFinity gerekmez)</option>
+          </select>
+          <input id="user" placeholder="TikTok kanal adı, ör: kanaladi" autocomplete="off">
+          <button class="primary" id="btnConnect">Bağlan</button>
+          <button id="btnStop">Bağlantıyı kes</button>
+        </div>
+        <div class="status"><span class="dot" id="dot"></span><span id="statusText">Bağlı değil</span><span class="muted" id="lastEv"></span></div>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <section id="settingsBox" hidden>
+        <h2>Tema ayarları <span class="muted">· değişiklik overlay'e hemen yansır</span></h2>
+        <div class="grid2" id="settings"></div>
+      </section>
+
+      <section>
+        <h2>Periyodik içerik</h2>
+        <div class="row">
+          <button id="btnPeriodic">⏱ Periyodik içeriği şimdi çal</button>
+          <span class="muted">Temanın duyuruları ve etkileşim davetleri, sırasını beklemeden hemen çalınır.</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Günlük</h2>
+        <div id="log"></div>
+      </section>
+    </div>
+
+    <!-- ===== Kurallar ===== -->
+    <div class="pane" data-pane="rules" hidden>
+      <section>
+        <h2>Sahaya kimler girer</h2>
+        <div class="grid2">
+          <label>Sahaya giriş
+            <select id="joinMode">
+              <option value="all">Etkileşime giren herkes (yayına giriş, kalp, sohbet...)</option>
+              <option value="keyword">Yalnızca anahtar sözcük yazan, hediye gönderen, takip eden, paylaşan</option>
+            </select>
+          </label>
+          <label>Giriş anahtar sözcükleri <input id="joinKeywords" placeholder="virgülle ayırın"></label>
+          <label>Büyük hediye (jeton) <input id="bigGiftCoins" type="number" min="1"></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Tek hediyenin fiyatına göre kademeler</h2>
+        <table><thead><tr><th>En az (jeton)</th><th>Eylem</th><th>Görünen yazı</th><th></th></tr></thead><tbody id="tiers"></tbody></table>
+        <button class="sm" id="addTier">+ Kademe ekle</button>
+      </section>
+
+      <section>
+        <h2>Özel hediyeler <span class="muted">· fiyat kademesinden önceliklidir</span></h2>
+        <table><thead><tr><th>Hediye ID</th><th>Ad / takma ad</th><th>Eylem</th><th>Görünen yazı</th><th></th></tr></thead><tbody id="overrides"></tbody></table>
+        <button class="sm" id="addOverride">+ Boş satır ekle</button>
+        <h3>Canlıda görülen hediyeler <span class="muted">· bir hediyeye tıklayıp ona özel kural ekleyin</span></h3>
+        <div class="gifts" id="catalog"></div>
+      </section>
+
+      <section>
+        <h2>Sohbet komutları</h2>
+        <table><thead><tr><th>Anahtar sözcük</th><th>Eşleşme</th><th>Eylem</th><th>Yazı</th><th>Bekleme (sn)</th><th></th></tr></thead><tbody id="commands"></tbody></table>
+        <button class="sm" id="addCommand">+ Komut ekle</button>
+      </section>
+
+      <div class="savebar">
+        <span class="muted" id="rulesMsg">Her satırdaki ▶ düğmesi o satırın efektini gösterir, kaydetmek gerekmez.</span>
+        <button class="ghost" id="resetRules">Temanın varsayılanına dön</button>
+        <button class="primary" id="saveRules">Kuralları kaydet</button>
+      </div>
+    </div>
+
+    <!-- ===== Deneme ===== -->
+    <div class="pane" data-pane="lab" hidden>
+      <section>
+        <h2>Sahte izleyiciler <span class="muted">· gerçek canlıyla aynı işlem hattından geçer</span></h2>
+        <div class="row" id="simRow"></div>
+        <h3>Bir kerede kalabalık bırak</h3>
+        <div class="row">
+          <button data-crowd="10">10 kişi</button><button data-crowd="30">30 kişi</button><button data-crowd="60">60 kişi</button><button data-crowd="400">400 kişi</button>
+          <span class="muted">Kişiler gerçek canlıdaki gibi yavaş yavaş girer (saniyede yaklaşık 12 kişi). 400 kişi, makinenin kalabalık yayına dayanıp dayanmadığını görmek içindir.</span>
+        </div>
+        <h3>Sürekli otomatik çalıştır</h3>
+        <div class="row">
+          <button data-rate="0">Kapalı</button><button data-rate="1">Orta</button><button data-rate="3">Kalabalık</button><button data-rate="10">Çok kalabalık</button>
+          <span class="muted">Gerçek canlıdan önce kapatın ve Yeni oturum'a basın (İstatistik sekmesi).</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Hediyeyi fiyat grubuna göre deneyin <span class="muted">· kayıtlı kurallardan geçer, izleyici göndermiş gibi</span></h2>
+        <div id="giftTests"></div>
+      </section>
+
+      <section>
+        <h2>Temanın her efektini deneyin</h2>
+        <div class="row" id="actionRow"></div>
+      </section>
+
+      <section>
+        <h2>Ses</h2>
+        <div class="row">
+          <input id="voiceText" placeholder="Deneme cümlesi" value="Merhaba, bu kanalın ses denemesidir.">
+          <button id="btnVoice">🔊 Ses denemesi</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== İstatistik ===== -->
+    <div class="pane" data-pane="stats" hidden>
+      <section>
+        <h2>Bu canlı oturum</h2>
+        <div class="stats" id="stats2"></div>
+        <div class="row">
+          <a class="btn" href="/api/export.csv">CSV indir</a>
+          <button class="danger" id="btnReset">Yeni oturum</button>
+          <span class="muted">Yeni oturum sıralamayı ve sayıları sıfırlar.</span>
+        </div>
+      </section>
+      <section>
+        <h2>Sıralama</h2>
+        <ol id="top"></ol>
+      </section>
+      <section>
+        <h2>Hedefler</h2>
+        <div id="goals"></div>
+      </section>
+    </div>
+
+    <!-- ===== Rehber ===== -->
+    <div class="pane guide" data-pane="guide" hidden>
+      <section class="starter">
+        <h2>Kendi temanızı yapın</h2>
+        <p>Kit hazır tema ile gelmez, yalnızca <b>boş şablon</b> vardır. Tema, kanalınıza özel sahne, karakter, efekt ve hediye kurallarıdır; yapay zekâ ile birkaç oturumda hazırlanır.</p>
+        <ol class="steps">
+          <li><b>Fikir düşünün.</b> <code>docs/IDEA.md</code> dosyasını açın: mekân, izleyiciler kim olur, hangi hediye ne yapar, sohbet komutları, ses. Aklınıza gelmezse yapay zekâ sorsun.</li>
+          <li><b>Kit klasöründe yapay zekâyı açın</b> (Claude Code, Codex, Cursor…) ve aşağıdaki cümleyi yapıştırın. Yapay zekâ parça parça sorar, plana çevirir, siz onaylayınca başlar.</li>
+          <li><b>Buraya dönün</b>, yukarıdaki Tema kutusundan yeni temayı seçin, Deneme sekmesinde deneyin.</li>
+        </ol>
+        <div class="prompt"><code data-prompt>AGENTS.md dosyasını oku ve TikTok Live Kit için yeni bir tema yapmak üzere docs/IDEA.md ile bana fikir soruları sor.</code><button class="sm" data-copy-prompt>Kopyala</button></div>
+      </section>
+      <section>
+        <h2>4 adımda canlıya çıkış</h2>
+        <ol class="steps">
+          <li><b>Kiti açın.</b> <code>run.bat</code> çalıştırın. Siyah pencere sunucudur: tüm canlı boyunca açık kalsın. Bu panel <code class="origin"></code> adresinde açılır.</li>
+          <li><b>Görüntüyü yayın uygulamasına verin</b>, aşağıdaki tablodaki üç yoldan biriyle.</li>
+          <li><b>Önce deneyin.</b> <b>Deneme</b> sekmesi: 30 kişi bırakın, birkaç hediye deneyin, sesi deneyin. Bitince otomatik çalıştırmayı <b>Kapatın</b> ve İstatistik sekmesinde <b>Yeni oturum</b>'a basın.</li>
+          <li><b>Yayına çıkın, sonra bağlanın.</b> Önce yayını başlatın, sonra <b>Canlı</b> sekmesinde kanal adını yazın (@ olmadan) ve <b>Bağlan</b>'a basın. Yeşil nokta hediye, kalp, sohbetin aktığını gösterir.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Yayın yolunu seçin</h2>
+        <table class="plain">
+          <thead><tr><th>Yol</th><th>Gerekenler</th><th>Her canlıda açılacaklar</th></tr></thead>
+          <tbody>
+            <tr><td><b>A.</b> LIVE Studio pencere yakalama</td><td>LIVE Studio kullanabilen hesap</td><td><code>run.bat</code> + <code>overlay.bat</code>, Studio: Kaynak ekle → Pencere yakalama → chrome.exe</td></tr>
+            <tr><td><b>B.</b> OBS → Virtual Camera → LIVE Studio <span class="tag">en akıcısı</span></td><td>LIVE Studio kullanabilen hesap, OBS</td><td><code>run.bat</code> + OBS (Tarayıcı kaynağı kayıtlı), Studio: Kaynak ekle → Kamera → OBS Virtual Camera</td></tr>
+            <tr><td><b>C.</b> Yayın anahtarıyla OBS</td><td>Yayın anahtarı (stream key) olan hesap</td><td><code>run.bat</code> + OBS, Ayarlar → Yayın → Özel</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">LIVE Studio "Erişim yetkisi yok" derse hesap henüz bilgisayardan yayın yapmaya uygun değildir; önce TikTok tarafında çözülmelidir.</p>
+        <h3>OBS'de Tarayıcı kaynağı (B, C yolları)</h3>
+        <ul>
+          <li>URL <code class="ovlink"></code>, genişlik 1080, yükseklik 1920, <i>Sesi OBS ile kontrol et</i> işaretli.</li>
+          <li>B yolu: kaynağa sağ tık → Gelişmiş Ses Özellikleri → Ses İzleme → <b>İzle ve Çıkış Ver</b> (sanal kamera yalnızca görüntü taşır, ses hoparlörden gider).</li>
+          <li>Overlay boşsa: kaynağa sağ tık → Yenile.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Faydalı overlay adresleri</h2>
+        <table class="plain">
+          <tbody>
+            <tr><td><a target="_blank" data-ov="">/overlay</a></td><td>OBS / LIVE Studio sayfası (1080 × 1920)</td></tr>
+            <tr><td><a target="_blank" data-ov="?safe">/overlay?safe</a></td><td>TikTok arayüzünün örttüğü veya telefonda kesilen alanları kırmızıyla gösterir</td></tr>
+            <tr><td><a target="_blank" data-ov="?scene">/overlay?scene</a></td><td>Sahne ölçüm ızgarası: ufuk, zemin, koridor, koltuklar, çapa noktaları</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Sık karşılaşılan sorunlar</h2>
+        <table class="plain">
+          <tbody>
+            <tr><td>"TikFinity ws://127.0.0.1:21213 adresinde bulunamadı"</td><td>TikFinity Desktop'ı açın (web sürümü olmaz), doğru kanalla giriş yapın. Ya da <b>Doğrudan</b>'ı seçin.</td></tr>
+            <tr><td>Doğrudan bağlantı hata veriyor</td><td>Kanal henüz yayında değil ya da kanal adı yanlış yazıldı.</td></tr>
+            <tr><td>Overlay sessiz</td><td><code>overlay.bat</code> penceresi sesi kendisi çalar; OBS'de <i>Sesi OBS ile kontrol et</i> işaretleyin.</td></tr>
+            <tr><td>Siyah pencereyi kapattım</td><td><code>run.bat</code> tekrar çalıştırın, Bağlan'a tekrar basın.</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">Tam rehber: <code>docs/GO-LIVE.md</code></p>
+      </section>
+    </div>
+  </div>
+
+  <div class="col side">
+    <div class="preview"><iframe id="preview" src="/overlay?quiet&mute" title="Overlay önizleme"></iframe></div>
+    <section class="mini">
+      <h2>En çok hediye gönderenler</h2>
+      <ol id="topMini"></ol>
+    </section>
+  </div>
+</main>
+<script src="control.js"></script>
+</body>
+</html>

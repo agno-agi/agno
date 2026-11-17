@@ -1,0 +1,335 @@
+{
+  "name": "Boş şablon",
+  "description": "TikTok Live Kit boş tema iskeleti: görselleri, karakterleri, efektleri ve metinleri kendinizinkilerle değiştirin.",
+  "width": 1080,
+  "height": 1920,
+  "actions": [
+    {
+      "id": "small",
+      "label": "Küçük hediye",
+      "icon": "✨",
+      "card": "1 XU",
+      "description": "Gönderen parlar, ışıldar, başını sallar",
+      "steps": [
+        {
+          "aura": 1
+        },
+        {
+          "sound": "small"
+        },
+        {
+          "fx": "emit",
+          "preset": "spark",
+          "at": "head",
+          "count": 14
+        },
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "text",
+          "at": "head",
+          "text": "+{total}"
+        }
+      ]
+    },
+    {
+      "id": "medium",
+      "label": "Orta hediye",
+      "icon": "🎉",
+      "card": "10 XU",
+      "description": "Sahneye çıkar, tezahürat yapar, konfeti, sonra yerine döner",
+      "steps": [
+        {
+          "walk": "stage"
+        },
+        {
+          "pose": "stand"
+        },
+        {
+          "sound": "medium"
+        },
+        {
+          "play": "cheer",
+          "times": 2
+        },
+        {
+          "fx": "emit",
+          "preset": "confetti",
+          "at": "head",
+          "count": 40
+        },
+        {
+          "walk": "home"
+        },
+        {
+          "pose": "idle"
+        }
+      ]
+    },
+    {
+      "id": "big",
+      "label": "Büyük hediye",
+      "icon": "🌟",
+      "card": "100+ XU",
+      "description": "Havai fişek, soğuk fişek, konfeti yağmuru, tüm oda tezahürat yapar",
+      "steps": [
+        {
+          "sound": "big"
+        },
+        {
+          "fx": "fireworks",
+          "bursts": 5,
+          "fountains": 2
+        },
+        {
+          "fx": "rain",
+          "preset": "confetti",
+          "count": 120
+        },
+        {
+          "crowd": [
+            {
+              "play": "cheer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wave",
+      "label": "El sallama",
+      "icon": "👋",
+      "description": "Sohbet komutu için",
+      "steps": [
+        {
+          "play": "cheer"
+        }
+      ]
+    },
+    {
+      "id": "draw",
+      "label": "Kura",
+      "icon": "🎴",
+      "description": "Sohbet kura komutu için: kart ekranın ortasında çıkar, içerik sesli okunur",
+      "steps": [
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "emit",
+          "preset": "star",
+          "at": "head",
+          "count": 16
+        }
+      ]
+    }
+  ],
+  "rules": {
+    "joinMode": "all",
+    "joinKeywords": [
+      "merhaba",
+      "selam"
+    ],
+    "bigGiftCoins": 100,
+    "giftTiers": [
+      {
+        "minCoins": 1,
+        "action": "small",
+        "label": "Küçük hediye"
+      },
+      {
+        "minCoins": 10,
+        "action": "medium",
+        "label": "Orta hediye"
+      },
+      {
+        "minCoins": 100,
+        "action": "big",
+        "label": "Büyük hediye"
+      }
+    ],
+    "giftOverrides": [],
+    "chatCommands": [
+      {
+        "keywords": [
+          "hi",
+          "hello",
+          "merhaba"
+        ],
+        "match": "exact",
+        "action": "wave",
+        "label": "El sallama",
+        "cooldownMs": 5000
+      },
+      {
+        "keywords": [
+          "kura",
+          "dilek"
+        ],
+        "match": "contains",
+        "action": "draw",
+        "label": "Kura",
+        "cooldownMs": 3000,
+        "draw": "loi-chuc"
+      }
+    ]
+  },
+  "draws": {
+    "loi-chuc": {
+      "perDay": true,
+      "items": [
+        {
+          "title": "Kart 1 · Çok şanslı",
+          "text": "Bugün her şey yolunda gidecek."
+        },
+        {
+          "title": "Kart 2 · Şanslı",
+          "text": "Biraz sabır, güzel haber yakında."
+        },
+        {
+          "title": "Kart 3 · Küçük şans",
+          "text": "İyi biriyle karşılaşırsın, teşekkür etmeyi unutma."
+        }
+      ]
+    }
+  },
+  "characters": [],
+  "animations": {},
+  "npcs": [
+    {
+      "id": "host",
+      "name": "Yayıncı",
+      "at": "stage",
+      "pose": "stand",
+      "reactions": {
+        "bigGift": [
+          {
+            "play": "cheer",
+            "times": 2
+          }
+        ]
+      }
+    }
+  ],
+  "titles": [
+    {
+      "minCoins": 0,
+      "label": "Misafir"
+    },
+    {
+      "minCoins": 50,
+      "label": "Sadık takipçi"
+    },
+    {
+      "minCoins": 500,
+      "label": "VIP"
+    }
+  ],
+  "goals": [
+    {
+      "id": "likes",
+      "metric": "likes",
+      "label": "Kalp hedefi",
+      "every": 1000
+    }
+  ],
+  "voice": {
+    "enabled": true,
+    "voice": "tr-TR-EmelNeural",
+    "giftMinCoins": 1,
+    "gift": [
+      "{ten}, {qua}{lan} için teşekkürler!"
+    ],
+    "bigGift": [
+      "Harika! {ten}, {qua}{lan} için teşekkürler. {loi}"
+    ],
+    "join": [
+      "Hoş geldin {ten}!"
+    ],
+    "chat": [
+      "{ten} yazdı: {chat}."
+    ],
+    "follow": [
+      "{ten}, kanalı takip ettiğin için teşekkürler."
+    ],
+    "title": [
+      "Tebrikler {ten}, {danh_hieu} oldun!"
+    ],
+    "goal": [
+      "Tüm oda {gia_tri} {muc_tieu} hedefine ulaştı!"
+    ],
+    "draw": [
+      "{ten} şunu çekti: {title}. {text}"
+    ],
+    "cooldown": {
+      "join": 15000,
+      "chat": 10000
+    },
+    "delay": {
+      "draw": 1500
+    },
+    "fallbackWords": []
+  },
+  "periodic": {
+    "everyMinutes": 4,
+    "quietSeconds": 20,
+    "title": "✦ DUYURU ✦",
+    "items": [
+      "Odaya girmek için yorum yaz, hediye göndererek ekranda öne çık."
+    ]
+  },
+  "prompts": {
+    "everySeconds": 90,
+    "quietSeconds": 25,
+    "items": [
+      "«kura» yazarak bugünün kartını çekebilirsin.",
+      "Kalp bırakarak odayı hedefe ulaştır!"
+    ]
+  },
+  "hud": {
+    "title": {
+      "text": "KANAL ADINIZ",
+      "sub": "Alt satır: slogan, konu"
+    },
+    "counters": true,
+    "giftCard": {
+      "verb": "gönderdi:",
+      "unit": "jeton"
+    },
+    "tiers": true,
+    "board": {
+      "title": "LİDER TABLOSU",
+      "size": 3
+    },
+    "ticker": {
+      "title": "Son gönderilenler",
+      "size": 5
+    },
+    "goal": true,
+    "guide": {
+      "title": "Nasıl katılırım"
+    }
+  },
+  "colors": {
+    "accent": "#a9b8ff",
+    "border": "rgba(169,184,255,.6)",
+    "panel": "linear-gradient(180deg, rgba(20,24,40,.88), rgba(10,12,22,.92))",
+    "glow": "rgba(140,160,255,.7)"
+  },
+  "sounds": {
+    "big": {
+      "cooldown": 8000,
+      "duck": 0.4,
+      "priority": true
+    }
+  },
+  "text": {},
+  "reactions": {
+    "chat": [
+      {
+        "play": "nod"
+      }
+    ]
+  }
+}

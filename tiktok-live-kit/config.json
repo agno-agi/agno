@@ -1,0 +1,15 @@
+{
+  "host": "127.0.0.1",
+  "port": 3939,
+  "theme": "cenaze",
+  "provider": "auto",
+  "tiktokUsername": "",
+  "autoConnect": false,
+  "tikfinityUrl": "ws://127.0.0.1:21213/",
+  "signApiKey": "",
+  "maxJoinsPerSecond": 15,
+  "playerTtlMinutes": 20,
+  "snapshotPlayers": 300,
+  "watchdogSeconds": 180,
+  "allowLan": false
+}
