@@ -61,7 +61,8 @@ class RunAuthorization:
         from dataclasses import asdict
 
         return {
-            "context": asdict(self.context),
+            # Roles an application grants a run are kept only when set, so every other snapshot stays unchanged
+            "context": {k: v for k, v in asdict(self.context).items() if k != "roles" or v is not None},
             "service_account": self.service_account,
             "enforce_tools": self.enforce_tools,
             **({"scheduled": True} if self.scheduled else {}),
