@@ -6,6 +6,9 @@ from agno.sandbox.base import SandboxHandle
 from agno.sandbox.checkpoint import CheckpointRef, CheckpointStore
 
 DEFAULT_NATIVE_EXCLUSIONS = ("native/codex/auth.json", "native/.claude/.credentials.json")
+# Codex clones a plugin marketplace of about 100 MiB into .tmp/plugins on start and rebuilds it,
+# so providers that move checkpoints over the network leave it out to keep transfers small.
+REMOTE_NATIVE_EXCLUSIONS = (*DEFAULT_NATIVE_EXCLUSIONS, "native/codex/.tmp/plugins", "native/codex/.tmp/plugins.sha")
 
 
 @runtime_checkable

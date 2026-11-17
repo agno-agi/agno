@@ -2,8 +2,6 @@
 
 import asyncio
 import base64
-import json
-import tarfile
 import tempfile
 from contextlib import suppress
 from dataclasses import asdict
@@ -15,22 +13,18 @@ from agno.sandbox.agentcore.sandbox import AgentCoreSandbox, _Refusal
 from agno.sandbox.agentcore.server import _MAX_TRANSFER
 from agno.sandbox.base import SandboxError, SandboxHandle, _sync
 from agno.sandbox.checkpoint import (
-    _MANIFEST,
-    _ROOTS,
     CheckpointArchive,
     CheckpointRef,
     CheckpointStore,
-    _archive_bytes,
-    _name,
+    check_excluded,
+    check_exclusions,
 )
-from agno.sandbox.transfer import DEFAULT_NATIVE_EXCLUSIONS
+from agno.sandbox.transfer import REMOTE_NATIVE_EXCLUSIONS
 
 # Checkpoint bytes per invocation. Base64 makes the payload a third larger, well
 # under AgentCore's 100 MB request and response limit.
 _CHUNK = 8 * 1024 * 1024
-# Codex clones a plugin marketplace of about 100 MiB into .tmp/plugins on start and
-# rebuilds it, so AgentCore checkpoints leave it out to keep transfers small.
-AGENTCORE_NATIVE_EXCLUSIONS = (*DEFAULT_NATIVE_EXCLUSIONS, "native/codex/.tmp/plugins", "native/codex/.tmp/plugins.sha")
+AGENTCORE_NATIVE_EXCLUSIONS = REMOTE_NATIVE_EXCLUSIONS
 
 
 class AgentCoreCheckpointTransfer:
@@ -89,33 +83,6 @@ class AgentCoreCheckpointTransfer:
                 if reply["size"] != offset:
                     raise SandboxError("Checkpoint import size mismatch")
 
-    def _check_excluded(self, path: Path, exclude: Sequence[str]) -> None:
-        exclusions = set(exclude)
-        with _archive_bytes(path, self.archive.limits) as stream:
-            with tarfile.open(fileobj=stream, mode="r:") as archive:
-                for member in archive:
-                    if member.name == _MANIFEST:
-                        manifest = json.loads(archive.extractfile(member).read())  # type: ignore[union-attr]
-                        if set(manifest.get("excluded", [])) != exclusions:
-                            raise SandboxError("Checkpoint export does not record the requested exclusions")
-                    elif any(member.name == item or member.name.startswith(item + "/") for item in exclusions):
-                        raise SandboxError(f"Checkpoint export contains excluded path {member.name!r}")
-                # Validation stops at the end marker, but the store uploads the whole
-                # file, so anything after it, such as a second appended archive,
-                # would reach storage unchecked.
-                stream.seek(archive.offset)
-                while chunk := stream.read(1024 * 1024):
-                    if chunk.count(0) != len(chunk):
-                        raise SandboxError("Checkpoint export has data after the end of the archive")
-
-    @staticmethod
-    def _check_exclusions(exclude: Sequence[str]) -> None:
-        # The same rules capture applies inside the computer, checked before the
-        # agent is stopped and anything is archived.
-        for item in exclude:
-            if str(_name(item)) == _MANIFEST or item in _ROOTS:
-                raise ValueError("Cannot exclude a manifest or entire durable root")
-
     async def acapture(
         self,
         handle: SandboxHandle,
@@ -123,7 +90,7 @@ class AgentCoreCheckpointTransfer:
         state: Mapping[str, Any],
         exclude: Sequence[str] = AGENTCORE_NATIVE_EXCLUSIONS,
     ) -> CheckpointRef:
-        self._check_exclusions(exclude)
+        check_exclusions(exclude)
         name = uuid4().hex
         try:
             exported = await self.provider._invoke_for(
@@ -142,7 +109,7 @@ class AgentCoreCheckpointTransfer:
                 # The archive was written inside the computer, where the agent can
                 # reach it, so check its structure and the exclusions here.
                 await self.archive.avalidate(path)
-                await asyncio.to_thread(self._check_excluded, path, exclude)
+                await asyncio.to_thread(check_excluded, path, self.archive.limits, exclude)
                 return await self.store.aput(path)
         finally:
             # Cleanup must never turn a stored checkpoint into an error.
