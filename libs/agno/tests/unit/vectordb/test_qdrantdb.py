@@ -136,6 +136,87 @@ def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         assert len(kwargs["points"]) == 3
 
 
+def test_insert_respects_batch_size(qdrant_db, mock_qdrant_client):
+    """Documents are upserted in batches no larger than batch_size"""
+    documents = [Document(content=f"Document {i}", name=f"doc_{i}") for i in range(5)]
+    with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768):
+        qdrant_db.insert(documents=documents, content_hash="test_hash", batch_size=2)
+
+    batches = [call.kwargs["points"] for call in mock_qdrant_client.upsert.call_args_list]
+    assert [len(points) for points in batches] == [2, 2, 1]
+
+
+def test_insert_default_sends_single_upsert(qdrant_db, mock_qdrant_client):
+    """Without batch_size, all points go in one upsert"""
+    documents = [Document(content=f"Document {i}", name=f"doc_{i}") for i in range(25)]
+    with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768):
+        qdrant_db.insert(documents=documents, content_hash="test_hash")
+
+    mock_qdrant_client.upsert.assert_called_once()
+    assert len(mock_qdrant_client.upsert.call_args.kwargs["points"]) == 25
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_insert_rejects_non_positive_batch_size(qdrant_db, mock_qdrant_client, batch_size):
+    """A non-positive batch_size raises before embedding or upserting"""
+    documents = [Document(content="Document", name="doc")]
+    with patch.object(qdrant_db.embedder, "get_embedding_and_usage", return_value=([0.1] * 768, None)) as mock_embed:
+        with pytest.raises(ValueError, match="batch_size"):
+            qdrant_db.insert(documents=documents, content_hash="test_hash", batch_size=batch_size)
+
+    mock_embed.assert_not_called()
+    mock_qdrant_client.upsert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_insert_respects_batch_size(qdrant_db):
+    """Async insert upserts in batches no larger than batch_size"""
+    async_client = AsyncMock()
+    qdrant_db._async_client = async_client
+    documents = [Document(content=f"Document {i}", name=f"doc_{i}", embedding=[0.1] * 768) for i in range(5)]
+    with (
+        patch.object(qdrant_db, "_ensure_user_id_payload_index_async", AsyncMock()),
+        patch.object(qdrant_db.embedder, "async_get_embedding_and_usage", AsyncMock(return_value=([0.1] * 768, None))),
+    ):
+        await qdrant_db.async_insert(documents=documents, content_hash="test_hash", batch_size=2)
+
+    batches = [call.kwargs["points"] for call in async_client.upsert.call_args_list]
+    assert [len(points) for points in batches] == [2, 2, 1]
+
+
+@pytest.mark.asyncio
+async def test_async_insert_default_sends_single_upsert(qdrant_db):
+    """Without batch_size, async insert sends all points in one upsert"""
+    async_client = AsyncMock()
+    qdrant_db._async_client = async_client
+    documents = [Document(content=f"Document {i}", name=f"doc_{i}", embedding=[0.1] * 768) for i in range(25)]
+    with (
+        patch.object(qdrant_db, "_ensure_user_id_payload_index_async", AsyncMock()),
+        patch.object(qdrant_db.embedder, "async_get_embedding_and_usage", AsyncMock(return_value=([0.1] * 768, None))),
+    ):
+        await qdrant_db.async_insert(documents=documents, content_hash="test_hash")
+
+    async_client.upsert.assert_called_once()
+    assert len(async_client.upsert.call_args.kwargs["points"]) == 25
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_size", [0, -1])
+async def test_async_insert_rejects_non_positive_batch_size(qdrant_db, batch_size):
+    """Async insert raises on a non-positive batch_size before embedding or upserting"""
+    async_client = AsyncMock()
+    qdrant_db._async_client = async_client
+    mock_embed = AsyncMock(return_value=([0.1] * 768, None))
+    with patch.object(qdrant_db.embedder, "async_get_embedding_and_usage", mock_embed):
+        with pytest.raises(ValueError, match="batch_size"):
+            await qdrant_db.async_insert(
+                documents=[Document(content="Document")], content_hash="test_hash", batch_size=batch_size
+            )
+
+    mock_embed.assert_not_awaited()
+    async_client.upsert.assert_not_called()
+
+
 def test_name_exists(qdrant_db, mock_qdrant_client):
     """Test name existence check"""
     # Test when name exists
