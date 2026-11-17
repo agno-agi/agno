@@ -643,28 +643,38 @@ class Agent37Sandbox(Sandbox):
         ).encode()
         ref, name = handle.provider_ref, uuid4().hex
         staged, inline = await self._input(ref, name, request)
-        output = io.BytesIO()
+
+        async def bound() -> None:
+            # The command may still be running remotely. Stop compute to bound it; recovery
+            # belongs to the caller.
+            if stop_on_failure:
+                await asyncio.shield(self.astop(handle))
+
         try:
             reply = await self._guest(ref, "run", name, _RUNNER, *staged, data=inline, timeout=timeout + 15)
+        except _Refused:
+            # Only the run request itself can be turned down before anything started.
+            raise
+        except (asyncio.CancelledError, SandboxError):
+            await bound()
+            raise
+        # The command has run, so every failure from here is one with an unknown result.
+        output = io.BytesIO()
+        try:
             try:
                 await self._receive(ref, name, reply, output, _MAX_RESULT)
             finally:
                 if reply.get("data") is None:
                     await asyncio.shield(self._discard(ref, name))
-        except (asyncio.CancelledError, SandboxError) as error:
-            # The command may still be running remotely. Stop compute to bound it; recovery
-            # belongs to the caller.
-            if stop_on_failure and not isinstance(error, _Refused):
-                await asyncio.shield(self.astop(handle))
-            raise
-        try:
             result = ExecResult(**json.loads(output.getvalue()))
         except (TypeError, ValueError) as error:
-            if stop_on_failure:
-                await self.astop(handle)
+            await bound()
             raise SandboxError("Sandbox returned an invalid command result") from error
-        if stop_on_failure and (result.timed_out or result.output_limited):
-            await self.astop(handle)
+        except (asyncio.CancelledError, SandboxError):
+            await bound()
+            raise
+        if result.timed_out or result.output_limited:
+            await bound()
         return result
 
     async def apause(self, handle: SandboxHandle) -> None:

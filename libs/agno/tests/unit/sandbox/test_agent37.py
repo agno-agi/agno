@@ -51,9 +51,12 @@ class Service:
         }
         return self.instances[ident]
 
-    def inject(self, method, suffix, outcome, *, times=1, after=False):
-        """Answer the next matching requests with ``outcome``; ``after`` does the work first, as a lost reply."""
-        self.injected.append({"method": method, "suffix": suffix, "outcome": outcome, "times": times, "after": after})
+    def inject(self, method, suffix, outcome, *, times=1, after=False, skip=0):
+        """Answer the next matching requests with ``outcome``, after letting ``skip`` of them through;
+        ``after`` does the work first, as a lost reply."""
+        self.injected.append(
+            {"method": method, "suffix": suffix, "outcome": outcome, "times": times, "after": after, "skip": skip}
+        )
 
     def sent(self, method, suffix):
         return [item for item in self.requests if item[0] == method and item[2].endswith(suffix)]
@@ -63,6 +66,9 @@ class Service:
         self.requests.append((request.method, request.url.host, request.url.path, body))
         for item in self.injected:
             if item["times"] and item["method"] == request.method and request.url.path.endswith(item["suffix"]):
+                if item["skip"]:
+                    item["skip"] -= 1
+                    continue
                 item["times"] -= 1
                 if item["after"]:
                     self.answer(request, body)
@@ -458,6 +464,16 @@ def test_a_suspended_host_counts_toward_the_resend_window(sandbox, service, monk
         sandbox.exec(handle, ["sh", "-c", "echo ran >> runs.txt"])
     assert len(service.sent("POST", "/exec")) == 1
     assert (workspace(service, handle) / "runs.txt").read_text() == "ran\n"
+    assert service.instances[handle.provider_ref]["status"] == "stopped"
+
+
+def test_a_refused_output_read_still_stops_the_instance(sandbox, service):
+    handle = sandbox.create("session")
+    # The run request goes through; reading back its staged output is refused.
+    service.inject("POST", "/exec", httpx.Response(429, json={"error": "rate_limited"}), skip=1)
+    with pytest.raises(SandboxError, match="rate_limited"):
+        sandbox.exec(handle, ["sh", "-c", "echo ran > ran.txt; head -c 300000 /dev/zero | tr '\\0' a"])
+    assert (workspace(service, handle) / "ran.txt").exists()
     assert service.instances[handle.provider_ref]["status"] == "stopped"
 
 
