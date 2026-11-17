@@ -1,25 +1,25 @@
 {
   "renderer": "3d",
   "hint": false,
-  "personColor": "#2b3038",
+  "personColor": "#20252d",
   "camera": {
     "position": [
       0,
-      6.5,
-      17
+      4.6,
+      13.5
     ],
     "target": [
       0,
-      1.2,
-      0
+      1.1,
+      -1.5
     ],
-    "fov": 52
+    "fov": 50
   },
   "background": "#0b0e13",
   "fog": {
     "color": "#0b0e13",
-    "near": 16,
-    "far": 40
+    "near": 18,
+    "far": 46
   },
   "lights": {
     "ambient": 0.65,
@@ -139,5 +139,6 @@
   "fill": {
     "rows": 0
   },
-  "fps": 30
+  "fps": 30,
+  "humanoid": true
 }

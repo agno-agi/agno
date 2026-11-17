@@ -275,14 +275,46 @@
       p.mixer = new T.AnimationMixer(m); p.actions = {}; p.clip = null;
     } else {
       const robe = new T.MeshStandardMaterial({ color: cfg.personColor ? new T.Color(cfg.personColor).offsetHSL(0, 0, p.tint / 400) : new T.Color().setHSL((220 + p.tint) / 360, 0.18, 0.55 + p.tint / 200), roughness: 0.8 }); // scene.json "personColor": yer tutucu kişilerin elbise rengi
-      const body = new T.Mesh(new T.CylinderGeometry(0.2, 0.28, 1.15, 12), robe); body.position.y = 0.58;
-      const head = new T.Mesh(new T.SphereGeometry(0.17, 16, 12), new T.MeshStandardMaterial({ color: '#2a201c', roughness: 0.7 })); head.position.y = 1.36;
-      const torso = new T.Group(); torso.add(body, head);
-      body.castShadow = head.castShadow = renderer.shadowMap.enabled;
+      let torso;
+      if (cfg.humanoid) torso = buildHuman(p, robe);
+      else {
+        const body = new T.Mesh(new T.CylinderGeometry(0.2, 0.28, 1.15, 12), robe); body.position.y = 0.58;
+        const head = new T.Mesh(new T.SphereGeometry(0.17, 16, 12), new T.MeshStandardMaterial({ color: '#2a201c', roughness: 0.7 })); head.position.y = 1.36;
+        torso = new T.Group(); torso.add(body, head);
+        body.castShadow = head.castShadow = renderer.shadowMap.enabled;
+      }
       g.add(torso); p.torso = torso; p.mixer = null;
     }
     p.obj = g; p.built = c.ready ? c : null;
     scene3.add(g);
+  }
+  // scene.json "humanoid": true → yer tutucu kişi daha insana benzer (boy ~1.7 m): bacak, gövde, kol, ele alınmış eller, baş, saç / takke / başörtüsü.
+  // Görünüm kimliğe göre sabittir (hash). Eller önde kavuşturulmuş (cenaze duruşu).
+  function buildHuman(p, robe) {
+    const h = hash(p.id), M = (c, r = 0.85) => new T.MeshStandardMaterial({ color: c, roughness: r });
+    const skin = M(['#e8c4a0', '#d9a97c', '#c68c5f', '#a8714a', '#f0d2b4'][h % 5], 0.7);
+    const dark = M('#14171c'), g = new T.Group();
+    const add = (m, x, y, z, rx = 0, rz = 0) => { m.position.set(x, y, z); m.rotation.x = rx; m.rotation.z = rz; g.add(m); return m; };
+    for (const x of [-0.09, 0.09]) { add(new T.Mesh(new T.CylinderGeometry(0.07, 0.065, 0.78, 8), dark), x, 0.42, 0); add(new T.Mesh(new T.BoxGeometry(0.1, 0.06, 0.2), M('#0c0e11')), x, 0.03, 0.04); }
+    add(new T.Mesh(new T.CylinderGeometry(0.17, 0.2, 0.62, 12), robe), 0, 1.09, 0);                 // gövde / ceket
+    add(new T.Mesh(new T.SphereGeometry(0.19, 12, 8), robe), 0, 1.38, 0).scale.set(1.15, 0.45, 0.7); // omuzlar
+    for (const sx of [-1, 1]) { // kollar: omuzdan öne, eller karın önünde
+      const arm = new T.Group(); arm.position.set(sx * 0.2, 1.36, 0.02); arm.rotation.x = -0.95; arm.rotation.z = sx * -0.12;
+      const up = new T.Mesh(new T.CylinderGeometry(0.05, 0.045, 0.5, 8), robe); up.position.y = -0.25; arm.add(up);
+      const hand = new T.Mesh(new T.SphereGeometry(0.05, 8, 6), skin); hand.position.y = -0.52; arm.add(hand); g.add(arm);
+    }
+    add(new T.Mesh(new T.CylinderGeometry(0.05, 0.055, 0.1, 8), skin), 0, 1.45, 0);                 // boyun
+    add(new T.Mesh(new T.SphereGeometry(0.12, 14, 12), skin), 0, 1.56, 0).scale.set(0.92, 1.08, 1);  // baş
+    const kind = (h >>> 3) % 4; // 0 saç, 1 beyaz takke, 2 başörtüsü, 3 kasket
+    if (kind === 2) {
+      const sc = M(['#2a2f3a', '#3b3f4a', '#1c2a24', '#4a3b40'][(h >>> 5) % 4], 0.95);
+      add(new T.Mesh(new T.SphereGeometry(0.14, 14, 12), sc), 0, 1.57, -0.01).scale.set(1, 1.05, 1.02);
+      add(new T.Mesh(new T.ConeGeometry(0.2, 0.34, 12), sc), 0, 1.34, -0.03);
+    } else if (kind === 1) add(new T.Mesh(new T.SphereGeometry(0.125, 12, 8, 0, 6.283, 0, 1.0), M('#eeeeea')), 0, 1.6, 0);
+    else if (kind === 3) add(new T.Mesh(new T.SphereGeometry(0.13, 12, 8, 0, 6.283, 0, 1.1), M('#23262d')), 0, 1.6, 0);
+    else add(new T.Mesh(new T.SphereGeometry(0.128, 12, 8, 0, 6.283, 0, 1.25), M(['#16120f', '#3a2a1c', '#6b6b6b'][(h >>> 5) % 3])), 0, 1.58, -0.01);
+    g.traverse((o) => { if (o.isMesh) o.castShadow = renderer.shadowMap.enabled; });
+    return g;
   }
   function drop(p) { if (p.obj) { scene3.remove(p.obj); p.mixer?.stopAllAction(); p.obj = null; } }
 
