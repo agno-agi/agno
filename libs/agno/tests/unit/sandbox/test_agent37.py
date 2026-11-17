@@ -17,7 +17,12 @@ import pytest
 import agno.sandbox.agent37.sandbox as agent37_sandbox
 from agno.sandbox.agent37 import Agent37CheckpointTransfer, Agent37Sandbox, _guest
 from agno.sandbox.base import SandboxError, SandboxHandle
-from agno.sandbox.checkpoint import CheckpointObjectNotFound, CheckpointRef, FileCheckpointStore
+from agno.sandbox.checkpoint import (
+    CheckpointContentError,
+    CheckpointObjectNotFound,
+    CheckpointRef,
+    FileCheckpointStore,
+)
 from agno.sandbox.pool import LoopClients
 from agno.sandbox.transfer import REMOTE_NATIVE_EXCLUSIONS, CheckpointTransfer
 
@@ -696,11 +701,22 @@ def test_capture_needs_a_running_instance(sandbox, service, transfer):
     assert service.instances[handle.provider_ref]["status"] == "sleeping"
 
 
-def test_a_failed_capture_leaves_the_instance_running(sandbox, service, transfer):
+def test_files_that_cannot_be_checkpointed_are_reported_as_such(sandbox, service, transfer):
     handle = sandbox.create("session")
     sandbox.exec(handle, ["sh", "-c", "mkfifo pipe"])
-    with pytest.raises(SandboxError, match="capture failed"):
+    # The coordinator retires a turn on this error rather than capturing the same files again.
+    with pytest.raises(CheckpointContentError, match="capture failed"):
         transfer.capture(handle, state={})
+    assert service.instances[handle.provider_ref]["status"] == "running"
+    assert list((service.root / handle.provider_ref / "control").iterdir()) == []
+
+
+def test_any_other_capture_failure_stays_retryable(sandbox, service, transfer, monkeypatch):
+    handle = sandbox.create("session")
+    monkeypatch.setattr(_guest, "_PYTHON", [sys.executable, "-c", "raise SystemExit('archiver crashed')"])
+    with pytest.raises(SandboxError, match="archiver crashed") as failure:
+        transfer.capture(handle, state={})
+    assert not isinstance(failure.value, CheckpointContentError)
     assert service.instances[handle.provider_ref]["status"] == "running"
     assert list((service.root / handle.provider_ref / "control").iterdir()) == []
 

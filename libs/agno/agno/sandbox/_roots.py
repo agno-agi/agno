@@ -10,7 +10,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from agno.sandbox.checkpoint import CheckpointArchive, CheckpointLimits
+from agno.sandbox.checkpoint import CheckpointArchive, CheckpointContentError, CheckpointLimits
+
+# Capture's exit status when the files themselves cannot be checkpointed, which the caller must
+# tell apart from a failure worth retrying.
+CONTENT_ERROR_EXIT = 65
 
 
 def _capture() -> None:
@@ -21,7 +25,11 @@ def _capture() -> None:
     archive = CheckpointArchive(CheckpointLimits(**job["limits"]))
     with tempfile.TemporaryDirectory(prefix="agno-capture-") as directory:
         output = Path(directory) / "checkpoint.tar"
-        archive.capture(roots, output, state=job["state"], exclude=job["exclude"])
+        try:
+            archive.capture(roots, output, state=job["state"], exclude=job["exclude"])
+        except CheckpointContentError as error:
+            sys.stderr.write(str(error))
+            sys.exit(CONTENT_ERROR_EXIT)
         with output.open("rb") as stream:
             shutil.copyfileobj(stream, sys.stdout.buffer)
         sys.stdout.buffer.flush()

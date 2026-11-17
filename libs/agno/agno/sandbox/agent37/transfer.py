@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from uuid import uuid4
 
+from agno.sandbox._roots import CONTENT_ERROR_EXIT
 from agno.sandbox.agent37.sandbox import MAX_COMMAND_SECONDS, Agent37Sandbox
 from agno.sandbox.base import SandboxError, SandboxHandle, _sync
 from agno.sandbox.checkpoint import (
     CheckpointArchive,
+    CheckpointContentError,
     CheckpointRef,
     CheckpointStore,
     check_excluded,
@@ -62,6 +64,11 @@ class Agent37CheckpointTransfer:
         staged, inline = await self.provider._input(ref, name, job.encode())
         try:
             reply = await self.provider._guest(ref, "capture", name, *staged, data=inline, timeout=MAX_COMMAND_SECONDS)
+            failed = reply.get("failed")
+            if isinstance(failed, dict):
+                # Files that cannot be checkpointed fail the same way again, so the caller must not retry.
+                kind = CheckpointContentError if failed.get("code") == CONTENT_ERROR_EXIT else SandboxError
+                raise kind("Checkpoint capture failed: " + str(failed.get("error")).strip()[-1500:])
             with tempfile.TemporaryDirectory(prefix=".capture-", dir=self.scratch) as directory:
                 path = Path(directory) / "checkpoint.tar"
                 with path.open("w+b") as output:

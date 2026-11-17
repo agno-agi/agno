@@ -26,6 +26,8 @@ These steps create billable compute. You need an Agent 37 workspace with a funde
    .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py --provider agent37   # fixture, no model calls
    ```
 
+   The instance runs the package baked into the template, so run `deploy` again after upgrading `agno`; it publishes a new revision under the same name.
+
    To use an image you already push to a registry instead, build it for linux/amd64 and register it with `POST /v1/templates` and `"entrypoint": ["sleep", "infinity"]`.
 
 4. Swap the provider on your agent. Nothing else about the agent changes:

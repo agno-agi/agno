@@ -262,7 +262,9 @@ def _capture(name: str, expected: List[str], stdin: BinaryIO) -> Dict[str, Any]:
             )
             _, error = _finish(child, json.dumps(job).encode())
         if child.returncode:
-            raise RuntimeError("Checkpoint capture failed: " + error.decode(errors="replace")[-1500:])
+            # What the exit status means is the host's to decide; it is only carried out of the instance here.
+            _file(name, ".out").unlink(missing_ok=True)
+            return {"failed": {"code": child.returncode, "error": error.decode(errors="replace")[-1500:]}}
         return _output(name)
     except BaseException:
         _file(name, ".out").unlink(missing_ok=True)
