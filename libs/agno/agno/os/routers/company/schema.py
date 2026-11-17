@@ -278,6 +278,17 @@ class WikiPageResponse(BaseModel):
     user_id: Optional[str] = None
 
 
+class CompanyFileEntryResponse(WikiPageResponse):
+    """One row of a tasks/ or notes/ listing.
+
+    A listing of everything holds files only. A listing of one folder also holds the folders directly
+    inside it: a folder's size is the total of the files under it, its time is the latest of theirs,
+    and it has no version.
+    """
+
+    type: Literal["file", "folder"] = "file"
+
+
 class WikiReadResponse(BaseModel):
     content: str
     metadata: WikiPageResponse
