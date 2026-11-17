@@ -50,6 +50,8 @@ class SlackContext:
     unfurl_media: bool = True
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
+    authorize_senders: bool = False
+    apps: Optional[Dict[str, str]] = None
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -94,6 +96,8 @@ def build_context(
     unfurl_media: bool = True,
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
+    authorize_senders: bool = False,
+    apps: Optional[Dict[str, str]] = None,
 ) -> SlackContext:
     """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
 
@@ -135,6 +139,8 @@ def build_context(
         unfurl_media=unfurl_media,
         approvers=approvers,
         users=users,
+        authorize_senders=authorize_senders,
+        apps=apps,
     )
 
 
@@ -234,10 +240,14 @@ async def event_context_from_run(
     """An event context for a stored run with no parked one, e.g. after a restart.
 
     The owner is the Slack id written on the card, else the Slack user mapped to the run's user,
-    else the Slack user whose email is the run's user.
+    else the Slack user whose email is the run's user. The workspace is the one the run's message
+    arrived in, else team_id.
     """
     session_id = getattr(run_output, "session_id", None) or ""
     user_id = getattr(run_output, "user_id", None) or ""
+    # An org-installed app's button click names no workspace; the run's metadata holds the one its message came from
+    run_team_id = (getattr(run_output, "metadata", None) or {}).get("slack_team_id")
+    team_id = run_team_id if isinstance(run_team_id, str) and run_team_id else team_id
     # "{entity_id}:{channel}:{thread_ts}", or the legacy "{entity_id}:{thread_ts}"
     prefix = f"{ctx.entity_id}:"
     session_channel, _, thread_ts = session_id.removeprefix(prefix).rpartition(":")

@@ -355,6 +355,7 @@ class TestRunKwargs:
         assert kwargs["run_id"] == event_context.run_id
         assert kwargs["metadata"]["action_token"] == "tok-1"
         assert kwargs["metadata"]["slack_message_ts"] == event_context.message_ts
+        assert kwargs["metadata"]["slack_team_id"] == event_context.team_id
         assert kwargs["session_id"] == event_context.session_id
 
     @pytest.mark.asyncio

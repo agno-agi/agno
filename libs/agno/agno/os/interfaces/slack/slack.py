@@ -65,6 +65,8 @@ class Slack(BaseInterface):
         unfurl_media: bool = True,
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
+        authorize_senders: bool = False,
+        apps: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the Slack interface.
@@ -86,13 +88,15 @@ class Slack(BaseInterface):
             ssl: SSL context for Slack API calls and file downloads
             buffer_size: Characters buffered before a streamed update is flushed
             max_file_size: Largest attached file downloaded, in bytes
-            resolve_user_identity: Use the sender's Slack email as the run's user_id
+            resolve_user_identity: Use the Slack email as user_id; a directory-checked sender runs as its directory user
             respond_to_other_apps: Answer messages posted by other bots
             markdown: Format replies as Slack mrkdwn
             unfurl_links: Let Slack expand link previews in replies
             unfurl_media: Let Slack expand media previews in replies
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused, and runs use the principal's access
+            authorize_senders: Under authorization, check each sender as Super Agent does; unlinked senders are refused
+            apps: Slack app ID (A..., or webhook bot ID) to AgentOS principal; unmapped apps are skipped
         """
         self.agent = agent
         self.team = team
@@ -117,6 +121,8 @@ class Slack(BaseInterface):
         self.unfurl_media = unfurl_media
         self.approvers = approvers
         self.users = users
+        self.authorize_senders = authorize_senders
+        self.apps = apps
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -155,6 +161,8 @@ class Slack(BaseInterface):
             unfurl_media=self.unfurl_media,
             approvers=self.approvers,
             users=self.users,
+            authorize_senders=self.authorize_senders,
+            apps=self.apps,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

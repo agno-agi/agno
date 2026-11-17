@@ -40,6 +40,7 @@ class FakeSlack:
         self.root: Dict[str, Any] = {"user": root_user, "ts": THREAD}
         self.thread: List[Dict[str, Any]] = list(replies or [])
         self.emails: Dict[str, str] = {}
+        self.teams: Dict[str, str] = {}
         self.chat_postMessage = AsyncMock(side_effect=self._post)
         self.conversations_replies = AsyncMock(side_effect=self._replies)
         self.users_info = AsyncMock(side_effect=self._users_info)
@@ -61,7 +62,7 @@ class FakeSlack:
         }
 
     async def _users_info(self, user: str) -> Dict[str, Any]:
-        return {"user": {"profile": {"email": self.emails.get(user)}}}
+        return {"user": {"team_id": self.teams.get(user), "profile": {"email": self.emails.get(user)}}}
 
     def posted(self) -> List[Dict[str, Any]]:
         return [call.kwargs for call in self.chat_postMessage.await_args_list]
@@ -129,6 +130,7 @@ def _save_turn(
     session_id: str = SESSION_ID,
     session_owner: Optional[str] = None,
     message_ts: Optional[str] = THREAD,
+    team_id: Optional[str] = None,
 ) -> None:
     """The Super Agent turn as its session stores it: the run that started the Task from a Slack message."""
     run = TeamRunOutput(
@@ -137,7 +139,7 @@ def _save_turn(
         team_id=ENTITY_ID,
         user_id=user_id,
         status=RunStatus.completed,
-        metadata={"slack_message_ts": message_ts} if message_ts else None,
+        metadata={"slack_message_ts": message_ts, "slack_team_id": team_id} if message_ts else None,
     )
     owner = session_owner or user_id
     db.upsert_session(TeamSession(session_id=session_id, team_id=ENTITY_ID, user_id=owner, session_data={}))
@@ -157,13 +159,14 @@ def company(tmp_path):
     db.close()
 
 
-def _company_os(db: SqliteDb, authorization: Any = None) -> AgentOS:
+def _company_os(db: SqliteDb, authorization: Any = None, user_directory: Optional[bool] = None) -> AgentOS:
     agent_os = AgentOS(
         id="slack-company",
         db=db,
         registry=Registry(agents=[Agent(id="writer", db=db)]),
         company=CompanyConfig(),
         authorization=authorization,
+        user_directory=user_directory,
         telemetry=False,
     )
     agent_os._company_app = agent_os.get_app()
@@ -176,12 +179,14 @@ def _delivery(
     slack: FakeSlack,
     users: Optional[Dict[str, str]] = None,
     resolve_user_identity: bool = False,
+    apps: Optional[Dict[str, str]] = None,
 ):
     ctx = SimpleNamespace(
         company=CompanyBridge(agent_os),
         entity=Team(id=ENTITY_ID, members=[], db=db),
         entity_id=ENTITY_ID,
         users=users,
+        apps=apps,
         resolve_user_identity=resolve_user_identity,
         web=lambda: slack,
         lookup_cache=LookupCache(),
@@ -456,17 +461,26 @@ async def test_multi_page_sweep_doubles_each_read_from_the_top(company, monkeypa
 # ---------------------------------------------------------------------------
 # Participants: the run's user wrote the Slack message that started the run, in that thread
 # ---------------------------------------------------------------------------
-def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, session_owner: Optional[str] = None):
+def _authorized_company(
+    tmp_path,
+    run_user: str,
+    message_ts: str = THREAD,
+    session_owner: Optional[str] = None,
+    user_directory: Optional[bool] = None,
+    team_id: Optional[str] = None,
+):
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
     auth.define_role("asker", ["teams:run", "tasks:read"])
     auth.define_role("runner", ["teams:run"])
     auth.assign("alice", "asker").assign("bob", "asker").assign("carol", "runner")
+    # Directory ids are emails: a Slack sender is the directory user whose id is their Slack email
+    auth.assign("alice@example.com", "asker").assign("bob@example.com", "asker").assign("carol@example.com", "runner")
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
-    agent_os = _company_os(db, authorization=auth)
+    agent_os = _company_os(db, authorization=auth, user_directory=user_directory)
     _finish_attempt(db, task, "run-1", run_user)
-    _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner)
+    _save_turn(db, "run-1", run_user, message_ts=message_ts, session_owner=session_owner, team_id=team_id)
     return db, agent_os
 
 
@@ -495,6 +509,52 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
     db, agent_os = _authorized_company(tmp_path, run_user, message_ts, session_owner="alice")
     slack = FakeSlack(root_user=root_user, replies=[{"user": "U_BOB", "ts": BOB_REPLY}])
     await _delivery(agent_os, db, slack, users=USERS).sweep()
+    assert bool(slack.posted()) is posted
+
+
+@pytest.mark.parametrize(
+    "run_user, root_user, posted",
+    [
+        ("alice@example.com", "U_ALICE", True),
+        # Alice's message, Bob's run
+        ("bob@example.com", "U_ALICE", False),
+        # Carol wrote the message but can no longer read Tasks
+        ("carol@example.com", "U_CAROL", False),
+    ],
+    ids=["message-author", "other-users-message", "access-revoked"],
+)
+@pytest.mark.asyncio
+async def test_directory_identity_posts_only_message_authors_task(tmp_path, run_user, root_user, posted):
+    db, agent_os = _authorized_company(tmp_path, run_user, user_directory=True, team_id="T_HOME")
+    for principal in ("alice@example.com", "bob@example.com", "carol@example.com"):
+        agent_os.user_directory.upsert(principal)
+    slack = FakeSlack(root_user=root_user)
+    slack.emails.update({"U_ALICE": "alice@example.com", "U_CAROL": "carol@example.com"})
+    slack.teams.update({"U_ALICE": "T_HOME", "U_CAROL": "T_HOME"})
+    await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
+    assert bool(slack.posted()) is posted
+
+
+@pytest.mark.parametrize(
+    "workspace, posted",
+    [
+        ("T_HOME", True),
+        # A Slack Connect message names the sender's own org; the workspace it arrived in is another
+        ("T_OTHER", False),
+        # A run that recorded no workspace cannot be checked
+        (None, False),
+    ],
+    ids=["home-workspace", "other-workspace", "no-workspace"],
+)
+@pytest.mark.asyncio
+async def test_directory_identity_checks_message_workspace(tmp_path, workspace, posted):
+    db, agent_os = _authorized_company(tmp_path, "alice@example.com", user_directory=True, team_id=workspace)
+    agent_os.user_directory.upsert("alice@example.com")
+    slack = FakeSlack(root_user="U_ALICE")
+    slack.root["team"] = "T_HOME"
+    slack.emails["U_ALICE"] = "alice@example.com"
+    slack.teams["U_ALICE"] = "T_HOME"
+    await _delivery(agent_os, db, slack, resolve_user_identity=True).sweep()
     assert bool(slack.posted()) is posted
 
 
@@ -560,6 +620,32 @@ async def test_failed_identity_lookup_is_retried(tmp_path, monkeypatch, run_user
     assert slack.posted() == [] and (task["id"], 1) in delivery._retry
     await delivery.sweep()
     assert len(slack.posted()) == 1 and delivery._retry == {}
+
+
+@pytest.mark.parametrize(
+    "apps, posted",
+    [
+        ({"A_APP": "alice"}, 1),
+        # users= is for people, so the app it names gets no result
+        ({"A_OTHER": "bob"}, 0),
+    ],
+    ids=["apps", "only-in-users"],
+)
+@pytest.mark.asyncio
+async def test_app_message_author_is_resolved_from_apps_after_a_failed_lookup(tmp_path, monkeypatch, apps, posted):
+    monkeypatch.setattr(company_module, "_RETRY_MIN", 0.0)
+    db, agent_os = _authorized_company(tmp_path, "alice")
+    # Another app's bot user wrote the message, and users= names it too
+    slack = FakeSlack(root_user="U_APP")
+    slack.root["bot_id"] = "B_APP"
+    slack.root["app_id"] = "A_APP"
+    slack.users_info = AsyncMock(side_effect=[slack_error("ratelimited"), {"user": {"id": "U_APP", "is_bot": True}}])
+    delivery = _delivery(agent_os, db, slack, users={**USERS, "U_APP": "alice"}, apps=apps)
+
+    await delivery.sweep()
+    assert slack.posted() == [] and len(delivery._retry) == 1
+    await delivery.sweep()
+    assert len(slack.posted()) == posted and delivery._retry == {}
 
 
 @pytest.mark.asyncio

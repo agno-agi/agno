@@ -200,7 +200,9 @@ feedback form. The click was not part of the live session.
 **Status:** PASS
 
 **Description:** A message from the mapped operator; the same message from an
-unmapped Slack user.
+unmapped Slack user. Messages from another app's bot user and an incoming
+webhook, each mapped in `apps=` and not, and from a person posting through a
+user token whose app ID is in `apps=`.
 
 **Result:**
 - The mapped user's message ran as the principal and paused on the approval
@@ -211,6 +213,18 @@ unmapped Slack user.
   "Not run: Permission required: ..." and nothing ran, while a mapped user with
   the role ran.
 - The approver click was not part of the live session.
+- An app's bot user posts under a different `bot_id` from the one on its
+  profile, and each of its posts names the app's `app_id`; mapped in `apps=`
+  by that app ID, it ran as its principal.
+- An incoming webhook's post carries `subtype: bot_message`, no `user`, a
+  `bot_id` and no `app_id`; mapped in `apps=` by its bot ID, it ran as its
+  principal.
+- An app that `apps=` doesn't map got no reply and no notice.
+- A post through a user token carries the app's `app_id` and was checked as
+  the person who posted it.
+- A mapped app or webhook whose principal is refused got no reply and no
+  notice.
+- `users.info` reports Slackbot (`USLACKBOT`) as no bot user with no email.
 
 ---
 

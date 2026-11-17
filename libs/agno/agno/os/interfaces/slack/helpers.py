@@ -111,6 +111,8 @@ def build_run_metadata(
         metadata["action_token"] = ctx["action_token"]
     if ctx.get("message_ts"):
         metadata["slack_message_ts"] = ctx["message_ts"]
+    if ctx.get("team_id"):
+        metadata["slack_team_id"] = ctx["team_id"]
     return metadata or None
 
 
@@ -122,6 +124,8 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "user": event.get("user") or "",
         # Bot sender ID (B...) — present on all bot-authored messages
         "bot_id": event.get("bot_id") or "",
+        # Posting app ID (A...) — one per app, unlike its bot ids
+        "app_id": event.get("app_id") or (event.get("bot_profile") or {}).get("app_id") or "",
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
@@ -150,7 +154,10 @@ def strip_bot_mention(text: str, bot_user_id: Optional[str], bot_name: Optional[
 
 
 async def resolve_slack_user(
-    async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+    async_client: Any,
+    slack_user_id: str,
+    errors: Optional[Set[str]] = None,
+    user_infos: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Resolve a Slack user ID to (canonical_user_id, display_name).
 
@@ -161,6 +168,9 @@ async def resolve_slack_user(
         resp = await async_client.users_info(user=slack_user_id)
         user = resp.get("user", {}) if resp else {}
         profile = user.get("profile", {})
+        # The whole user object, for a caller that reads more than the identity, such as whether it is a bot
+        if user_infos is not None:
+            user_infos[slack_user_id] = user
 
         email = profile.get("email")
         resolved_id = email if email else slack_user_id
@@ -304,12 +314,17 @@ class LookupCache:
         key = f"user:{slack_user_id}"
         cached = self.get(key)
         if cached is not None:
-            return cached
-        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors)
+            return cached[0], cached[1]
+        user_infos: Dict[str, Any] = {}
+        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors, user_infos)
         # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
-        if resolved_user_id != slack_user_id or display_name:
-            self.set(key, (resolved_user_id, display_name))
+        if slack_user_id in user_infos:
+            self.set(key, (resolved_user_id, display_name, user_infos[slack_user_id]))
         return resolved_user_id, display_name
+
+    def user_info(self, slack_user_id: str) -> Optional[Dict[str, Any]]:
+        cached = self.get(f"user:{slack_user_id}")
+        return cached[2] if cached is not None else None
 
     async def bot_identity(
         self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None

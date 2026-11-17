@@ -6687,6 +6687,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return await authz_sql.alist_user_ids(self.db_engine, table, include_disabled)
 
+    async def list_authz_user_ids_matching(self, user_id: str) -> List[str]:
+        table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return await authz_sql.alist_user_ids_matching(self.db_engine, table, user_id)
+
     async def count_authz_users_by_day(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
     ) -> List[Dict[str, int]]:

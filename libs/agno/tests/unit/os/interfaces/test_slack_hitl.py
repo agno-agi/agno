@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -576,6 +577,26 @@ class TestRestoredAuthority:
         assert len(fake.calls) == 1
         assert fake.calls[0]["event_context"].authority is authority
         assert fake.calls[0]["clicker"] == OWNER
+
+    @pytest.mark.parametrize("refused", [False, True])
+    @pytest.mark.asyncio
+    async def test_directory_owner_authority_is_checked_again_on_a_decision(self, refused):
+        # Super Agent under authorization with resolve_user_identity: the run's user is the directory principal
+        entity = _make_entity(_paused_run([_make_requirement()], user_id="alice"))
+        ctx = make_ctx(agent=entity, resolve_user_identity=True)
+        # The flag AgentOS sets when it enforces authorization
+        ctx.app = SimpleNamespace(state=SimpleNamespace(authorization_enabled=True))
+        ctx.company = AsyncMock()
+        ctx.company.authorize = AsyncMock(side_effect=PermissionError("User is disabled") if refused else None)
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), client, ctx)
+
+        ctx.company.authorize.assert_awaited_once_with(ctx.app, "alice", "agent-1")
+        assert len(fake.calls) == (0 if refused else 1)
+        assert _ephemerals(client) == (["Not run: User is disabled"] if refused else [])
 
     @pytest.mark.asyncio
     async def test_refused_authority_posts_ephemeral_without_claim(self):

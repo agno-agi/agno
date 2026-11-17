@@ -1,5 +1,6 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -409,8 +410,8 @@ async def test_session_stopped_hands_the_stop_to_the_executor():
 # -- event_context_from_run --
 
 
-def _run(user_id: str, session_id: str = "agent-1:C9:3.0"):
-    return SimpleNamespace(run_id="run-1", session_id=session_id, user_id=user_id)
+def _run(user_id: str, session_id: str = "agent-1:C9:3.0", metadata: Optional[dict] = None):
+    return SimpleNamespace(run_id="run-1", session_id=session_id, user_id=user_id, metadata=metadata)
 
 
 @pytest.mark.asyncio
@@ -439,6 +440,24 @@ async def test_event_context_from_run_owner_by_email():
         make_ctx(resolve_user_identity=True), _run("test@example.com"), client=client
     )
     assert event_context.owner == "U_EMAIL"
+
+
+@pytest.mark.parametrize(
+    "metadata, payload_team, workspace",
+    [
+        # An org-installed app's button click names no workspace
+        ({"slack_team_id": "T_RUN"}, None, "T_RUN"),
+        ({"slack_team_id": "T_RUN"}, "T_CLICK", "T_RUN"),
+        # A run saved before its workspace was recorded
+        (None, "T_CLICK", "T_CLICK"),
+        ({}, None, None),
+    ],
+    ids=["no-payload-workspace", "run-workspace-first", "payload-workspace", "no-workspace"],
+)
+@pytest.mark.asyncio
+async def test_event_context_from_run_workspace_is_the_runs(metadata, payload_team, workspace):
+    event_context = await event_context_from_run(make_ctx(), _run("U123", metadata=metadata), team_id=payload_team)
+    assert event_context.team_id == workspace
 
 
 @pytest.mark.asyncio
