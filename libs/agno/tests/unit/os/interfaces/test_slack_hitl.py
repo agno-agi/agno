@@ -631,6 +631,45 @@ class TestRestoredAuthority:
         assert _ephemerals(client) == ["Not run: User is disabled"]
 
 
+class TestRestoredAuthorityWithoutUsers:
+    @pytest.mark.asyncio
+    async def test_click_after_registry_clear_restores_no_roles_authority(self):
+        entity = _make_entity(_paused_run([_make_requirement()]))
+        ctx = make_ctx(agent=entity)
+        authority = object()
+        no_roles = Mock(return_value=authority)
+        fake = FakeContinue()
+
+        with (
+            patch.object(hitl, "continue_run", new=fake),
+            patch.object(security, "no_roles_authorization", new=no_roles),
+        ):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
+
+        no_roles.assert_called_once_with(ctx.app, OWNER)
+        assert len(fake.calls) == 1
+        assert fake.calls[0]["event_context"].authority is authority
+
+    @pytest.mark.asyncio
+    async def test_click_after_registry_clear_restores_default_role_authority(self):
+        entity = _make_entity(_paused_run([_make_requirement()]))
+        ctx = make_ctx(agent=entity, default_role="slack-bot")
+        authority = object()
+        authorize = AsyncMock(return_value=authority)
+        fake = FakeContinue()
+
+        with (
+            patch.object(hitl, "continue_run", new=fake),
+            patch.object(security, "resolve_principal_authorization", new=authorize),
+        ):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
+
+        authorize.assert_awaited_once_with(ctx.app, "slack-bot", "agents", "agent-1")
+        assert fake.calls[0]["event_context"].authority is authority
+        # The run stays the Slack user's own
+        assert fake.calls[0]["event_context"].user_id == OWNER
+
+
 class TestRowActions:
     @pytest.mark.asyncio
     async def test_row_reject_shows_reason_and_submit(self):

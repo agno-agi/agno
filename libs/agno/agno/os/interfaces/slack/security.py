@@ -42,11 +42,22 @@ async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext",
     return False
 
 
-async def resolve_principal_authorization(app: Any, principal_id: str, resource: str, resource_id: str) -> Any:
-    """A mapped Slack user's authority, None with authorization off. Raises PermissionError if disabled or denied."""
-    from agno.os.auth import _authorization_enforced, resolve_authorization_provider
+def principal_authorization(app: Any, principal_id: str) -> Any:
+    """An authority that checks principal_id's roles."""
+    from agno.os.auth import resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
     from agno.run.authorization import RunAuthorization
+
+    return RunAuthorization(
+        resolve_authorization_provider(app),
+        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}),
+        enforce_tools=False,
+    )
+
+
+async def resolve_principal_authorization(app: Any, principal_id: str, resource: str, resource_id: str) -> Any:
+    """A mapped Slack user's authority, None with authorization off. Raises PermissionError if disabled or denied."""
+    from agno.os.auth import _authorization_enforced
 
     state = getattr(app, "state", None)
     user_store = getattr(state, "user_store", None)
@@ -67,13 +78,32 @@ async def resolve_principal_authorization(app: Any, principal_id: str, resource:
     if not _authorization_enforced(app):
         return None
     # Roles are resolved fresh on every check, so a revoked grant applies to the next message
-    authority = RunAuthorization(
-        resolve_authorization_provider(app),
-        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}),
-        enforce_tools=False,
-    )
+    authority = principal_authorization(app, principal_id)
     await authority.arequire(resource, "run", resource_id)
     return authority
+
+
+def no_roles_authorization(app: Any, owner: str) -> Any:
+    """An authority with no roles for a Slack user not in users=, None with authorization off."""
+    from agno.os.auth import _authorization_enforced
+
+    if not _authorization_enforced(app):
+        return None
+    return principal_authorization(app, f"slack:{owner}")
+
+
+async def authorize_unmapped(
+    ctx: "SlackContext",
+    event_context: "EventContext",
+    client: Any,
+    user: str,
+    thread_ts: Optional[str] = None,
+) -> bool:
+    """Set the authority of a run whose owner is not in users=: the default role's, else one with no roles."""
+    if ctx.default_role is not None:
+        return await authorize_run(ctx, event_context, ctx.default_role, client, user, thread_ts)
+    event_context.authority = no_roles_authorization(ctx.app, event_context.owner)
+    return True
 
 
 async def authorize_run(
