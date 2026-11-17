@@ -1,3 +1,4 @@
+import base64
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
@@ -13,14 +14,29 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
+_GPT_IMAGE_OPTIONS = {
+    "sizes": ["auto", "1024x1024", "1536x1024", "1024x1536"],
+    "qualities": ["auto", "low", "medium", "high"],
+}
+# Sizes and qualities each image model accepts.
+MODEL_OPTIONS: Dict[str, Dict[str, List[str]]] = {
+    "gpt-image-2": _GPT_IMAGE_OPTIONS,
+    "gpt-image-1": _GPT_IMAGE_OPTIONS,
+    "gpt-image-1-mini": _GPT_IMAGE_OPTIONS,
+    "dall-e-3": {"sizes": ["1024x1024", "1792x1024", "1024x1792"], "qualities": ["auto", "standard", "hd"]},
+    "dall-e-2": {"sizes": ["256x256", "512x512", "1024x1024"], "qualities": ["auto", "standard"]},
+}
+
 
 class DalleTools(Toolkit):
     def __init__(
         self,
-        model: str = "dall-e-3",
+        model: str = "gpt-image-2",
         n: int = 1,
-        size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
-        quality: Literal["standard", "hd"] = "standard",
+        size: Optional[
+            Literal["auto", "1024x1024", "1536x1024", "1024x1536", "256x256", "512x512", "1792x1024", "1024x1792"]
+        ] = "1024x1024",
+        quality: Literal["auto", "low", "medium", "high", "standard", "hd"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
@@ -35,14 +51,13 @@ class DalleTools(Toolkit):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
 
         # Validations
-        if model not in ["dall-e-3", "dall-e-2"]:
-            raise ValueError("Invalid model. Please choose from 'dall-e-3' or 'dall-e-2'.")
-        if size not in ["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]:
-            raise ValueError(
-                "Invalid size. Please choose from '256x256', '512x512', '1024x1024', '1792x1024', '1024x1792'."
-            )
-        if quality not in ["standard", "hd"]:
-            raise ValueError("Invalid quality. Please choose from 'standard' or 'hd'.")
+        if model not in MODEL_OPTIONS:
+            raise ValueError(f"Invalid model. Please choose from {', '.join(MODEL_OPTIONS)}.")
+        options = MODEL_OPTIONS[model]
+        if size not in options["sizes"]:
+            raise ValueError(f"Invalid size for {model}. Please choose from {', '.join(options['sizes'])}.")
+        if quality not in options["qualities"]:
+            raise ValueError(f"Invalid quality for {model}. Please choose from {', '.join(options['qualities'])}.")
         if not isinstance(n, int) or n <= 0:
             raise ValueError("Invalid number of images. Please provide a positive integer.")
         if model == "dall-e-3" and n > 1:
@@ -104,6 +119,17 @@ class DalleTools(Toolkit):
                         )
                         generated_images.append(image)
                         response_str += f"Image has been generated at the URL {img.url}\n"
+                    elif img.b64_json:
+                        # GPT Image models return base64 data only, never a URL.
+                        image = Image(
+                            id=str(uuid4()),
+                            content=base64.b64decode(img.b64_json),
+                            mime_type=f"image/{getattr(response, 'output_format', None) or 'png'}",
+                            original_prompt=prompt,
+                            revised_prompt=img.revised_prompt,
+                        )
+                        generated_images.append(image)
+                        response_str += "Image has been generated\n"
 
             return ToolResult(
                 content=response_str or "No images were generated",
