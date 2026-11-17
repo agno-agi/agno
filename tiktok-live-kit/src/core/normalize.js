@@ -1,7 +1,7 @@
 import { cleanName, cleanChat } from './profanity.js';
 
-// Đưa dữ liệu thô của mọi nguồn (tiktok-live-connector, TikFinity, giả lập) về MỘT dạng sự kiện chung.
-// Tên trường đổi giữa các bản thư viện và giữa các nguồn, nên đọc phòng thủ.
+// Tüm kaynaklardan gelen ham veriyi (tiktok-live-connector, TikFinity, demo) TEK ortak olay biçimine çevirir.
+// Alan adları kütüphane sürümleri ve kaynaklar arasında değiştiği için savunmacı okunur.
 
 const KIND_ALIASES = {
   member: 'member', join: 'member', viewerjoin: 'member',
@@ -32,7 +32,7 @@ export function normUser(data = {}) {
   const u = data.user || data.userData || data.author || data;
   const uniqueId = text(u.uniqueId, u.unique_id, u.displayId, u.username, data.uniqueId);
   const id = text(u.userId, u.user_id, u.id, data.userId, uniqueId, u.nickname) || 'an-danh';
-  // Ưu tiên ảnh JPEG/PNG: một số trình duyệt nhúng (OBS cũ) không giải mã được WebP của TikTok
+  // JPEG/PNG tercih edilir: bazı gömülü tarayıcılar (eski OBS) TikTok'un WebP görsellerini çözemez
   const pics = [
     u.profilePictureUrl, u.profilePictureUrls, u.profilePicture?.urls, u.profilePicture?.urlList,
     u.avatarThumb?.urlList, u.avatarThumb?.mUrls, u.avatarMedium?.urlList, u.avatarMedium?.mUrls,
@@ -58,13 +58,13 @@ function normGift(data) {
     unitCoins: Math.max(0, Number(d.diamondCount ?? d.diamond_count ?? ext.diamond_count ?? data.diamondCount) || 0) || 1,
     streakable: type === 1,
     repeatCount,
-    // nguồn không báo repeatEnd thì coi như quà đã chốt
+    // kaynak repeatEnd bildirmezse hediye tamamlanmış sayılır
     repeatEnd: data.repeatEnd === undefined ? true : Boolean(data.repeatEnd),
     groupId: text(data.groupId, data.group_id),
   };
 }
 
-/** Một sự kiện thô → sự kiện chung, hoặc null nếu không dùng tới. */
+/** Ham olay → ortak olay; kullanılmayacaksa null. */
 export function normalize(kindName, data = {}) {
   let kind = kindOf(kindName);
   if (!kind) return null;
@@ -86,7 +86,7 @@ export function normalize(kindName, data = {}) {
   return ev;
 }
 
-/** Tin nhắn TikFinity: {event, data} hoặc mảng các tin đó. */
+/** TikFinity mesajı: {event, data} veya bunların dizisi. */
 export function normalizeTikFinity(raw) {
   let msg = raw;
   if (Buffer.isBuffer(msg)) msg = msg.toString('utf8');
@@ -96,5 +96,5 @@ export function normalizeTikFinity(raw) {
     .filter(Boolean);
 }
 
-/** Aksan/diyakritik at, ı→i, đ→d, küçük harf: hediye adı ve sohbet komutu eşleştirme (Türkçe + Vietnamca). */
+/** Aksan/diyakritik at, ı→i, đ→d, küçük harf: hediye adı ve sohbet komutu eşleştirme (Türkçe + Vietnamca adlar). */
 export const plain = (s) => String(s || '').replace(/[ıİ]/g, 'i').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();

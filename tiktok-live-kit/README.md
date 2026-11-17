@@ -1,39 +1,38 @@
 # TikTok Live Kit
 
-**English** | [Tiếng Việt](README.vi.md)
+**Türkçe** · Kaynak: [duycuf/tiktok-live-kit](https://github.com/duycuf/tiktok-live-kit) (MIT) · Bu kopyada Türkçeleştirme, `themes/cenaze` anma teması ve küfür filtresi eklenmiştir.
 
-A shared framework for building **interactive games / overlays for TikTok LIVE**. When viewers join, comment, tap likes or send gifts, characters and effects on screen react.
+**TikTok CANLI için etkileşimli oyun / overlay** hazırlamaya yarayan ortak bir çatıdır. İzleyiciler katıldığında, yorum yazdığında, kalp bıraktığında veya hediye gönderdiğinde ekrandaki karakterler ve efektler tepki verir.
 
-The core is written once. Each topic (café, dance floor, fishing pond…) is a **theme** dropped into `themes/` and switched live from the control panel.
+Çekirdek bir kez yazılmıştır. Her konu (kafe, dans pisti, anma…) `themes/` içine bırakılan bir **temadır** ve kontrol panelinden canlı olarak değiştirilir.
 
-The kit ships no ready-made themes, only the blank `themes/template` (2D) and `themes/template-3d` (3D, Three.js) to copy for your own topic. A theme's look comes from the assets you prepare (background, characters, GIFs, video, music).
+Bu kopyada hazır tema olarak `themes/cenaze` (anma yayını) ve kendi temanız için kopyalanacak boş `themes/template` (2D) vardır. Temanın görünüşü, hazırladığınız dosyalardan (arka plan, karakterler, GIF, video, müzik) gelir.
 
-| Doc | Contents |
+| Belge | İçerik |
 |---|---|
-| [docs/IDEA.md](docs/IDEA.md) | Your theme idea: the questions to answer before building (space, viewers, gifts, chat, voice, assets) |
-| [docs/THEME.md](docs/THEME.md) | Building a theme: structure, `scene.json`, `theme.json`, actions, voice, `theme.js` |
-| [docs/ASSETS-GUIDE.md](docs/ASSETS-GUIDE.md) | Where the beauty comes from: background, character sheet, effects, sound with AI image tools, processing tools |
-| [docs/GO-LIVE.md](docs/GO-LIVE.md) | Going live: LIVE Studio / OBS, TikFinity, pre-stream checks, common problems |
-| [AGENTS.md](AGENTS.md) | For AI coding agents (Claude Code, Codex, Gemini…): repo map, commands, rules |
-| [CHANGELOG.md](CHANGELOG.md) | Changes |
+| [docs/IDEA.md](docs/IDEA.md) | Tema fikriniz: yapmadan önce yanıtlanacak sorular (mekân, izleyiciler, hediyeler, sohbet, ses, görseller) |
+| [docs/THEME.md](docs/THEME.md) | Tema yapımı: yapı, `scene.json`, `theme.json`, eylemler, ses, `theme.js` |
+| [docs/ASSETS-GUIDE.md](docs/ASSETS-GUIDE.md) | Güzellik nereden gelir: arka plan, karakter sayfası, efektler, yapay zekâ görsel araçlarıyla ses/görsel, işleme araçları |
+| [docs/GO-LIVE.md](docs/GO-LIVE.md) | Canlıya çıkış: LIVE Studio / OBS, TikFinity, yayın öncesi kontroller, sık sorunlar |
+| [themes/cenaze/README.md](themes/cenaze/README.md) | Anma teması: hediye eşleme, ön saf, küfür filtresi |
+| [AGENTS.md](AGENTS.md) | Yapay zekâ kodlama ajanları için: depo haritası, komutlar, kurallar |
+| [CHANGELOG.md](CHANGELOG.md) | Değişiklikler |
 
-## Make your theme
+## Temanızı yapın
 
-1. **Idea first.** Read [docs/IDEA.md](docs/IDEA.md): what the space is, who viewers become, what each gift does, chat commands, voice lines, which assets you have. You can leave it blank and let the AI ask.
-2. **Build it with AI.** Open the kit folder in Claude Code / Codex / Cursor and say: *"Read AGENTS.md and interview me with docs/IDEA.md to make a new theme."* The agent asks a few questions at a time, sums your answers up as a one-page plan, and only starts once you agree.
-3. **Try it.** Pick the new theme in the control panel, use the **Test** tab (*Thử nghiệm*), then go live ([docs/GO-LIVE.md](docs/GO-LIVE.md)).
+1. **Önce fikir.** [docs/IDEA.md](docs/IDEA.md) dosyasını okuyun: mekân ne, izleyiciler kim olur, her hediye ne yapar, sohbet komutları, ses cümleleri, hangi görselleriniz var. Boş bırakıp yapay zekânın sormasına da izin verebilirsiniz.
+2. **Yapay zekâyla yapın.** Kit klasörünü Claude Code / Codex / Cursor ile açıp şunu söyleyin: *"AGENTS.md dosyasını oku ve yeni tema için docs/IDEA.md ile benimle röportaj yap."* Ajan bir seferde birkaç soru sorar, yanıtlarınızı tek sayfalık plana çevirir ve siz onaylayınca başlar.
+3. **Deneyin.** Kontrol panelinde yeni temayı seçin, **Deneme** sekmesini kullanın, sonra canlıya çıkın ([docs/GO-LIVE.md](docs/GO-LIVE.md)).
 
-While the kit runs the blank template, the control panel shows these steps with the prompt ready to copy.
+### Temayı kendi reposunda tutmak
 
-### Keeping a theme in its own repo
+Her canlı kanal, yalnızca temasını ve verisini tutan ayrı bir repo olabilir; kitin sunucusu üç ortam değişkeniyle çalıştırılır:
 
-Each live channel can be a separate repo holding only its theme and data, running the kit's server with three environment variables:
-
-| Variable | Meaning |
+| Değişken | Anlamı |
 |---|---|
-| `KIT_THEMES_DIR` | Folder with your themes (takes precedence over the kit's `themes/`) |
-| `KIT_DATA_DIR` | Where edited rules, live sessions and voice files are stored (default: the kit's `data/`) |
-| `KIT_CONFIG` | Config file overriding the kit's `config.json` (e.g. `{"theme": "my-theme"}`) |
+| `KIT_THEMES_DIR` | Temalarınızın klasörü (kitin `themes/` klasöründen önceliklidir) |
+| `KIT_DATA_DIR` | Düzenlenmiş kuralların, canlı oturumların, ses dosyalarının tutulduğu yer (varsayılan: kitin `data/` klasörü) |
+| `KIT_CONFIG` | Kitin `config.json` dosyasını ezen yapılandırma (ör. `{"theme": "my-theme"}`) |
 
 ```bat
 set KIT_THEMES_DIR=%~dp0themes
@@ -42,111 +41,113 @@ set KIT_CONFIG=%~dp0config.json
 node ..\tiktok-live-kit\src\server.js
 ```
 
-## Live setup
+## Canlı yayın düzeni
 
 ```
-TikTok LIVE ──> TikFinity Desktop ──ws://127.0.0.1:21213──┐
-          └──> (fallback) direct connection ───────────────┤
+TikTok CANLI ──> TikFinity Desktop ──ws://127.0.0.1:21213──┐
+          └──> (yedek) doğrudan bağlantı ──────────────────┤
                                                            ▼
-                                    Core (Node, port 3939)
-                                    dedupe · combos · gift rules · leaderboard · titles · goals
+                                    Çekirdek (Node, port 3939)
+                                    tekrar filtresi · kombo · hediye kuralları · sıralama · unvanlar · hedefler
                                                            │ WebSocket
                          ┌─────────────────────────────────┴───────────────┐
-                Control panel (/)                                  Theme overlay (/overlay)
+                Kontrol paneli (/)                                 Tema overlay'i (/overlay)
                                                                           │
-                              LIVE Studio (window capture of overlay.bat) or OBS (Browser source)
+                       LIVE Studio (overlay.bat penceresinin yakalanması) veya OBS (Tarayıcı kaynağı)
 ```
 
-## Run
+## Çalıştırma
 
-Requires Node.js 20 or newer.
+Node.js 20 veya üstü gerekir.
 
-- Windows: double-click **`run.bat`** (installs dependencies, starts the server and opens the control panel).
-- Or:
+- Windows: **`run.bat`** dosyasına çift tıklayın (bağımlılıkları kurar, sunucuyu başlatır, kontrol panelini açar).
+- Ya da:
   ```bash
   pnpm install
   pnpm start
   ```
 
-Open http://localhost:3939/ for the control panel (its UI is in Vietnamese).
+Kontrol paneli için http://localhost:3939/ adresini açın.
 
-## Going live
+## Canlıya çıkış
 
-In short: run `run.bat` → open TikFinity Desktop and connect your channel → click **Connect** in the control panel (source **Auto**) → run `overlay.bat` and add a **Window capture** source in LIVE Studio (or OBS: Browser source `http://localhost:3939/overlay`, 1080 × 1920). Step by step and common problems: [docs/GO-LIVE.md](docs/GO-LIVE.md).
+Kısaca: `run.bat` çalıştırın → TikFinity Desktop'ı açıp kanalınıza bağlayın → kontrol panelinde **Bağlan**'a tıklayın (kaynak **Otomatik**) → `overlay.bat` çalıştırıp LIVE Studio'da **Pencere yakalama** kaynağı ekleyin (veya OBS'de Tarayıcı kaynağı `http://localhost:3939/overlay`, 1080 × 1920). Adım adım anlatım ve sık sorunlar: [docs/GO-LIVE.md](docs/GO-LIVE.md).
 
-Network drops, TikFinity restarts or the streaming app reloading the page need no action:
-- The core reconnects, backing off from 2 to 30 seconds.
-- The overlay reconnects and rebuilds the current crowd.
-- The leaderboard is saved to disk, so restarting the server keeps it.
+Ağ kopması, TikFinity'nin yeniden başlaması veya yayın uygulamasının sayfayı yenilemesi için bir şey yapmanız gerekmez:
+- Çekirdek 2'den 30 saniyeye açılan aralıklarla yeniden bağlanır.
+- Overlay yeniden bağlanır ve mevcut kalabalığı yeniden kurar.
+- Sıralama diske kaydedilir; sunucu yeniden başlasa da korunur.
 
-## Control panel
+## Kontrol paneli
 
-Five tabs, with the overlay preview and the top 3 gifters always on the right:
+Beş sekme; overlay önizlemesi ve ilk 3 gönderen her zaman sağdadır:
 
-- **Live**: pick a source, connect, see status and "last event N seconds ago" to know data is flowing; theme settings; event log.
-- **Rules** (*Luật*), edited on the web, no code:
-  - Who enters the scene: everyone, or only people who chat a keyword / send a gift.
-  - Gift tiers by single-gift price.
-  - Per-gift overrides by ID or name, with a **gift library** (image, name, price) that learns gifts seen on live: click one to add a rule.
-  - Chat commands with cooldowns.
-  - A ▶ button on every row previews that row's effect before saving.
-- **Test** (*Thử nghiệm*): fake viewers, crowd bursts (10 / 30 / 60 / 400 people, to check the machine copes), auto mode (normal / busy / packed), gift buttons grouped by price (small / medium / large), a button per theme effect, voice test. Fake events go through the same pipeline as a real live.
-- **Stats** (*Thống kê*): session totals, leaderboard with titles, **CSV** download to thank supporters, goals, **New session** button.
-- **Guide** (*Hướng dẫn*): going live in 4 steps, the three streaming setups, useful overlay URLs, common problems.
+- **Canlı**: kaynak seçimi, bağlanma, durum ve "son olay N saniye önce" göstergesi (veri akıyor mu), tema ayarları, olay günlüğü.
+- **Kurallar**, web'den düzenlenir, kod gerekmez:
+  - Sahneye kimlerin gireceği: herkes, ya da yalnızca anahtar sözcük yazan / hediye gönderen.
+  - Tek hediye fiyatına göre hediye kademeleri.
+  - Kimliğe veya ada göre hediyeye özel kurallar; canlıda görülen hediyeleri (görsel, ad, fiyat) öğrenen bir **hediye kitaplığı**: birine tıklayıp kural eklenir.
+  - Bekleme süreli sohbet komutları.
+  - Her satırdaki ▶ düğmesi, kaydetmeden önce o satırın efektini önizler.
+- **Deneme**: sahte izleyiciler, kalabalık dalgaları (10 / 30 / 60 / 400 kişi; makinenin dayanıp dayanmadığını görmek için), otomatik mod (normal / yoğun / tıklım tıklım), fiyata göre gruplanmış hediye düğmeleri (küçük / orta / büyük), temanın her efekti için düğme, ses denemesi. Sahte olaylar gerçek canlıyla aynı işlem hattından geçer.
+- **İstatistik**: oturum toplamları, unvanlı sıralama, destekçilere teşekkür için **CSV** indirme, hedefler, **Yeni oturum** düğmesi.
+- **Rehber**: 4 adımda canlıya çıkış, üç yayın düzeni, faydalı overlay adresleri, sık sorunlar.
 
-The theme can be switched while running; the overlay reloads itself.
+Tema çalışırken değiştirilebilir; overlay kendini yeniler.
 
-## Making a theme
+## Tema yapımı
 
-See [docs/THEME.md](docs/THEME.md). Summary: copy `themes/template`, put assets in `assets/`, measure the scene in `scene.json`, then declare the action for each gift tier in `theme.json`. Write `theme.js` for custom effects. A theme can be 2D (background image + character sheets) or 3D (`"renderer": "3d"`: GLB models, a real camera, lights; see "3D scenes" in THEME.md), or draw with anything (DOM, Canvas). External games such as Unity can also connect to the `/ws` WebSocket with `{"type":"hello","role":"overlay"}`.
+Bkz. [docs/THEME.md](docs/THEME.md). Özet: `themes/template` klasörünü kopyalayın, görselleri `assets/` içine koyun, sahneyi `scene.json` içinde ölçün, sonra her hediye kademesinin eylemini `theme.json` içinde tanımlayın. Özel efektler için `theme.js` yazın. Tema 2D (arka plan görseli + karakter sayfaları) veya 3D (`"renderer": "3d"`: GLB modeller, gerçek kamera, ışıklar; THEME.md içindeki "3D sahneler" bölümüne bakın) olabilir ya da her şeyle (DOM, Canvas) çizim yapabilir. Unity gibi dış oyunlar da `/ws` WebSocket'ine `{"type":"hello","role":"overlay"}` ile bağlanabilir.
 
-## Structure
+## Yapı
 
 ```
 src/
-  server.js            HTTP + WebSocket, control/overlay roles, theme loading
+  server.js            HTTP + WebSocket, kontrol/overlay rolleri, tema yükleme
   core/
-    normalize.js       raw data from every source → one common event shape
-    streaks.js         gift combos (counts only the increase, no double counting)
-    rules.js           rules: gift ID → gift name → price tier; chat commands; join keywords
-    engine.js          pipeline: dedupe → combos → rules → session → broadcast
-    session.js         players, leaderboard, titles, goals, persistence, CSV export
-    gift-catalog.js    remembers gifts seen
-    voice.js, tts.js   voice line templates (comment filtering, cooldowns), Vietnamese TTS, pre-rendered fixed lines
-    draws.js           chat draws (fortune sticks, card draws...)
-  providers/           tikfinity · connector (direct) · demo · manager (reconnect, source switching, silence watch)
+    normalize.js       her kaynaktan ham veri → tek ortak olay biçimi
+    profanity.js       küfür filtresi (isimler ve sohbet)
+    streaks.js         hediye kombosu (yalnızca artan kısım sayılır, çift sayım yok)
+    rules.js           kurallar: hediye ID → hediye adı → fiyat kademesi; sohbet komutları; giriş anahtar sözcükleri
+    engine.js          işlem hattı: tekrar filtresi → kombo → kurallar → oturum → yayın
+    session.js         oyuncular, sıralama, unvanlar, hedefler, kalıcılık, CSV dışa aktarma
+    gift-catalog.js    görülen hediyeleri hatırlar
+    voice.js, tts.js   ses cümle şablonları (yorum filtresi, bekleme süreleri), Türkçe TTS, önceden okunan sabit cümleler
+    draws.js           sohbet kuraları (dilek kartı, kart çekme...)
+  providers/           tikfinity · connector (doğrudan) · demo · manager (yeniden bağlanma, kaynak değiştirme, sessizlik bekçisi)
 public/
-  control/             control panel
-  sdk/                 live-sdk (connection) · geometry · assets · fx · audio · scene (crowd, camera) · hud · kit (runs JSON actions)
+  control/             kontrol paneli
+  sdk/                 live-sdk (bağlantı) · geometry · assets · fx · audio · scene (kalabalık, kamera) · hud · kit (JSON eylemleri çalıştırır)
 themes/<id>/           theme.json + scene.json + index.html + theme.js + assets/
-data/                  (not in git) settings, edited rules, live sessions, gift list
-tools/                 asset processing: cut-sheet.py (pnpm assets:cut), black-to-alpha.py (pnpm assets:alpha)
+data/                  (git'te yok) ayarlar, düzenlenmiş kurallar, canlı oturumlar, hediye listesi
+tools/                 görsel işleme: cut-sheet.py (pnpm assets:cut), black-to-alpha.py (pnpm assets:alpha)
 test/                  pnpm test
-run.bat, overlay.bat   start the server; open the overlay as a Chrome window for LIVE Studio to capture
+run.bat, overlay.bat   sunucuyu başlatır; overlay'i LIVE Studio'nun yakalayacağı Chrome penceresi olarak açar
 ```
 
-## Configuration
+## Yapılandırma
 
-`config.json` holds the defaults. Anything changed in the control panel (channel, source, theme) is saved separately in `data/settings.json`.
+`config.json` varsayılanları tutar. Kontrol panelinde değişen her şey (kanal, kaynak, tema) ayrıca `data/settings.json` içine kaydedilir.
 
-| Key | Meaning |
+| Anahtar | Anlamı |
 |---|---|
-| `port`, `host` | Default `127.0.0.1:3939`, this machine only. `host` accepts a list (`"127.0.0.1,192.168.137.1"`) to open exactly one more address (e.g. the PC's Wi-Fi hotspot) |
-| `allowLan` | `true` lets other machines on the LAN connect (e.g. controlling from a phone) |
+| `port`, `host` | Varsayılan `127.0.0.1:3939`, yalnızca bu bilgisayar. `host` liste kabul eder (`"127.0.0.1,192.168.137.1"`), tam olarak bir adres daha açar (ör. bilgisayarın Wi-Fi erişim noktası) |
+| `allowLan` | `true` ise yerel ağdaki diğer makineler bağlanabilir (ör. telefondan kontrol) |
 | `provider` | `auto` \| `tikfinity` \| `connector` |
-| `tikfinityUrl` | Default `ws://127.0.0.1:21213/` |
-| `autoConnect` | Connect automatically when the server starts |
-| `signApiKey` | Euler Stream key if the direct source gets rate-limited |
-| `maxJoinsPerSecond` | Caps join floods on busy lives (default 15/s) |
-| `playerTtlMinutes` | How long a silent viewer stays before leaving the scene |
-| `watchdogSeconds` | Reconnect the direct source after this long without events |
+| `tikfinityUrl` | Varsayılan `ws://127.0.0.1:21213/` |
+| `autoConnect` | Sunucu başlayınca otomatik bağlanır |
+| `signApiKey` | Doğrudan kaynak hız sınırına takılırsa Euler Stream anahtarı |
+| `maxJoinsPerSecond` | Yoğun yayınlarda giriş seline üst sınır (varsayılan 15/sn) |
+| `playerTtlMinutes` | Sessiz izleyicinin sahneden çıkmadan önce ne kadar kalacağı |
+| `watchdogSeconds` | Bu süre olay gelmezse doğrudan kaynağı yeniden bağlar |
 
-## Notes
+## Notlar
 
-- The direct source (`tiktok-live-connector`) is an unofficial library. If TikTok changes its protocol, run `pnpm update tiktok-live-connector`. Prefer TikFinity as the main source.
-- On busy lives TikTok does not send every join and every like. Gifts and comments are nearly complete.
-- Voice and template text are Vietnamese: TTS uses the two `vi-VN` voices (`VOICES` in `src/core/tts.js`). Voice lines live in `theme.json`.
+- Doğrudan kaynak (`tiktok-live-connector`) resmi olmayan bir kütüphanedir. TikTok protokolü değiştirirse `pnpm update tiktok-live-connector` çalıştırın. Ana kaynak olarak TikFinity tercih edilir.
+- Yoğun yayınlarda TikTok her girişi ve her kalbi göndermez. Hediyeler ve yorumlar neredeyse eksiksizdir.
+- Ses ve şablon metinleri Türkçedir: TTS iki `tr-TR` sesini kullanır (`src/core/tts.js` içindeki `VOICES`). Ses cümleleri `theme.json` içindedir.
+- İsimler ve sohbet `src/core/profanity.js` ile süzülür; ek yasak kelimeler `theme.json` > `filter.extraWords` içine yazılır.
 
-## License
+## Lisans
 
-[MIT](LICENSE). The kit is an independent project, not affiliated with or endorsed by TikTok. Assets you put in a theme (images, music, fonts) follow their own licenses.
+[MIT](LICENSE) (özgün yazar: duycuf, dosya değiştirilmemiştir). Kit bağımsız bir projedir; TikTok ile ilişkisi yoktur, TikTok tarafından onaylanmamıştır. Temaya koyduğunuz görseller, müzikler, yazı tipleri kendi lisanslarına tabidir.

@@ -1,14 +1,14 @@
-// Kit.geometry: tính toán phối cảnh và chỗ đứng từ scene.json. Không đụng tới DOM (dùng được trong test).
+// Kit.geometry: scene.json'dan perspektif ve duruş yeri hesapları. DOM'a dokunmaz (testte kullanılabilir).
 //
-// scene.json (toạ độ theo khung 1080x1920 của ảnh nền):
-//   horizonY            đường chân trời (nơi ván sàn, thảm tụ lại)
-//   person              { refY, refHeight, exponent }  người cao refHeight px khi đứng ở y = refY;
-//                       càng gần càng to theo lũy thừa `exponent` (1 = đúng phối cảnh, nhỏ hơn = đều cỡ, chứa đông hơn)
-//   floor               { top, bottom, left, right }   vùng sàn đặt đám đông
-//   aisle               { x, half: [[y1, w1], [y2, w2]], lane }  lối đi giữa (nửa bề rộng theo độ sâu), làn đi bộ
-//   spacing             { col, row }   khoảng cách ngang / dọc tính theo chiều cao người (mặc định 0.74 / 0.36)
-//   obstacles           [{ x0, x1, y0, y1 }]  vùng không đặt người (chân cột, bàn...)
-//   seats               [[x, y], ...]  ghế danh dự theo thứ tự ưu tiên
+// scene.json (arka plan görselinin 1080x1920 çerçevesine göre koordinatlar):
+//   horizonY            ufuk çizgisi (zemin tahtalarının, halının birleştiği yer)
+//   person              { refY, refHeight, exponent }  kişi y = refY'de dururken refHeight piksel boyundadır;
+//                       yaklaştıkça `exponent` üssüne göre büyür (1 = tam perspektif, küçük = boylar eşitlenir, daha kalabalık sığar)
+//   floor               { top, bottom, left, right }   kalabalığın yerleştirileceği zemin alanı
+//   aisle               { x, half: [[y1, w1], [y2, w2]], lane }  orta koridor (derinliğe göre yarım genişlik), yürüme şeridi
+//   spacing             { col, row }   kişi boyuna göre yatay / dikey aralık (varsayılan 0.74 / 0.36)
+//   obstacles           [{ x0, x1, y0, y1 }]  kimsenin durmayacağı alanlar (sütun dibi, masa...)
+//   seats               [[x, y], ...]  öncelik sırasına göre onur koltukları (sıradaki i. kişi seats[i]'ye oturur)
 
 (function (root) {
   const DEFAULTS = {
@@ -32,14 +32,14 @@
     return s;
   }
 
-  /** Chiều cao người (tư thế nghỉ) tại độ sâu y. */
+  /** Derinlik y'de kişinin boyu (dinlenme pozunda). */
   function personH(s, y) {
     const { refY, refHeight, exponent } = s.person;
     const ratio = Math.max(0.2, (y - s.horizonY) / Math.max(1, refY - s.horizonY));
     return refHeight * Math.pow(ratio, exponent);
   }
 
-  /** Nửa bề rộng lối đi tại y (nội suy tuyến tính giữa hai mốc đo). */
+  /** y'de koridorun yarım genişliği (iki ölçüm noktası arasında doğrusal ara değer). */
   function aisleHalf(s, y) {
     if (!s.aisle) return 0;
     const [[y1, w1], [y2, w2]] = s.aisle.half;
@@ -49,7 +49,7 @@
 
   const blocked = (s, x, y, pad) => s.obstacles.some((o) => x > o.x0 - pad && x < o.x1 + pad && y > o.y0 && y < o.y1);
 
-  /** Chỗ đứng trên sàn với độ thưa `density` (1 = dày nhất, 1.6 = thưa). Thứ tự: gần nơi thờ / sân khấu trước, sát lối giữa trước. */
+  /** `density` seyrekliğiyle zemindeki duruş yerleri (1 = en sık, 1.6 = seyrek). Sıra: önce ön/sahne yakını, önce koridora yakın olanlar. */
   function buildSlots(scene, density = 1) {
     const s = scene.horizonY !== undefined && scene.person?.refY ? scene : normalize(scene);
     const list = [];
@@ -65,7 +65,7 @@
   }
 
   const LEVELS = [1.7, 1.35, 1.0];
-  /** Bộ chỗ đứng theo số người: phòng vắng thì thưa (nhìn vẫn kín), đông thì dày. */
+  /** Kişi sayısına göre duruş yeri kümesi: oda boşken seyrek (yine de dolu görünür), kalabalıkken sık. */
   function layoutFor(scene, count) {
     const s = normalize(scene);
     for (const d of LEVELS) {

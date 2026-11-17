@@ -1,5 +1,5 @@
-// Nguồn TikFinity Desktop: TikFinity đăng nhập TikTok của chủ kênh và phát sự kiện ở WebSocket nội bộ.
-// Sự kiện là của phiên live mà TikFinity đang kết nối; tên kênh nhập ở bảng điều khiển chỉ để hiển thị.
+// TikFinity Desktop kaynağı: TikFinity kanal sahibinin TikTok hesabıyla girer ve olayları yerel WebSocket'te yayınlar.
+// Olaylar TikFinity'nin bağlı olduğu canlı oturuma aittir; kontrol panelinde girilen kanal adı yalnızca gösterim içindir.
 
 import WebSocket from 'ws';
 import { normalizeTikFinity } from '../core/normalize.js';

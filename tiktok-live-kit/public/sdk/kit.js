@@ -1,25 +1,25 @@
-// Kit: khởi động overlay của theme, nối sự kiện live với cảnh, chạy hành động khai báo trong theme.json.
+// Kit: temanın overlay'ini başlatır, canlı olayları sahneye bağlar, theme.json'da tanımlı eylemleri çalıştırır.
 //
-// index.html của theme chỉ cần:
+// temanın index.html'inde yalnızca şunlar yeter:
 //   <div id="stage"></div>
 //   <script src="/sdk/live-sdk.js"></script> ... <script src="/sdk/kit.js"></script>
-//   <script src="theme.js"></script>   (tuỳ chọn: hành động / vẽ riêng)
+//   <script src="theme.js"></script>   (isteğe bağlı: özel eylem / çizim)
 //
-// Hành động (theme.json "actions"[].steps, "bigGift", "reactions") là danh sách bước chạy lần lượt trên người tặng:
-//   { "walk": "offer" }                 đi tới điểm (scene.json points) / "home" (về chỗ) / "seat"
-//   { "pose": "stand" }                 đổi tư thế
-//   { "play": "bow", "times": 3, "each": [ ...bước tức thì... ] }   chạy hoạt cảnh n lần ("times": "count" = theo số quà)
+// Eylemler (theme.json "actions"[].steps, "bigGift", "reactions") gönderen kişi üzerinde sırayla çalışan adım listesidir:
+//   { "walk": "offer" }                 noktaya (scene.json points) / "home" (yerine dön) / "seat" yürür
+//   { "pose": "stand" }                 pozu değiştirir
+//   { "play": "bow", "times": 3, "each": [ ...anlık adımlar... ] }   animasyonu n kez oynatır ("times": "count" = hediye adedi kadar)
 //   { "wait": 800 }
-//   { "fx": "emit", "preset": "smoke", "at": "censerMouth", "count": 8 }   hiệu ứng (xem Kit.fx)
+//   { "fx": "emit", "preset": "smoke", "at": "censerMouth", "count": 8 }   efekt (bkz. Kit.fx)
 //   { "fx": "rain" | "halo" | "rays" | "pillar" | "text" | "fly" | "sprite" | "fireworks" | "flash" | "shake", ... }
 //   { "spotlight": true }  { "camera": "person", "zoom": 1.6 }  { "sound": "chuong" }  { "aura": 1 }  { "boost": 1.3 }
-//   { "fx3d": "fireworks" | "confetti" | "beam" | "ring" }   hiệu ứng 3D (cảnh 2D tự đổi sang hiệu ứng 2D tương ứng)
-//   { "stage": "party", "duration": 6000 } | { "stage": "calm" } | { "stage": "strobe" }   sân khấu 3D: đèn quét, laser (cảnh 2D bỏ qua)
-//   { "say": "Cảm ơn {ten}!" }          bong bóng chữ trên đầu
-//   { "crowd": [ ...bước... ] }         cả đám đông cùng làm
-//   { "npc": "su-tru-tri", "steps": [ ...bước... ] }
-//   { "js": "tenHam" }                  gọi hàm riêng: Kit.action('tenHam', (person, ev, ctx) => { ... })
-// Chữ trong bước được điền {ten} {qua} {count} {total} {label}.
+//   { "fx3d": "fireworks" | "confetti" | "beam" | "ring" }   3D efekt (2D sahne karşılığı olan 2D efekte çevirir)
+//   { "stage": "party", "duration": 6000 } | { "stage": "calm" } | { "stage": "strobe" }   3D sahne: hareketli ışık, lazer (2D sahne yok sayar)
+//   { "say": "Teşekkürler {ten}!" }      kişinin başında yazı balonu
+//   { "crowd": [ ...adımlar... ] }       tüm kalabalık birlikte yapar
+//   { "npc": "imam", "steps": [ ...adımlar... ] }
+//   { "js": "fonksiyonAdi" }           özel fonksiyonu çağırır: Kit.action('fonksiyonAdi', (person, ev, ctx) => { ... })
+// Adımlardaki yazılarda {ten} {qua} {count} {total} {label} doldurulur.
 
 (function () {
   const K = window.Kit;
@@ -27,7 +27,7 @@
   const custom = {};
   K.events = {
     on(name, fn) { (handlers[name] ||= []).push(fn); return K.events; },
-    emit(name, ...args) { for (const fn of handlers[name] || []) try { fn(...args); } catch (e) { console.error(`[Kit] lỗi trong "${name}"`, e); } },
+    emit(name, ...args) { for (const fn of handlers[name] || []) try { fn(...args); } catch (e) { console.error(`[Kit] "${name}" içinde hata`, e); } },
   };
   K.on = K.events.on;
   K.action = (name, fn) => { custom[name] = fn; };
@@ -35,7 +35,7 @@
   let theme = null, settings = {}, started = false;
   const fill = (s, ev = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => ({ ten: ev.user?.name, qua: ev.gift?.name || ev.label, count: ev.count, total: ev.total, label: ev.label, likes: ev.count }[k] ?? ''));
 
-  // ---------- Bộ chạy bước ----------
+  // ---------- Adım çalıştırıcı ----------
   function where(at, person) {
     if (!at || at === 'person' || at === 'feet') return person ? { x: person.x, y: person.y } : { x: K.W / 2, y: K.H / 2 };
     if (at === 'head') return person ? K.scene.P.head(person) : { x: K.W / 2, y: K.H / 2 };
@@ -45,7 +45,7 @@
 
   const num = (v, ev, max = 10) => (v === 'count' ? Math.min(max, Math.max(1, ev?.count || 1)) : v === 'likes' ? Math.min(max, Math.max(1, Math.ceil((ev?.count || 1) / 3))) : Number(v) || 1);
 
-  // Bước tức thì (không chiếm thời gian của nhân vật)
+  // Anlık adım (karakterin zamanını almaz)
   function instant(step, person, ev) {
     const P = K.scene.P;
     if (step.fx) {
@@ -76,10 +76,10 @@
     else if (step.toast) K.hud.toast(fill(step.toast, ev));
     else if (step.crowd) for (const q of [...K.scene.people(), ...(K.scene.extras?.() || [])]) { if (q.task || q.tasks.length) continue; K.scene.P.wait(q, Math.random() * (step.stagger ?? 400)); run(step.crowd, q, ev); }
     else if (step.npc) { const n = K.scene.npc(step.npc); if (n) run(step.steps || [], n, ev); }
-    else if (step.js) { const fn = custom[step.js]; if (fn) fn(person, ev, { theme, settings }); else console.warn(`[Kit] chưa có Kit.action('${step.js}')`); }
+    else if (step.js) { const fn = custom[step.js]; if (fn) fn(person, ev, { theme, settings }); else console.warn(`[Kit] Kit.action('${step.js}') tanımlı değil`); }
   }
 
-  // Cảnh 2D gặp bước fx3d: dùng hiệu ứng 2D gần nhất để một theme chạy được cả hai kiểu
+  // 2D sahne fx3d adımıyla karşılaşırsa: en yakın 2D efekti kullanır, böylece tema iki türde de çalışır
   function fx3dIn2D(step, person, ev) {
     const at = where(step.at || (person ? 'head' : 'center'), person);
     if (step.fx3d === 'fireworks') K.fx.fireworks({ bursts: step.bursts ?? 4 });
@@ -88,7 +88,7 @@
     else if (step.fx3d === 'ring') K.fx.halo(at.x, person ? person.y - K.scene.height(person) * 0.5 : at.y, {});
   }
 
-  /** Chạy danh sách bước trên một người (hoặc không có người: chạy lần lượt theo thời gian). */
+  /** Bir kişi üzerinde adım listesini çalıştırır (kişi yoksa: zamana göre sırayla). */
   function run(steps, person, ev) {
     if (!Array.isArray(steps)) return;
     const P = K.scene.P;
@@ -122,7 +122,7 @@
   };
   const reaction = (name) => theme.reactions?.[name] ?? DEFAULT_REACTIONS[name] ?? [];
 
-  // ---------- Sự kiện live ----------
+  // ---------- Canlı olaylar ----------
   function onEvent(kind, ev) {
     const S = K.scene;
     switch (kind) {
@@ -134,7 +134,7 @@
         if (!p) break;
         p.lastActive = performance.now();
         if (!S.skinFromChat(ev.user, ev.text)) S.P.say(p, ev.text);
-        if (!ev.command && !p.task && !p.tasks.length) run(reaction('chat'), p, ev); // theme.json reactions.chat: người chat làm động tác
+        if (!ev.command && !p.task && !p.tasks.length) run(reaction('chat'), p, ev); // theme.json reactions.chat: yorum yazan kişi hareket yapar
         break;
       }
       case 'like': { const p = ev.user.isPlayer && S.ensure(ev.user); if (p) run(reaction('like'), p, ev); if (theme.sounds?.like !== false) K.audio.sfx('like'); break; }
@@ -152,7 +152,7 @@
       case 'command': {
         const p = S.ensure(ev.user); const a = (theme.actions || []).find((x) => x.id === ev.action);
         if (p && a) run(a.steps || DEFAULT_STEPS, p, ev);
-        if (ev.draw) K.hud.draw?.(ev); // lá thăm server vừa bốc (theme.json "draws")
+        if (ev.draw) K.hud.draw?.(ev); // sunucunun az önce çektiği kura kartı (theme.json "draws")
         break;
       }
       case 'follow': case 'share': case 'title': { const p = S.ensure(ev.user); run(reaction(kind), p, ev); break; }
@@ -170,13 +170,13 @@
     K.events.emit(kind, ev);
   }
 
-  // ---------- Vùng an toàn khi live TikTok (khung 1080 x 1920) ----------
-  // Số đo ước lượng trên điện thoại, TikTok không công bố chính thức. Mở overlay với ?safe để thấy các vùng bị che.
-  //   top      tên kênh, số người xem, hàng người tặng quà
-  //   side     máy màn hình dài (20:9) phóng khung cho đầy chiều cao nên cắt mất hai bên
-  //   chatTop  từ đây xuống là khung bình luận (nửa trái, rộng tới chatRight)
-  //   bottom   từ đây xuống là ô nhập bình luận, nút quà, nút chia sẻ
-  //   hearts   dải bên phải tim bay lên (từ heartsTop tới bottom)
+  // ---------- TikTok canlı yayında güvenli bölgeler (1080 x 1920 çerçeve) ----------
+  // Telefonda tahmini ölçüler; TikTok resmi olarak yayımlamaz. Örtülen bölgeleri görmek için overlay'i ?safe ile açın.
+  //   top      kanal adı, izleyici sayısı, hediye gönderenlerin sırası
+  //   side     uzun ekranlı (20:9) telefonlar çerçeveyi yüksekliğe doldurur, bu yüzden iki yan kesilir
+  //   chatTop  buradan aşağısı yorum alanı (sol yarı, chatRight'a kadar)
+  //   bottom   buradan aşağısı yorum kutusu, hediye düğmesi, paylaş düğmesi
+  //   hearts   sağdaki yukarı uçan kalp şeridi (heartsTop'tan bottom'a)
   K.safe = { top: 240, side: 100, chatTop: 1250, chatRight: 720, bottom: 1760, heartsLeft: 950, heartsTop: 1300 };
 
   function showSafeZones(stage) {
@@ -195,7 +195,7 @@
     stage.appendChild(el);
   }
 
-  // ---------- Khởi động ----------
+  // ---------- Başlatma ----------
   function start({ theme: t, players, state, guide }) {
     theme = t;
     settings = Live.settings || {};
@@ -208,10 +208,10 @@
       canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
       stage.prepend(canvas);
       Live.stage(stage, K.W, K.H);
-      // scene.json "renderer": "3d": dùng cảnh Three.js (sdk/scene3d.js), cùng giao diện với cảnh 2D
+      // scene.json "renderer": "3d": Three.js sahnesi (sdk/scene3d.js), 2D sahneyle aynı arayüz
       if (theme.scene?.renderer === '3d') {
         if (K.scene3d) K.scene = K.scene3d;
-        else console.error('[Kit] scene.json "renderer": "3d" cần nạp /sdk/scene3d.js trong index.html (xem themes/template-3d)');
+        else console.error('[Kit] scene.json "renderer": "3d" için index.html içinde /sdk/scene3d.js yüklenmeli');
       }
       K.scene.init({ canvas, theme, settings });
       K.hud.init({ stage, theme });
@@ -222,7 +222,7 @@
     }
     K.audio.configure(settings, theme.sounds);
     K.hud.guide(guide, theme.characters);
-    // dựng lại đám đông đang có (OBS tải lại trang, mất mạng chốc lát...)
+    // mevcut kalabalığı yeniden kurar (OBS sayfayı yeniler, ağ kısa süre kopar...)
     for (const p of (players || []).slice().reverse()) if (p.isPlayer !== false) K.scene.ensure(p, { instant: true });
     applyState(state);
   }
@@ -234,7 +234,7 @@
   }
 
   let last = performance.now();
-  // scene.json "fps": giới hạn số hình vẽ mỗi giây (vd 30) để dành máy cho phần mềm phát live; mặc định theo màn hình
+  // scene.json "fps": saniyedeki çizim sayısını sınırlar (ör. 30) ki yayın yazılımına güç kalsın; varsayılan ekrana göre
   function loop(t = performance.now()) {
     requestAnimationFrame(loop);
     const cap = theme?.scene?.fps;
@@ -251,10 +251,10 @@
   Live.on('guide', (g) => K.hud.guide(g, theme?.characters));
   for (const k of ['join', 'chat', 'like', 'gift', 'command', 'follow', 'share', 'title', 'goal', 'periodic', 'prompt', 'tts']) Live.on(k, (ev) => theme && onEvent(k, ev));
 
-  // Mở trang đúng lúc server đang khởi động lại có thể kẹt ở màn trống: chưa dựng được cảnh thì tự tải lại
+  // Sayfa sunucu yeniden başlarken açılırsa boş ekranda kalabilir: sahne kurulamadıysa sayfa kendini yeniler
   setTimeout(function watchdog() {
     if (started && document.querySelector('#stage canvas')) return;
-    console.warn('[Kit] chưa dựng được cảnh, tải lại trang');
+    console.warn('[Kit] sahne kurulamadı, sayfa yenileniyor');
     location.reload();
   }, 12000);
 })();

@@ -1,6 +1,6 @@
-// Quà tặng liên tiếp (combo): TikTok gửi lại cùng một món nhiều lần với repeatCount tăng dần
-// (1, 2, 3...) rồi một lần chốt repeatEnd. Chỉ tính PHẦN TĂNG THÊM để không cộng trùng xu,
-// và vẫn phản hồi ngay từng nhịp combo thay vì chờ chốt.
+// Ardışık hediyeler (kombo): TikTok aynı hediyeyi artan repeatCount ile (1, 2, 3...) tekrar tekrar gönderir,
+// sonunda bir kez repeatEnd ile kapatır. Yalnızca ARTAN KISIM sayılır ki jeton iki kez eklenmesin,
+// ve kapanışı beklemeden her kombo adımına hemen tepki verilir.
 
 export function createStreaks({ ttlMs = 60000 } = {}) {
   const last = new Map(); // key -> { count, at }

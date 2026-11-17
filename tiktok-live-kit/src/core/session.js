@@ -1,5 +1,5 @@
-// Trạng thái một phiên live: người chơi, bảng xếp hạng, danh hiệu, mục tiêu, thống kê.
-// Lưu xuống file để tắt mở server (hay mất điện) giữa buổi live không mất bảng xếp hạng.
+// Bir canlı oturumun durumu: oyuncular, sıralama, unvanlar, hedefler, istatistikler.
+// Dosyaya kaydedilir; yayın ortasında sunucu kapanıp açılsa (veya elektrik kesilse) sıralama kaybolmaz.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,7 +23,7 @@ export function createSession({ file, titles = [], goals = [], playerTtlMs = 20 
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       s = { ...blank(), ...saved, goals: blank().goals.map((g) => ({ ...g, reached: saved.goals?.find((x) => x.id === g.id)?.reached || 0 })) };
-    } catch { /* chưa có phiên cũ */ }
+    } catch { /* önceki oturum yok */ }
   }
 
   let saveTimer = null;
@@ -52,7 +52,7 @@ export function createSession({ file, titles = [], goals = [], playerTtlMs = 20 
     return { player: p, isNew };
   }
 
-  /** Cộng một chỉ số; trả về các mục tiêu vừa đạt. */
+  /** Bir göstergeyi artırır; yeni ulaşılan hedefleri döndürür. */
   function bump(metric, n) {
     s.totals[metric] = (s.totals[metric] || 0) + n;
     const hits = [];
@@ -65,7 +65,7 @@ export function createSession({ file, titles = [], goals = [], playerTtlMs = 20 
     return hits;
   }
 
-  /** Cộng xu cho người tặng; trả về danh hiệu mới nếu vừa lên bậc. */
+  /** Gönderene jeton ekler; yeni kademeye çıktıysa yeni unvanı döndürür. */
   function addCoins(p, coins) {
     p.coins += coins;
     p.gifts += 1;

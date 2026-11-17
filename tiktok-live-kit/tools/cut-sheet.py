@@ -1,18 +1,18 @@
-"""Cắt tờ nhân vật dạng lưới (gen bằng AI, nền xanh lá) thành dải khung ngang cho Kit.
+"""Izgara biçimindeki karakter sayfasını (yapay zekâyla üretilmiş, yeşil arka planlı) Kit için yatay kare şeridine keser.
 
-Chạy (ở thư mục kit, cần uv: https://docs.astral.sh/uv/):
+Çalıştırma (kit klasöründe, uv gerekir: https://docs.astral.sh/uv/):
     pnpm assets:cut themes/<id>/assets/raw/character.png themes/<id>/assets/chars/character.png --auto
-    (tức là: uv run --no-project --with pillow --with numpy python tools/cut-sheet.py ...)
-    tuỳ chọn: --cols 6 --rows 5 (mặc định đúng prompt master), --auto (AI xếp hàng không đều: tự dò từng dáng),
-              --scale 0.66 (thu nhỏ tờ ra), --preview đường/dẫn.png (ảnh soát, mặc định cạnh file ra)
+    (yani: uv run --no-project --with pillow --with numpy python tools/cut-sheet.py ...)
+    seçenekler: --cols 6 --rows 5 (varsayılan ana prompt'a göre), --auto (YZ sıraları düzensiz dizdiyse her figürü kendisi bulur),
+              --scale 0.66 (sayfayı küçültür), --preview yol/dosya.png (denetim görseli, varsayılan çıktının yanına)
 
-Làm gì:
-  1. Tách nền: lấy màu nền ở viền ảnh (thường là xanh lá), xoá phần cùng màu, viền mềm, khử ánh xanh hắt lên áo.
-  2. Chia đều lưới cột x hàng (hoặc --auto: tìm khoảng trống giữa các hàng rồi giữa các dáng), mỗi ô giữ lại người,
-     bỏ số thứ tự, chữ, chấm lẻ.
-  3. Xếp các khung thành một hàng ngang theo thứ tự đọc (trái sang phải, trên xuống dưới), canh chân chung một đáy,
-     GIỮ NGUYÊN tỉ lệ giữa các khung (người quỳ thấp hơn người đứng) để code vẽ đúng cỡ.
-  4. Ghi thêm <tên>-preview.png có đánh số khung để soát.
+Ne yapar:
+  1. Arka planı ayırır: görselin kenarındaki rengi (genelde yeşil) alır, aynı rengi siler, kenarı yumuşatır, elbiseye vuran yeşil yansımayı giderir.
+  2. Sütun x satır ızgarasına eşit böler (veya --auto: önce satırlar, sonra figürler arasındaki boşlukları bulur), her hücrede kişiyi tutar,
+     sıra numarası, yazı, tek tek lekeler atılır.
+  3. Kareleri okuma sırasıyla (soldan sağa, yukarıdan aşağı) tek yatay şeride dizer, ayakları ortak tabana hizalar,
+     kareler arası ORANI KORUR (diz çöken kişi ayaktakinden kısadır) ki kod doğru boyda çizsin.
+  4. Ayrıca kareleri numaralı <ad>-preview.png denetim görselini yazar.
 """
 import argparse
 import json
@@ -27,21 +27,21 @@ def key_background(rgb):
     border = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]]).astype(np.float32)
     bg = np.median(border, axis=0)
     dist = np.sqrt(((rgb.astype(np.float32) - bg) ** 2).sum(axis=2))
-    lo, hi = 60.0, 140.0  # gần màu nền hơn lo: trong suốt; xa hơn hi: giữ nguyên; ở giữa: viền mềm
+    lo, hi = 60.0, 140.0  # arka plan rengine lo'dan yakınsa: şeffaf; hi'den uzaksa: olduğu gibi; arası: yumuşak kenar
     alpha = np.clip((dist - lo) / (hi - lo), 0, 1)
     out = rgb.astype(np.float32)
-    if bg[1] > bg[0] + 40 and bg[1] > bg[2] + 40:  # nền xanh lá: khử ánh xanh hắt lên người
+    if bg[1] > bg[0] + 40 and bg[1] > bg[2] + 40:  # yeşil arka plan: kişiye vuran yeşil yansımayı giderir
         cap = np.maximum(out[..., 0], out[..., 2])
         out[..., 1] = np.minimum(out[..., 1], cap + 8)
     return out.astype(np.uint8), (alpha * 255).astype(np.uint8), bg
 
 
 def keep_figure(alpha):
-    """Giữ mảng lớn nhất (người) và các mảng đáng kể nằm sát nó; bỏ số thứ tự, chữ, chấm lẻ AI hay vẽ thêm."""
+    """En büyük parçayı (kişi) ve ona bitişik önemli parçaları tutar; YZ'nin sık eklediği sıra numarası, yazı, tek lekeleri atar."""
     m = alpha > 40
     h, w = m.shape
     label = np.zeros((h, w), np.int32)
-    comps = []  # (diện tích, x0, y0, x1, y1)
+    comps = []  # (alan, x0, y0, x1, y1)
     for sy, sx in zip(*np.nonzero(m)):
         if label[sy, sx]:
             continue
@@ -71,7 +71,7 @@ def keep_figure(alpha):
 
 
 def runs(counts, min_count, max_gap, min_len):
-    """Các đoạn liên tiếp có counts >= min_count, nối đoạn cách nhau < max_gap, bỏ đoạn ngắn hơn min_len."""
+    """counts >= min_count olan ardışık aralıklar; aralarındaki boşluk < max_gap ise birleştirilir, min_len'den kısa olanlar atılır."""
     on = np.where(counts >= min_count)[0]
     if not len(on):
         return []
@@ -86,8 +86,8 @@ def runs(counts, min_count, max_gap, min_len):
 
 
 def auto_regions(alpha):
-    """Cắt luân phiên ngang / dọc theo khoảng trống cho tới khi mỗi mảnh chỉ còn một dáng (XY-cut).
-    Trả về các vùng theo thứ tự đọc: từng hàng từ trên xuống, trong hàng từ trái sang phải."""
+    """Her parçada tek figür kalana dek boşluklardan dönüşümlü yatay / dikey keser (XY-cut).
+    Bölgeleri okuma sırasıyla döndürür: satırlar yukarıdan aşağı, satır içinde soldan sağa."""
     m = alpha > 40
     H, W = m.shape
     min_h, min_w = H // 40, W // 120
@@ -110,9 +110,9 @@ def auto_regions(alpha):
     regions = [r + (int(m[r[1]:r[3], r[0]:r[2]].sum()),) for r in split(0, 0, W, H, True, 0)]
     if not regions:
         return []
-    med = float(np.median([r[4] for r in regions]))  # bỏ mảnh quá nhỏ (dấu bản quyền, chấm lẻ)
+    med = float(np.median([r[4] for r in regions]))  # çok küçük parçaları atar (telif işareti, tek lekeler)
     regions = [r[:4] for r in regions if r[4] >= 0.15 * med]
-    # gom thành hàng theo đáy (chân) gần nhau, rồi xếp trái sang phải
+    # tabanı (ayakları) yakın olanları satır yapar, sonra soldan sağa dizer
     regions.sort(key=lambda r: r[3])
     rows, cur = [], []
     for r in regions:
@@ -148,14 +148,14 @@ def main():
     im = Image.open(a.src).convert('RGBA')
     arr = np.array(im)
     rgb, alpha = arr[..., :3], arr[..., 3]
-    if alpha.min() == 255:  # ảnh không có nền trong suốt: tách theo màu nền
+    if alpha.min() == 255:  # görselde şeffaf arka plan yok: arka plan rengine göre ayırır
         rgb, alpha, bg = key_background(rgb)
-        print(f'Tách nền màu {tuple(int(v) for v in bg)}')
+        print(f'Arka plan rengi ayrıldı {tuple(int(v) for v in bg)}')
     H, W = alpha.shape
     if a.auto:
         rows = auto_regions(alpha)
         regions = [r for row in rows for r in row]
-        print(f'Tự dò: {len(rows)} hàng, số dáng mỗi hàng {[len(row) for row in rows]}')
+        print(f'Otomatik tespit: {len(rows)} satır, satır başına figür sayısı {[len(row) for row in rows]}')
     else:
         cw, ch = W / a.cols, H / a.rows
         regions = [(round(c * cw), round(r * ch), round((c + 1) * cw), round((r + 1) * ch)) for r in range(a.rows) for c in range(a.cols)]
@@ -177,7 +177,7 @@ def main():
         frames = [f.resize((max(1, round(f.width * a.scale)), max(1, round(f.height * a.scale))), Image.LANCZOS) if f else None for f in frames]
     real = [f for f in frames if f]
     if not real:
-        sys.exit('Không thấy nhân vật nào. Kiểm tra nền và số cột / hàng.')
+        sys.exit('Hiç karakter bulunamadı. Arka planı ve sütun / satır sayısını kontrol edin.')
     fw = max(f.width for f in real) + 12
     fh = max(f.height for f in real) + 6
     strip = Image.new('RGBA', (fw * len(frames), fh), (0, 0, 0, 0))
@@ -195,12 +195,12 @@ def main():
     prev_path = a.preview or a.out.rsplit('.', 1)[0] + '-preview.png'
     prev.convert('RGB').save(prev_path)
 
-    print(f'{len(frames)} khung, mỗi khung {fw}x{fh}px -> {a.out}')
-    print(f'Xem soát: {prev_path}')
+    print(f'{len(frames)} kare, her kare {fw}x{fh}px -> {a.out}')
+    print(f'Denetim görseli: {prev_path}')
     if empty:
-        print(f'Ô trống (không thấy người): {empty}')
+        print(f'Boş hücreler (kişi bulunamadı): {empty}')
     if a.cols == 6 and a.rows == 5 and not a.auto:
-        print('Khai báo trong theme.json "characters" (đúng thứ tự prompt master):')
+        print('theme.json "characters" içine ekleyin (ana prompt sırasıyla):')
         print(json.dumps({
             'sheet': a.out.replace('\\', '/'), 'frames': 30,
             'walkUp': [0, 1, 2, 3, 4, 5], 'walkDown': [6, 7, 8, 9, 10, 11], 'walkSide': [12, 13, 14, 15, 16, 17],

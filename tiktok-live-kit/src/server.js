@@ -1,4 +1,4 @@
-// TikTok Live Kit: lõi dùng chung. Nguồn live → đường ống → WebSocket → theme (overlay) + bảng điều khiển.
+// TikTok Live Kit: ortak çekirdek. Canlı kaynak → işlem hattı → WebSocket → tema (overlay) + kontrol paneli.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -18,23 +18,23 @@ import { createTTS } from './core/tts.js';
 import { createDraws } from './core/draws.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// Repo dự án (ví dụ một kênh live) có thể dùng kit này mà để theme + dữ liệu ở chỗ riêng:
-//   KIT_THEMES_DIR  thư mục theme của dự án (ưu tiên hơn themes/ của kit)
-//   KIT_DATA_DIR    thư mục dữ liệu (luật đã chỉnh, phiên live, giọng đọc...)
-//   KIT_CONFIG      file cấu hình của dự án (ghi đè config.json của kit)
+// Proje reposu (ör. bir canlı kanal) bu kiti kullanıp tema + veriyi kendi yerinde tutabilir:
+//   KIT_THEMES_DIR  projenin tema klasörü (kitin themes/ klasöründen önceliklidir)
+//   KIT_DATA_DIR    veri klasörü (düzenlenmiş kurallar, canlı oturum, ses önbelleği...)
+//   KIT_CONFIG      projenin yapılandırma dosyası (kitin config.json'unu ezer)
 const DATA = path.resolve(process.env.KIT_DATA_DIR || path.join(ROOT, 'data'));
 const THEME_DIRS = [process.env.KIT_THEMES_DIR, path.join(ROOT, 'themes')].filter(Boolean).map((d) => path.resolve(d));
-// config.json là mặc định (trong git); lựa chọn đổi lúc chạy (kênh, nguồn, theme) lưu riêng ở data/settings.json
+// config.json varsayılandır (git'te); çalışırken değişen seçimler (kanal, kaynak, tema) data/settings.json'a ayrıca kaydedilir
 const SETTINGS_FILE = path.join(DATA, 'settings.json');
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
 const settings = readJson(SETTINGS_FILE);
 const config = { ...readJson(path.join(ROOT, 'config.json')), ...(process.env.KIT_CONFIG ? readJson(path.resolve(process.env.KIT_CONFIG)) : {}), ...settings };
 const PORT = Number(process.env.PORT || config.port || 3939);
-// host: một địa chỉ hoặc danh sách ("127.0.0.1,192.168.78.191" / ["127.0.0.1", "..."]): nghe thêm đúng các địa chỉ đó
-// (ví dụ đường USB tới điện thoại) mà không phải mở cả mạng như allowLan
+// host: tek adres veya liste ("127.0.0.1,192.168.78.191" / ["127.0.0.1", "..."]): yalnızca bu adresler de dinlenir
+// (ör. telefona USB hattı) allowLan gibi tüm ağı açmadan
 const HOSTS = [].concat(process.env.HOST || config.host || '127.0.0.1').flatMap((h) => String(h).split(',')).map((h) => h.trim()).filter(Boolean);
 
-// ---------- Theme, luật, phiên ----------
+// ---------- Tema, kurallar, oturum ----------
 let theme, rules, session, engine, themeSettings;
 let periodicTimer = null;
 let periodicIdx = 0;
@@ -49,21 +49,21 @@ const tts = createTTS({
   onError: (msg) => { console.warn('[ses]', msg); broadcast({ type: 'error', message: msg }, 'control'); },
 });
 
-/** Đọc một câu bằng giọng của theme (nếu đang bật). */
-// Câu đọc quẻ, quà, danh hiệu, mục tiêu chen lên trước; câu chào người vào, đọc bình luận chỉ đọc khi rảnh
+/** Temanın sesiyle bir cümle okur (açıksa). */
+// Hediye, unvan, hedef cümleleri öne geçer; giriş selamı ve yorum okuma yalnızca boştayken okunur
 const PRIORITY = new Set(['draw', 'gift', 'title', 'goal']);
 const LOW = new Set(['join', 'chat', 'like', 'member']);
-const CACHED = new Set(['draw', 'prompt', 'periodic']); // câu cố định: đọc sẵn, lần sau phát ngay
+const CACHED = new Set(['draw', 'prompt', 'periodic']); // sabit cümleler: önceden okunur, sonraki sefer anında çalar
 function speak(text, meta = {}) {
   if (!text || !themeSettings?.voiceEnabled) return;
   const v = theme.voice || {};
   const go = () => tts.say(text, { voice: v.voice, meta, fallback: v.fallback, priority: PRIORITY.has(meta.about), low: LOW.has(meta.about), cache: CACHED.has(meta.about) });
-  // voice.delay: { "draw": 2300 } chờ cho khớp lúc hình hiện (thẻ quẻ mở sau khi lắc ống xăm)
+  // voice.delay: { "draw": 2300 } görüntünün çıkışıyla eşleşsin diye bekler
   const wait = Number(v.delay?.[meta.about]) || 0;
   if (wait) setTimeout(go, wait); else go();
 }
 
-/** Đọc sẵn các câu cố định: đọc quẻ của mọi lá thăm (mẫu câu không có tên người), tụng kinh định kỳ, lời mời tương tác. */
+/** Sabit cümleleri önceden okur: tüm kuraların okunuşu (isimsiz şablonlar), periyodik metinler, etkileşim davetleri. */
 function warmDraws() {
   const v = theme.voice || {};
   if (!v.enabled) return;
@@ -73,7 +73,7 @@ function warmDraws() {
   for (const t of v.draw || []) {
     const used = [...t.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
     for (const d of Object.values(theme.draws || {})) for (const [i, it] of (d.items || []).entries()) {
-      // câu còn chỗ điền tên / lời riêng của từng người (mà lá thăm không có sẵn) thì không đọc sẵn được
+      // kişiye özel isim / söz doldurulan cümleler (kartta hazır olmayanlar) önceden okunamaz
       if (used.some((k) => personal.includes(k) && !(k in it))) continue;
       texts.push(fill(t, { n: i + 1, ...Object.fromEntries(Object.entries(it).map(([k, x]) => [k, Array.isArray(x) ? x.join(', ') : x])) }));
     }
@@ -82,10 +82,10 @@ function warmDraws() {
   if (n) console.log(`[ses] ${n} sabit cümle arka planda önceden seslendiriliyor`);
 }
 
-/** Mọi sự kiện đi ra overlay đều qua đây: nhớ lời người xem nói, đọc câu theo mẫu của theme. */
+/** Overlay'e giden her olay buradan geçer: izleyicinin sözünü hatırlar, cümleyi temanın şablonuna göre okur. */
 function emitEvent(ev) {
   if (ev.kind === 'chat') { voice.remember(ev.user?.id, ev.text); lastChatAt = Date.now(); }
-  // lệnh chat có bốc thăm: server bốc để overlay và giọng đọc cùng một kết quả
+  // kura içeren sohbet komutu: sunucu çeker ki overlay ve ses aynı sonucu kullansın
   if (ev.kind === 'command' && typeof ev.draw === 'string') { const d = draws.pick(theme.draws, ev.draw, ev.user?.id || ''); if (d) ev.draw = d; else delete ev.draw; }
   broadcast({ type: 'event', ev });
   if (!ev.test) speak(voice.line(theme.voice, ev), { for: ev.user?.id || '', about: ev.draw ? 'draw' : ev.kind });
@@ -123,7 +123,7 @@ function activate(themeId) {
 }
 activate(process.env.THEME || config.theme || 'starter');
 
-// ---------- Nội dung định kỳ (tụng kinh, lời mời, câu hỏi...) khi chat vắng ----------
+// ---------- Sohbet sessizken periyodik içerik ----------
 function schedulePeriodic() {
   clearInterval(periodicTimer);
   const p = theme.periodic || {};
@@ -132,15 +132,15 @@ function schedulePeriodic() {
   const every = Math.max(0.5, Number(p.everyMinutes) || 3) * 60000;
   periodicTimer = setInterval(() => {
     if (!themeSettings.periodicEnabled) return;
-    // chỉ chạy khi phòng vắng một lúc (mặc định 20 giây không có sự kiện)
+    // yalnızca oda bir süre sessizken çalışır (varsayılan 20 saniye olay yok)
     const quiet = (Number(p.quietSeconds ?? 20) || 0) * 1000;
     if (engine.lastEventAt && Date.now() - engine.lastEventAt < quiet) return;
     firePeriodic(items[periodicIdx++ % items.length]);
   }, every);
   periodicTimer.unref?.();
 }
-// ---------- Lời mời tương tác khi chat vắng ----------
-// theme.json "prompts": { "everySeconds": 90, "quietSeconds": 25, "items": ["Gõ xin xăm để xem quẻ...", { "text": "...", "say": "..." }] }
+// ---------- Sohbet sessizken etkileşim daveti ----------
+// theme.json "prompts": { "everySeconds": 90, "quietSeconds": 25, "items": ["Dua yazabilirsiniz...", { "text": "...", "say": "..." }] }
 function schedulePrompts() {
   clearInterval(promptTimer);
   const p = theme.prompts || {};
@@ -206,7 +206,7 @@ const server = http.createServer((req, res) => {
     return res.end(session.csv());
   }
   if (p === '/api/theme-files') {
-    // liệt kê file trong themes/<theme>/assets/<dir> (nhạc, ảnh) để theme tự nạp những gì người dùng thả vào
+    // themes/<theme>/assets/<dir> içindeki dosyaları (müzik, görsel) listeler; tema kullanıcının koyduklarını kendisi yükler
     const dir = String(url.searchParams.get('dir') || '').replace(/[^a-z0-9_-]/gi, '');
     let files = [];
     try { files = fs.readdirSync(path.join(theme.dir, 'assets', dir)).filter((f) => /\.(mp3|ogg|wav|m4a|png|jpe?g|webp|gif|mp4|webm|json)$/i.test(f)).sort(); } catch {}
@@ -233,7 +233,7 @@ const wss = new WebSocketServer({
   server, path: '/ws', maxPayload: 256 * 1024,
   verifyClient: ({ origin, req }) => {
     if (!hostOk(req.headers.host)) return false;
-    if (!origin) return true; // client gốc (game Unity, script) không gửi Origin
+    if (!origin) return true; // yerel istemci (Unity oyunu, betik) Origin göndermez
     try { return config.allowLan || LOCAL_HOSTS.has(new URL(origin).hostname); } catch { return false; }
   },
 });
@@ -267,7 +267,7 @@ const publicTheme = () => ({
   text: theme.text || {}, settings: theme.settings, characters: theme.characters, animations: theme.animations, npcs: theme.npcs,
   hud: theme.hud, colors: theme.colors, sounds: theme.sounds, bigGift: theme.bigGift, reactions: theme.reactions, scene: theme.scene, goals: theme.goals,
 });
-// Overlay cần luật để tự sinh bảng "tặng gì được gì"; kèm tên và ảnh các quà đã gặp
+// Overlay "ne gönderirsen ne olur" tablosunu üretmek için kurallara ihtiyaç duyar; görülen hediyelerin ad ve görselleri eklenir
 const guideData = () => ({ rules, gifts: catalog.list().map((g) => ({ id: g.id, name: g.name, coins: g.coins, image: g.image })) });
 
 function init(ws) {
@@ -287,9 +287,9 @@ const CONTROL = {
   async disconnect() { await manager.stop(); },
   sim(m) { demo.fire(m.kind, m.arg, m.arg2, m.gift); },
   crowd(m) { demo.crowd(m.n, (config.maxJoinsPerSecond || 15) * 0.8); },
-  demo(m) { demo.auto(Number(m.rate) || 0, { gifts: manager.status.state === 'idle' }); pushState(); }, // đang nối live thật: giả lập không tạo quà
+  demo(m) { demo.auto(Number(m.rate) || 0, { gifts: manager.status.state === 'idle' }); pushState(); }, // gerçek canlıya bağlıyken: demo hediye üretmez
   test(m) {
-    // Bắn thẳng một hành động của theme để xem hiệu ứng, không cộng điểm
+    // Temanın bir eylemini doğrudan tetikler, puan eklemez
     const a = theme.actions.find((x) => x.id === m.action);
     if (!a) return;
     const p = session.active(1)[0] || { id: 'test', name: 'Deneme', avatar: '', coins: 0, title: '', rank: 0 };
@@ -354,22 +354,22 @@ wss.on('connection', (ws) => {
 
 const heartbeat = setInterval(() => {
   for (const c of wss.clients) { if (!c.alive) { c.terminate(); continue; } c.alive = false; c.ping(); }
-  if (manager.status.state === 'connected') pushState(); // cập nhật "sự kiện cuối cách đây"
+  if (manager.status.state === 'connected') pushState(); // "son olay şu kadar önce" bilgisini günceller
 }, 15000);
 
-// ---------- Kết nối live ----------
+// ---------- Canlı bağlantı ----------
 const manager = createManager({
   config,
   onEvent: (ev) => engine.ingest(ev),
   onStatus: (st) => {
-    // nối được buổi live thật thì tắt giả lập: từ đây chỉ còn người xem thật
+    // gerçek canlıya bağlanınca demo kapanır: bundan sonra yalnızca gerçek izleyiciler
     if (st?.state === 'connected' && demo.running) { demo.stop(); console.log('[live] bağlandı, demo kapatıldı'); }
     pushState();
   },
   lastEventAt: () => engine.lastEventAt,
 });
 
-for (const h of HOSTS.slice(1)) { // địa chỉ thêm: cùng xử lý, cùng WebSocket
+for (const h of HOSTS.slice(1)) { // ek adresler: aynı işlem, aynı WebSocket
   const extra = http.createServer(server.listeners('request')[0]);
   extra.on('upgrade', (req, socket, head) => server.emit('upgrade', req, socket, head));
   extra.on('error', (e) => console.warn(`[ağ] dinlenemiyor ${h}:${PORT} (${e.code || e.message})`));

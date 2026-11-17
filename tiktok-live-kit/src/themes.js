@@ -1,11 +1,11 @@
-// Nạp theme từ thư mục themes/<id>/: theme.json (nội dung, luật, giọng đọc...) + scene.json (bố cục cảnh).
+// Temayı themes/<id>/ klasöründen yükler: theme.json (içerik, kurallar, ses...) + scene.json (sahne düzeni).
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 const readJson = (f, fallback = null) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; } };
 
-/** Theme trong một hoặc nhiều thư mục (thư mục đầu ưu tiên khi trùng tên). Mỗi theme kèm `dir` chứa nó. */
+/** Bir veya birden fazla klasördeki temalar (aynı adda ilk klasör öncelikli). Her temaya onu içeren `dir` eklenir. */
 export function listThemes(dirs) {
   const seen = new Map();
   for (const dir of [].concat(dirs)) {
@@ -20,7 +20,7 @@ export function listThemes(dirs) {
   return [...seen.values()];
 }
 
-// Cài đặt kit thêm cho mọi theme (theme khai báo cùng id thì dùng bản của theme)
+// Tüm temalara eklenen kit ayarları (tema aynı id'yi tanımlarsa temanınki kullanılır)
 const STANDARD_SETTINGS = [
   { id: 'voiceEnabled', label: 'Sesli okuma (isim/dua)', type: 'toggle', default: true },
   { id: 'voiceVolume', label: 'Ses okuma seviyesi', type: 'range', min: 0, max: 100, default: 90 },
@@ -57,7 +57,7 @@ export function loadTheme(dirs, id) {
     prompts: t.prompts || {},
     prompts: t.prompts || {},
     draws: t.draws || {},
-    // phần chỉ overlay dùng, server chuyển nguyên
+    // yalnızca overlay'in kullandığı kısım, sunucu olduğu gibi iletir
     characters: t.characters || [],
     animations: t.animations || {},
     npcs: t.npcs || [],
@@ -70,7 +70,7 @@ export function loadTheme(dirs, id) {
   };
 }
 
-/** Giá trị cài đặt của theme: mặc định trong theme.json, ghi đè bằng giá trị đã lưu (chỉ nhận khoá có khai báo). */
+/** Temanın ayar değerleri: theme.json'daki varsayılanlar, kayıtlı değerlerle ezilir (yalnızca tanımlı anahtarlar kabul edilir). */
 export function settingValues(theme, saved = {}) {
   const out = {};
   for (const f of theme.settings) {

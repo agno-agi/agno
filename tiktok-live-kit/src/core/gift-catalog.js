@@ -1,11 +1,11 @@
-// Ghi nhớ các món quà đã gặp thật trên live (ID, tên, giá, ảnh) để bảng điều khiển cho chọn hành động riêng.
+// Canlıda gerçekten görülen hediyeleri (ID, ad, fiyat, görsel) hatırlar; kontrol paneli her hediyeye ayrı eylem seçtirebilsin.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 export function createGiftCatalog(file) {
   let gifts = {};
-  try { gifts = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* chưa có */ }
+  try { gifts = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* henüz yok */ }
   let timer = null;
 
   function learn(gift) {

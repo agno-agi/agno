@@ -1,5 +1,5 @@
-// Quản lý kết nối live: chọn nguồn, tự thử lại (giãn dần 2s → 30s), tự chuyển nguồn khi chế độ "auto",
-// và canh "im lặng bất thường" (đang kết nối mà lâu không có sự kiện nào thì nối lại).
+// Canlı bağlantı yönetimi: kaynak seçer, otomatik yeniden dener (2sn → 30sn aralık), "auto" modda kaynak değiştirir,
+// ve "olağandışı sessizliği" izler (bağlıyken uzun süre olay gelmezse yeniden bağlanır).
 
 import { createTikFinity } from './tikfinity.js';
 import { createConnector } from './connector.js';
@@ -82,7 +82,7 @@ export function createManager({ config, onEvent, onStatus, lastEventAt }) {
     if (!keep) set('idle', '', null);
   }
 
-  // Canh im lặng: nguồn trực tiếp đôi khi "treo" mà không báo ngắt
+  // Sessizlik bekçisi: doğrudan kaynak bazen kopma bildirmeden "asılı kalır"
   const watchdog = setInterval(() => {
     if (!active || status.state !== 'connected' || active.name !== 'connector') return;
     const quietMs = Date.now() - Math.max(lastEventAt(), connectedAt);

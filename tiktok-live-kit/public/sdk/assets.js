@@ -1,13 +1,13 @@
-// Kit.assets: nạp asset mọi định dạng về một kiểu "drawable" vẽ được lên canvas.
-//   ảnh: png / jpg / webp      GIF động: gif (giải mã từng khung, cần trình duyệt có ImageDecoder)
-//   video: mp4 / webm (webm có nền trong suốt)      Lottie: json (cần /vendor/lottie.min.js)
+// Kit.assets: her biçimdeki dosyayı canvas'a çizilebilen tek bir "drawable" türüne yükler.
+//   görsel: png / jpg / webp      hareketli GIF: gif (kare kare çözülür, tarayıcıda ImageDecoder gerekir)
+//   video: mp4 / webm (webm şeffaf arka planlı olabilir)      Lottie: json (/vendor/lottie.min.js gerekir)
 //
-//   const d = Kit.assets.get('assets/fx/halo.png');   // dùng ngay, vẽ khi đã sẵn sàng
-//   d.draw(ctx, x, y, w, h, { t, alpha, flip })       // t: thời gian (ms) để chạy GIF / Lottie
-//   const s = Kit.assets.sheet('assets/chars/ba.png', 5) // tờ khung hình chia đều theo chiều ngang
-//   s.drawFrame(ctx, i, cx, baseY, height, { flip })     // vẽ khung i, neo chân tại (cx, baseY)
+//   const d = Kit.assets.get('assets/fx/halo.png');   // hemen kullanılır, hazır olunca çizilir
+//   d.draw(ctx, x, y, w, h, { t, alpha, flip })       // t: GIF / Lottie oynatmak için zaman (ms)
+//   const s = Kit.assets.sheet('assets/chars/ba.png', 5) // yatayda eşit bölünmüş kare şeridi
+//   s.drawFrame(ctx, i, cx, baseY, height, { flip })     // i. kareyi çizer, ayağı (cx, baseY) noktasına sabitler
 //
-// Asset thiếu: d.missing = true, người gọi tự vẽ hình giữ chỗ.
+// Eksik dosya: d.missing = true olur, çağıran yer tutucu şekli kendisi çizer.
 
 (function () {
   const cache = new Map();
@@ -31,7 +31,7 @@
     return d;
   }
 
-  // GIF: giải mã thành danh sách khung + thời lượng; trình duyệt không hỗ trợ thì dùng khung đầu
+  // GIF: kare listesi + süre olarak çözülür; tarayıcı desteklemiyorsa ilk kare kullanılır
   function gif(url) {
     const d = base(url);
     d.kind = 'gif';
@@ -134,7 +134,7 @@
     if (needSave) ctx.restore();
   }
 
-  /** Drawable cho một đường dẫn bất kỳ (tự nhận định dạng theo đuôi file). */
+  /** Herhangi bir yol için drawable (biçimi dosya uzantısından anlar). */
   function get(url) {
     if (!url) { const d = base(''); d.missing = true; return d; }
     if (cache.has(url)) return cache.get(url);
@@ -144,9 +144,9 @@
     return d;
   }
 
-  // ---------- Tờ khung hình (nhân vật nhiều tư thế) ----------
-  // Chia đều theo chiều ngang thành `frames` ô; mỗi ô tự cắt sát phần có hình (bỏ khoảng trống)
-  // để nhân vật các tư thế đứng chân thẳng hàng và cao đều nhau.
+  // ---------- Kare şeridi (çok pozlu kişiler) ----------
+  // Yatayda `frames` hücreye eşit bölünür; her hücre görselin olduğu kısma göre kırpılır (boşluk atılır)
+  // ki farklı pozlardaki kişilerin ayakları aynı hizada ve boyları eşit olsun.
   function sheet(url, frames = 1) {
     const key = `${url}#${frames}`;
     if (cache.has(key)) return cache.get(key);
@@ -171,7 +171,7 @@
       s.ready = true;
     };
     prepare();
-    // vẽ khung i, neo giữa chân tại (cx, baseY), cao `height` (theo chiều cao của ô đã cắt)
+    // i. kareyi çizer, ayakların ortasını (cx, baseY)'ye sabitler, `height` yüksekliğinde (kırpılmış hücrenin boyuna göre)
     s.drawFrame = (ctx, i, cx, baseY, height, o = {}) => {
       if (!s.ready) return false;
       const b = s.boxes[Math.max(0, Math.min(frames - 1, i | 0))];
@@ -186,7 +186,7 @@
     return s;
   }
 
-  // Hộp bao phần có alpha > 16 trong vùng (x0, y0, w, h)
+  // (x0, y0, w, h) alanında alpha > 16 olan kısmın sınır kutusu
   function trim(data, W, x0, y0, w, h) {
     let minX = w, minY = h, maxX = -1, maxY = -1;
     for (let y = 0; y < h; y += 2) {

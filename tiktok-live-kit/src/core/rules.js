@@ -1,5 +1,5 @@
-// Luật: quà nào / lệnh chat nào → hành động nào của theme.
-// Thứ tự ưu tiên cho quà: đúng ID quà → đúng tên quà (bí danh, không dấu) → bậc theo giá một món.
+// Kurallar: hangi hediye / sohbet komutu → temanın hangi eylemi.
+// Hediye öncelik sırası: tam hediye ID'si → hediye adı (takma ad, aksansız) → tek hediyenin fiyat kademesi.
 
 import { plain } from './normalize.js';
 

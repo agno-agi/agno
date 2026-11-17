@@ -1,97 +1,93 @@
-# Going live
+# Canlıya çıkış
 
-**English** | [Tiếng Việt](GO-LIVE.vi.md)
-
-The technical part of putting a theme on a TikTok LIVE. Account requirements and TikTok's content rules: see TikTok / LIVE Studio.
+Bir temayı TikTok CANLI'ya almanın teknik kısmı. Hesap gereksinimleri ve TikTok'un içerik kuralları için TikTok / LIVE Studio'ya bakın.
 
 ```
-TikTok LIVE ──(gifts, likes, chat)──> TikFinity Desktop ──ws://127.0.0.1:21213──┐
-            └──(fallback) direct connection ─────────────────────────────────────┤
-                                                                                  ▼
-                                                            Kit (run.bat, port 3939)
-                                                                                  │
+TikTok CANLI ──(hediye, kalp, sohbet)──> TikFinity Desktop ──ws://127.0.0.1:21213──┐
+            └──(yedek) doğrudan bağlantı ─────────────────────────────────────────┤
+                                                                                   ▼
+                                                              Kit (run.bat, port 3939)
+                                                                                   │
                         LIVE Studio / OBS <── overlay http://localhost:3939/overlay
 ```
 
-## 0. Pick a setup
+## 0. Bir düzen seçin
 
-Answer two questions first: **which app will put the picture on air**, and **what does the account allow** (LIVE Studio access, or a stream key from TikTok)?
+Önce iki soruyu yanıtlayın: **görüntüyü hangi uygulama yayına verecek** ve **hesap neye izin veriyor** (LIVE Studio erişimi mi, TikTok'tan yayın anahtarı mı)?
 
-| Setup | Needs | Each live | Notes |
+| Düzen | Gerekenler | Her canlıda | Notlar |
 |---|---|---|---|
-| **A. LIVE Studio, window capture** | LIVE Studio access | `run.bat` + `overlay.bat` | Simplest; Studio captures the overlay's Chrome window |
-| **B. OBS → Virtual Camera → LIVE Studio** | LIVE Studio access, OBS | `run.bat` + OBS | **Smoothest**: OBS renders the overlay itself, the source is saved in the scene, no `overlay.bat` |
-| **C. OBS with a stream key** | A stream key for the account, OBS | `run.bat` + OBS | Streams straight from OBS, no Studio |
+| **A. LIVE Studio, pencere yakalama** | LIVE Studio erişimi | `run.bat` + `overlay.bat` | En basiti; Studio overlay'in Chrome penceresini yakalar |
+| **B. OBS → Sanal Kamera → LIVE Studio** | LIVE Studio erişimi, OBS | `run.bat` + OBS | **En akıcısı**: OBS overlay'i kendisi çizer, kaynak sahnede kayıtlıdır, `overlay.bat` gerekmez |
+| **C. Yayın anahtarıyla OBS** | Hesap için yayın anahtarı, OBS | `run.bat` + OBS | Doğrudan OBS'den yayın yapar, Studio gerekmez |
 
-If LIVE Studio says the account has no access, the account isn't eligible to stream from a computer yet: sort that out on TikTok first. Whatever the setup, `run.bat` must run during the whole live: it serves the overlay, the voice and the live data.
+LIVE Studio hesabın erişimi olmadığını söylüyorsa hesap henüz bilgisayardan yayın yapmaya uygun değildir: önce bunu TikTok'ta çözün. Düzen ne olursa olsun `run.bat` canlı boyunca çalışmalıdır: overlay'i, sesi ve canlı veriyi o sunar.
 
-## 1. Requirements
+## 1. Gereksinimler
 
-| Software | Notes |
+| Yazılım | Notlar |
 |---|---|
-| Node.js 20+ | https://nodejs.org (`run.bat` tells you if it's missing) |
-| Chrome | Setup A: opens the overlay window for LIVE Studio to capture (Studio lists Chrome windows) |
-| TikTok LIVE Studio or OBS | Streaming app |
-| TikFinity **Desktop** (recommended) | The installed app (the web version does not expose port 21213). Without it, use the direct connection |
+| Node.js 20+ | https://nodejs.org (eksikse `run.bat` söyler) |
+| Chrome | Düzen A: LIVE Studio'nun yakalaması için overlay penceresini açar (Studio Chrome pencerelerini listeler) |
+| TikTok LIVE Studio veya OBS | Yayın uygulaması |
+| TikFinity **Desktop** (önerilir) | Kurulu uygulama (web sürümü 21213 portunu açmaz). Yoksa doğrudan bağlantıyı kullanın |
 
-## 2. Run the kit
+## 2. Kiti çalıştırın
 
-1. Run `run.bat` (installs dependencies the first time). The black window is the server: **keep it open for the whole live**.
-2. The control panel opens at http://localhost:3939: pick a theme, check connection status, test effects, toggle the demo. Its **Guide** tab (*Hướng dẫn*) sums up this page.
+1. `run.bat` çalıştırın (ilk seferde bağımlılıkları kurar). Siyah pencere sunucudur: **tüm canlı boyunca açık tutun**.
+2. Kontrol paneli http://localhost:3939 adresinde açılır: tema seçin, bağlantı durumuna bakın, efektleri deneyin, demoyu açıp kapatın. **Rehber** sekmesi bu sayfanın özetidir.
 
-## 3. Put the overlay into the streaming app
+## 3. Overlay'i yayın uygulamasına koyun
 
-**A. TikTok LIVE Studio (window capture)**
-1. Run `overlay.bat`: opens the overlay as its own vertical Chrome window that **plays sound on its own** and **doesn't freeze when covered by other windows**.
-2. Studio: vertical layout → **Add source → Window capture → chrome.exe** (the title is the theme name).
-3. Select the source → set it to **fill** (not stretch) to cover the frame. The live frame is taller than 9:16, so about 100px is cropped on each side: keep text and panels inside the safe zone (`/overlay?safe`).
-4. Don't minimize the overlay window; having it behind other windows is fine.
-5. Sound: enable desktop audio capture in Studio's audio settings.
+**A. TikTok LIVE Studio (pencere yakalama)**
+1. `overlay.bat` çalıştırın: overlay'i kendi dikey Chrome penceresinde açar; **sesi kendisi çalar** ve **başka pencereler üstünü örttüğünde donmaz**.
+2. Studio: dikey düzen → **Kaynak ekle → Pencere yakalama → chrome.exe** (başlık tema adıdır).
+3. Kaynağı seçin → çerçeveyi kaplaması için **doldur** (esnetme değil) yapın. Canlı çerçeve 9:16'dan uzundur, bu yüzden her yandan yaklaşık 100px kesilir: yazı ve panelleri güvenli bölgede tutun (`/overlay?safe`).
+4. Overlay penceresini küçültmeyin; başka pencerelerin arkasında kalması sorun değildir.
+5. Ses: Studio'nun ses ayarlarında masaüstü sesi yakalamayı açın.
 
-**B and C. OBS** (set up once, OBS remembers it)
-1. Settings → Video: base and output resolution 1080 × 1920, 30 FPS.
-2. Sources → **Browser**: URL `http://localhost:3939/overlay`, width 1080, height 1920, tick *Control audio via OBS*. Right-click → Interact, click the overlay once to enable sound.
-3. **B, into LIVE Studio**: OBS → *Start Virtual Camera*. The virtual camera carries picture only, so set the browser source's sound to play out loud: Edit → Advanced Audio Properties → Audio Monitoring → **Monitor and Output**. In Studio: vertical layout → **Add source → Camera → OBS Virtual Camera**, fill the frame, and enable desktop audio capture.
-4. **C, with a stream key**: Settings → Stream → Custom, paste the server URL and stream key from TikTok → *Start Streaming*. Sound goes through OBS directly.
+**B ve C. OBS** (bir kez kurulur, OBS hatırlar)
+1. Ayarlar → Video: temel ve çıkış çözünürlüğü 1080 × 1920, 30 FPS.
+2. Kaynaklar → **Tarayıcı**: URL `http://localhost:3939/overlay`, genişlik 1080, yükseklik 1920, *Sesi OBS ile kontrol et* işaretli. Sağ tık → Etkileşim, sesi açmak için overlay'e bir kez tıklayın.
+3. **B, LIVE Studio'ya**: OBS → *Sanal Kamerayı Başlat*. Sanal kamera yalnızca görüntü taşır, bu yüzden tarayıcı kaynağının sesini hoparlörden çaldırın: Düzenle → Gelişmiş Ses Özellikleri → Ses İzleme → **İzle ve Çıkış Ver**. Studio'da: dikey düzen → **Kaynak ekle → Kamera → OBS Virtual Camera**, çerçeveyi doldurun, masaüstü sesi yakalamayı açın.
+4. **C, yayın anahtarıyla**: Ayarlar → Yayın → Özel, TikTok'tan aldığınız sunucu URL'sini ve yayın anahtarını yapıştırın → *Yayını Başlat*. Ses doğrudan OBS'den gider.
 
-Next time: run `run.bat`, open OBS (start the virtual camera for B). If the overlay is blank, right-click the source → Refresh.
+Bir sonraki sefer: `run.bat` çalıştırın, OBS'yi açın (B için sanal kamerayı başlatın). Overlay boşsa kaynağa sağ tık → Yenile.
 
-To put the characters over your own camera or video: turn on **Green screen** (*Nền xanh để ghép trong OBS*) in the control panel's theme settings, then add a **Chroma Key** filter to the Browser source.
+Karakterleri kendi kameranızın veya videonuzun üstüne koymak için: kontrol panelindeki tema ayarlarında **OBS için yeşil arka plan**'ı açın, sonra Tarayıcı kaynağına **Chroma Key** filtresi ekleyin.
 
-Stream at 30 FPS: the overlay already caps its frame rate (`scene.json` `"fps": 30`), leaving the CPU to the streaming app's encoder.
+30 FPS ile yayın yapın: overlay kare hızını zaten sınırlar (`scene.json` `"fps": 30`), işlemciyi yayın uygulamasının kodlayıcısına bırakır.
 
-## 4. Connect live data (gifts, likes, chat)
+## 4. Canlı veriyi bağlayın (hediye, kalp, sohbet)
 
-The control panel is in Vietnamese; button names are given in brackets.
+**TikFinity Desktop ile**: TikFinity'yi açın, giriş yapın, kullanıcı adı kutusuna kanalın tam @adını girin (@ olmadan), TikFinity'nin canlıya bağlandığını söylemesini bekleyin. Kontrol paneli: **TikFinity Desktop** seçin → **Bağlan**.
 
-**Via TikFinity Desktop**: open TikFinity, sign in, enter the channel's exact @handle in the username box (without @), wait for TikFinity to say it's connected to the live. Control panel: choose **TikFinity Desktop** → **Connect** (*Kết nối*).
+**Doğrudan**: kontrol panelinde **Doğrudan**'ı seçin, kanal adını yazın → **Bağlan** (kanal canlıya geçtikten sonra).
 
-**Direct**: in the control panel choose **Direct** (*Trực tiếp*), type the channel name → **Connect** (after the channel is live).
+**Otomatik**: TikFinity varsa onu kullanır, yoksa doğrudan bağlanır. Kopunca yeniden dener (aralık 30 saniyeye kadar açılır).
 
-**Auto** (*Tự động*): uses TikFinity if it's there, otherwise connects directly. On disconnect it retries (backing off up to 30 seconds).
+Yeşil durum noktası ve ilerleyen "son olay … önce" satırı veri aktığı anlamına gelir.
 
-A green status dot and a ticking "last event … ago" line mean data is flowing.
+## 5. Yayına çıkmadan önce
 
-## 5. Before going on air
+- **Deneme** sekmesinde: efektleri ve hediye düğmelerini deneyin, **Ses denemesi**ni kullanın, makinenin dayanıp dayanmadığını görmek için 60 veya 400 kişilik kalabalık bırakın.
+- Otomatik mod kalabalık bir sahne gösterir; gerçek canlıdan önce **kapatın** ve **İstatistik** sekmesinden **Yeni oturum**'a tıklayın (gerçek canlıya bağlanmak demoyu da durdurur).
+- Yazı ve panellerin güvenli bölgede olduğunu görmek için `/overlay?safe` açın.
+- Sabit cümleler (kuralar, periyodik metinler, davetler) sunucu başladıktan birkaç dakika sonra önceden okunur: kiti canlıdan epey önce başlatın.
 
-- In the **Test** tab (*Thử nghiệm*): try the effects and the gift buttons, use **Test voice** (*Đọc thử*), drop a 60 or 400-person crowd to check the machine copes.
-- Auto mode (*Tự chạy*) shows a crowded scene; **turn it off** (*Tắt*) and click **New session** (*Phiên mới*, **Stats** tab) before the real live (connecting to a real live also stops the demo).
-- Open `/overlay?safe` to check text and panels are inside the safe zone.
-- Fixed lines (draws, periodic chants, prompts) are pre-rendered a few minutes after the server starts: start the kit well before the live.
+## Sık sorunlar
 
-## Common problems
-
-| Symptom | What to do |
+| Belirti | Ne yapmalı |
 |---|---|
-| Studio's window capture is black, "video signal lost" | Open the overlay with `overlay.bat` (Chrome), pick the right chrome.exe; reload the source in Studio |
-| The overlay window isn't in Studio's list | Studio doesn't list Edge app windows: use Chrome (`overlay.bat` prefers Chrome) |
-| Overlay is silent | The `overlay.bat` window plays sound on its own; in a normal browser tab click once. Enable desktop audio in Studio |
-| Overlay is empty, no scene | Usually opened while the server was restarting; the page reloads itself after 12 seconds, or press F5 |
-| "TikFinity not found at ws://127.0.0.1:21213" | TikFinity Desktop isn't open / not connected to the live, or you're using the web version. Or switch to Direct |
-| Direct connection can't get the Room ID | The channel isn't live yet, or the channel name is wrong |
-| TikFinity says `user_not_found` | Enter the @handle, not the display name |
-| Voice is slow or patchy | Microsoft's TTS service is flaky: fixed lines are pre-rendered; set `"voice": { "fallback": "local" }` in the theme to use Windows' built-in Vietnamese voice when it fails outright |
-| Text and panels cropped on phones | Keep them in the safe zone (`?safe`), at least 100px from the edges |
-| Closed the black window by mistake | Run `run.bat` again, click Connect again, re-select the source in Studio if the picture is gone (OBS: refresh the browser source) |
-| B: Studio shows the picture but no sound | The virtual camera has no sound: set the OBS browser source to *Monitor and Output* and enable desktop audio in Studio |
-| B: "OBS Virtual Camera" isn't in Studio's camera list | Start the virtual camera in OBS before opening Studio, or restart Studio |
+| Studio'nun pencere yakalaması siyah, "video sinyali kayboldu" | Overlay'i `overlay.bat` ile (Chrome) açın, doğru chrome.exe'yi seçin; Studio'da kaynağı yenileyin |
+| Overlay penceresi Studio listesinde yok | Studio Edge uygulama pencerelerini listelemez: Chrome kullanın (`overlay.bat` Chrome'u tercih eder) |
+| Overlay sessiz | `overlay.bat` penceresi sesi kendisi çalar; normal tarayıcı sekmesinde bir kez tıklayın. Studio'da masaüstü sesini açın |
+| Overlay boş, sahne yok | Genelde sunucu yeniden başlarken açılmıştır; sayfa 12 saniye sonra kendini yeniler, ya da F5'e basın |
+| "TikFinity ws://127.0.0.1:21213 adresinde bulunamadı" | TikFinity Desktop açık değil / canlıya bağlı değil ya da web sürümünü kullanıyorsunuz. Ya da Doğrudan'a geçin |
+| Doğrudan bağlantı Room ID alamıyor | Kanal henüz canlı değil ya da kanal adı yanlış |
+| TikFinity `user_not_found` diyor | Görünen adı değil @adı girin |
+| Ses yavaş veya kesik | Microsoft'un TTS servisi kararsızdır: sabit cümleler önceden okunur; tamamen başarısız olunca Windows'un yerleşik Türkçe sesini kullanmak için temaya `"voice": { "fallback": "local" }` yazın |
+| Yazı ve paneller telefonlarda kesiliyor | Güvenli bölgede tutun (`?safe`), kenarlardan en az 100px içeride |
+| Siyah pencereyi yanlışlıkla kapattım | `run.bat` tekrar çalıştırın, Bağlan'a tekrar tıklayın; görüntü gittiyse Studio'da kaynağı yeniden seçin (OBS: tarayıcı kaynağını yenileyin) |
+| B: Studio görüntüyü gösteriyor ama ses yok | Sanal kamerada ses yoktur: OBS tarayıcı kaynağını *İzle ve Çıkış Ver* yapın, Studio'da masaüstü sesini açın |
+| B: Studio'nun kamera listesinde "OBS Virtual Camera" yok | Studio'yu açmadan önce OBS'de sanal kamerayı başlatın ya da Studio'yu yeniden başlatın |

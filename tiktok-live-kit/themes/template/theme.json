@@ -1,15 +1,15 @@
 {
-  "name": "Khung trống",
-  "description": "Khung theme trống của TikTok Live Kit: thay ảnh, nhân vật, hiệu ứng, chữ bằng của bạn.",
+  "name": "Boş şablon",
+  "description": "TikTok Live Kit boş tema iskeleti: görselleri, karakterleri, efektleri ve metinleri kendinizinkilerle değiştirin.",
   "width": 1080,
   "height": 1920,
   "actions": [
     {
       "id": "small",
-      "label": "Quà nhỏ",
+      "label": "Küçük hediye",
       "icon": "✨",
       "card": "1 XU",
-      "description": "Người tặng sáng lên, lấp lánh, gật đầu",
+      "description": "Gönderen parlar, ışıldar, başını sallar",
       "steps": [
         {
           "aura": 1
@@ -35,10 +35,10 @@
     },
     {
       "id": "medium",
-      "label": "Quà vừa",
+      "label": "Orta hediye",
       "icon": "🎉",
       "card": "10 XU",
-      "description": "Lên sân khấu, cổ vũ, pháo giấy, rồi về chỗ",
+      "description": "Sahneye çıkar, tezahürat yapar, konfeti, sonra yerine döner",
       "steps": [
         {
           "walk": "stage"
@@ -69,10 +69,10 @@
     },
     {
       "id": "big",
-      "label": "Quà lớn",
+      "label": "Büyük hediye",
       "icon": "🌟",
       "card": "100+ XU",
-      "description": "Pháo hoa, pháo lạnh, mưa pháo giấy, cả phòng cổ vũ",
+      "description": "Havai fişek, soğuk fişek, konfeti yağmuru, tüm oda tezahürat yapar",
       "steps": [
         {
           "sound": "big"
@@ -98,9 +98,9 @@
     },
     {
       "id": "wave",
-      "label": "Vẫy tay",
+      "label": "El sallama",
       "icon": "👋",
-      "description": "Dùng cho lệnh chat",
+      "description": "Sohbet komutu için",
       "steps": [
         {
           "play": "cheer"
@@ -109,9 +109,9 @@
     },
     {
       "id": "draw",
-      "label": "Rút thăm",
+      "label": "Kura",
       "icon": "🎴",
-      "description": "Dùng cho lệnh chat rút thăm: lá thăm hiện giữa màn, giọng đọc nội dung",
+      "description": "Sohbet kura komutu için: kart ekranın ortasında çıkar, içerik sesli okunur",
       "steps": [
         {
           "play": "nod"
@@ -128,25 +128,25 @@
   "rules": {
     "joinMode": "all",
     "joinKeywords": [
-      "hi",
-      "xin chao"
+      "merhaba",
+      "selam"
     ],
     "bigGiftCoins": 100,
     "giftTiers": [
       {
         "minCoins": 1,
         "action": "small",
-        "label": "Quà nhỏ"
+        "label": "Küçük hediye"
       },
       {
         "minCoins": 10,
         "action": "medium",
-        "label": "Quà vừa"
+        "label": "Orta hediye"
       },
       {
         "minCoins": 100,
         "action": "big",
-        "label": "Quà lớn"
+        "label": "Büyük hediye"
       }
     ],
     "giftOverrides": [],
@@ -155,21 +155,21 @@
         "keywords": [
           "hi",
           "hello",
-          "chào"
+          "merhaba"
         ],
         "match": "exact",
         "action": "wave",
-        "label": "Vẫy tay",
+        "label": "El sallama",
         "cooldownMs": 5000
       },
       {
         "keywords": [
-          "rút thăm",
-          "rut tham"
+          "kura",
+          "dilek"
         ],
         "match": "contains",
         "action": "draw",
-        "label": "Rút thăm",
+        "label": "Kura",
         "cooldownMs": 3000,
         "draw": "loi-chuc"
       }
@@ -180,16 +180,16 @@
       "perDay": true,
       "items": [
         {
-          "title": "Lá số 1 · Đại cát",
-          "text": "Hôm nay làm gì cũng thuận."
+          "title": "Kart 1 · Çok şanslı",
+          "text": "Bugün her şey yolunda gidecek."
         },
         {
-          "title": "Lá số 2 · Trung cát",
-          "text": "Kiên nhẫn một chút, tin vui sắp tới."
+          "title": "Kart 2 · Şanslı",
+          "text": "Biraz sabır, güzel haber yakında."
         },
         {
-          "title": "Lá số 3 · Tiểu cát",
-          "text": "Gặp người tốt, nhớ nói lời cảm ơn."
+          "title": "Kart 3 · Küçük şans",
+          "text": "İyi biriyle karşılaşırsın, teşekkür etmeyi unutma."
         }
       ]
     }
@@ -199,7 +199,7 @@
   "npcs": [
     {
       "id": "host",
-      "name": "Chủ phòng",
+      "name": "Yayıncı",
       "at": "stage",
       "pose": "stand",
       "reactions": {
@@ -215,11 +215,11 @@
   "titles": [
     {
       "minCoins": 0,
-      "label": "Khách"
+      "label": "Misafir"
     },
     {
       "minCoins": 50,
-      "label": "Fan cứng"
+      "label": "Sadık takipçi"
     },
     {
       "minCoins": 500,
@@ -230,37 +230,37 @@
     {
       "id": "likes",
       "metric": "likes",
-      "label": "Mục tiêu tim",
+      "label": "Kalp hedefi",
       "every": 1000
     }
   ],
   "voice": {
     "enabled": true,
-    "voice": "vi-VN-HoaiMyNeural",
+    "voice": "tr-TR-EmelNeural",
     "giftMinCoins": 1,
     "gift": [
-      "Cảm ơn {ten} đã tặng {qua}{lan}!"
+      "{ten}, {qua}{lan} için teşekkürler!"
     ],
     "bigGift": [
-      "Wow! Cảm ơn {ten} đã tặng {qua}{lan}. {loi}"
+      "Harika! {ten}, {qua}{lan} için teşekkürler. {loi}"
     ],
     "join": [
-      "Chào {ten}!"
+      "Hoş geldin {ten}!"
     ],
     "chat": [
-      "{ten} nhắn: {chat}."
+      "{ten} yazdı: {chat}."
     ],
     "follow": [
-      "Cảm ơn {ten} đã theo dõi kênh."
+      "{ten}, kanalı takip ettiğin için teşekkürler."
     ],
     "title": [
-      "Chúc mừng {ten} lên {danh_hieu}!"
+      "Tebrikler {ten}, {danh_hieu} oldun!"
     ],
     "goal": [
-      "Cả phòng đã đạt {gia_tri} {muc_tieu}!"
+      "Tüm oda {gia_tri} {muc_tieu} hedefine ulaştı!"
     ],
     "draw": [
-      "{ten} rút được {title}. {text}"
+      "{ten} şunu çekti: {title}. {text}"
     ],
     "cooldown": {
       "join": 15000,
@@ -274,41 +274,41 @@
   "periodic": {
     "everyMinutes": 4,
     "quietSeconds": 20,
-    "title": "✦ THÔNG BÁO ✦",
+    "title": "✦ DUYURU ✦",
     "items": [
-      "Bình luận để vào phòng, tặng quà để được vinh danh trên màn hình."
+      "Odaya girmek için yorum yaz, hediye göndererek ekranda öne çık."
     ]
   },
   "prompts": {
     "everySeconds": 90,
     "quietSeconds": 25,
     "items": [
-      "Gõ «rút thăm» để xem lá thăm hôm nay nhé.",
-      "Thả tim để cả phòng đạt mục tiêu!"
+      "«kura» yazarak bugünün kartını çekebilirsin.",
+      "Kalp bırakarak odayı hedefe ulaştır!"
     ]
   },
   "hud": {
     "title": {
-      "text": "TÊN KÊNH CỦA BẠN",
-      "sub": "Dòng phụ: khẩu hiệu, chủ đề"
+      "text": "KANAL ADINIZ",
+      "sub": "Alt satır: slogan, konu"
     },
     "counters": true,
     "giftCard": {
-      "verb": "đã tặng",
-      "unit": "xu"
+      "verb": "gönderdi:",
+      "unit": "jeton"
     },
     "tiers": true,
     "board": {
-      "title": "BẢNG VÀNG",
+      "title": "LİDER TABLOSU",
       "size": 3
     },
     "ticker": {
-      "title": "Vừa tặng",
+      "title": "Son gönderilenler",
       "size": 5
     },
     "goal": true,
     "guide": {
-      "title": "Cách tham gia"
+      "title": "Nasıl katılırım"
     }
   },
   "colors": {

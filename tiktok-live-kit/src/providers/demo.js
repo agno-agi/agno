@@ -1,4 +1,4 @@
-// Người xem giả để thử theme khi chưa live (Test Lab). Đi qua đúng đường ống như live thật.
+// Henüz canlı değilken temayı denemek için sahte izleyiciler (Test Lab). Gerçek canlıyla aynı işlem hattından geçer.
 
 const NAMES = ['Ayşe K.', 'Mehmet Y.', 'zeynep_44', 'Hasan', 'Fatma H.', 'ali.can', 'Emre', 'Elif Nur', 'Mustafa', 'Hatice', 'Yusuf', 'Merve', 'Kemal A.', 'Selin', 'Ömer', 'Gülşen', 'Burak', 'Esra', 'İbrahim', 'Rabia'];
 const CHATS = ['Allah rahmet eylesin', 'Mekanı cennet olsun', '🤲🤲🤲', 'Başımız sağolsun', 'Ailesine sabır diliyorum', 'Amin', 'Nur içinde yatsın', 'Selamün aleyküm'];
@@ -33,7 +33,7 @@ export function createDemo({ onEvent, extraChats = [] }) {
     like: (n) => ({ kind: 'like', user: someone(), likeCount: n || 1 + Math.floor(Math.random() * 15) }),
     follow: () => ({ kind: 'follow', user: someone() }),
     share: () => ({ kind: 'share', user: someone() }),
-    // gift: quà cụ thể (từ thư viện quà đã gặp) để thử đúng luật theo ID / tên
+    // gift: belirli bir hediye (görülen hediye kataloğundan); ID / ada göre kuralı doğru denemek için
     gift: (coins, count = 1, gift) => {
       const g = gift?.id ? { id: String(gift.id), name: String(gift.name || 'Hediye'), unitCoins: Number(gift.coins) || Number(coins) || 1, image: String(gift.image || '') }
         : GIFTS.find((x) => x.unitCoins === Number(coins)) || { id: 'demo-' + coins, name: `Hediye ${coins} jeton`, unitCoins: Number(coins) || 1 };
@@ -46,14 +46,14 @@ export function createDemo({ onEvent, extraChats = [] }) {
     if (ev) onEvent(ev);
   }
 
-  // Thả n người vào (rải đều, dưới giới hạn maxJoinsPerSecond của engine để không bị bỏ bớt) để thử cảnh đông
+  // n kişiyi sahaya bırakır (eşit aralıkla, motorun maxJoinsPerSecond sınırının altında ki atılmasınlar) kalabalık sahneyi denemek için
   function crowd(n, perSecond = 12) {
     const total = Math.max(1, Math.min(500, Math.round(Number(n) || 0)));
     const gap = Math.max(4000 / total, 1000 / Math.max(1, perSecond));
     for (let i = 0; i < total; i++) setTimeout(() => fire('member'), Math.round(i * gap));
   }
 
-  // gifts: false khi đang lên sóng thật: chỉ có người vào, chat, tim cho cảnh có không khí, không bày quà giả trước mặt người xem
+  // gifts: false → gerçek yayındayken yalnızca giriş, sohbet, kalp üretilir; izleyicinin önüne sahte hediye konmaz
   function auto(rate = 1, { gifts = true } = {}) {
     stop();
     if (!rate) return;

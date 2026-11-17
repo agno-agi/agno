@@ -1,77 +1,77 @@
-# Your theme idea
+# Tema fikriniz
 
-**English** | [Tiếng Việt](IDEA.vi.md)
+Kit hazır tema ile gelmez. Bir tema yapmadan önce aşağıdaki soruları yanıtlayın: kendiniz doldurun ya da yapay zekâ kodlama ajanınızın tek tek sormasına izin verin (ajan [AGENTS.md](../AGENTS.md) dosyasını okur). Kısa yanıtlar yeterlidir; "emin değilim" de bir yanıttır, ajan seçenekler önerir.
 
-The kit ships no ready-made theme. Before building one, answer the questions below: fill them in yourself, or let your AI coding agent ask them one by one (it reads [AGENTS.md](../AGENTS.md)). Short answers are fine; "not sure" is an answer too, the agent will suggest options.
+## 1. Mekân
 
-## 1. The space
+- **Konu**: canlı yayın nerede geçiyor? (kafe, balık göleti, sınıf, tribün, bahçe, uzay istasyonu, anma salonu…)
+- **Hava**: sıcak, komik, enerjik, sakin, ciddi?
+- Çerçevenin üstündeki **ana nesne**: sahne, tezgâh, büyük bir ağaç, ekran…
+- **Yayıncı**: kamerada siz mi olacaksınız, yoksa sahne tüm görüntü mü?
 
-- **Topic**: where does the live take place? (café, fishing pond, classroom, stadium stand, garden, space station…)
-- **Mood**: cosy, funny, energetic, calm, solemn?
-- **Main subject** at the top of the frame: a stage, a counter, a big tree, a screen…
-- **Host**: will you be on camera, or is the scene the whole picture?
+## 2. İzleyiciler
 
-## 2. Viewers
+- Biri katılınca sahnede **kim olur**? (müşteri, hayran, balık, öğrenci, cemaatten biri…)
+- Kimler girer: etkileşime giren **herkes** mi, yoksa yalnızca bir **anahtar sözcük** yazan / hediye gönderen mi?
+- Beklerken ne yaparlar? (oturur, dans eder, dolaşır, tezahürat yapar, sessiz durur)
 
-- When someone joins, **who do they become** in the scene? (a customer, a fan, a fish, a student…)
-- Who enters: **everyone** who interacts, or only people who chat a **keyword** / send a gift?
-- What do they do while waiting? (sit, dance, wander, cheer)
+## 3. Hediyeler
 
-## 3. Gifts
+Her kademe için ekranda ne olur. Bir hediye birden fazla şeyi tetikleyebilir (bir yere yürümek, bir hareket oynatmak, efekt, ses, ses cümlesi).
 
-What happens on screen for each level. One gift can trigger several things (walk somewhere, play a move, an effect, a sound, a voice line).
-
-| Level | Coins per gift | What happens |
+| Kademe | Hediye başına jeton | Ne olur |
 |---|---|---|
-| Small | 1–9 | e.g. the person glows and waves |
-| Medium | 10–99 | e.g. walks to the stage and does a move |
-| Large | 100+ | e.g. fireworks, camera zoom, the whole crowd cheers |
+| Küçük | 1–9 | ör. kişi parlar ve el sallar |
+| Orta | 10–99 | ör. sahneye yürür ve bir hareket yapar |
+| Büyük | 100+ | ör. havai fişek, kamera yakınlaşması, tüm kalabalık tezahürat yapar |
 
-Any specific gift with its own action? (e.g. Rose = throws a flower)
+Kendi eylemi olan belirli bir hediye var mı? (ör. Gül = çiçek atar)
 
-## 4. Chat
+> Not: Hediye eşleme sabit olmalıdır: aynı hediye her zaman aynı etkiyi yapar. Şansa bağlı ödül veya çekiliş yapmayın.
 
-- **Commands**: what can viewers type, and what happens? (e.g. "dance" → dances, "order coffee" → a cup appears)
-- **Draws**: a free daily card, fortune, wish or quote by chat?
-- Should comments be **read aloud**?
+## 4. Sohbet
 
-## 5. Progress
+- **Komutlar**: izleyiciler ne yazabilir, ne olur? (ör. "dans" → dans eder, "kahve" → fincan belirir)
+- **Kuralar**: sohbetle günlük ücretsiz bir kart, fal, dilek veya söz?
+- Yorumlar **sesli okunsun** mu?
 
-- **Titles** by total coins (e.g. Regular → VIP → Legend)?
-- **Goals** for the whole room (e.g. every 1,000 likes = something happens)?
-- **Leaderboard**: honour seats or a podium for the top gifters?
+## 5. İlerleme
 
-## 6. Voice and automatic content
+- Toplam jetona göre **unvanlar** (ör. Müdavim → VIP → Efsane)?
+- Tüm oda için **hedefler** (ör. her 1.000 kalpte bir şey olur)?
+- **Sıralama**: en çok gönderenler için onur koltukları veya podyum?
 
-The voice is Vietnamese only (two voices: female HoaiMy, male NamMinh).
+## 6. Ses ve otomatik içerik
 
-- What does it say when someone **joins**, sends a **gift**, reaches a **title**?
-- **Periodic announcements** (every few minutes) and **prompts** when chat is quiet ("Type dance to join the party!")?
+Ses Türkçedir (iki ses: kadın Emel, erkek Ahmet).
 
-## 7. Assets
+- Biri **katılınca**, **hediye** gönderince, bir **unvana** ulaşınca ne söylenir?
+- **Periyodik duyurular** (birkaç dakikada bir) ve sohbet sessizken **davetler** ("Partiye katılmak için dans yaz!")?
 
-- What do you already have: background, characters, effects, music, sound effects?
-- Missing ones: generate with AI (see [ASSETS-GUIDE.md](ASSETS-GUIDE.md)), or start with placeholder shapes?
-- Art style: photo, 3D, anime, flat cartoon?
-- **2D or 3D?** 2D = one background image + character sheets (easy to make beautiful with AI images). 3D = GLB models and a moving camera (free CC0 model packs exist; heavier on the computer).
+## 7. Görseller
 
-## 8. Going live
+- Elinizde ne var: arka plan, karakterler, efektler, müzik, ses efektleri?
+- Eksikler: yapay zekâyla üretin ([ASSETS-GUIDE.md](ASSETS-GUIDE.md)'a bakın) ya da yer tutucu şekillerle başlayın?
+- Sanat stili: fotoğraf, 3D, anime, düz çizgi film?
+- **2D mi 3D mi?** 2D = tek arka plan görseli + karakter sayfaları (yapay zekâ görselleriyle güzel yapmak kolay). 3D = GLB modeller ve hareketli kamera (ücretsiz CC0 model paketleri var; bilgisayarı daha çok yorar).
 
-- Which setup: LIVE Studio window capture, OBS → virtual camera → LIVE Studio, or OBS with a stream key? (see [GO-LIVE.md](GO-LIVE.md))
-- Live data through TikFinity Desktop or the direct connection?
+## 8. Canlıya çıkış
 
-## What the agent gives back
+- Hangi düzen: LIVE Studio pencere yakalama, OBS → sanal kamera → LIVE Studio, ya da yayın anahtarıyla OBS? ([GO-LIVE.md](GO-LIVE.md)'a bakın)
+- Canlı veri TikFinity Desktop üzerinden mi, doğrudan bağlantıyla mı?
 
-Before writing any code, the agent sums your answers up as a one-page plan and waits for your OK:
+## Ajanın geri verdiği
+
+Tek satır kod yazmadan önce ajan yanıtlarınızı tek sayfalık plana çevirir ve onayınızı bekler:
 
 ```
-Theme: <name> (folder themes/<kebab-name>)
-Scene: <background, main subject, where the crowd stands>
-Viewers: <who they become, join rule, idle behaviour>
-Gifts: small → <steps> · medium → <steps> · large → <steps> · <special gifts>
-Chat: <commands> · <draws>
-Titles / goals: <list>
-Voice: <join / gift / title lines> · periodic: <items> · prompts: <items>
-Assets: have <…> · need <…> (prompts ready in ASSETS-GUIDE style)
-Live: <setup A / B / C>, <TikFinity / direct>
+Tema: <ad> (klasör themes/<kebab-ad>)
+Sahne: <arka plan, ana nesne, kalabalığın durduğu yer>
+İzleyiciler: <kim olurlar, giriş kuralı, boştaki davranış>
+Hediyeler: küçük → <adımlar> · orta → <adımlar> · büyük → <adımlar> · <özel hediyeler>
+Sohbet: <komutlar> · <kuralar>
+Unvanlar / hedefler: <liste>
+Ses: <giriş / hediye / unvan cümleleri> · periyodik: <maddeler> · davetler: <maddeler>
+Görseller: var <…> · gerek <…> (ASSETS-GUIDE tarzında hazır prompt'lar)
+Canlı: <düzen A / B / C>, <TikFinity / doğrudan>
 ```

@@ -1,4 +1,4 @@
-// Bảng điều khiển chung: kết nối live, luật, thử nghiệm, thống kê, hướng dẫn. Tự đọc theme đang chạy.
+// Ortak kontrol paneli: canlı bağlantı, kurallar, deneme, istatistik, rehber. Çalışan temayı kendisi okur.
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -7,8 +7,8 @@ const fmt = (n) => Number(n || 0).toLocaleString('vi-VN');
 let ws;
 let theme = null;
 let rules = null;
-let gifts = [];       // quà đã gặp thật trên live
-let presetGifts = []; // vài quà phổ biến để thử khi chưa gặp quà thật
+let gifts = [];       // canlıda gerçekten görülen hediyeler
+let presetGifts = []; // henüz gerçek hediye görülmediyse denemek için birkaç yaygın hediye
 const send = (m) => ws?.readyState === 1 && ws.send(JSON.stringify(m));
 
 const OV = location.origin + '/overlay';
@@ -19,8 +19,8 @@ document.querySelectorAll('.ovlink').forEach((el) => (el.textContent = OV));
 document.querySelectorAll('[data-ov]').forEach((a) => (a.href = OV + a.dataset.ov));
 document.querySelectorAll('[data-copy-prompt]').forEach((b) => (b.onclick = () => {
   navigator.clipboard?.writeText(b.previousElementSibling.textContent);
-  b.textContent = 'Đã chép ✓';
-  setTimeout(() => (b.textContent = 'Chép'), 2000);
+  b.textContent = 'Kopyalandı ✓';
+  setTimeout(() => (b.textContent = 'Kopyala'), 2000);
 }));
 
 // ---------- Tab ----------
@@ -35,38 +35,38 @@ let savedTab = 'live';
 try { savedTab = localStorage.getItem('kit.tab') || 'live'; } catch {}
 showTab(savedTab);
 
-// ---------- Kết nối live ----------
+// ---------- Canlı bağlantı ----------
 $('btnConnect').onclick = () => send({ type: 'connect', username: $('user').value, provider: $('provider').value });
 $('btnStop').onclick = () => send({ type: 'disconnect' });
 $('themeSel').onchange = () => send({ type: 'setTheme', id: $('themeSel').value });
-$('btnReset').onclick = () => { if (confirm('Bắt đầu phiên mới? Bảng xếp hạng và số liệu phiên này sẽ về 0 (tải CSV trước nếu cần).')) send({ type: 'reset' }); };
+$('btnReset').onclick = () => { if (confirm('Yeni oturum başlatılsın mı? Bu oturumun sıralaması ve sayıları sıfırlanır (gerekirse önce CSV indirin).')) send({ type: 'reset' }); };
 $('btnPeriodic').onclick = () => send({ type: 'periodicNow' });
 
-const STATE_LABEL = { idle: 'Chưa kết nối', connecting: 'Đang kết nối…', reconnecting: 'Đang thử lại…', connected: 'Đã kết nối' };
-const PROVIDER_LABEL = { tikfinity: 'TikFinity', connector: 'trực tiếp' };
+const STATE_LABEL = { idle: 'Bağlı değil', connecting: 'Bağlanıyor…', reconnecting: 'Yeniden deneniyor…', connected: 'Bağlandı' };
+const PROVIDER_LABEL = { tikfinity: 'TikFinity', connector: 'doğrudan' };
 
 function renderState(s) {
   const live = s.live || {};
   const label = (STATE_LABEL[live.state] || live.state) + (live.provider ? ` · ${PROVIDER_LABEL[live.provider] || live.provider}` : '');
   $('dot').className = $('dotTop').className = 'dot ' + (live.state || 'idle');
   $('statusText').textContent = label + (live.message ? ` · ${live.message}` : '');
-  $('statusTop').textContent = label + (s.demo ? ' · đang tự chạy' : '');
-  $('lastEv').textContent = s.lastEventAgo != null ? `· sự kiện cuối ${Math.round(s.lastEventAgo / 1000)}s trước` : '';
+  $('statusTop').textContent = label + (s.demo ? ' · otomatik çalışıyor' : '');
+  $('lastEv').textContent = s.lastEventAgo != null ? `· son olay ${Math.round(s.lastEventAgo / 1000)} sn önce` : '';
   const t = s.totals || {};
-  $('stats').innerHTML = $('stats2').innerHTML = [['Đang xem', s.viewers], ['Vào sân', t.joins], ['Tim', t.likes], ['Xu', t.coins], ['Lượt quà', t.gifts], ['Bình luận', t.chats], ['Theo dõi', t.follows]]
+  $('stats').innerHTML = $('stats2').innerHTML = [['İzleyen', s.viewers], ['Sahaya giren', t.joins], ['Kalp', t.likes], ['Jeton', t.coins], ['Hediye sayısı', t.gifts], ['Yorum', t.chats], ['Takip', t.follows]]
     .map(([k, v]) => `<div><b>${fmt(v)}</b>${k}</div>`).join('');
   const row = (p) => `<li>${esc(p.name)}<span class="t">${esc(p.title)}</span><span class="c">${fmt(p.coins)}</span></li>`;
-  const empty = '<span class="muted">Chưa có ai tặng quà</span>';
+  const empty = '<span class="muted">Henüz hediye gönderen yok</span>';
   $('top').innerHTML = (s.top || []).map(row).join('') || empty;
   $('topMini').innerHTML = (s.top || []).slice(0, 3).map(row).join('') || empty;
-  $('goals').innerHTML = (s.goals || []).map((g) => `<div class="goal">${esc(g.label)}: ${fmt(g.value)} / ${fmt(g.target)}<div class="bar"><div style="width:${Math.round(g.progress * 100)}%"></div></div></div>`).join('') || '<span class="muted">Theme không đặt mục tiêu</span>';
+  $('goals').innerHTML = (s.goals || []).map((g) => `<div class="goal">${esc(g.label)}: ${fmt(g.value)} / ${fmt(g.target)}<div class="bar"><div style="width:${Math.round(g.progress * 100)}%"></div></div></div>`).join('') || '<span class="muted">Temada hedef tanımlı değil</span>';
   if (!s.demo) document.querySelectorAll('[data-rate]').forEach((b) => b.classList.toggle('on', b.dataset.rate === '0'));
 }
 
-// ---------- Thử nghiệm ----------
+// ---------- Deneme ----------
 const SIMS = [
-  ['+1 người vào', { kind: 'member' }], ['Bình luận', { kind: 'chat' }], ['Thả tim', { kind: 'like' }],
-  ['Theo dõi', { kind: 'follow' }], ['Chia sẻ', { kind: 'share' }], ['Combo 1 xu ×10', { kind: 'gift', arg: 1, arg2: 10 }],
+  ['+1 kişi girdi', { kind: 'member' }], ['Yorum', { kind: 'chat' }], ['Kalp bırak', { kind: 'like' }],
+  ['Takip', { kind: 'follow' }], ['Paylaş', { kind: 'share' }], ['Kombo 1 jeton ×10', { kind: 'gift', arg: 1, arg2: 10 }],
 ];
 $('simRow').innerHTML = SIMS.map(([label], i) => `<button data-sim="${i}">${label}</button>`).join('');
 $('simRow').onclick = (e) => { const sim = SIMS[e.target.dataset.sim]?.[1]; if (sim) send({ type: 'sim', ...sim }); };
@@ -79,12 +79,12 @@ document.querySelectorAll('[data-rate]').forEach((b) => b.onclick = () => {
 
 function renderActions() {
   $('actionRow').innerHTML = theme.actions.map((a) => `<button data-action="${esc(a.id)}" title="${esc(a.description || '')}">${iconHtml(a)} ${esc(a.label)}</button>`).join('')
-    + '<label class="inline"><input type="checkbox" id="bigTest"> quà lớn</label>';
+    + '<label class="inline"><input type="checkbox" id="bigTest"> büyük hediye</label>';
   $('actionRow').onclick = (e) => { const id = e.target.closest('[data-action]')?.dataset.action; if (id) send({ type: 'test', action: id, big: $('bigTest').checked }); };
 }
 
 const giftImg = (g) => g.image ? `<img src="${esc(g.image)}" alt="" referrerpolicy="no-referrer" loading="lazy">` : '<span class="noimg">🎁</span>';
-const GROUPS = [['Quà nhỏ', 1, 9, 1], ['Quà vừa', 10, 99, 50], ['Quà lớn', 100, Infinity, 500]]; // tên, từ, đến, giá của nút "quà bất kỳ"
+const GROUPS = [['Küçük hediye', 1, 9, 1], ['Orta hediye', 10, 99, 50], ['Büyük hediye', 100, Infinity, 500]]; // ad, en az, en çok, "herhangi hediye" düğmesinin fiyatı
 
 function renderGiftTests() {
   const all = new Map();
@@ -92,9 +92,9 @@ function renderGiftTests() {
   const list = [...all.values()].sort((a, b) => a.coins - b.coins || a.name.localeCompare(b.name));
   $('giftTests').innerHTML = GROUPS.map(([label, lo, hi, any]) => {
     const items = list.filter((g) => g.coins >= lo && g.coins <= hi);
-    return `<h3>${label} <span class="muted">· ${hi === Infinity ? `${lo}+` : `${lo}–${hi}`} xu</span></h3><div class="gifts">`
-      + items.map((g) => `<button class="gift" data-gtest="${esc(g.id)}">${giftImg(g)}<span>${esc(g.name)}</span><small>${fmt(g.coins)} xu</small></button>`).join('')
-      + `<button class="gift" data-gcoins="${any}"><span class="noimg">＋</span><span>Quà bất kỳ</span><small>${fmt(any)} xu</small></button></div>`;
+    return `<h3>${label} <span class="muted">· ${hi === Infinity ? `${lo}+` : `${lo}–${hi}`} jeton</span></h3><div class="gifts">`
+      + items.map((g) => `<button class="gift" data-gtest="${esc(g.id)}">${giftImg(g)}<span>${esc(g.name)}</span><small>${fmt(g.coins)} jeton</small></button>`).join('')
+      + `<button class="gift" data-gcoins="${any}"><span class="noimg">＋</span><span>Herhangi</span><small>${fmt(any)} jeton</small></button></div>`;
   }).join('');
 }
 $('giftTests').onclick = (e) => {
@@ -105,18 +105,18 @@ $('giftTests').onclick = (e) => {
   if (g) send({ type: 'sim', kind: 'gift', arg: g.coins, gift: { id: g.id, name: g.name, coins: g.coins, image: g.image || '' } });
 };
 
-// ---------- Luật ----------
-// icon của hành động có thể là emoji hoặc đường dẫn ảnh của theme
+// ---------- Kurallar ----------
+// eylemin simgesi emoji veya temanın görsel yolu olabilir
 const isImg = (icon) => /[./]/.test(icon || '');
 const iconText = (a) => (a.icon && !isImg(a.icon) ? a.icon + ' ' : '');
 const iconHtml = (a) => (isImg(a.icon) ? `<img class="ico" src="/themes/${esc(theme.id)}/${esc(a.icon)}" alt="">` : esc(a.icon || ''));
 const actionOptions = (sel) => theme.actions.map((a) => `<option value="${esc(a.id)}"${a.id === sel ? ' selected' : ''}>${iconText(a)}${esc(a.label)}</option>`).join('');
-const tail = '<td class="act"><button class="ghost sm" data-try title="Xem hiệu ứng của dòng này">▶</button><button class="ghost sm" data-del title="Xoá dòng">✕</button></td>';
+const tail = '<td class="act"><button class="ghost sm" data-try title="Bu satırın efektini göster">▶</button><button class="ghost sm" data-del title="Satırı sil">✕</button></td>';
 
 function rowTier(t = {}) { return `<tr><td class="n"><input type="number" min="1" data-k="minCoins" value="${t.minCoins || 1}"></td><td><select data-k="action">${actionOptions(t.action)}</select></td><td><input data-k="label" value="${esc(t.label)}"></td>${tail}</tr>`; }
 function rowOverride(o = {}) { return `<tr><td class="n"><input data-k="giftId" value="${esc(o.giftId)}"></td><td><input data-k="names" value="${esc((o.names || []).join(', '))}"></td><td><select data-k="action">${actionOptions(o.action)}</select></td><td><input data-k="label" value="${esc(o.label)}"></td>${tail}</tr>`; }
 function rowCommand(c = {}) {
-  return `<tr><td><input data-k="keywords" value="${esc((c.keywords || []).join(', '))}"></td><td><select data-k="match"><option value="exact"${c.match !== 'contains' ? ' selected' : ''}>đúng cả câu</option><option value="contains"${c.match === 'contains' ? ' selected' : ''}>có chứa</option></select></td><td><select data-k="action">${actionOptions(c.action)}</select></td><td><input data-k="label" value="${esc(c.label)}"></td><td class="n"><input type="number" min="0" data-k="cooldown" value="${Math.round((c.cooldownMs || 0) / 1000)}"></td>${tail}</tr>`;
+  return `<tr><td><input data-k="keywords" value="${esc((c.keywords || []).join(', '))}"></td><td><select data-k="match"><option value="exact"${c.match !== 'contains' ? ' selected' : ''}>tam eşleşme</option><option value="contains"${c.match === 'contains' ? ' selected' : ''}>içeriyorsa</option></select></td><td><select data-k="action">${actionOptions(c.action)}</select></td><td><input data-k="label" value="${esc(c.label)}"></td><td class="n"><input type="number" min="0" data-k="cooldown" value="${Math.round((c.cooldownMs || 0) / 1000)}"></td>${tail}</tr>`;
 }
 
 function renderRules() {
@@ -130,9 +130,9 @@ function renderRules() {
 }
 
 function renderCatalog() {
-  if (!gifts.length) { $('catalog').innerHTML = '<p class="muted">Chưa gặp quà thật nào. Kết nối một buổi live, quà nào người xem tặng sẽ tự hiện ở đây kèm ảnh, tên, giá.</p>'; return; }
+  if (!gifts.length) { $('catalog').innerHTML = '<p class="muted">Henüz gerçek hediye görülmedi. Bir canlıya bağlanın; izleyicilerin gönderdiği hediyeler görsel, ad ve fiyatla burada kendiliğinden görünür.</p>'; return; }
   const used = new Set(rowsOf('overrides').map((r) => r.giftId));
-  $('catalog').innerHTML = gifts.map((g) => `<button class="gift${used.has(g.id) ? ' used' : ''}" data-gift="${esc(g.id)}" title="ID ${esc(g.id)}">${giftImg(g)}<span>${esc(g.name)}</span><small>${fmt(g.coins)} xu${used.has(g.id) ? ' · có luật' : ''}</small></button>`).join('');
+  $('catalog').innerHTML = gifts.map((g) => `<button class="gift${used.has(g.id) ? ' used' : ''}" data-gift="${esc(g.id)}" title="ID ${esc(g.id)}">${giftImg(g)}<span>${esc(g.name)}</span><small>${fmt(g.coins)} jeton${used.has(g.id) ? ' · kuralı var' : ''}</small></button>`).join('');
 }
 $('catalog').onclick = (e) => {
   const g = gifts.find((x) => x.id === e.target.closest('[data-gift]')?.dataset.gift);
@@ -142,7 +142,7 @@ $('catalog').onclick = (e) => {
   $('overrides').insertAdjacentHTML('beforeend', rowOverride({ giftId: g.id, names: [g.name], action: theme.actions[0]?.id, label: g.name }));
   $('overrides').lastElementChild.querySelector('select').focus();
   renderCatalog();
-  $('rulesMsg').textContent = `Đã thêm dòng cho ${g.name}: chọn hành động rồi bấm Lưu luật.`;
+  $('rulesMsg').textContent = `${g.name} için satır eklendi: eylemi seçin ve Kuralları kaydet'e basın.`;
 };
 
 const rowData = (tr) => Object.fromEntries([...tr.querySelectorAll('[data-k]')].map((el) => [el.dataset.k, el.value]));
@@ -162,7 +162,7 @@ function collectRules() {
 document.addEventListener('click', (e) => {
   if (e.target.matches('[data-del]')) { e.target.closest('tr').remove(); renderCatalog(); return; }
   if (!e.target.matches('[data-try]')) return;
-  // Thử dòng đang sửa (chưa cần lưu): bắn thẳng hành động của dòng, kèm tên quà / chữ của dòng
+  // Düzenlenen satırı dener (kaydetmek gerekmez): satırın eylemini hediye adı / yazısıyla doğrudan tetikler
   const r = rowData(e.target.closest('tr'));
   const g = gifts.find((x) => x.id === r.giftId);
   const coins = Number(r.minCoins) || g?.coins || 1;
@@ -172,10 +172,10 @@ $('addTier').onclick = () => $('tiers').insertAdjacentHTML('beforeend', rowTier(
 $('addOverride').onclick = () => $('overrides').insertAdjacentHTML('beforeend', rowOverride({ action: theme.actions[0]?.id }));
 $('addCommand').onclick = () => $('commands').insertAdjacentHTML('beforeend', rowCommand({ action: theme.actions[0]?.id }));
 $('overrides').addEventListener('change', renderCatalog);
-$('saveRules').onclick = () => { send({ type: 'saveRules', rules: collectRules() }); $('rulesMsg').textContent = 'Đã lưu ✓'; };
-$('resetRules').onclick = () => { if (confirm('Bỏ luật đã chỉnh, dùng lại luật mặc định của theme?')) send({ type: 'resetRules' }); };
+$('saveRules').onclick = () => { send({ type: 'saveRules', rules: collectRules() }); $('rulesMsg').textContent = 'Kaydedildi ✓'; };
+$('resetRules').onclick = () => { if (confirm('Düzenlenen kurallar atılsın, temanın varsayılan kuralları kullanılsın mı?')) send({ type: 'resetRules' }); };
 
-// ---------- Cài đặt theme ----------
+// ---------- Tema ayarları ----------
 function renderSettings(values, keepFocus = false) {
   const fields = theme.settings || [];
   $('settingsBox').hidden = !fields.length;
@@ -198,7 +198,7 @@ $('settings').addEventListener('input', (e) => {
   settingsTimer = setTimeout(() => send({ type: 'saveSettings', values: { [el.dataset.set]: value } }), 150);
 });
 
-// ---------- Nhật ký ----------
+// ---------- Günlük ----------
 function log(text) {
   const el = document.createElement('div');
   el.textContent = new Date().toLocaleTimeString('vi-VN') + '  ' + text;
@@ -208,15 +208,15 @@ function log(text) {
 function describe(ev) {
   const n = ev.user?.name || '';
   switch (ev.kind) {
-    case 'join': return `${n} vào sân`;
+    case 'join': return `${n} sahaya girdi`;
     case 'chat': return `${n}: ${ev.text}`;
-    case 'gift': return `${ev.test ? '[thử] ' : ''}${n} tặng ${ev.gift?.name} ×${ev.count} (${ev.total} xu) → ${ev.label}${ev.big ? ' · QUÀ LỚN' : ''}`;
-    case 'command': return `${n} gõ lệnh "${ev.text}" → ${ev.label || ev.action}`;
-    case 'follow': return `${n} theo dõi`;
-    case 'share': return `${n} chia sẻ`;
-    case 'title': return `${n} lên danh hiệu ${ev.title}`;
-    case 'goal': return `🎯 Đạt mục tiêu ${ev.label}: ${fmt(ev.value)}`;
-    case 'streamEnd': return 'Buổi live đã kết thúc';
+    case 'gift': return `${ev.test ? '[deneme] ' : ''}${n} ${ev.gift?.name} ×${ev.count} gönderdi (${ev.total} jeton) → ${ev.label}${ev.big ? ' · BÜYÜK HEDİYE' : ''}`;
+    case 'command': return `${n} "${ev.text}" komutunu yazdı → ${ev.label || ev.action}`;
+    case 'follow': return `${n} takip etti`;
+    case 'share': return `${n} paylaştı`;
+    case 'title': return `${n} ${ev.title} unvanına ulaştı`;
+    case 'goal': return `🎯 Hedefe ulaşıldı ${ev.label}: ${fmt(ev.value)}`;
+    case 'streamEnd': return 'Canlı yayın sona erdi';
     default: return null;
   }
 }
@@ -231,7 +231,7 @@ function connect() {
       const changed = theme && theme.id !== msg.theme.id;
       theme = msg.theme; rules = msg.rules; gifts = msg.gifts || []; presetGifts = msg.presetGifts || [];
       document.title = `${theme.name} · TikTok Live Kit`;
-      document.querySelectorAll('[data-starter]').forEach((el) => (el.hidden = !theme.id.startsWith('template'))); // khung trống: gợi ý làm theme riêng
+      document.querySelectorAll('[data-starter]').forEach((el) => (el.hidden = !theme.id.startsWith('template'))); // boş şablon: kendi temanızı yapmayı önerir
       $('themeSel').innerHTML = msg.themes.map((t) => `<option value="${esc(t.id)}"${t.id === theme.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
       $('provider').value = msg.config.provider;
       if (!$('user').value) $('user').value = msg.config.tiktokUsername;
@@ -240,10 +240,10 @@ function connect() {
     } else if (msg.type === 'state') renderState(msg);
     else if (msg.type === 'rules') { rules = msg.rules; renderRules(); }
     else if (msg.type === 'settings') renderSettings(msg.values, true);
-    else if (msg.type === 'gifts') { gifts = msg.gifts; renderCatalog(); renderGiftTests(); log('Gặp quà mới, đã thêm vào thư viện quà'); }
+    else if (msg.type === 'gifts') { gifts = msg.gifts; renderCatalog(); renderGiftTests(); log('Yeni hediye görüldü, hediye kitaplığına eklendi'); }
     else if (msg.type === 'event' && msg.ev.kind !== 'like') { const t = describe(msg.ev); if (t) log(t); }
-    else if (msg.type === 'error') log('Lỗi: ' + msg.message);
+    else if (msg.type === 'error') log('Hata: ' + msg.message);
   };
-  ws.onclose = () => { $('statusText').textContent = $('statusTop').textContent = 'Mất kết nối tới server, đang nối lại…'; $('dot').className = $('dotTop').className = 'dot'; setTimeout(connect, 1500); };
+  ws.onclose = () => { $('statusText').textContent = $('statusTop').textContent = 'Sunucu bağlantısı koptu, yeniden bağlanılıyor…'; $('dot').className = $('dotTop').className = 'dot'; setTimeout(connect, 1500); };
 }
 connect();

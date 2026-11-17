@@ -1,11 +1,11 @@
-// Sân khấu 3D dựng sẵn cho cảnh "renderer": "3d" (scene3d.js tự nạp file này): đèn quét có tia sáng,
-// laser, màn hình video, và hiệu ứng 3D (pháo hoa, confetti, cột sáng, vòng sáng). Mọi thứ tuỳ chọn, khai báo trong scene.json:
+// "renderer": "3d" sahnesi için hazır 3D sahne (scene3d.js bu dosyayı kendisi yükler): ışık huzmeli hareketli ışıklar,
+// lazer, video ekranı ve 3D efektler (havai fişek, konfeti, ışık sütunu, ışık halkası). Hepsi isteğe bağlı, scene.json'da tanımlanır:
 //   "stage": {
 //     "lights": [{ "at": [-3, 6, -3], "color": "#ff3cac", "sweep": 3, "speed": 0.6, "target": [0, 3], "angle": 14, "intensity": 40 }],
 //     "lasers": { "from": [0, 5, -4], "count": 8, "colors": ["#00ffd5", "#ff2bd6"], "spread": 70, "speed": 0.5, "width": 0.035, "always": false },
-//     "screens": [{ "at": [0, 3.5, -5], "size": [6, 3.4], "video": "assets/video/loop.mp4" }]   // hoặc "videos": [...], "folder": "video", "image": "..."
+//     "screens": [{ "at": [0, 3.5, -5], "size": [6, 3.4], "video": "assets/video/loop.mp4" }]   // veya "videos": [...], "folder": "video", "image": "..."
 //   }
-// Bước hành động: { "stage": "party", "duration": 6000 } (đèn mạnh, quét nhanh, bật laser), { "stage": "calm" }, { "stage": "strobe" }
+// Eylem adımları: { "stage": "party", "duration": 6000 } (güçlü ışık, hızlı tarama, lazer açık), { "stage": "calm" }, { "stage": "strobe" }
 //                 { "fx3d": "fireworks", "at": "stage", "bursts": 4 }, { "fx3d": "confetti", "count": 300 },
 //                 { "fx3d": "beam", "at": "person", "color": "#ffd27a" }, { "fx3d": "ring", "at": "person" }
 
@@ -13,10 +13,10 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
   const st = cfg.stage || {};
   const now = () => performance.now();
   const color = (c, d) => new T.Color(c || d);
-  const live = []; // hiệu ứng đang chạy: { update(dt, t) → false khi xong, dispose() }
+  const live = []; // çalışan efektler: { update(dt, t) → bitince false, dispose() }
   let partyUntil = 0, party = 0, strobeUntil = 0, hidden = false;
 
-  // Vật liệu sáng cộng dồn, mờ dần theo chiều dài (tia đèn, cột sáng)
+  // Toplamalı parlak malzeme, uzunluk boyunca solar (ışık huzmeleri, sütunlar)
   function glowMaterial(c, opacity = 0.35, fadePow = 1.6) {
     return new T.ShaderMaterial({
       uniforms: { uColor: { value: color(c, '#ffffff') }, uOpacity: { value: opacity }, uPow: { value: fadePow } },
@@ -26,7 +26,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
     });
   }
 
-  // ---------- Đèn quét (moving head): đèn thật chiếu xuống sàn + tia sáng nhìn thấy ----------
+  // ---------- Hareketli ışık (moving head): zemine düşen gerçek ışık + görünen huzme ----------
   const heads = (st.lights || []).map((l, i) => {
     const at = worldPoint(l.at) || { x: 0, y: 6, z: -3 };
     const base = worldPoint(l.target) || { x: at.x, y: 0, z: at.z + 4 };
@@ -35,7 +35,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
     spot.position.set(at.x, at.y, at.z);
     scene.add(spot, spot.target);
     const geo = new T.ConeGeometry(1, 1, 24, 1, true);
-    geo.translate(0, -0.5, 0); // đỉnh nón ở gốc, thân nón chạy xuống dưới
+    geo.translate(0, -0.5, 0); // koninin tepesi orijinde, gövdesi aşağı uzanır
     const beam = new T.Mesh(geo, glowMaterial(l.color, l.beam ?? 0.28));
     beam.position.copy(spot.position);
     scene.add(beam);
@@ -61,7 +61,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
     }
   }
 
-  // ---------- Laser: chùm tia mảnh xoè hình quạt, quay qua lại; bật khi "party" (hoặc luôn bật) ----------
+  // ---------- Lazer: yelpaze şeklinde yayılan ince ışınlar, ileri geri döner; "party"de (veya hep) açılır ----------
   const L = st.lasers;
   let laser = null;
   if (L) {
@@ -92,7 +92,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
     }
   }
 
-  // ---------- Màn hình: video lặp / danh sách phát / thư mục / ảnh ----------
+  // ---------- Ekran: döngü video / oynatma listesi / klasör / görsel ----------
   const screens = [];
   for (const s of st.screens || []) {
     const [w, h] = s.size || [6, 3.4];
@@ -123,7 +123,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
       .then(({ files }) => play(files.filter((f) => /\.(mp4|webm)$/i.test(f)).map((f) => `assets/${s.folder}/${f}`))).catch(() => {});
   }
 
-  // ---------- Hiệu ứng 3D ----------
+  // ---------- 3D efektler ----------
   const rand = (a, b) => a + Math.random() * (b - a);
   const palette = (step) => (step.colors || ['#ff5a5a', '#ffd25a', '#5affb4', '#5ab4ff', '#ff5ae1', '#ffffff']).map((c) => color(c));
 
@@ -189,7 +189,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
     const h = step.height ?? 14;
     const geo = new T.CylinderGeometry(step.radius ?? 0.55, (step.radius ?? 0.55) * 1.6, h, 32, 1, true);
     geo.translate(0, h / 2, 0);
-    // vUv.y = 0 ở chân, 1 ở đỉnh: đảo lại để sáng ở chân, mờ dần lên trên
+    // vUv.y = 0 ayakta, 1 tepede: ters çevrilir ki ayakta parlak, yukarı doğru solgun olsun
     const pa = geo.attributes.uv; for (let i = 0; i < pa.count; i++) pa.setY(i, 1 - pa.getY(i));
     const mat = glowMaterial(step.color || '#ffd27a', 0, 1.2);
     const mesh = new T.Mesh(geo, mat); mesh.position.set(pos.x, 0, pos.z); scene.add(mesh);
@@ -226,7 +226,7 @@ export function createStage({ T, scene, cfg, worldPoint, beat }) {
       else if (step.stage === 'strobe') strobeUntil = now() + (step.duration ?? 1200);
     },
     fx(step, pos) {
-      if (live.length > 60) return; // giữ máy nhẹ khi live đông
+      if (live.length > 60) return; // yayın kalabalıkken makineyi hafif tutar
       if (step.fx3d === 'fireworks') fireworks(pos, step);
       else if (step.fx3d === 'confetti') confetti(step);
       else if (step.fx3d === 'beam') beam(pos, step);

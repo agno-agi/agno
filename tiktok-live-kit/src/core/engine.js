@@ -1,11 +1,11 @@
-// Đường ống xử lý: sự kiện chung từ mọi nguồn → lọc trùng → gom combo → luật → phiên live → phát cho theme.
+// İşlem hattı: tüm kaynaklardan ortak olay → tekrar filtresi → kombo birleştirme → kurallar → canlı oturum → temaya iletim.
 
 import { createStreaks } from './streaks.js';
 import { resolveGift, resolveChat, isJoinKeyword } from './rules.js';
 
 export function createEngine({ getRules, session, catalog, emit, onChange, maxJoinsPerSecond = 15 }) {
   const streaks = createStreaks();
-  const seen = new Map(); // eventId -> thời điểm, chống trùng khi nguồn gửi lặp
+  const seen = new Map(); // eventId -> zaman; kaynak aynı olayı tekrar gönderirse çiftlemeyi önler
   const cooldowns = new Map();
   let bucket = { at: Date.now(), tokens: maxJoinsPerSecond };
   let lastEventAt = 0;
@@ -31,7 +31,7 @@ export function createEngine({ getRules, session, catalog, emit, onChange, maxJo
   const userView = (p) => ({ id: p.id, name: p.name, avatar: p.avatar, title: p.title, coins: p.coins, rank: session.rankOf(p.id), isPlayer: Boolean(p.joined) });
   const send = (kind, p, extra = {}) => emit({ kind, at: Date.now(), ...(p ? { user: userView(p) } : {}), ...extra });
 
-  /** Cho người xem vào sân (nếu đủ điều kiện và chưa quá tải). */
+  /** İzleyiciyi sahaya alır (uygun ve aşırı yüklenme yoksa). */
   function join(p, reason) {
     if (p.joined) return;
     if (!takeJoinToken()) return;

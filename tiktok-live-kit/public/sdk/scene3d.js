@@ -1,27 +1,27 @@
-// Kit.scene3d: cảnh 3D bằng Three.js, cùng giao diện với Kit.scene (2D) nên hành động trong theme.json,
-// HUD, hiệu ứng (Kit.fx vẽ trên lớp 2D phía trên), nhãn tên, bong bóng chat dùng chung.
-// Bật bằng scene.json "renderer": "3d"; index.html của theme cần importmap cho "three" và nạp file này
-// sau scene.js (xem themes/template-3d/index.html).
+// Kit.scene3d: Three.js ile 3D sahne; Kit.scene (2D) ile aynı arayüzü sunar, bu yüzden theme.json eylemleri,
+// HUD, efektler (Kit.fx üstteki 2D katmanda çizer), isim etiketleri, sohbet balonları ortak kullanılır.
+// scene.json "renderer": "3d" ile açılır; temanın index.html'inde "three" için importmap gerekir ve bu dosya yüklenir
+// scene.js'den sonra yüklenir.
 //
-// scene.json (đơn vị mét; x sang ngang, y lên trên, z hướng về phía camera, sân khấu ở z âm):
+// scene.json (birim metre; x yana, y yukarı, z kameraya doğru, sahne negatif z'de):
 //   "camera": { "position": [0, 7, 15], "target": [0, 1.2, -1], "fov": 38 }
-//   "world": "assets/3d/stage.glb", "worldScale": 1     cảnh dựng sẵn (tuỳ chọn); thiếu thì vẽ sàn phẳng
-//   "background": "#14121c" hoặc "assets/bg.jpg", "fog": { "color": "#14121c", "near": 18, "far": 45 }
+//   "world": "assets/3d/stage.glb", "worldScale": 1     hazır sahne (isteğe bağlı); yoksa düz zemin çizilir
+//   "background": "#14121c" veya "assets/bg.jpg", "fog": { "color": "#14121c", "near": 18, "far": 45 }
 //   "lights": { "ambient": 0.8, "sun": { "intensity": 1.6, "position": [6, 12, 8], "shadows": false },
 //               "points": [{ "at": [0, 3, -4], "color": "#ff8a5c", "intensity": 30, "distance": 12 }] }
-//   "floor": { "x": [-6, 6], "z": [-1, 7], "color": "#2a2633" }   vùng đứng của đám đông
+//   "floor": { "x": [-6, 6], "z": [-1, 7], "color": "#2a2633" }   kalabalığın duracağı alan
 //   "aisle": { "x": 0, "half": 0.7 }, "spacing": 1.1, "fill": { "rows": 1 }
 //   "seats": [[-2, -2], [2, -2]], "points": { "stage": [0, -3], "entry": [0, 12], "focus": [0, 2.5, -4] }
 //   "bloom": { "strength": 0.6, "radius": 0.4, "threshold": 0.85 }, "maxAnimated": 120, "fps": 30
-//   "facing": "focus" (đứng yên thì nhìn về điểm focus / stage, mặc định) hoặc "camera" (quay mặt ra khán giả)
-//   Điểm viết [x, z] (trên sàn) hoặc [x, y, z].
+//   "facing": "focus" (hareketsizken focus / stage noktasına bakar, varsayılan) veya "camera" (izleyiciye döner)
+//   Noktalar [x, z] (zeminde) veya [x, y, z] yazılır.
 // theme.json "characters" (3D): { "id": "guest", "model": "assets/3d/guest.glb", "height": 1.7,
 //   "clips": { "idle": "Idle", "walk": "Walk", "cheer": "Cheer", "dance": "Dance", "wave": "Wave" } }
-//   "pose" / "play" dùng tên trong "clips"; thiếu thì tìm clip có tên trùng (không phân biệt hoa thường).
-//   "animations": { "bow": { "clip": "Bow", "ms": 1600 } } đặt thời lượng một lần chạy.
-// Chưa có mô hình thì vẽ người giữ chỗ (thân + đầu) và tự làm động tác cúi, nhún, nhảy.
-// Sân khấu dựng sẵn (đèn quét, laser, màn hình video) và hiệu ứng 3D: scene.json "stage", bước "stage" / "fx3d" (xem sdk/stage3d.js).
-// Nền xanh để ghép OBS: cài đặt "Nền xanh" trên bảng điều khiển hoặc ?chroma; ẩn sàn, cảnh dựng sẵn, sương mù.
+//   "pose" / "play" "clips" içindeki adları kullanır; yoksa adı eşleşen klip aranır (büyük/küçük harf fark etmez).
+//   "animations": { "bow": { "clip": "Bow", "ms": 1600 } } bir oynatmanın süresini belirler.
+// Model yoksa yer tutucu insan (gövde + baş) çizilir ve eğilme, zıplama, dans hareketlerini kendisi yapar.
+// Hazır sahne (hareketli ışık, lazer, video ekranı) ve 3D efektler: scene.json "stage", "stage" / "fx3d" adımları (bkz. sdk/stage3d.js).
+// OBS birleştirme için yeşil arka plan: kontrol panelindeki "Yeşil arka plan" ayarı veya ?chroma; zemin, hazır sahne, sis gizlenir.
 
 (function () {
   const K = window.Kit;
@@ -29,7 +29,7 @@
 
   let T = null, loaderGLTF = null, cloneSkinned = null;
   let renderer = null, scene3 = null, camera = null, composer = null, raycaster = null, floorPlane = null;
-  let stage = null, backdrop = null, worldObj = null, floorObj = null, fogObj = null, chromaOn = false; // sân khấu dựng sẵn; nền, cảnh, sàn, sương (ẩn khi bật nền xanh)
+  let stage = null, backdrop = null, worldObj = null, floorObj = null, fogObj = null, chromaOn = false; // hazır sahne; arka plan, dünya, zemin, sis (yeşil arka planda gizlenir)
   let ready = false, theme = { characters: [], animations: {}, npcs: [], colors: {} }, settings = {}, cfg = {};
   let canvas = null, ctx = null;
   const persons = new Map(), npcs = new Map(), fillers = new Map();
@@ -37,14 +37,14 @@
   const cam = { queue: [], until: 0, cur: null, pos: null, look: null, basePos: null, baseLook: null };
   const emitters = [];
   let labels = null;
-  const pending = { users: [], top: null }; // người xem / bảng top gửi tới trước khi cảnh 3D dựng xong
+  const pending = { users: [], top: null }; // 3D sahne kurulmadan önce gelen izleyiciler / sıralama
 
   const now = () => performance.now();
   const hash = (s) => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
   const col = (k, d) => theme.colors?.[k] || d;
   const v3 = (a, y0 = 0) => (Array.isArray(a) ? (a.length >= 3 ? { x: a[0], y: a[1], z: a[2] } : { x: a[0], y: y0, z: a[1] }) : { x: a.x ?? 0, y: a.y ?? y0, z: a.z ?? 0 });
 
-  // ---------- Khởi tạo ----------
+  // ---------- Başlatma ----------
   function init(opts) {
     canvas = opts.canvas; ctx = canvas.getContext('2d');
     theme = opts.theme || theme;
@@ -56,7 +56,7 @@
     gl.width = W; gl.height = H;
     gl.style.cssText = canvas.style.cssText;
     canvas.parentNode.insertBefore(gl, canvas);
-    setup(gl).catch((e) => console.error('[Kit.scene3d] không dựng được cảnh 3D', e));
+    setup(gl).catch((e) => console.error('[Kit.scene3d] 3D sahne kurulamadı', e));
   }
 
   async function setup(gl) {
@@ -81,7 +81,7 @@
     cam.pos = cam.basePos.clone(); cam.look = cam.baseLook.clone();
     camera.position.copy(cam.pos); camera.lookAt(cam.look);
 
-    // nền, sương mù, ánh sáng
+    // arka plan, sis, ışık
     const bg = cfg.background || '#14121c';
     backdrop = new T.Color(/^#/.test(bg) ? bg : '#000000');
     if (/\.(png|jpe?g|webp)$/i.test(bg)) new T.TextureLoader().load(bg, (tex) => { tex.colorSpace = T.SRGBColorSpace; backdrop = tex; applyChroma(); });
@@ -97,14 +97,14 @@
       const at = v3(pl.at || [0, 3, 0], 3); l.position.set(at.x, at.y, at.z); scene3.add(l);
     }
 
-    // cảnh dựng sẵn hoặc sàn phẳng
+    // hazır sahne veya düz zemin
     const fl = cfg.floor || { x: [-6, 6], z: [-1, 7] };
     if (cfg.world) {
       loaderGLTF.load(cfg.world, (g) => {
         g.scene.scale.setScalar(cfg.worldScale ?? 1);
         g.scene.traverse((o) => { if (o.isMesh) { o.receiveShadow = Boolean(sun.shadows); o.castShadow = Boolean(sun.shadows); } });
         worldObj = g.scene; scene3.add(g.scene); applyChroma();
-      }, undefined, () => console.warn(`[Kit.scene3d] chưa thấy ${cfg.world}`));
+      }, undefined, () => console.warn(`[Kit.scene3d] ${cfg.world} bulunamadı`));
     } else {
       const w = fl.x[1] - fl.x[0] + 16, d = fl.z[1] - fl.z[0] + 24;
       const m = new T.Mesh(new T.PlaneGeometry(w, d), new T.MeshStandardMaterial({ color: fl.color || '#2a2633', roughness: 0.9 }));
@@ -113,7 +113,7 @@
       floorObj = m; scene3.add(m);
     }
 
-    // hậu kỳ: phát sáng (bloom)
+    // son işlem: parlama (bloom)
     if (cfg.bloom) {
       const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }] = await Promise.all([
         import('three/addons/postprocessing/EffectComposer.js'), import('three/addons/postprocessing/RenderPass.js'),
@@ -125,19 +125,19 @@
       composer.addPass(new OutputPass());
     }
 
-    // sân khấu dựng sẵn: đèn quét, laser, màn hình (scene.json "stage") và hiệu ứng 3D
+    // hazır sahne: hareketli ışık, lazer, ekran (scene.json "stage") ve 3D efektler
     const { createStage } = await import('/sdk/stage3d.js');
     stage = createStage({ T, scene: scene3, cfg, worldPoint, beat: K.fx.beat });
     applyChroma();
 
-    // nhân vật: nạp mô hình một lần, mỗi người là một bản sao
+    // karakter: model bir kez yüklenir, her kişi bir kopyadır
     chars = (theme.characters || []).map((ch) => ({ ...ch, ready: false }));
-    if (!chars.length) chars = [{ id: 'default', label: 'Người', placeholder: true }];
+    if (!chars.length) chars = [{ id: 'default', label: 'Kişi', placeholder: true }];
     for (const ch of chars) if (ch.model) loaderGLTF.load(ch.model, (g) => {
       const box = new T.Box3().setFromObject(g.scene);
       ch.unit = (ch.height ?? 1.7) / Math.max(0.01, box.max.y - box.min.y);
       ch.gltf = g; ch.ready = true;
-    }, undefined, () => console.warn(`[Kit.scene3d] chưa thấy ${ch.model}, dùng người giữ chỗ`));
+    }, undefined, () => console.warn(`[Kit.scene3d] ${ch.model} bulunamadı, yer tutucu kişi kullanılıyor`));
 
     seats = (cfg.seats || []).map((s) => ({ ...v3(s), taken: null, vip: true }));
     buildSlots();
@@ -150,18 +150,18 @@
 
   function configure(s) { settings = s || {}; setAmbient(settings.ambientFx !== false); applyChroma(); }
 
-  // Nền xanh (chroma key) để ghép trong OBS: chỉ còn người, đèn, hiệu ứng trên nền xanh trơn
+  // OBS'de birleştirmek için yeşil arka plan (chroma key): yalnızca kişiler, ışıklar, efektler düz yeşil üstünde kalır
   function applyChroma() {
     if (!scene3) return;
     const on = chromaOn = settings.chroma === true || new URLSearchParams(location.search).has('chroma');
-    stage?.setVisible(!on); // tia đèn, laser, màn hình cộng màu lên nền xanh làm OBS tách nền sai
+    stage?.setVisible(!on); // ışık huzmeleri, lazer, ekranlar yeşile eklenip OBS'in arka planı yanlış ayırmasına yol açar
     scene3.background = on ? new T.Color(cfg.chroma || '#00ff00') : backdrop;
     scene3.fog = on ? null : fogObj;
     if (worldObj) worldObj.visible = !on;
     if (floorObj) floorObj.visible = !on;
   }
 
-  // Hiệu ứng liên tục của scene.json "emitters": vẽ bằng Kit.fx trên lớp 2D, vị trí chiếu lại mỗi khung hình
+  // scene.json "emitters" ile sürekli efektler: Kit.fx ile 2D katmanda çizilir, konum her karede yeniden yansıtılır
   function setAmbient(on) {
     if (!ready && !T) return;
     emitters.length = 0;
@@ -174,7 +174,7 @@
     });
   }
 
-  // ---------- Điểm, chiếu toạ độ ----------
+  // ---------- Noktalar, koordinat yansıtma ----------
   function worldPoint(name) {
     if (!name) return null;
     if (typeof name === 'object') return name.z !== undefined ? name : Array.isArray(name) ? v3(name) : null;
@@ -186,20 +186,20 @@
     const v = _v().set(x, y, z).project(camera);
     return { x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H, behind: v.z > 1 };
   }
-  /** Điểm trong scene.json "points" chiếu ra khung 1080 x 1920 (cho hiệu ứng 2D), kèm toạ độ thế giới. */
+  /** scene.json "points" noktasını 1080 x 1920 çerçeveye yansıtır (2D efektler için), dünya koordinatıyla birlikte. */
   function point(name) {
     const w = worldPoint(name);
     if (!w || !camera) return null;
     return { ...project(w.x, w.y, w.z), world: w };
   }
-  /** Từ toạ độ khung hình về điểm trên sàn (để camera zoom vào chỗ được chỉ bằng toạ độ 2D). */
+  /** Çerçeve koordinatından zemindeki noktaya (kamera 2D koordinatla gösterilen yere yakınlaşsın diye). */
   function toFloor(x, y) {
     raycaster.setFromCamera(new T.Vector2(x / W * 2 - 1, 1 - y / H * 2), camera);
     const hit = _v();
     return raycaster.ray.intersectPlane(floorPlane, hit) ? { x: hit.x, y: 0, z: hit.z } : null;
   }
 
-  // ---------- Chỗ đứng ----------
+  // ---------- Duruş yerleri ----------
   function buildSlots() {
     const fl = cfg.floor || { x: [-6, 6], z: [-1, 7] };
     const sp = cfg.spacing ?? 1.1, aisle = cfg.aisle;
@@ -243,7 +243,7 @@
     return s;
   }
 
-  // ---------- Người ----------
+  // ---------- Kişi ----------
   function pickChar(id, preferred) {
     if (preferred) { const c = chars.find((x) => x.id === preferred); if (c) return c; }
     const total = chars.reduce((a, c) => a + (c.weight ?? 1), 0);
@@ -263,7 +263,7 @@
     return p;
   }
 
-  // Dựng (hoặc dựng lại khi đổi nhân vật / mô hình vừa tải xong) phần 3D của một người
+  // Bir kişinin 3D kısmını kurar (karakter / model yeni yüklendiyse yeniden kurar)
   function build(p) {
     if (p.obj) drop(p);
     const c = p.char, g = new T.Group();
@@ -320,7 +320,7 @@
     npcs.set(n.id, p);
   }
 
-  // Đường đi: theo lối giữa rồi rẽ vào chỗ (thiếu lối giữa thì đi thẳng)
+  // Yol: orta koridor boyunca gidip yerine döner (koridor yoksa doğrudan gider)
   function route(p, target) {
     const a = cfg.aisle;
     if (!a) return [{ x: target.x, z: target.z }];
@@ -330,7 +330,7 @@
   }
   const resolveTarget = (p, to) => (to === 'home' || to === 'seat' ? p.slot : worldPoint(to) || p.slot);
 
-  // Hàng việc của từng người (giống cảnh 2D): walk / pose / play / wait / do
+  // Kişi başına iş kuyruğu (2D sahneyle aynı): walk / pose / play / wait / do
   const P = {
     walkTo(p, to) { p.tasks.push({ type: 'walk', pts: (q) => { const t = resolveTarget(q, to); return t ? route(q, t) : []; } }); },
     pose(p, pose) { p.tasks.push({ type: 'pose', pose }); },
@@ -340,7 +340,7 @@
     say(p, text, ms = 6500) { p.bubble = { text: String(text).slice(0, 80), until: now() + ms }; p.lastActive = now(); },
     aura(p, level = 1) { p.aura = Math.max(p.aura, level); },
     boost(p, scale = 1.25, ms = 4000) { p.boost = scale; p.boostUntil = now() + ms; },
-    /** Đỉnh đầu chiếu ra khung hình; h là chiều cao người tính bằng điểm ảnh. */
+    /** Başın tepesi çerçeveye yansır; h kişinin piksel boyudur. */
     head(p) {
       if (!camera) return { x: p.x, y: p.y, h: 60 };
       const hm = (p.char.height ?? 1.7) * (p.scale || 1) * (p.boost || 1);
@@ -350,7 +350,7 @@
   };
   const height = (p) => P.head(p).h;
 
-  // ---------- Hoạt cảnh ----------
+  // ---------- Animasyonlar ----------
   function findClip(c, name) {
     const list = c.gltf?.animations || [];
     const want = String(c.clips?.[name] || name).toLowerCase();
@@ -377,9 +377,9 @@
   }
   const clipMs = (p, name) => { const a = action(p, name); return a ? a.getClip().duration * 1000 : 0; };
 
-  // ---------- Cập nhật ----------
+  // ---------- Güncelleme ----------
   function update(p, t, dt) {
-    if (p.char.ready && p.built !== p.char) build(p); // mô hình vừa tải xong: thay người giữ chỗ
+    if (p.char.ready && p.built !== p.char) build(p); // model yeni yüklendi: yer tutucu kişi değiştirilir
     if (p.boostUntil && t > p.boostUntil) { p.boost += (1 - p.boost) * Math.min(1, dt / 300); if (Math.abs(p.boost - 1) < 0.01) { p.boost = 1; p.boostUntil = 0; } }
     if (!p.task && p.tasks.length) { p.task = p.tasks.shift(); p.task.start = t; }
     const task = p.task;
@@ -405,7 +405,7 @@
         if (task.onEach && n !== task.last) { task.last = n; if (n < task.times) task.onEach(p, n); }
         if (k >= task.times) { p.anim = null; p.task = null; }
       } else if (task.type === 'wait') { if (t - task.start >= task.ms) p.task = null; }
-      else if (task.type === 'do') { p.task = null; try { task.fn(p); } catch (e) { console.error('[Kit.scene3d] lỗi trong bước "do"', e); } }
+      else if (task.type === 'do') { p.task = null; try { task.fn(p); } catch (e) { console.error('[Kit.scene3d] "do" adımında hata', e); } }
     } else if (p.slot && !p.leaving && Math.hypot(p.wx - p.slot.x, p.wz - p.slot.z) > 0.05) {
       p.tasks.push({ type: 'walk', pts: (q) => route(q, q.slot) }, { type: 'pose', pose: 'idle' });
     }
@@ -413,7 +413,7 @@
     if (p.bubble && t > p.bubble.until) p.bubble = null;
   }
 
-  // Đặt vị trí, hướng, động tác của phần 3D theo trạng thái người
+  // 3D kısmın konumunu, yönünü, hareketini kişinin durumuna göre ayarlar
   const focusXZ = () => worldPoint('focus') || worldPoint('stage') || { x: 0, z: -10 };
   function sync(p, t, dt, animate) {
     const g = p.obj;
@@ -430,7 +430,7 @@
       setClip(p, name);
       if (animate) { p.mixer.update((dt + (p.skipped || 0)) / 1000); p.skipped = 0; } else p.skipped = (p.skipped || 0) + dt;
     } else if (p.torso) {
-      // người giữ chỗ: tự làm động tác đơn giản theo tên
+      // yer tutucu kişi: ada göre basit hareketleri kendisi yapar
       const tt = t / 1000 + (hash(p.id) % 100) / 30, tor = p.torso;
       tor.position.y = 0; tor.rotation.x = 0; tor.rotation.z = 0;
       if (p.walking) tor.position.y = Math.abs(Math.sin(tt * 9)) * 0.06;
@@ -442,34 +442,35 @@
     p.x = foot.x; p.y = foot.y;
   }
 
-  // ---------- Ghế danh dự, đổi nhân vật ----------
+  // ---------- Onur koltukları, görünüm değiştirme ----------
+  // Sıra → koltuk: `top` dizisindeki i. kişi HER ZAMAN seats[i]'ye oturur (2D scene.js ile aynı mantık).
   function seatTop(top = []) {
     if (!ready) { pending.top = top; return; }
     if (!seats.length) return;
     const want = top.slice(0, seats.length);
-    const ids = new Set(want.map((p) => p.id));
-    for (const seat of seats) {
-      if (!seat.taken || ids.has(seat.taken)) continue;
+    const rankIdx = new Map(want.map((u, i) => [u.id, i]));
+    seats.forEach((seat, i) => { // 1) sırasına uymayanı koltuktan kaldır
+      if (!seat.taken || rankIdx.get(seat.taken) === i) return;
       const p = persons.get(seat.taken);
       seat.taken = null;
-      if (!p || p.leaving) continue;
+      if (!p || p.leaving) return;
       const s = freeSlot();
-      if (!s) { leave(p); continue; }
+      if (!s) { leave(p); return; }
       p.slot = s; s.taken = p.id;
       P.walkTo(p, 'home'); P.pose(p, 'idle');
-    }
-    for (const u of want) {
+    });
+    want.forEach((u, i) => { // 2) seats[0], seats[1], ... sırayla oturt
       const p = persons.get(u.id) || ensure({ ...u, isPlayer: true });
-      if (!p || p.leaving) continue;
-      p.rank = u.rank || 0; p.coins = u.coins;
-      if (p.slot?.vip || p.task || p.tasks.length) continue;
-      const seat = seats.find((s) => !s.taken);
-      if (!seat) break;
+      if (!p || p.leaving) return;
+      p.rank = u.rank || i + 1; p.coins = u.coins;
+      const seat = seats[i];
+      if (p.slot === seat || seat.taken) return;
+      if (p.task || p.tasks.length) return; // meşgul: sonraki state güncellemesinde oturur
       if (p.slot) p.slot.taken = null;
       p.slot = seat; seat.taken = p.id;
       P.walkTo(p, 'seat'); P.pose(p, 'idle');
       P.do(p, (q) => { q.aura = 1; const hd = P.head(q); K.fx.pillar(q.x, q.y, { height: hd.h * 6 }); K.events?.emit('seated', q); });
-    }
+    });
   }
 
   function skinFromChat(user, text) {
@@ -516,7 +517,7 @@
     camera.lookAt(cam.look);
   }
 
-  // ---------- Vòng vẽ ----------
+  // ---------- Çizim döngüsü ----------
   let debugOverlay = new URLSearchParams(location.search).has('scene');
   let rankAt = 0, animatedIds = new Set();
   function frame(t, dt) {
@@ -527,7 +528,7 @@
     K.fx.update(dt, t);
     const all = [...persons.values(), ...npcs.values(), ...fillers.values()];
     for (const p of all) update(p, t, dt);
-    // chỉ những người gần camera nhất được cập nhật động tác mỗi khung (scene.json "maxAnimated"), người xa cập nhật thưa hơn
+    // her karede yalnızca kameraya en yakın kişilerin hareketi güncellenir (scene.json "maxAnimated"), uzaktakiler seyrek güncellenir
     const maxA = cfg.maxAnimated ?? 120;
     if (t - rankAt > 500) {
       rankAt = t;
@@ -538,9 +539,9 @@
     for (const p of all) sync(p, t, dt, animatedIds.has(p.id) || p.task || tick);
     for (const e of emitters) { const at = point(e.at) || { x: W / 2, y: H / 2 }; e.o.x = at.x; e.o.y = at.y; }
     stage?.update(t, dt);
-    if (composer && !chromaOn) composer.render(); else renderer.render(scene3, camera); // nền xanh: bỏ phát sáng để giữ đúng màu nền
+    if (composer && !chromaOn) composer.render(); else renderer.render(scene3, camera); // yeşil arka plan: parlama atılır ki arka plan rengi doğru kalsın
 
-    // lớp 2D: hiệu ứng, vầng sáng, nhãn tên, bong bóng
+    // 2D katman: efektler, ışık halesi, isim etiketleri, balonlar
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     const sh = K.fx.shakeOffset(t);
@@ -565,7 +566,7 @@
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(hd.x, cy, r, 0, 6.283); ctx.fill(); ctx.restore();
   }
 
-  // ?scene: vùng sàn, lối giữa, chỗ đứng, ghế, điểm (chiếu từ toạ độ thế giới) để chỉnh scene.json
+  // ?scene: scene.json'u ayarlamak için zemin, koridor, duruş yerleri, koltuklar, noktalar (dünya koordinatından yansıtılır)
   function drawDebug() {
     const fl = cfg.floor || { x: [-6, 6], z: [-1, 7] };
     ctx.save();
@@ -589,15 +590,15 @@
     person: (id) => persons.get(id), npc: (id) => npcs.get(id), people: () => [...persons.values()].filter((p) => !p.leaving),
     extras: () => [...fillers.values()],
     height, P, get layout() { return { slots }; }, get seats() { return seats; }, get scene() { return cfg; }, get chars() { return chars; },
-    /** Bước { "stage": "party" | "calm" | "strobe" }. */
+    /** { "stage": "party" | "calm" | "strobe" } adımı. */
     stage: (step) => stage?.command(step),
-    /** Bước { "fx3d": "fireworks" | "confetti" | "beam" | "ring", "at": "person" | tên điểm }. */
+    /** { "fx3d": "fireworks" | "confetti" | "beam" | "ring", "at": "person" | nokta adı } adımı. */
     fx3d(step, person) {
       if (!stage) return;
       const at = step.at && step.at !== 'person' ? worldPoint(step.at) : person ? { x: person.wx, y: 0, z: person.wz } : worldPoint('stage');
       stage.fx(step, at || { x: 0, y: 0, z: 0 });
     },
-    get three() { return { THREE: T, scene: scene3, camera, renderer }; }, // cho theme.js tự thêm vật thể 3D
+    get three() { return { THREE: T, scene: scene3, camera, renderer }; }, // theme.js kendi 3D nesnesini ekleyebilsin diye
     set debug(v) { debugOverlay = v; },
   };
 })();

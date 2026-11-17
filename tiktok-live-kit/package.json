@@ -1,7 +1,7 @@
 {
   "name": "tiktok-live-kit",
   "version": "1.0.1",
-  "description": "Bộ khung chung cho game tương tác TikTok LIVE: nguồn TikFinity / trực tiếp, luật quà, đám đông, hiệu ứng, giọng đọc, theme thay được.",
+  "description": "TikTok CANLI etkileşimli overlay çatısı: TikFinity / doğrudan kaynak, hediye kuralları, kalabalık, efektler, ses, değiştirilebilir temalar.",
   "type": "module",
   "private": true,
   "scripts": {

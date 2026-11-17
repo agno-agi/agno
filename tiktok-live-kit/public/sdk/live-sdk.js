@@ -1,22 +1,22 @@
-// Live SDK cho theme: kết nối lõi, tự nối lại, co khung, phát sự kiện. Theme chỉ cần Live.on(...).
+// Tema için Live SDK: çekirdeğe bağlanır, otomatik yeniden bağlanır, kareyi sığdırır, olayları yayar. Temanın yalnızca Live.on(...) yazması yeter.
 //
-//   Live.on('ready',    ({ theme, players, state }) => {})  // lúc nối (và nối lại): dựng lại đám đông có sẵn
+//   Live.on('ready',    ({ theme, players, state }) => {})  // bağlanınca (ve yeniden bağlanınca): mevcut kalabalığı yeniden kurar
 //   Live.on('join',     (e) => {})   e.user = { id, name, avatar, title, coins, rank, isPlayer }
 //   Live.on('chat',     (e) => {})   e.text
 //   Live.on('like',     (e) => {})   e.count
 //   Live.on('gift',     (e) => {})   e.action, e.label, e.gift{name,image,coins}, e.count, e.total, e.big, e.combo
-//   Live.on('command',  (e) => {})   lệnh chat đã khớp luật: e.action
+//   Live.on('command',  (e) => {})   kurala uyan sohbet komutu: e.action
 //   Live.on('follow' | 'share' | 'title' | 'goal' | 'streamEnd', (e) => {})
 //   Live.on('state',    (s) => {})   s.viewers, s.totals, s.top, s.goals
-//   Live.on('reset',    () => {})    bảng điều khiển bấm "Phiên mới"
-//   Live.on('settings', (v) => {})   cài đặt riêng của theme (khai báo "settings" trong theme.json) vừa đổi
-//   Live.on('*',        (e) => {})   mọi sự kiện
+//   Live.on('reset',    () => {})    kontrol panelinde "Yeni oturum" basıldı
+//   Live.on('settings', (v) => {})   temanın özel ayarı (theme.json'da "settings") değişti
+//   Live.on('*',        (e) => {})   tüm olaylar
 //
-//   Live.stage(el)      co phần tử el (kích thước gốc theo theme) vừa cửa sổ, giữ tỉ lệ
-//   Live.sound(url, vol) phát âm thanh (tự giới hạn số tiếng cùng lúc)
-//   Live.img(url)       ảnh có cache, bỏ referrer để ảnh TikTok tải được
-//   Live.audio()        AudioContext dùng chung (null khi tắt tiếng); Live.muted = true ở khung xem trước (?mute)
-//   Live.settings       giá trị cài đặt hiện tại của theme
+//   Live.stage(el)      el öğesini (temanın özgün boyutu) pencereye sığdırır, oranı korur
+//   Live.sound(url, vol) ses çalar (aynı anda çalan ses sayısı kendiliğinden sınırlanır)
+//   Live.img(url)       önbellekli görsel, referrer atılır ki TikTok görselleri yüklensin
+//   Live.audio()        ortak AudioContext (ses kapalıyken null); önizlemede Live.muted = true (?mute)
+//   Live.settings       temanın şu anki ayar değerleri
 
 (function () {
   const handlers = {};
@@ -28,12 +28,12 @@
     connected: false,
     on(kind, fn) { (handlers[kind] ||= []).push(fn); return Live; },
     emit(kind, data) {
-      for (const fn of handlers[kind] || []) try { fn(data); } catch (e) { console.error(`[Live] lỗi trong handler "${kind}"`, e); }
+      for (const fn of handlers[kind] || []) try { fn(data); } catch (e) { console.error(`[Live] "${kind}" işleyicisinde hata`, e); }
       if (kind !== 'state' && kind !== 'ready') for (const fn of handlers['*'] || []) try { fn(data); } catch (e) { console.error(e); }
     },
   };
 
-  // ---------- Kết nối ----------
+  // ---------- Bağlantı ----------
   let retry = 500;
   function connect() {
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
@@ -64,13 +64,13 @@
     };
   }
 
-  // Báo mất kết nối (ẩn được bằng ?quiet)
+  // Bağlantı kopmasını bildirir (?quiet ile gizlenebilir)
   let bannerEl = null;
   function banner(show) {
     if (new URLSearchParams(location.search).has('quiet')) return;
     if (!bannerEl) {
       bannerEl = document.createElement('div');
-      bannerEl.textContent = 'Mất kết nối server, đang nối lại…';
+      bannerEl.textContent = 'Sunucu bağlantısı koptu, yeniden bağlanılıyor…';
       bannerEl.style.cssText = 'position:fixed;top:8px;left:8px;z-index:99999;padding:4px 10px;border-radius:6px;background:rgba(170,30,30,.9);color:#fff;font:14px system-ui;display:none';
       document.addEventListener('DOMContentLoaded', () => document.body.appendChild(bannerEl));
       if (document.body) document.body.appendChild(bannerEl);
@@ -94,7 +94,7 @@
     return fit;
   };
 
-  // ---------- Ảnh, âm thanh ----------
+  // ---------- Görsel, ses ----------
   const imgs = new Map();
   Live.img = function (url) {
     if (!url) return null;
@@ -116,7 +116,7 @@
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       ctx = new AC();
-      // trình duyệt thường chặn âm thanh tới khi có thao tác; OBS thì không chặn
+      // tarayıcılar kullanıcı etkileşimine kadar sesi engeller; OBS engellemez
       const unlock = () => ctx.state === 'suspended' && ctx.resume();
       addEventListener('pointerdown', unlock);
       addEventListener('keydown', unlock);

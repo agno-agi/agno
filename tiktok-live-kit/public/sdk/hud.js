@@ -1,17 +1,17 @@
-// Kit.hud: giao diện có sẵn trên overlay. Bật / tắt và đổi chữ trong theme.json "hud", đổi màu trong "colors".
+// Kit.hud: overlay'de hazır arayüz. theme.json "hud" ile açılıp kapanır ve metni değişir, "colors" ile renk değişir.
 //   "hud": {
-//     "title":   { "text": "Tên kênh", "sub": "Dòng phụ" },      tiêu đề trên cùng
-//     "counters": true,                                         số người trong cảnh, người xem, tim, đồng hồ phiên
-//     "giftCard": { "verb": "đã tặng", "unit": "xu" },          thẻ vinh danh lớn khi có quà
-//     "tiers": true,                                            ô mức quà (lấy từ actions có "card")
-//     "board":  { "title": "BẢNG VÀNG", "size": 3 },            bảng xếp hạng
-//     "ticker": { "title": "Vừa tặng", "size": 5 },             danh sách quà vừa nhận
-//     "goal": true,                                             thanh mục tiêu
-//     "guide":  { "title": "Cách tham gia" },                   bảng hướng dẫn tự sinh từ luật
-//     "safeTop": 150                                            chừa khoảng trên cùng cho giao diện TikTok
+//     "title":   { "text": "Kanal adı", "sub": "Alt satır" },      en üst başlık
+//     "counters": true,                                         sahnedeki kişi sayısı, izleyici, kalp, oturum saati
+//     "giftCard": { "verb": "gönderdi:", "unit": "jeton" },       hediye gelince büyük onur kartı
+//     "tiers": true,                                            hediye kademesi kutuları ("card" taşıyan actions'tan alınır)
+//     "board":  { "title": "ÖN SAF", "size": 3 },                sıralama tablosu
+//     "ticker": { "title": "Son gönderilenler", "size": 5 },     yeni gelen hediyelerin listesi
+//     "goal": true,                                             hedef çubuğu
+//     "guide":  { "title": "Nasıl katılırım" },                  kurallardan otomatik üretilen rehber paneli
+//     "safeTop": 150                                            TikTok arayüzü için en üstte boşluk bırakır
 //   }
-// Lá thăm (theme.json "draws") hiện ở khung giữa: trường "title" và "text" của lá thăm.
-// Theme muốn giao diện riêng thì gán Kit.hud = { init, giftCard, ticker, state, guide, toast, periodic, draw, remember, reset } trong theme.js.
+// Kura kartı (theme.json "draws") orta çerçevede görünür: kartın "title" ve "text" alanları.
+// Tema kendi arayüzünü istiyorsa theme.js'de Kit.hud = { init, giftCard, ticker, state, guide, toast, periodic, draw, remember, reset } atar.
 
 (function () {
   const K = window.Kit;
@@ -80,7 +80,7 @@
     let y = top;
     if (cfg.title) { root.insertAdjacentHTML('beforeend', `<div class="kit-title kit-panel" style="top:${y}px"><h1>${esc(cfg.title.text || theme.name)}</h1>${cfg.title.sub ? `<p>${esc(cfg.title.sub)}</p>` : ''}</div>`); y += cfg.title.sub ? 118 : 92; }
     if (cfg.counters) { root.insertAdjacentHTML('beforeend', `<div class="kit-counters" style="top:${y}px"><div data-c="people">👥 0</div><div data-c="viewers">👀 0</div><div data-c="likes">❤️ 0</div><div data-c="clock">⏱ 00:00</div></div>`); y += 58; }
-    const cardY = cfg.giftCard?.top ?? y + 6;  // theme đặt "giftCard": { "top": 1480 } để thẻ không che vật chính (tượng, sân khấu)
+    const cardY = cfg.giftCard?.top ?? y + 6;  // tema "giftCard": { "top": 1480 } verirse kart ana nesneyi (heykel, sahne) örtmez
     if (cfg.giftCard !== false) root.insertAdjacentHTML('beforeend', `<div class="kit-card kit-panel" style="top:${cardY}px"><div class="who"></div><div class="what"></div><div class="quote"></div></div>`);
     const sideY = cfg.sideTop ?? y + 196;
     if (cfg.guide) root.insertAdjacentHTML('beforeend', `<div class="kit-side kit-panel kit-guide" style="left:24px;top:${sideY}px"><h3>${esc(cfg.guide.title || 'Nasıl katılırım')}</h3><ul></ul></div>`);
@@ -118,7 +118,7 @@
     el.textContent = `⏱ ${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   }
 
-  // ---------- Thẻ vinh danh ----------
+  // ---------- Onur kartı ----------
   const cardQ = [];
   let cardBusy = false;
   function giftCard(ev) {
@@ -152,7 +152,7 @@
     ul.innerHTML = tickerItems.map((e) => `<li><span class="nm">${esc(e.user?.name)}</span><span class="c">${esc(e.label || e.gift?.name)}${e.count > 1 ? ' ×' + e.count : ''}</span></li>`).join('');
   }
 
-  // ---------- Trạng thái ----------
+  // ---------- Durum ----------
   function state(s, peopleCount) {
     if (!root) return;
     const set = (k, v) => { const el = $(`[data-c="${k}"]`, root); if (el) el.textContent = v; };
@@ -171,7 +171,7 @@
     if (g && ge) { $('.gl', ge).textContent = g.label; $('.gv', ge).textContent = `${fmt(g.value)} / ${fmt(g.target)}`; $('.fill', ge).style.width = `${Math.round(g.progress * 100)}%`; }
   }
 
-  // ---------- Bảng hướng dẫn tự sinh từ luật ----------
+  // ---------- Kurallardan otomatik üretilen rehber paneli ----------
   function guide(data, chars) {
     const ul = root && $('.kit-guide ul', root);
     if (!ul || !data?.rules) return;

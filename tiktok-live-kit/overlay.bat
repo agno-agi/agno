@@ -1,11 +1,11 @@
 @echo off
-rem Mo overlay thanh mot cua so doc rieng de LIVE Studio "Quay man hinh cua so".
-rem - Uu tien Chrome (LIVE Studio liet ke duoc cua so Chrome), khong co thi dung Edge.
-rem - Ho so trinh duyet rieng: cac tuy chon duoi day moi co tac dung du trinh duyet dang mo.
-rem - Khong cho Windows lam "ngu" cua so khi bi che (hinh khong bi dung).
-rem - Tu phat tieng, khong can bam vao trang.
-rem - Cong go loi 9333 (chi may nay truy cap) de kiem tra am thanh, hinh ben trong cua so khi can.
-rem Chay run.bat truoc de server dang chay. Doi cong: set OVERLAY_URL=http://localhost:<cong>/overlay
+rem Overlay'i ayri bir pencerede acar, LIVE Studio "Pencere yakalama" ile alabilsin.
+rem - Chrome tercih edilir (LIVE Studio Chrome pencerelerini listeler), yoksa Edge kullanilir.
+rem - Ayri tarayici profili: asagidaki secenekler tarayici zaten acik olsa bile gecerli olur.
+rem - Pencere ortuldugunde Windows'un pencereyi "uyutmasi" engellenir (goruntu donmaz).
+rem - Ses kendiliginden calar, sayfaya tiklamak gerekmez.
+rem - 9333 hata ayiklama portu (yalnizca bu bilgisayardan erisilir): gerektiginde pencere icindeki sesi/goruntuyu denetlemek icin.
+rem Once run.bat calistirin ki sunucu acik olsun. Port degistirmek icin: set OVERLAY_URL=http://localhost:<port>/overlay
 
 if not defined OVERLAY_URL set "OVERLAY_URL=http://localhost:3939/overlay"
 set "BROWSER=msedge"

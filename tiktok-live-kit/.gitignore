@@ -6,5 +6,5 @@ data/
 .DS_Store
 **/assets/raw/
 
-# ghi chú kế hoạch nội bộ, chỉ giữ trên máy
+# iç plan notları, yalnızca yerel makinede tutulur
 docs/PLAN.md

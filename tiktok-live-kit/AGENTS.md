@@ -1,67 +1,69 @@
 # AGENTS.md
 
-Instructions for AI coding agents (Claude Code, Codex, Gemini CLI, Cursor…) working in this repo. `CLAUDE.md` and `GEMINI.md` point here. Reply to the user in their language; the docs exist in English (`*.md`) and Vietnamese (`*.vi.md`).
+Bu depoda çalışan yapay zekâ kodlama ajanları (Claude Code, Codex, Gemini CLI, Cursor…) için talimatlar. `CLAUDE.md` ve `GEMINI.md` buraya yönlendirir. Kullanıcıya kendi dilinde yanıt verin; belgeler Türkçedir.
 
-## What this repo is
+## Bu depo nedir
 
-TikTok Live Kit: a Node server that receives TikTok LIVE events (gifts, likes, chat, joins) and a 1080 × 1920 overlay that reacts through a **theme**. Users usually ask an agent to **make a new theme** or **tweak a theme**; changing the core is rarely needed.
+TikTok Live Kit: TikTok CANLI olaylarını (hediye, kalp, sohbet, giriş) alan bir Node sunucusu ve bir **tema** aracılığıyla tepki veren 1080 × 1920 overlay. Kullanıcılar çoğunlukla ajandan **yeni bir tema yapmasını** veya **bir temayı ayarlamasını** ister; çekirdeği değiştirmek nadiren gerekir.
 
-| Path | Contents |
+| Yol | İçerik |
 |---|---|
-| `src/server.js` | HTTP + WebSocket, theme loading, voice, automatic content |
-| `src/core/` | Event pipeline: normalize → streaks (combos) → rules → engine → session; `voice.js`, `tts.js`, `draws.js` |
-| `src/providers/` | Sources: TikFinity, direct connection, demo, manager (reconnect) |
-| `public/control/` | Control panel (`/`, Vietnamese UI) |
-| `public/sdk/` | Overlay SDK: `kit.js` (runs JSON actions), `scene.js` (2D crowd, camera), `scene3d.js` (same API in Three.js, `"renderer": "3d"`), `stage3d.js` (3D moving lights, lasers, video screens, `fx3d` effects), `fx.js`, `audio.js`, `hud.js`, `assets.js`, `geometry.js`, `live-sdk.js` |
-| `themes/template/`, `themes/template-3d/` | Blank 2D / 3D templates to copy for a new theme |
-| `tools/` | Asset processing: character sheet cutter, black → transparent |
-| `docs/` | `IDEA.md` (theme idea questionnaire), `THEME.md` (full reference), `ASSETS-GUIDE.md` (making assets), `GO-LIVE.md` (going live) |
+| `src/server.js` | HTTP + WebSocket, tema yükleme, ses, otomatik içerik |
+| `src/core/` | Olay hattı: normalize → streaks (kombo) → rules → engine → session; `voice.js`, `tts.js`, `draws.js`, `profanity.js` (küfür filtresi) |
+| `src/providers/` | Kaynaklar: TikFinity, doğrudan bağlantı, demo, manager (yeniden bağlanma) |
+| `public/control/` | Kontrol paneli (`/`) |
+| `public/sdk/` | Overlay SDK: `kit.js` (JSON eylemlerini çalıştırır), `scene.js` (2D kalabalık, kamera), `scene3d.js` (aynı API, Three.js, `"renderer": "3d"`), `stage3d.js` (3D hareketli ışıklar, lazerler, video ekranları, `fx3d` efektleri), `fx.js`, `audio.js`, `hud.js`, `assets.js`, `geometry.js`, `live-sdk.js` |
+| `themes/template/` | Yeni tema için kopyalanacak boş 2D şablon |
+| `themes/cenaze/` | Anma teması (hediye eşleme, ön saf koltukları, küfür filtresi; bkz. kendi README'si) |
+| `tools/` | Görsel işleme: karakter sayfası kesici, siyah → şeffaf |
+| `docs/` | `IDEA.md` (tema fikri anketi), `THEME.md` (tam başvuru), `ASSETS-GUIDE.md` (görsel hazırlama), `GO-LIVE.md` (canlıya çıkış) |
 | `test/` | `node --test` |
 
-## Commands
+## Komutlar
 
 ```bash
-pnpm install          # first time (or run.bat on Windows)
-pnpm start            # server at http://localhost:3939
-pnpm dev              # restarts on src/ changes
-pnpm test             # core tests
-pnpm assets:cut  <sheet.png> <out.png> --auto --scale 0.7 --preview <check.png>   # cut a green-screen character sheet
-pnpm assets:alpha <in.jpg> <out.png> --max 1024                                   # effect on black → transparent
+pnpm install          # ilk seferde (veya Windows'ta run.bat)
+pnpm start            # sunucu http://localhost:3939 adresinde
+pnpm dev              # src/ değişince yeniden başlar
+pnpm test             # çekirdek testleri
+pnpm assets:cut  <sheet.png> <out.png> --auto --scale 0.7 --preview <check.png>   # yeşil perde karakter sayfasını keser
+pnpm assets:alpha <in.jpg> <out.png> --max 1024                                   # siyah arka planlı efekti şeffaflaştırır
 ```
 
-`assets:*` need [uv](https://docs.astral.sh/uv/) (fetches pillow, numpy).
+`assets:*` komutları [uv](https://docs.astral.sh/uv/) gerektirir (pillow, numpy indirir).
 
-## Making a theme
+## Tema yapmak
 
-The kit ships no ready-made theme; `themes/template` is only a blank skeleton. When the user asks for a new theme (or just "help me start"):
+Kit hazır tema ile gelmez; `themes/template` yalnızca boş bir iskelettir. Kullanıcı yeni tema istediğinde (veya sadece "başlamama yardım et" dediğinde):
 
-0. **Interview first, code later.** Walk through `docs/IDEA.md` (`docs/IDEA.vi.md` in Vietnamese) a few questions at a time: space and mood, who viewers become, what each gift level does, chat commands and draws, titles and goals, voice lines, assets they have, how they go live. Offer 2–3 concrete options when they're unsure. Then write the one-page plan from the end of `IDEA.md` and **wait for their OK** before creating files. If they already filled `IDEA.md`, read it and only ask what's missing.
-1. Copy `themes/template` (2D: background image + character sheets) or `themes/template-3d` (3D: GLB models, see "3D scenes" in `docs/THEME.md`) → `themes/<theme-name>` (English, kebab-case). Set `"theme": "<theme-name>"` in `config.json` or pick it in the control panel.
-2. **Assets** (from the interview): if they have none, point them to `docs/ASSETS-GUIDE.md` and write prompts from its templates. Don't draw assets in code as a substitute for real images unless the user wants that.
-3. Background → `scene.json`: open `/overlay?scene`, tune `horizonY`, `person`, `floor`, `aisle`, `seats`, `points` until people stand on the floor.
-4. `theme.json`: `actions` (step lists), `rules` (gift tiers, chat commands), `voice`, `characters`, `hud`, `colors`, `sounds`; optional `draws`, `periodic`, `prompts`, `reactions`, `titles`, `goals`. Every key is in `docs/THEME.md`.
-5. Only write `theme.js` when JSON can't do it (custom action via `Kit.action`, custom HUD replacing `Kit.hud`).
-6. Check: in the control panel's **Thử nghiệm** tab click every effect button and the gift buttons, drop a 60 / 400-person crowd, test the voice (*Đọc thử*); open `/overlay?safe` to check text is inside the safe zone.
+0. **Önce röportaj, sonra kod.** `docs/IDEA.md` dosyasını bir seferde birkaç soruyla birlikte gözden geçirin: mekân ve hava, izleyiciler kim olur, her hediye kademesi ne yapar, sohbet komutları ve kuralar, unvanlar ve hedefler, ses cümleleri, elindeki görseller, nasıl canlıya çıkacakları. Emin olmadıklarında 2–3 somut seçenek sunun. Sonra `IDEA.md` sonundaki tek sayfalık planı yazın ve dosya oluşturmadan önce **onaylarını bekleyin**. `IDEA.md` doldurulmuşsa okuyun ve yalnızca eksikleri sorun.
+1. `themes/template` klasörünü `themes/<tema-adı>` olarak kopyalayın (İngilizce, kebab-case). `config.json` içinde `"theme": "<tema-adı>"` ayarlayın veya kontrol panelinden seçin.
+2. **Görseller** (röportajdan): yoksa `docs/ASSETS-GUIDE.md`'ye yönlendirin ve oradaki şablonlardan prompt'lar yazın. Kullanıcı istemedikçe gerçek görsel yerine kodla çizim yapmayın (kodla çizim yalnızca kullanıcı istediğinde, örneğin `themes/cenaze` gibi telif sorunundan kaçınmak için).
+3. Arka plan → `scene.json`: `/overlay?scene` açın, kişiler zeminde duruncaya dek `horizonY`, `person`, `floor`, `aisle`, `seats`, `points` ayarlarını düzenleyin.
+4. `theme.json`: `actions` (adım listeleri), `rules` (hediye kademeleri, sohbet komutları), `voice`, `characters`, `hud`, `colors`, `sounds`; isteğe bağlı `draws`, `periodic`, `prompts`, `reactions`, `titles`, `goals`, `filter`. Her anahtar `docs/THEME.md` içinde.
+5. `theme.js` yalnızca JSON yapamadığında yazılır (`Kit.action` ile özel eylem, `Kit.hud` yerine özel HUD, `Kit.fx.preset` ile yeni parçacık).
+6. Kontrol: kontrol panelindeki **Deneme** sekmesinde her efekt düğmesine ve hediye düğmelerine tıklayın, 60 / 400 kişilik kalabalık bırakın, sesi deneyin (*Ses denemesi*); yazının güvenli bölge içinde olduğunu görmek için `/overlay?safe` açın.
 
-A theme can live in its own repo: `KIT_THEMES_DIR`, `KIT_DATA_DIR`, `KIT_CONFIG` (see README).
+Tema kendi reposunda da durabilir: `KIT_THEMES_DIR`, `KIT_DATA_DIR`, `KIT_CONFIG` (bkz. README).
 
-## Going live
+## Canlıya çıkış
 
-When the user wants to go live or set up streaming, **ask before giving steps**:
+Kullanıcı canlıya çıkmak veya yayın kurmak istediğinde **adımları vermeden önce sorun**:
 
-1. Which app puts the picture on air: LIVE Studio capturing the overlay window (A), OBS → Virtual Camera → LIVE Studio (B, smoothest), or OBS with a stream key (C)?
-2. What the account allows: can it already use LIVE Studio, or does it have a stream key? If Studio says no access, they must sort that out on TikTok first.
-3. Live data: TikFinity Desktop or the direct connection?
+1. Görüntüyü hangi uygulama yayına veriyor: overlay penceresini yakalayan LIVE Studio (A), OBS → Sanal Kamera → LIVE Studio (B, en akıcısı), yoksa yayın anahtarıyla OBS (C)?
+2. Hesap neye izin veriyor: LIVE Studio'yu zaten kullanabiliyor mu, yoksa yayın anahtarı var mı? Studio erişim yok diyorsa önce bunu TikTok'ta çözmeleri gerekir.
+3. Canlı veri: TikFinity Desktop mı, doğrudan bağlantı mı?
 
-Then walk them through only that route in `docs/GO-LIVE.md` (`docs/GO-LIVE.vi.md` in Vietnamese). `run.bat` must run for the whole live in every route.
+Sonra `docs/GO-LIVE.md` içinden yalnızca o yolu anlatın. Her yolda `run.bat` tüm canlı boyunca çalışmalıdır.
 
-## Rules
+## Kurallar
 
-- **Themes don't modify the core.** Missing features go in `theme.js`; only change `src/` or `public/sdk/` when the user wants to upgrade the kit for every theme, and run `pnpm test` afterwards.
-- **1080 × 1920 frame, watched on phones**: text 20px or more; keep text and panels inside the safe zone (`Kit.safe`: top 240px, 100px each side, left half from y 1250, bottom from y 1760). Don't cover the background's main subject.
-- **Viewer data is untrusted**: names and comments go into the DOM via `textContent` or escaping, never raw `innerHTML`.
-- **Busy lives**: no unbounded loops, particles or sounds; use the built-in limits (`maxTags`, `fps`, `sounds.cooldown`).
-- **The page can reload at any time**: state worth keeping comes from the server (`Live.on('state')`), not only page variables.
-- **Voice is Vietnamese only** (`vi-VN` voices); voice lines in `theme.json` should be Vietnamese.
-- **Don't commit** `data/` (live sessions, edited rules, voice cache), `assets/raw/`, keys or tokens (`signApiKey`).
-- Credit assets in `themes/<id>/CREDITS.md`.
+- **Temalar çekirdeği değiştirmez.** Eksik özellikler `theme.js` içine girer; `src/` veya `public/sdk/` yalnızca kullanıcı kiti tüm temalar için yükseltmek istediğinde değiştirilir ve ardından `pnpm test` çalıştırılır.
+- **1080 × 1920 çerçeve, telefonda izlenir**: yazı 20px veya üstü; yazı ve panelleri güvenli bölgede tutun (`Kit.safe`: üstte 240px, her yanda 100px, sol yarı y 1250'den, alt y 1760'tan). Arka planın ana nesnesini örtmeyin.
+- **İzleyici verisi güvenilmezdir**: ad ve yorumlar DOM'a `textContent` veya kaçışla girer, asla ham `innerHTML` ile değil. İsim ve sohbet ayrıca `src/core/profanity.js` filtresinden geçer.
+- **Hediye şansa bağlı olmaz**: aynı hediye her zaman aynı etkiyi yapar (kademe fiyata göre); hediyeyle tetiklenen rastgele ödül / çekiliş eklemeyin.
+- **Yoğun canlılar**: sınırsız döngü, parçacık veya ses yok; hazır sınırları kullanın (`maxTags`, `fps`, `sounds.cooldown`).
+- **Sayfa her an yenilenebilir**: saklanması gereken durum yalnızca sayfa değişkenlerinden değil, sunucudan gelir (`Live.on('state')`).
+- **Ses yalnızca Türkçedir** (`tr-TR` sesleri); `theme.json` içindeki ses cümleleri Türkçe olmalıdır.
+- **Şunları commit etmeyin**: `data/` (canlı oturumlar, düzenlenmiş kurallar, ses önbelleği), `assets/raw/`, anahtarlar veya token'lar (`signApiKey`).
+- Görsellerin kaynağını `themes/<id>/CREDITS.md` içinde belirtin; telifli görsel ve müzik kullanmayın.
