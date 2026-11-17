@@ -503,3 +503,22 @@ Framework source: `9e1f77f52a9bb16ee5dde3ccff9fa2491e86db5f`. Python 3.12, Claud
 **Result:** Exit 0 in 29.7 seconds.
 
 ---
+### codex_basic.py — Codex 0.167.2 (2026-11-16)
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/frameworks/codex/codex_basic.py` as a script using the installed `openai-codex==0.167.2` SDK and its bundled runtime, with existing Codex authentication.
+
+**Result:** Exit 0, status COMPLETED, and the correct $0 shipping fee at the $100 boundary. Run ID `57fe8eca-833b-4b91-af1e-295e99630203`. Output: `/private/tmp/codex-167-cookbooks/basic.log`.
+
+---
+
+### codex_tools.py — Codex 0.167.2 (2026-11-16)
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/frameworks/codex/codex_tools.py` as a script using `openai-codex==0.167.2`, reading the bundled shipping fixtures through native tools under read-only/deny-all settings.
+
+**Result:** Exit 0, status COMPLETED, and the script's assertions for successful tool execution passed. Reported shipping fees of $8, $0 and $0, including the $100 boundary. Run ID `d23027d0-212d-489d-bfd3-e945e7a73a70`. Output: `/private/tmp/codex-167-cookbooks/tools.log`. The live approval, rejection and native-question checks are recorded in `../human_in_the_loop/TEST_LOG.md`.
+
+---
