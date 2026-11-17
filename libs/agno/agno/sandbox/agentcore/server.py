@@ -48,6 +48,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from agno.sandbox._roots import CONTENT_ERROR_EXIT
+
 _CONTROL = Path("/var/lib/agno-control")
 _CLAIM = _CONTROL / "claim.json"
 _WORKSPACE, _RUNTIME = Path("/workspace"), Path("/runtime")
@@ -590,7 +592,11 @@ def _export(request: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 os.close(descriptor)
             if child.returncode:
-                raise ValueError("Checkpoint capture failed: " + error.decode(errors="replace")[-1500:])
+                message = "Checkpoint capture failed: " + error.decode(errors="replace")[-1500:]
+                if child.returncode == CONTENT_ERROR_EXIT:
+                    # The same files fail the same way again, so the host must not retry.
+                    raise _Refused("content", message)
+                raise ValueError(message)
             size = target.stat().st_size
             if size > _MAX_TRANSFER:
                 raise ValueError("Checkpoint capture exceeds the transfer limit")
