@@ -385,6 +385,36 @@ class MistralChat(Model):
         ):
             model_response.content = delta_message.content
 
+        # Reasoning models can send a list of typed chunks instead of a string.
+        # Walk it once: text chunks are answer content, thinking chunks are reasoning.
+        elif isinstance(delta_message.content, list):
+            text_parts: list[str] = []
+            reasoning_parts: list[str] = []
+            for chunk in delta_message.content:
+                if isinstance(chunk, str):
+                    text_parts.append(chunk)
+                    continue
+                if isinstance(chunk, dict):
+                    kind, payload = chunk.get("type"), chunk.get("text")
+                    inner = chunk.get("thinking")
+                else:
+                    kind, payload = getattr(chunk, "type", None), getattr(chunk, "text", None)
+                    inner = getattr(chunk, "thinking", None)
+                if kind == "text" and payload:
+                    text_parts.append(str(payload))
+                elif kind == "thinking":
+                    if isinstance(inner, str) and inner:
+                        reasoning_parts.append(inner)
+                    elif isinstance(inner, list):
+                        for part in inner:
+                            t = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+                            if t:
+                                reasoning_parts.append(str(t))
+            if text_parts:
+                model_response.content = "".join(text_parts)
+            if reasoning_parts:
+                model_response.reasoning_content = "".join(reasoning_parts)
+
         if delta_message.tool_calls is not None:
             model_response.tool_calls = []
             for tool_call in delta_message.tool_calls:
