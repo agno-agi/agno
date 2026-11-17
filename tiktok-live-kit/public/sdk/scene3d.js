@@ -288,14 +288,25 @@
     p.obj = g; p.built = c.ready ? c : null;
     scene3.add(g);
   }
-  // scene.json "humanoid": true → yer tutucu kişi daha insana benzer (boy ~1.7 m): bacak, gövde, kol, ele alınmış eller, baş, saç / takke / başörtüsü.
-  // Görünüm kimliğe göre sabittir (hash). Eller önde kavuşturulmuş (cenaze duruşu).
+  // scene.json "humanoid": true → yer tutucu kişi daha insana benzer (boy ~1.7 m): bacak (yürürken sallanır), gövde, kol, önde kavuşturulmuş eller,
+  // baş, saç / takke / başörtüsü. "humanoidStyle": "suit" → takım elbise, kravat, gözlük, bıyık/sakal, şapka/kasket, uzun palto, bazılarında kadın figürü.
+  // Her görünüm kimliğe göre sabittir (hash); boy ve genişlik de biraz değişir. Bacaklar g.userData.legs içindedir (update adımında sallanır).
   function buildHuman(p, robe) {
     const h = hash(p.id), M = (c, r = 0.85) => new T.MeshStandardMaterial({ color: c, roughness: r });
+    const suit = cfg.humanoidStyle === 'suit';
+    const woman = suit && (h >>> 3) % 6 === 5;
+    if (suit) robe = M(woman ? ['#14161a', '#1d1f26', '#251c24'][(h >>> 11) % 3] : ['#0e1014', '#171a1f', '#1f242c', '#141b28', '#2a2a2e'][(h >>> 11) % 5]);
     const skin = M(['#e8c4a0', '#d9a97c', '#c68c5f', '#a8714a', '#f0d2b4'][h % 5], 0.7);
     const dark = M('#14171c'), g = new T.Group();
     const add = (m, x, y, z, rx = 0, rz = 0) => { m.position.set(x, y, z); m.rotation.x = rx; m.rotation.z = rz; g.add(m); return m; };
-    for (const x of [-0.09, 0.09]) { add(new T.Mesh(new T.CylinderGeometry(0.07, 0.065, 0.78, 8), dark), x, 0.42, 0); add(new T.Mesh(new T.BoxGeometry(0.1, 0.06, 0.2), M('#0c0e11')), x, 0.03, 0.04); }
+    const legs = [];
+    for (const x of [-0.09, 0.09]) { // bacak: kalçadan sarkar, yürürken sallanır
+      const leg = new T.Group(); leg.position.set(x, 0.8, 0);
+      const lm = new T.Mesh(new T.CylinderGeometry(0.07, 0.065, 0.78, 8), dark); lm.position.y = -0.39; leg.add(lm);
+      const sh = new T.Mesh(new T.BoxGeometry(0.1, 0.06, 0.2), M('#0c0e11')); sh.position.set(0, -0.77, 0.04); leg.add(sh);
+      g.add(leg); legs.push(leg);
+    }
+    g.userData.legs = legs;
     add(new T.Mesh(new T.CylinderGeometry(0.17, 0.2, 0.62, 12), robe), 0, 1.09, 0);                 // gövde / ceket
     add(new T.Mesh(new T.SphereGeometry(0.19, 12, 8), robe), 0, 1.38, 0).scale.set(1.15, 0.45, 0.7); // omuzlar
     for (const sx of [-1, 1]) { // kollar: omuzdan öne, eller karın önünde
@@ -305,18 +316,31 @@
     }
     add(new T.Mesh(new T.CylinderGeometry(0.05, 0.055, 0.1, 8), skin), 0, 1.45, 0);                 // boyun
     add(new T.Mesh(new T.SphereGeometry(0.12, 14, 12), skin), 0, 1.56, 0).scale.set(0.92, 1.08, 1);  // baş
-    if (cfg.humanoidStyle === 'suit') { // takım elbiseli jenerik tipler: beyaz gömlek, kravat, güneş gözlüğü, bazılarında fötr şapka / uzun palto
-      const k2 = (h >>> 3) % 10;
-      add(new T.Mesh(new T.BoxGeometry(0.13, 0.3, 0.02), M('#f2f2ee')), 0, 1.3, 0.17);                      // gömlek
-      add(new T.Mesh(new T.BoxGeometry(0.035, 0.28, 0.025), M(['#5a1218', '#14171c', '#1d2a44'][h % 3])), 0, 1.29, 0.185); // kravat
-      if (k2 < 7) add(new T.Mesh(new T.BoxGeometry(0.21, 0.04, 0.03), M('#050607', 0.3)), 0, 1.575, 0.115); // güneş gözlüğü
-      if (k2 >= 6) { // uzun palto
-        add(new T.Mesh(new T.CylinderGeometry(0.2, 0.27, 0.62, 12), robe), 0, 0.62, 0);
+    if (suit) {
+      const k = (h >>> 3) % 12, hairCol = M(['#0e0b09', '#1d150f', '#3a2a1c', '#4a4a4a', '#9a9a96', '#e4e4e0'][(h >>> 5) % 6]);
+      if (woman) { // başörtülü kadın, uzun siyah elbise
+        const sc = M(['#15171c', '#2a2f3a', '#1c2a24', '#3b2f38'][(h >>> 5) % 4], 0.95);
+        add(new T.Mesh(new T.SphereGeometry(0.14, 14, 12), sc), 0, 1.57, -0.01).scale.set(1, 1.05, 1.02);
+        add(new T.Mesh(new T.ConeGeometry(0.2, 0.36, 12), sc), 0, 1.33, -0.03);
+        add(new T.Mesh(new T.CylinderGeometry(0.2, 0.3, 0.7, 12), robe), 0, 0.55, 0);              // etek
+      } else {
+        add(new T.Mesh(new T.BoxGeometry(0.13, 0.3, 0.02), M('#f2f2ee')), 0, 1.3, 0.17);                    // gömlek
+        add(new T.Mesh(new T.BoxGeometry(0.035, 0.28, 0.025), M(['#5a1218', '#14171c', '#1d2a44', '#3a3a3e'][h % 4])), 0, 1.29, 0.185); // kravat
+        if ((h >>> 7) % 3 === 0) add(new T.Mesh(new T.BoxGeometry(0.22, 0.04, 0.03), M('#050607', 0.3)), 0, 1.575, 0.115); // güneş gözlüğü
+        else if ((h >>> 7) % 3 === 1) add(new T.Mesh(new T.TorusGeometry(0.035, 0.008, 6, 12), M('#222')), -0.05, 1.575, 0.118), add(new T.Mesh(new T.TorusGeometry(0.035, 0.008, 6, 12), M('#222')), 0.05, 1.575, 0.118); // ince gözlük
+        if ((h >>> 9) % 5 < 2) add(new T.Mesh(new T.BoxGeometry(0.1, 0.022, 0.02), hairCol), 0, 1.528, 0.117);   // bıyık
+        if ((h >>> 9) % 5 === 3) add(new T.Mesh(new T.BoxGeometry(0.14, 0.07, 0.03), hairCol), 0, 1.5, 0.1);     // sakal
+        if (k >= 6 && k < 9) add(new T.Mesh(new T.CylinderGeometry(0.2, 0.27, 0.62, 12), robe), 0, 0.62, 0);   // uzun palto
+        if (k === 0 || k === 1) { // fötr şapka
+          add(new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.018, 16), M('#0c0e11')), 0, 1.64, 0);
+          add(new T.Mesh(new T.CylinderGeometry(0.11, 0.125, 0.13, 14), M('#0c0e11')), 0, 1.71, 0);
+        } else if (k === 2 || k === 3) { // yassı kasket
+          add(new T.Mesh(new T.SphereGeometry(0.135, 12, 8, 0, 6.283, 0, 1.2), M(['#6b5a46', '#3b3f46', '#2b2622'][k - 2])), 0, 1.6, 0).scale.set(1, 0.55, 1.05);
+          add(new T.Mesh(new T.BoxGeometry(0.2, 0.015, 0.1), M('#2b2622')), 0, 1.6, 0.13);
+        } else if (k !== 4) add(new T.Mesh(new T.SphereGeometry(0.128, 12, 8, 0, 6.283, 0, 1.25), hairCol), 0, 1.58, -0.01); // saç (k=4: kel)
       }
-      if (k2 === 8 || k2 === 9) { // fötr şapka
-        add(new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.018, 16), M('#0c0e11')), 0, 1.64, 0);
-        add(new T.Mesh(new T.CylinderGeometry(0.11, 0.125, 0.13, 14), M('#0c0e11')), 0, 1.71, 0);
-      } else add(new T.Mesh(new T.SphereGeometry(0.128, 12, 8, 0, 6.283, 0, 1.25), M(['#0e0b09', '#1d150f', '#4a4a4a'][(h >>> 5) % 3])), 0, 1.58, -0.01);
+      const sc2 = 0.93 + ((h >>> 13) % 9) / 100;   // boy / genişlik farkı
+      g.scale.set(woman ? 0.94 * sc2 : sc2, woman ? 0.95 * sc2 : sc2 + ((h >>> 17) % 5) / 100, woman ? 0.94 * sc2 : sc2);
       g.traverse((o) => { if (o.isMesh) o.castShadow = renderer.shadowMap.enabled; });
       return g;
     }
@@ -478,12 +502,12 @@
       if (animate) { p.mixer.update((dt + (p.skipped || 0)) / 1000); p.skipped = 0; } else p.skipped = (p.skipped || 0) + dt;
     } else if (p.torso) {
       // yer tutucu kişi: ada göre basit hareketleri kendisi yapar
-      const tt = t / 1000 + (hash(p.id) % 100) / 30, tor = p.torso;
+      const tt = t / 1000 + (p.npc && cfg.procession ? 0 : (hash(p.id) % 100) / 30), tor = p.torso; // alayda taşıyıcılar (npc) aynı adımı atar
       tor.position.y = 0; tor.rotation.x = 0; tor.rotation.z = 0;
       if (p.walking) tor.position.y = Math.abs(Math.sin(tt * 9)) * 0.06;
       else if (/bow|lay|nod|offer|pray/i.test(name)) tor.rotation.x = Math.sin(((p.anim?.k ?? 0) % 1) * Math.PI) * (name === 'nod' ? 0.25 : 0.6);
       else if (/dance|cheer|jump|wave/i.test(name)) { tor.position.y = Math.abs(Math.sin(tt * 7)) * 0.18; tor.rotation.z = Math.sin(tt * 7) * 0.12; }
-      else { tor.rotation.z = Math.sin(tt * 1.3) * 0.02; if (cfg.procession) tor.position.y = Math.abs(Math.sin(tt * 6)) * 0.035; } // scene.json "procession": true → alay yürüyormuş gibi hafif sekme
+      else { tor.rotation.z = Math.sin(tt * 1.3) * 0.02; if (cfg.procession) { tor.position.y = Math.abs(Math.sin(tt * 6)) * 0.035; const lg = tor.userData.legs; if (lg) { const sw = Math.sin(tt * 6) * 0.42; lg[0].rotation.x = sw; lg[1].rotation.x = -sw; } } } // scene.json "procession": true → alay yürüyormuş gibi hafif sekme
     }
     const foot = project(p.wx, 0, p.wz);
     p.x = foot.x; p.y = foot.y;

@@ -71,8 +71,9 @@
     put(new T.Mesh(new T.CylinderGeometry(0.55, 0.55, 0.22, 12), M('#c9c2b2')), 3.5, 10.4, -24);
 
     // omuzlarda taşınan örtülü tabut + isim levhası (npc'ler köşelerde durur: scene.json / theme.json "npcs")
+    let cof = null;
     if (SHOW_COFFIN) {
-      const cof = new T.Group(); cof.position.set(0, 1.28, -3.4); cof.scale.setScalar(1.25); g.add(cof);
+      cof = new T.Group(); cof.position.set(0, 1.28, -3.4); cof.scale.setScalar(1.25); g.add(cof);
       const box = (w, h, d, c, y = 0) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), M(c, 0.85)); m.position.y = y; cof.add(m); return m; };
       box(0.9, 0.5, 2.2, '#1d3a2c');            // koyu yeşil örtü
       box(0.94, 0.06, 2.24, '#e0d6a8', 0.1);    // örtü şeritleri
@@ -80,7 +81,7 @@
       const plate = new T.Mesh(new T.PlaneGeometry(1.0, 0.31), new T.MeshBasicMaterial({ map: plaqueTexture(T) }));
       plate.position.set(0, 0.55, 1.14); plate.rotation.x = -0.35; cof.add(plate);
     }
-    k.scene.add(g); world = { tex, trees, blocks }; return true;
+    k.scene.add(g); world = { tex, trees, blocks, cof }; return true;
   }
   let last = performance.now();
   Kit.on('frame', (t) => {
@@ -88,6 +89,7 @@
     const dt = Math.min(60, t - last) / 1000; last = t;
     world.tex.offset.y += (SPEED * dt) / (40 / 12);          // yol kayar
     for (const tr of world.trees) { tr.position.z += SPEED * dt; if (tr.position.z > 14) tr.position.z -= 28.8; }
+    if (world.cof) { const w = Math.sin((t / 1000) * 6); world.cof.position.y = 1.28 + Math.abs(w) * 0.035; world.cof.rotation.z = w * 0.012; } // taşıyıcılarla aynı adım
     for (const b of world.blocks) { b.position.z += SPEED * dt; if (b.position.z > 14) b.position.z -= 32.4; }
   });
   const tm = setInterval(() => { if (build()) clearInterval(tm); }, 300);
