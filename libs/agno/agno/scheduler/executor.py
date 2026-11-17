@@ -400,6 +400,9 @@ class ScheduleExecutor:
             snapshot["company_product_id"] = (payload.get("metadata") or {}).get("product_id")
             snapshot["company_routine"] = True
             has_authority = True
+        elif snapshot is not None:
+            # The saved authority is the creator's, and nobody is present when the schedule fires.
+            snapshot = {**snapshot, "scheduled": True}
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 

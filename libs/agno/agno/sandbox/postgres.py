@@ -28,10 +28,15 @@ try:
     from sqlalchemy.dialects.postgresql import insert
     from sqlalchemy.engine import Connection
     from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import Session
 except ImportError:
     raise ImportError("Sandbox coordination requires sqlalchemy and a PostgreSQL driver")
 
 _T = TypeVar("_T")
+
+# The connection info key of the created_at of each run a transaction wrote, whose metrics days it reopens
+_METRICS_CREATED_ATS = "metrics_created_ats"
 
 # Service run statuses no sandbox turn may reopen or overwrite. REGENERATED marks a
 # completed run superseded by /continue?regenerate=true.
@@ -273,17 +278,38 @@ class _SandboxStore:
 
             async def transact_async() -> _T:
                 async with db.db_engine.begin() as connection:
-                    return await connection.run_sync(operation)
+                    try:
+                        result = await connection.run_sync(operation)
+                        created_ats = connection.info.get(_METRICS_CREATED_ATS)
+                        if created_ats:
+                            async with AsyncSession(bind=connection) as sess:
+                                await db._reopen_metrics_days(sess, created_ats)
+                        return result
+                    finally:
+                        connection.info.pop(_METRICS_CREATED_ATS, None)
 
             # A cancellation that lands while the commit is in flight would hide whether it happened.
             return await _settled(transact_async(), undo)
 
         def transact() -> _T:
             with db.db_engine.begin() as connection:
-                return operation(connection)
+                try:
+                    result = operation(connection)
+                    created_ats = connection.info.get(_METRICS_CREATED_ATS)
+                    if created_ats:
+                        with Session(bind=connection) as sess:
+                            db._reopen_metrics_days(sess, created_ats)
+                    return result
+                finally:
+                    connection.info.pop(_METRICS_CREATED_ATS, None)
 
         # Cancelling to_thread leaves the thread running; wait so a cancelled call never commits later.
         return await _settled(asyncio.to_thread(transact), undo)
+
+    @staticmethod
+    def _queue_metrics_reopen(connection: Connection, created_at: Optional[int]) -> None:
+        """Queue the day a run write changed, for _transaction to reopen."""
+        connection.info.setdefault(_METRICS_CREATED_ATS, []).append(created_at)
 
     @staticmethod
     def _json(value: Any) -> Any:
@@ -515,6 +541,7 @@ class _SandboxStore:
                     .where(self.runs.c.run_id == run_id)
                     .values(status="RUNNING", run_data=self._json(reopened), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, run["created_at"])
             elif not active and str(run["status"]).upper() in _FINISHED:
                 raise SandboxRunFinished(dict(run["run_data"]))
             if not active and str(run["status"]).upper() == "PAUSED":
@@ -845,6 +872,7 @@ class _SandboxStore:
                 .where(self.runs.c.run_id == lease.run_id)
                 .values(status=run["status"], run_data=self._json(run), updated_at=int(time.time()))
             )
+            self._queue_metrics_reopen(connection, previous_run["created_at"])
             connection.execute(
                 update(self.sessions)
                 .where(self.sessions.c.session_id == lease.session_id)
@@ -963,6 +991,7 @@ class _SandboxStore:
                     .where(self.runs.c.run_id == lease.run_id)
                     .values(status=run["status"], run_data=self._json(run), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, previous_run["created_at"])
                 if record.get("stop_retryable"):
                     # Lets the queue's next attempt of this run reopen it.
                     record["retryable_failure"] = {"run_id": lease.run_id, "queue_attempt": lease.queue_attempt}
@@ -1122,6 +1151,7 @@ class _SandboxStore:
                     updated_at=int(time.time()),
                 )
             )
+            self._queue_metrics_reopen(connection, service["created_at"])
 
         await self._transaction(publish)
 
@@ -1241,6 +1271,7 @@ class _SandboxStore:
                     .where(self.runs.c.run_id == run_id)
                     .values(status=status, run_data=self._json(run), updated_at=int(time.time()))
                 )
+                self._queue_metrics_reopen(connection, row["created_at"])
                 return RunPersistOutcome.UPDATED
             # Take over an interrupted stop without rewriting the status it already committed to.
             if record["phase"] != "stopping":

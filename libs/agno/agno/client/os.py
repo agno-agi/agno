@@ -4,10 +4,12 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence,
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
+from pydantic import BaseModel
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.exceptions import RemoteServerUnavailableError
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
@@ -39,6 +41,14 @@ from agno.os.routers.metrics.schemas import (
     MetricsRefreshResponse,
     MetricsRefreshStatusResponse,
     MetricsResponse,
+    OSLatencyMetricsResponse,
+    OSMetricsRefreshResponse,
+    OSMetricsRefreshStatusResponse,
+    OSModelMetricsResponse,
+    OSRunMetricsResponse,
+    OSSessionMetricsResponse,
+    OSTokenMetricsResponse,
+    OSUserMetricsResponse,
 )
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
@@ -74,6 +84,33 @@ from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_warning
+from agno.utils.serialize import json_serializer
+
+
+def _form_json_default(obj: Any) -> Any:
+    if isinstance(obj, FilterExpr):
+        return obj.to_dict()
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    return json_serializer(obj)
+
+
+def _encode_form_fields(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Encode extra run fields for a multipart form, in the shapes the AgentOS run routes parse."""
+    fields: Dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, bytes, bool, int, float)):
+            fields[key] = value
+        elif isinstance(value, type) and issubclass(value, BaseModel):
+            fields[key] = json.dumps(value.model_json_schema())
+        elif isinstance(value, (dict, list, tuple, FilterExpr, BaseModel)):
+            fields[key] = json.dumps(value, default=_form_json_default)
+        else:
+            log_warning(f"Not sending '{key}' to the remote AgentOS: {type(value).__name__} has no form encoding")
+    return fields
 
 
 class AgentOSClient:
@@ -578,12 +615,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -640,11 +672,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -686,11 +714,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
@@ -728,11 +752,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
@@ -853,12 +873,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -915,12 +930,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -987,11 +997,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return TeamRunOutput.from_dict(response_data)
@@ -1041,11 +1047,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
@@ -1161,12 +1163,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -1223,12 +1220,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -1278,11 +1270,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return WorkflowRunOutput.from_dict(response_data)
@@ -1328,11 +1316,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
@@ -3126,6 +3110,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
     ) -> MetricsResponse:
         """Retrieve AgentOS metrics and analytics data for a specified date range.
 
@@ -3137,9 +3122,10 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional database table to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID
 
         Returns:
-            MetricsResponse: Metrics data including daily aggregated metrics
+            MetricsResponse: Metrics data including daily aggregated metrics and the refresh status
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -3149,6 +3135,7 @@ class AgentOSClient:
             "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
             "db_id": db_id,
             "table": table,
+            "user_id": user_id,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
@@ -3161,6 +3148,8 @@ class AgentOSClient:
         table: Optional[str] = None,
         background: bool = False,
         headers: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
+        rebuild_from: Optional[date] = None,
     ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         """Manually trigger recalculation of system metrics from raw data.
 
@@ -3176,6 +3165,8 @@ class AgentOSClient:
             table: Optional database table to use
             background: Run the refresh in the background and return immediately
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID
+            rebuild_from: Also rebuild every day from this date to today (YYYY-MM-DD format)
 
         Returns:
             List[DayAggregatedMetrics]: The refreshed daily aggregated metrics (synchronous refresh)
@@ -3184,7 +3175,12 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"db_id": db_id, "table": table}
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+            "user_id": user_id,
+            "rebuild_from": rebuild_from.strftime("%Y-%m-%d") if rebuild_from else None,
+        }
         params = {k: v for k, v in params.items() if v is not None}
         if background:
             params["background"] = True
@@ -3204,9 +3200,9 @@ class AgentOSClient:
 
         Returns 'running' while a refresh is in progress, then 'completed' or 'failed'
         with the finish timestamp. The state updates even when a refresh completes
-        without writing new data. Returns 'idle' if no refresh has been triggered
-        since the server process started. Intended for polling after starting a
-        background refresh via refresh_metrics(background=True).
+        without writing new data. Returns 'idle' if no refresh has run on the
+        database. Intended for polling after starting a background refresh via
+        refresh_metrics(background=True).
 
         Args:
             db_id: Optional database ID to use
@@ -3224,3 +3220,285 @@ class AgentOSClient:
 
         data = await self._aget("/metrics/refresh/status", params=params, headers=headers)
         return MetricsRefreshStatusResponse.model_validate(data)
+
+    async def get_os_session_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSSessionMetricsResponse:
+        """Retrieve the sessions created on each day of a date range, their total, and how that total
+        compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSSessionMetricsResponse: Session counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/sessions", params=params, headers=headers)
+        return OSSessionMetricsResponse.model_validate(data)
+
+    async def get_os_token_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSTokenMetricsResponse:
+        """Retrieve the tokens used on each day of a date range, their total, and how that total
+        compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSTokenMetricsResponse: Token counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/tokens", params=params, headers=headers)
+        return OSTokenMetricsResponse.model_validate(data)
+
+    async def get_os_user_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSUserMetricsResponse:
+        """Retrieve the users in the user directory at the end of each day of a date range, their total,
+        and how that total compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSUserMetricsResponse: User counts per day, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/users", params=params, headers=headers)
+        return OSUserMetricsResponse.model_validate(data)
+
+    async def get_os_model_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSModelMetricsResponse:
+        """Retrieve how many runs each model served over a date range.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSModelMetricsResponse: Run counts and shares per model
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/models", params=params, headers=headers)
+        return OSModelMetricsResponse.model_validate(data)
+
+    async def get_os_run_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSRunMetricsResponse:
+        """Retrieve the runs started on each day of a date range by status, their total and success rate,
+        and how that total compares with the date range of the same length before it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSRunMetricsResponse: Run counts per day by status, their total and its change
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/runs", params=params, headers=headers)
+        return OSRunMetricsResponse.model_validate(data)
+
+    async def get_os_latency_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSLatencyMetricsResponse:
+        """Retrieve the average, median, p95 and slowest duration, time to the first token and model call
+        of the completed runs on each day of a date range and across it.
+
+        If no date range is specified, covers the last 30 days.
+
+        Args:
+            starting_date: Starting date for metrics range (YYYY-MM-DD format)
+            ending_date: Ending date for metrics range (YYYY-MM-DD format)
+            user_id: Optional user ID
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSLatencyMetricsResponse: Latency per day and across the window
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "starting_date": starting_date.strftime("%Y-%m-%d") if starting_date else None,
+            "ending_date": ending_date.strftime("%Y-%m-%d") if ending_date else None,
+            "user_id": user_id,
+            "db_id": db_id,
+            "timeout_seconds": timeout_seconds,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/latency", params=params, headers=headers)
+        return OSLatencyMetricsResponse.model_validate(data)
+
+    async def refresh_os_metrics(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshResponse:
+        """Recalculate the metrics of every database the /os/metrics routes read, in the background.
+
+        Returns at once with the status of each database. Poll get_os_metrics_refresh_status for the outcome.
+
+        Args:
+            db_id: Optional database IDs to refresh, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshResponse: The status of the refresh of each database
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._apost("/os/metrics/refresh", params=params, headers=headers)
+        return OSMetricsRefreshResponse.model_validate(data)
+
+    async def get_os_metrics_refresh_status(
+        self,
+        db_id: Optional[List[str]] = None,
+        timeout_seconds: Optional[float] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> OSMetricsRefreshStatusResponse:
+        """Get the status of the most recent metrics refresh of every database the /os/metrics routes read.
+
+        Args:
+            db_id: Optional database IDs to read, every database by default
+            timeout_seconds: Optional seconds to wait for each database to answer
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            OSMetricsRefreshStatusResponse: The status that answers for every database, and each database's own
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "timeout_seconds": timeout_seconds}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/os/metrics/refresh/status", params=params, headers=headers)
+        return OSMetricsRefreshStatusResponse.model_validate(data)

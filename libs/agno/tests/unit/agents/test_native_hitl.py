@@ -889,6 +889,44 @@ async def test_codex_transport_preserves_native_policy(monkeypatch, policy):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("installed, supported", [("0.162.1", False), ("0.163.0", True), ("0.169.0", True)])
+async def test_codex_transport_accepts_any_version_from_the_minimum(monkeypatch, installed, supported):
+    pytest.importorskip("openai_codex")
+    import importlib.metadata
+
+    from agno.agents.codex._hitl import human_client
+
+    real = importlib.metadata.version
+    monkeypatch.setattr(
+        importlib.metadata, "version", lambda name: installed if name == "openai-codex" else real(name)
+    )
+    if supported:
+        assert human_client(None, None)._client._sync is not None
+    else:
+        with pytest.raises(ValueError, match=r"openai-codex>=0\.163\.0"):
+            human_client(None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner, hook",
+    [
+        ("openai_codex.client.CodexClient", "_reader_loop"),
+        ("openai_codex.client.CodexClient", "_write_message"),
+        ("openai_codex._message_router.MessageRouter", "fail_all"),
+    ],
+)
+async def test_codex_transport_refuses_an_sdk_without_its_hooks(monkeypatch, owner, hook):
+    # A missing hook would leave the SDK's accept-everything default in charge, so it must fail closed.
+    pytest.importorskip("openai_codex")
+    from agno.agents.codex._hitl import human_client
+
+    monkeypatch.delattr(f"{owner}.{hook}")
+    with pytest.raises(ValueError, match=f"not compatible with this openai-codex version.*{hook}"):
+        human_client(None, None)
+
+
+@pytest.mark.asyncio
 async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch, tmp_path):
     pytest.importorskip("openai_codex")
     import queue
@@ -1333,6 +1371,51 @@ async def test_reclaimed_direct_native_run_never_replays(tmp_path):
     assert agent.calls == 0
     assert (await store.get_job("run"))["status"] == "failed"
     assert (await agent.aget_run_output("run", "session")).status == RunStatus.error
+
+
+@pytest.mark.asyncio
+async def test_queued_native_run_gets_its_decision_without_a_second_execution(tmp_path, monkeypatch):
+    """A queued run paused on a native request keeps its ticket running; the decision reaches that execution."""
+    import json
+
+    import httpx
+
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os import AgentOS, utils
+
+    deliveries = []
+    deliver = utils.adeliver_native_decisions
+
+    async def counted(*args, **kwargs):
+        deliveries.append(args[1].run_id)
+        return await deliver(*args, **kwargs)
+
+    monkeypatch.setattr(utils, "adeliver_native_decisions", counted)
+
+    db = SqliteDb(db_file=str(tmp_path / "queued.db"))
+    agent = Harness(id="test", db=db, hitl_timeout=5)
+    store = InMemoryQueueStore()
+    queue = QueueConfig(durable=True, db=store, poll_interval=0.05)
+    app = AgentOS(id="queue-test", db=db, agents=[agent], queue=queue, telemetry=False).get_app()
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            run_id, run = await paused_over_http(client, agent)
+            assert (await store.get_job(run_id))["status"] == "running"
+            tools = json.dumps([tool.to_dict() for tool in answered(run, True)])
+            response = await client.post(
+                f"/agents/test/runs/{run_id}/continue", data={"session_id": "session", "stream": "true", "tools": tools}
+            )
+            assert response.status_code == 200, response.text
+            assert "RunCompleted" in response.text
+            for _ in range(300):
+                if (await store.get_job(run_id))["status"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+            assert (await store.get_job(run_id))["status"] == "completed"
+    assert (await agent.aget_run_output(run_id, session_id="session")).status == RunStatus.completed
+    assert deliveries == [run_id]
+    assert agent.executions == 1 and agent.calls == 1
 
 
 @pytest.mark.asyncio

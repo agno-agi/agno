@@ -14,7 +14,7 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
+from agno.run.team import TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -81,7 +81,6 @@ from agno.run.agent import (
     ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
-from agno.run.base import RunStatus
 from agno.utils.serialize import to_json_types
 
 # Workflow events sent as progress: the event type sent to the client, and the event fields sent with it.
@@ -184,71 +183,6 @@ def _get_progress_metadata(event: Any) -> Optional[Dict[str, Any]]:
                     metadata[field] = value
             return metadata
     return None
-
-
-async def map_background_stream_to_run_events(
-    event_stream: AsyncIterator[Any],
-    entity: Any,
-    run_id: str,
-    session_id: str,
-) -> AsyncIterator[Any]:
-    """Map the stream of a background run back to Agno events.
-
-    A background run streams its events as SSE strings, the form they are buffered in for
-    clients that reconnect. A run that ends without a final event (one cancelled before it
-    started) is given the one its stored run calls for.
-
-    Args:
-        event_stream: The async iterator from agent/team.arun(stream=True, background=True)
-        entity: The Agno Agent or Team being run
-        run_id: The id of the run
-        session_id: The id of the session the run belongs to
-
-    Yields:
-        The Agno events of the run
-    """
-    is_finished = False
-    async for event in event_stream:
-        if isinstance(event, str):
-            # Keepalive comments carry no event
-            data_line = next((line for line in event.splitlines() if line.startswith("data: ")), None)
-            if data_line is None:
-                continue
-            event = team_run_output_event_from_dict(json.loads(data_line[len("data: ") :]))
-        elif isinstance(event, (RunOutput, TeamRunOutput)):
-            # Terminal RunOutput is not an SSE event; skip it like the background producer does
-            continue
-        if getattr(event, "run_id", None) == run_id and isinstance(
-            event,
-            (
-                RunCompletedEvent,
-                RunCancelledEvent,
-                RunErrorEvent,
-                RunPausedEvent,
-                TeamRunCompletedEvent,
-                TeamRunCancelledEvent,
-                TeamRunErrorEvent,
-                TeamRunPausedEvent,
-            ),
-        ):
-            is_finished = True
-        yield event
-
-    if is_finished:
-        return
-    run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)
-    if run_output is not None and run_output.status == RunStatus.cancelled:
-        if isinstance(run_output, TeamRunOutput):
-            yield TeamRunCancelledEvent(run_id=run_id, session_id=session_id)
-        else:
-            yield RunCancelledEvent(run_id=run_id, session_id=session_id)
-    elif run_output is not None and run_output.status == RunStatus.error:
-        if isinstance(run_output, TeamRunOutput):
-            yield TeamRunErrorEvent(
-                run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed")
-            )
-        else:
-            yield RunErrorEvent(run_id=run_id, session_id=session_id, content=str(run_output.content or "Run failed"))
 
 
 async def stream_run_events_to_task(

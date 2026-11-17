@@ -37,13 +37,13 @@ class TestMetricsUserIsolation:
 
         assert results is not None
         by_user = {record["user_id"]: record for record in results}
-        assert set(by_user) == {"user_a", "user_b", ""}
+        assert set(by_user) == {"user_a", "user_b", None}
         assert by_user["user_a"]["agent_sessions_count"] == 2
         assert by_user["user_b"]["agent_sessions_count"] == 1
-        assert by_user[""]["agent_sessions_count"] == 1
+        assert by_user[None]["agent_sessions_count"] == 1
         assert by_user["user_a"]["users_count"] == 1
-        assert by_user[""]["users_count"] == 0
-        assert by_user[""]["id"].endswith("__daily")
+        assert by_user[None]["users_count"] == 0
+        assert by_user[None]["id"].endswith("__daily")
 
     def test_recalculation_updates_same_records(self, valkey_db: ValkeyDb):
         _seed_sessions(valkey_db)

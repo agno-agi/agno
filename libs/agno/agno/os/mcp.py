@@ -52,6 +52,7 @@ from agno.os.utils import (
     resolve_workflow,
     stamped_component_version,
 )
+from agno.registry._reserved import _listed
 from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
@@ -2664,7 +2665,9 @@ def build_mcp_server(
                 return filter_resources_by_access(request, items, resource_type)
             return items
 
-        agents_out = [AgentSummaryResponse.from_agent(a).model_dump() for a in _accessible(os.agents, "agents")]
+        agents_out = [
+            AgentSummaryResponse.from_agent(a).model_dump() for a in _accessible(_listed(os.agents), "agents")
+        ]
         teams_out = [TeamSummaryResponse.from_team(t).model_dump() for t in _accessible(os.teams, "teams")]
         workflows_out = [
             WorkflowSummaryResponse.from_workflow(w).model_dump() for w in _accessible(os.workflows, "workflows")

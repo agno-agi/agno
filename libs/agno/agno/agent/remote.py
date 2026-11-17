@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
+from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge, take_local_run_options
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
 from agno.utils.agent import validate_input
@@ -288,6 +288,9 @@ class RemoteAgent(BaseRemote):
         headers = self._get_auth_headers(auth_token)
         # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
         yield_run_output = kwargs.pop("yield_run_output", False)
+        dependencies, metadata, knowledge_filters = take_local_run_options(
+            kwargs, dependencies=dependencies, metadata=metadata, knowledge_filters=knowledge_filters
+        )
 
         # A2A protocol path
         if self.a2a_client:
@@ -493,7 +496,7 @@ class RemoteAgent(BaseRemote):
         headers = self._get_auth_headers(auth_token)
         # Local-only continue arguments; the remote route rebuilds them from the tools it receives
         kwargs.pop("updated_tools", None)
-        kwargs.pop("background_tasks", None)
+        take_local_run_options(kwargs)
         # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
         yield_run_output = kwargs.pop("yield_run_output", False)
 

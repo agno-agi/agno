@@ -1,6 +1,5 @@
 """MySQL regression coverage for deleting runs from a legacy blob."""
 
-import json
 import uuid
 
 import pytest
@@ -72,8 +71,6 @@ def _blob_ids(db):
     sessions = db._get_table(table_type="sessions")
     with db.Session() as sess:
         raw = sess.execute(select(sessions.c.runs)).scalar_one()
-    if isinstance(raw, str):
-        raw = json.loads(raw)
     return [run["run_id"] for run in raw]
 
 

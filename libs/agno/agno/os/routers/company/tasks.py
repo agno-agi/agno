@@ -13,6 +13,7 @@ from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus,
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
+from agno.registry._reserved import MINI_AGENT_ID
 
 
 def get_tasks_router(
@@ -301,6 +302,10 @@ def get_tasks_router(
                     status_code=409, detail=task_transition_blocker(existing, body.target, run_holding=True)
                 )
         if body.target == "ready":
+            if body.executor_type is None:
+                # No executor named: the Task keeps its own. A Task that has none runs on Mini Agent.
+                stored = existing.get("executor_type"), existing.get("executor_id")
+                body.executor_type, body.executor_id = stored if all(stored) else ("agent", MINI_AGENT_ID)
             await _require_accept(request, body.executor_type, body.executor_id)
         record = await _call(
             "transition_task",
