@@ -1,15 +1,15 @@
 {
-  "name": "Anma · Süleyman Çakır (3D)",
-  "description": "Sakin, saygılı anma teması. Hediyeler şansa bağlı değildir: aynı hediye her zaman aynı etkiyi yapar. Ucuz hediye = mum/gül yaprağı, büyük hediye = tek ve sakin bir an. 3D sahne: model dosyası yok, yer tutucu kişiler ve kodla çizilmiş sade mekân.",
+  "name": "Alay · Süleyman Çakır (3D)",
+  "description": "Cenaze alayı: tabut omuzlarda taşınır, izleyiciler alaya katılır, hediyeler sabit rollere denk gelir (şans yok). Kurgu / mizah içeriğidir.",
   "width": 1080,
   "height": 1920,
   "actions": [
     {
       "id": "mum",
-      "label": "Mum",
-      "icon": "🕯️",
+      "label": "Omuz ver",
+      "icon": "🤝",
       "card": "1–9 JETON",
-      "description": "Gönderenin yanında mum ışığı yükselir, hafif baş eğer",
+      "description": "Gönderen alaya omuz verir: parlar, baş eğer",
       "steps": [
         {
           "aura": 0.6
@@ -19,7 +19,7 @@
         },
         {
           "fx": "emit",
-          "preset": "mum",
+          "preset": "nur",
           "at": "head",
           "count": "count"
         },
@@ -29,7 +29,7 @@
         {
           "fx": "text",
           "at": "head",
-          "text": "🕯 {ten}",
+          "text": "🤝 {ten}",
           "color": "#f3e7c4",
           "size": 28
         }
@@ -37,13 +37,13 @@
     },
     {
       "id": "cicek",
-      "label": "Çiçek",
+      "label": "Çelenk",
       "icon": "🌹",
       "card": "10–99 JETON",
-      "description": "Ön tarafa yürür, baş eğer, karanfil yaprakları bırakır, yerine döner",
+      "description": "Tabuta yürür, çelenk bırakır, baş eğer, yerine döner",
       "steps": [
         {
-          "walk": "stage"
+          "walk": "bier"
         },
         {
           "pose": "stand"
@@ -77,10 +77,10 @@
     },
     {
       "id": "an",
-      "label": "Büyük hediye",
+      "label": "Büyük saygı",
       "icon": "🌙",
       "card": "100+ JETON",
-      "description": "Tek ve sakin bir an: ışık sütunu, yavaş yağan yapraklar, tüm saf baş eğer",
+      "description": "Tek ve sakin bir an: kamera yaklaşır, ışık sütunu, yapraklar, tüm alay baş eğer",
       "steps": [
         {
           "sound": "big"
@@ -130,7 +130,7 @@
         {
           "fx": "text",
           "at": "focus",
-          "text": "Allah rahmet eylesin",
+          "text": "Süleyman Çakır'a saygı",
           "size": 46,
           "duration": 4200
         }
@@ -138,8 +138,8 @@
     },
     {
       "id": "amin",
-      "label": "Amin",
-      "icon": "🤲",
+      "label": "Alaya katıl",
+      "icon": "🚶",
       "description": "Sohbet komutu: baş eğer",
       "steps": [
         {
@@ -155,31 +155,52 @@
     }
   ],
   "rules": {
-    "joinMode": "all",
+    "joinMode": "keyword",
     "joinKeywords": [
-      "amin",
-      "merhaba"
+      "katıl",
+      "katil",
+      "amin"
     ],
     "bigGiftCoins": 100,
     "giftTiers": [
       {
         "minCoins": 1,
         "action": "mum",
-        "label": "Mum"
+        "label": "Omuz ver"
       },
       {
         "minCoins": 10,
         "action": "cicek",
-        "label": "Çiçek"
+        "label": "Çelenk"
       },
       {
         "minCoins": 100,
         "action": "an",
-        "label": "Büyük hediye"
+        "label": "Büyük saygı"
       }
     ],
-    "giftOverrides": [],
+    "giftOverrides": [
+      {
+        "names": [
+          "rose",
+          "gül",
+          "gul"
+        ],
+        "action": "mum",
+        "label": "Omuz ver"
+      }
+    ],
     "chatCommands": [
+      {
+        "keywords": [
+          "katıl",
+          "katil"
+        ],
+        "match": "contains",
+        "action": "amin",
+        "label": "Alaya katıl",
+        "cooldownMs": 8000
+      },
       {
         "keywords": [
           "amin",
@@ -189,24 +210,53 @@
         "action": "amin",
         "label": "Amin",
         "cooldownMs": 8000
-      },
-      {
-        "keywords": [
-          "rahmet",
-          "mekanı cennet",
-          "başımız sağolsun",
-          "başsağlığı"
-        ],
-        "match": "contains",
-        "action": "amin",
-        "label": "Dua",
-        "cooldownMs": 8000
       }
     ]
   },
   "characters": [],
   "animations": {},
-  "npcs": [],
+  "npcs": [
+    {
+      "id": "t0",
+      "name": "",
+      "at": [
+        -0.75,
+        -3.95
+      ],
+      "pose": "idle",
+      "showName": false
+    },
+    {
+      "id": "t1",
+      "name": "",
+      "at": [
+        0.75,
+        -3.95
+      ],
+      "pose": "idle",
+      "showName": false
+    },
+    {
+      "id": "t2",
+      "name": "",
+      "at": [
+        -0.75,
+        -2.85
+      ],
+      "pose": "idle",
+      "showName": false
+    },
+    {
+      "id": "t3",
+      "name": "",
+      "at": [
+        0.75,
+        -2.85
+      ],
+      "pose": "idle",
+      "showName": false
+    }
+  ],
   "titles": [
     {
       "minCoins": 0,
@@ -237,11 +287,11 @@
     "voice": "tr-TR-AhmetNeural",
     "giftMinCoins": 1,
     "gift": [
-      "{ten}, Allah razı olsun.",
-      "{ten}, teşekkür ederiz. Allah rahmet eylesin."
+      "{ten}, omuz verdiğin için sağ ol.",
+      "{ten}, alaya katıldığın için teşekkürler."
     ],
     "bigGift": [
-      "{ten}, Süleyman Çakır için gönderdiğin hediyeden dolayı Allah razı olsun. Mekânı cennet olsun."
+      "{ten}, büyük bir saygı gösterdi. Süleyman Çakır için herkes baş eğsin."
     ],
     "join": [],
     "chat": [],
@@ -257,23 +307,23 @@
   "periodic": {
     "everyMinutes": 6,
     "quietSeconds": 20,
-    "title": "ANMA",
+    "title": "ALAY",
     "items": [
-      "Süleyman Çakır'a Allah rahmet eylesin. Başımız sağolsun."
+      "Süleyman Çakır alayı yürüyor. Yoruma katıl yaz, sen de alaya katıl."
     ]
   },
   "prompts": {
     "everySeconds": 240,
     "quietSeconds": 40,
     "items": [
-      "Dua ve taziye mesajlarınızı yorumlara yazabilirsiniz.",
-      "«Amin» yazarak dualara katılabilirsiniz."
+      "Yoruma «katıl» yaz, cenaze alayına katıl.",
+      "Gül göndererek alaya omuz ver."
     ]
   },
   "hud": {
     "title": {
       "text": "SÜLEYMAN ÇAKIR",
-      "sub": "Allah rahmet eylesin · Mekânı cennet olsun"
+      "sub": "Cenaze alayı · mizah / kurgu yayını"
     },
     "counters": true,
     "giftCard": {

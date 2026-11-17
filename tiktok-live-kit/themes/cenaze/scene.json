@@ -5,15 +5,15 @@
   "camera": {
     "position": [
       0,
-      4.6,
-      13.5
+      3.6,
+      9.5
     ],
     "target": [
       0,
-      1.1,
-      -1.5
+      1.5,
+      -3
     ],
-    "fov": 50
+    "fov": 55
   },
   "background": "#0b0e13",
   "fog": {
@@ -71,55 +71,59 @@
       4.2
     ],
     "z": [
-      -0.5,
+      0.2,
       8
     ],
     "color": "#171c24"
   },
   "aisle": {
     "x": 0,
-    "half": 0.6
+    "half": 1.0
   },
   "spacing": 0.8,
   "seats": [
     [
-      -1.4,
-      -1.8
+      -2.0,
+      -0.6
     ],
     [
-      1.4,
-      -1.8
+      2.0,
+      -0.6
     ],
     [
-      -2.4,
-      -1.8
+      -3.0,
+      -0.6
     ],
     [
-      2.4,
-      -1.8
+      3.0,
+      -0.6
     ],
     [
-      -3.4,
-      -1.8
+      -1.2,
+      0.6
     ],
     [
-      3.4,
-      -1.8
+      1.2,
+      0.6
     ]
   ],
   "points": {
     "stage": [
       0,
-      -3.2
+      -1.6
     ],
     "focus": [
       0,
-      2,
-      -4
+      1.5,
+      -3.4
     ],
     "entry": [
       0,
       14
+    ],
+    "bier": [
+      1.8,
+      -3.0
     ]
   },
   "bloom": {
@@ -127,13 +131,7 @@
     "radius": 0.5,
     "threshold": 0.8
   },
-  "emitters": [
-    {
-      "preset": "nur",
-      "at": "focus",
-      "every": 700
-    }
-  ],
+  "emitters": [],
   "maxAnimated": 120,
   "maxTags": 8,
   "fill": {
@@ -141,5 +139,6 @@
   },
   "fps": 30,
   "humanoid": true,
-  "humanoidStyle": "suit"
+  "humanoidStyle": "suit",
+  "procession": true
 }

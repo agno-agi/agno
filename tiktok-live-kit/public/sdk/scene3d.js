@@ -483,7 +483,7 @@
       if (p.walking) tor.position.y = Math.abs(Math.sin(tt * 9)) * 0.06;
       else if (/bow|lay|nod|offer|pray/i.test(name)) tor.rotation.x = Math.sin(((p.anim?.k ?? 0) % 1) * Math.PI) * (name === 'nod' ? 0.25 : 0.6);
       else if (/dance|cheer|jump|wave/i.test(name)) { tor.position.y = Math.abs(Math.sin(tt * 7)) * 0.18; tor.rotation.z = Math.sin(tt * 7) * 0.12; }
-      else tor.rotation.z = Math.sin(tt * 1.3) * 0.02;
+      else { tor.rotation.z = Math.sin(tt * 1.3) * 0.02; if (cfg.procession) tor.position.y = Math.abs(Math.sin(tt * 6)) * 0.035; } // scene.json "procession": true → alay yürüyormuş gibi hafif sekme
     }
     const foot = project(p.wx, 0, p.wz);
     p.x = foot.x; p.y = foot.y;
