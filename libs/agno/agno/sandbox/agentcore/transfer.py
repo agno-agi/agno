@@ -14,6 +14,7 @@ from agno.sandbox.agentcore.server import _MAX_TRANSFER
 from agno.sandbox.base import SandboxError, SandboxHandle, _sync
 from agno.sandbox.checkpoint import (
     CheckpointArchive,
+    CheckpointContentError,
     CheckpointRef,
     CheckpointStore,
     check_excluded,
@@ -93,16 +94,21 @@ class AgentCoreCheckpointTransfer:
         check_exclusions(exclude)
         name = uuid4().hex
         try:
-            exported = await self.provider._invoke_for(
-                handle,
-                "export",
-                idempotent=False,
-                slow=True,
-                name=name,
-                state=dict(state),
-                exclude=list(exclude),
-                limits=asdict(self.archive.limits),
-            )
+            try:
+                exported = await self.provider._invoke_for(
+                    handle,
+                    "export",
+                    idempotent=False,
+                    slow=True,
+                    name=name,
+                    state=dict(state),
+                    exclude=list(exclude),
+                    limits=asdict(self.archive.limits),
+                )
+            except _Refusal as error:
+                if error.code == "content":
+                    raise CheckpointContentError(str(error)) from error
+                raise
             with tempfile.TemporaryDirectory(prefix=".capture-", dir=self.scratch) as directory:
                 path = Path(directory) / "checkpoint.tar"
                 await self._pull(handle, name, int(exported["size"]), path)

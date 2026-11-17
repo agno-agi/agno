@@ -24,7 +24,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 import agno.sandbox.agentcore.sandbox as agentcore_sandbox
 from agno.sandbox.agentcore import AgentCoreCheckpointTransfer, AgentCoreSandbox, server
 from agno.sandbox.base import SandboxError
-from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore, check_excluded
+from agno.sandbox.checkpoint import CheckpointContentError, CheckpointRef, FileCheckpointStore, check_excluded
 
 ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/agno_sandbox-abc123"
 
@@ -555,6 +555,31 @@ async def test_capture_refuses_a_symlinked_root(computer, tmp_path):
     transfer = AgentCoreCheckpointTransfer(computer.sandbox, FileCheckpointStore(tmp_path / "store"))
     with pytest.raises(SandboxError, match="real directories"):
         await transfer.acapture(handle, state={})
+
+
+@pytest.mark.asyncio
+async def test_files_that_cannot_be_checkpointed_are_reported_as_such(computer, tmp_path):
+    handle = await computer.sandbox.acreate("s")
+    os.mkfifo(computer.workspace / "pipe")
+    transfer = AgentCoreCheckpointTransfer(computer.sandbox, FileCheckpointStore(tmp_path / "store"))
+    # The coordinator retires a turn on this error rather than capturing the same files again.
+    with pytest.raises(CheckpointContentError, match="capture failed.*workspace/pipe"):
+        await transfer.acapture(handle, state={})
+    assert computer.sandbox._data.stops == []
+    assert not list(computer.control.glob("*.checkpoint"))
+    assert not server._marked(server._CAPTURING)
+
+
+@pytest.mark.asyncio
+async def test_any_other_capture_failure_stays_retryable(computer, tmp_path, monkeypatch):
+    handle = await computer.sandbox.acreate("s")
+    monkeypatch.setattr(server, "_PYTHON", [sys.executable, "-c", "raise SystemExit('archiver crashed')"])
+    transfer = AgentCoreCheckpointTransfer(computer.sandbox, FileCheckpointStore(tmp_path / "store"))
+    with pytest.raises(SandboxError, match="archiver crashed") as failure:
+        await transfer.acapture(handle, state={})
+    assert not isinstance(failure.value, CheckpointContentError)
+    assert computer.sandbox._data.stops == []
+    assert not list(computer.control.glob("*.checkpoint"))
 
 
 @pytest.mark.asyncio
