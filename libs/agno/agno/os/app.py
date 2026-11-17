@@ -1185,12 +1185,14 @@ class AgentOS:
                 from agno.os.auth import _has_authorization_middleware
 
                 # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
-                ):
+                authorized = bool(self.authorization) or _has_authorization_middleware(app)
+                # Under authorization Super Agent must know who each sender is: users=, or members linked by email
+                if authorized and getattr(interface, "users", None) is None and not self._attach_slack_links(interface):
                     raise ValueError(
-                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                        "pass Slack(users={slack_user_id: principal_id})."
+                        "Slack serving Super Agent under authorization requires Slack identity mapping: pass "
+                        "Slack(users={slack_user_id: principal_id}), or Slack(resolve_user_identity=True) with "
+                        "AgentOS(user_directory=True) and a PostgreSQL or SQLite db, so each member is matched by "
+                        "their Slack email to a user who has signed in."
                     )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:
@@ -2876,6 +2878,21 @@ class AgentOS:
         app = self.get_app()
 
         return flatten_routes(app.routes)
+
+    def _attach_slack_links(self, interface: BaseInterface) -> bool:
+        """Lend a Slack interface the links that match its members to AgentOS users by email; False when it cannot.
+
+        That needs Slack(resolve_user_identity=True), the user directory (the users who have signed in), and a
+        PostgreSQL or SQLite AgentOS db for the links.
+        """
+        from agno.os.interfaces.slack.links import SlackLinks, supports_links
+
+        if not getattr(interface, "resolve_user_identity", False) or self.user_directory is None:
+            return False
+        if not supports_links(self.db):
+            return False
+        interface.ctx.links = SlackLinks(self.db)  # type: ignore[attr-defined]
+        return True
 
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.

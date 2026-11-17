@@ -59,6 +59,8 @@ class SlackContext:
     bot_user_id: Optional[str] = None
     bolt_app: Any = None
     app: Any = None
+    # The Slack links AgentOS lends Super Agent's interface under authorization (see links.py)
+    links: Any = None
 
     def web(self) -> AsyncWebClient:
         """A client for Slack calls made outside a request (timers, Stop, delivery)."""
@@ -243,13 +245,16 @@ async def event_context_from_run(
     session_channel, _, thread_ts = session_id.removeprefix(prefix).rpartition(":")
     if not owner and user_id and ctx.users is not None:
         owner = next((slack_id for slack_id, principal in ctx.users.items() if principal == user_id), None)
+    links = getattr(ctx, "links", None)
+    if not owner and user_id and links is not None:
+        owner = await links.slack_user(user_id, team_id)
     if not owner and "@" in user_id:
         try:
             response = await (client or ctx.web()).users_lookupByEmail(email=user_id)
             owner = (response.get("user") or {}).get("id")
         except Exception as e:
             log_warning(f"Failed to look up the Slack user of a run: {str(e)}")
-    if not owner and ctx.users is None and not ctx.resolve_user_identity:
+    if not owner and ctx.users is None and links is None and not ctx.resolve_user_identity:
         # Without identity resolution the run's user is the Slack id itself
         owner = user_id
     return EventContext(

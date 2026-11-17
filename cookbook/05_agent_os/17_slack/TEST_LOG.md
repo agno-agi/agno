@@ -290,6 +290,28 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
 
 ---
 
+### link_accounts.py
+
+**Status:** PASS
+
+**Description:** Super Agent under authorization with
+`Slack(resolve_user_identity=True)`, the user directory and a default `member`
+role, with no `users=` map. `--check` builds it; a Task was seeded and started
+as a signed-in user with the durable queue running. Not yet run against a live
+Slack workspace in this form.
+
+**Result:**
+- AgentOS started, and the Slack interface matches members by email.
+- A user added to the directory (as a first sign-in would) got the member
+  role, which allows running Super Agent and starting the investigator Task.
+- Unit tests cover a member matched by confirmed email and stored, told once;
+  a guest, bot, deleted account, other organization, unconfirmed or unmatched
+  email, disabled user and ambiguous match refused; a member matched after
+  signing in later; `users=` as the only mapping when set; approvals and Task
+  results using the same identity; and the startup check.
+
+---
+
 ## Validation
 
 - `Slack(...)` raises `ValueError` when the token, the signing secret, or the

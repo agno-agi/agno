@@ -421,6 +421,8 @@ class BaseDb(ABC):
         self.authz_users_table_name = "agno_authz_users"
         self.authz_audit_table_name = "agno_authz_audit"
         self.authz_decisions_table_name = "agno_authz_decisions"
+        # Identity links: outside accounts (Slack members) linked to principals
+        self.identity_links_table_name = "agno_identity_links"
 
         # Avoids re-running the existence check and schema validation on
         # every query; see TableResolutionCache.
@@ -2720,6 +2722,34 @@ class BaseDb(ABC):
         """Remove a directory row."""
         raise NotImplementedError
 
+    # --- Identity links (Optional) ---
+    # An outside account (a Slack member) linked to the principal it acts as. Implemented by the
+    # SQLAlchemy backends (PostgresDb / SqliteDb and their async twins).
+
+    def set_identity_link(self, provider: str, tenant: str, external_id: str, principal_id: str) -> None:
+        """Link an outside account to principal_id, replacing its earlier link."""
+        raise NotImplementedError
+
+    def get_identity_link(self, provider: str, tenant: str, external_id: str) -> Optional[str]:
+        """The principal an outside account is linked to, or None."""
+        raise NotImplementedError
+
+    def list_identity_links(
+        self, provider: str, principal_id: Optional[str] = None, external_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """The links of a principal, or of an outside account in any tenant."""
+        raise NotImplementedError
+
+    def delete_identity_links(
+        self,
+        provider: str,
+        principal_id: Optional[str] = None,
+        tenant: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> int:
+        """Remove the links matching every given filter; the number removed."""
+        raise NotImplementedError
+
     def is_authz_user_disabled(self, user_id: str) -> bool:
         """The kill switch, read on every request for a known subject."""
         raise NotImplementedError
@@ -2943,6 +2973,8 @@ class AsyncBaseDb(ABC):
         self.authz_users_table_name = "agno_authz_users"
         self.authz_audit_table_name = "agno_authz_audit"
         self.authz_decisions_table_name = "agno_authz_decisions"
+        # Identity links: outside accounts (Slack members) linked to principals
+        self.identity_links_table_name = "agno_identity_links"
 
         # Async adapters cannot create component config/link tables yet, but
         # the FK dependency map needs their configured names.
@@ -4789,6 +4821,32 @@ class AsyncBaseDb(ABC):
 
     async def delete_authz_user(self, user_id: str) -> None:
         """Delete a directory user."""
+        raise NotImplementedError
+
+    # --- Identity links (Optional) ---
+
+    async def set_identity_link(self, provider: str, tenant: str, external_id: str, principal_id: str) -> None:
+        """Link an outside account to principal_id, replacing its earlier link."""
+        raise NotImplementedError
+
+    async def get_identity_link(self, provider: str, tenant: str, external_id: str) -> Optional[str]:
+        """The principal an outside account is linked to, or None."""
+        raise NotImplementedError
+
+    async def list_identity_links(
+        self, provider: str, principal_id: Optional[str] = None, external_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """The links of a principal, or of an outside account in any tenant."""
+        raise NotImplementedError
+
+    async def delete_identity_links(
+        self,
+        provider: str,
+        principal_id: Optional[str] = None,
+        tenant: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ) -> int:
+        """Remove the links matching every given filter; the number removed."""
         raise NotImplementedError
 
     async def is_authz_user_disabled(self, user_id: str) -> bool:

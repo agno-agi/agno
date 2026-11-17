@@ -8,7 +8,7 @@ from weakref import ReferenceType, ref
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
 from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
-from agno.os.interfaces.slack.security import resolve_principal_authorization
+from agno.os.interfaces.slack.security import maps_senders, resolve_principal_authorization, sender_principal
 from agno.utils.log import log_debug, log_error, log_warning
 
 # Slack message metadata event type that marks a Task attempt's result as posted
@@ -156,10 +156,10 @@ class TaskDelivery:
             if accepted is None:
                 self._finish(key, updated)
                 return True
-            channel, thread_ts, user_id, message_ts = accepted
+            channel, thread_ts, user_id, message_ts, team_id = accepted
             client = self.ctx.web()
             # The run's user must have written the message that started it, in this thread, read from Slack
-            if await self._message_author(client, channel, thread_ts, message_ts) != user_id:
+            if await self._message_author(client, channel, thread_ts, message_ts, team_id) != user_id:
                 log_debug(f"Task {key[0]} was not started by a Slack message from its run's user; not posted")
                 self._finish(key, updated)
                 return True
@@ -206,8 +206,8 @@ class TaskDelivery:
         self._retry.pop(key, None)
         self._done[key] = updated
 
-    async def _accept(self, attempt: Dict[str, Any]) -> Optional[Tuple[str, str, str, str]]:
-        """The thread, principal and starting message of a Task attempt this Slack interface started, or None."""
+    async def _accept(self, attempt: Dict[str, Any]) -> Optional[Tuple[str, str, str, str, Optional[str]]]:
+        """The thread, principal, starting message and workspace of a Task attempt this interface started, or None."""
         # Only the Super Agent start tool records requested_from, on the attempt its own call queued
         requested = attempt.get("requested_from") or {}
         session_id, run_id = requested.get("session_id"), requested.get("run_id")
@@ -226,9 +226,12 @@ class TaskDelivery:
         message_ts = (run.metadata or {}).get("slack_message_ts")
         if not isinstance(message_ts, str) or not message_ts:
             return None
-        return coordinates[0], coordinates[1], run.user_id, message_ts
+        team_id = (run.metadata or {}).get("slack_team_id")
+        return coordinates[0], coordinates[1], run.user_id, message_ts, team_id if isinstance(team_id, str) else None
 
-    async def _message_author(self, client: Any, channel: str, thread_ts: str, message_ts: str) -> Optional[str]:
+    async def _message_author(
+        self, client: Any, channel: str, thread_ts: str, message_ts: str, team_id: Optional[str] = None
+    ) -> Optional[str]:
         """The agno user id of the message's author, derived as for the event context; None outside the thread."""
         key = f"message_author:{channel}:{message_ts}"
         sender = self.ctx.lookup_cache.get(key)
@@ -242,8 +245,8 @@ class TaskDelivery:
             sender = (message.get("user") or "", message.get("bot_id") or "")
             self.ctx.lookup_cache.set(key, sender)
         user, bot_id = sender
-        if self.ctx.users is not None:
-            return self.ctx.users.get(user or bot_id)
+        if maps_senders(self.ctx):
+            return await sender_principal(self.ctx, team_id, user or bot_id, client)
         if self.ctx.resolve_user_identity:
             sender_id = user or bot_id
             # A user-token post carries both ids; the human is the sender, as for the event context

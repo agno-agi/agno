@@ -3,6 +3,7 @@
 from typing import Any
 
 from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
+from agno.db.schemas.identity_links import IDENTITY_LINK_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
 
 try:
@@ -693,6 +694,7 @@ def get_table_schema_definition(
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
         **MCP_OAUTH_TABLE_SCHEMAS,
         **AUTHZ_TABLE_SCHEMAS,
+        **IDENTITY_LINK_TABLE_SCHEMAS,
     }
     schema = schemas.get(table_type, {})
 
