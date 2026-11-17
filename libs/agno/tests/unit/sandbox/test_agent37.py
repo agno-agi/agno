@@ -411,6 +411,17 @@ def test_a_late_refusal_after_a_lost_reply_is_not_resent_either(sandbox, service
     assert service.instances[handle.provider_ref]["status"] == "stopped"
 
 
+def test_a_refusal_after_a_lost_reply_still_stops_the_instance(sandbox, service):
+    handle = sandbox.create("session")
+    service.inject("POST", "/exec", httpx.ReadError("dropped"), after=True)
+    service.inject("POST", "/exec", httpx.Response(429, json={"error": "rate_limited"}))
+    with pytest.raises(SandboxError, match="rate_limited"):
+        sandbox.exec(handle, ["sh", "-c", "echo ran >> runs.txt"])
+    # The refusal answers the resend, not the first send, which ran.
+    assert (workspace(service, handle) / "runs.txt").read_text() == "ran\n"
+    assert service.instances[handle.provider_ref]["status"] == "stopped"
+
+
 def test_a_busy_instance_is_retried_because_nothing_started(sandbox, service):
     handle = sandbox.create("session")
     service.inject("POST", "/exec", httpx.Response(503, json={"error": "try_again"}), times=2)

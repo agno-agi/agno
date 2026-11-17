@@ -432,7 +432,8 @@ class Agent37Sandbox(Sandbox):
                 # Too many commands at once, a host change or a wake that has not finished: nothing started.
                 unsent = response.status_code in (409, 503)
                 if response.status_code < 500 and not unsent:
-                    raise _Refused(reason)
+                    # A refusal answers this send only; an earlier one whose reply was lost may be running.
+                    raise (SandboxError if uncertain else _Refused)(reason)
             uncertain = uncertain or not unsent
             if attempt == _ATTEMPTS - 1 or (uncertain and time.monotonic() - started >= _REJOIN_SECONDS):
                 raise (SandboxError if uncertain else _Refused)(reason) from failure
