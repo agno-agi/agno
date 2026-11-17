@@ -17,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List
 
@@ -31,6 +32,8 @@ _INLINE = 256 * 1024
 _MAX_CHUNK = 256 * 1024
 # Capture and restore must finish inside one exec call, which Agent 37 holds for 15 minutes.
 _CHILD_TIMEOUT = 780
+# Staged files this old belong to an operation the host abandoned.
+_STALE_SECONDS = 3600
 
 
 def _file(name: str, suffix: str) -> Path:
@@ -50,6 +53,7 @@ def _prepare() -> None:
     info = _CONTROL.lstat()
     if not stat.S_ISDIR(info.st_mode) or (root and (info.st_uid != 0 or info.st_mode & 0o077)):
         raise PermissionError("The staging directory must belong to root alone")
+    _sweep()
     for path in (_WORKSPACE, _RUNTIME):
         path.mkdir(exist_ok=True)
         info = path.lstat()
@@ -57,6 +61,17 @@ def _prepare() -> None:
             raise PermissionError(f"{path} must be a directory")
         if root and (info.st_uid, info.st_gid) != (_USER, _GROUP):
             os.chown(path, _USER, _GROUP, follow_symlinks=False)
+
+
+def _sweep() -> None:
+    """Remove staged files of abandoned operations, so they can never fill the disk."""
+    cutoff = time.time() - _STALE_SECONDS
+    for entry in _CONTROL.iterdir():
+        try:
+            if entry.lstat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            continue
 
 
 def _spawn(argv: List[str], **kwargs: Any) -> "subprocess.Popen[bytes]":

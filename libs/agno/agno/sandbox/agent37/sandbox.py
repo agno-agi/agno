@@ -652,11 +652,13 @@ class Agent37Sandbox(Sandbox):
 
         try:
             reply = await self._guest(ref, "run", name, _RUNNER, *staged, data=inline, timeout=timeout + 15)
-        except _Refused:
+        except (asyncio.CancelledError, SandboxError) as error:
             # Only the run request itself can be turned down before anything started.
-            raise
-        except (asyncio.CancelledError, SandboxError):
-            await bound()
+            if stop_on_failure and not isinstance(error, _Refused):
+                await bound()
+            elif staged:
+                # Compute stays up, so input staged for this request must not pile up on its disk.
+                await asyncio.shield(self._discard(ref, name))
             raise
         # The command has run, so every failure from here is one with an unknown result.
         output = io.BytesIO()

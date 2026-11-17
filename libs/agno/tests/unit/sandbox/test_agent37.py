@@ -8,6 +8,7 @@ import os
 import shlex
 import signal
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -477,6 +478,28 @@ def test_a_refused_output_read_still_stops_the_instance(sandbox, service):
     assert service.instances[handle.provider_ref]["status"] == "stopped"
 
 
+def test_staged_input_is_removed_when_the_run_is_refused(sandbox, service):
+    handle = sandbox.create("session")
+    # Both uploads go through; the run request that would consume them is refused.
+    service.inject("POST", "/exec", httpx.Response(429, json={"error": "rate_limited"}), skip=2)
+    with pytest.raises(SandboxError, match="rate_limited"):
+        sandbox.exec(handle, ["cat"], stdin=b"x" * 600_000)
+    assert service.executed == ["put", "put", "remove"]
+    assert list((service.root / handle.provider_ref / "control").iterdir()) == []
+    assert service.instances[handle.provider_ref]["status"] == "running"
+
+
+def test_staged_input_is_removed_when_a_runtime_request_fails(sandbox, service):
+    handle = sandbox.create("session")
+    payload = json.dumps({"wait": 0, "input": "x" * 600_000}).encode()
+    # A runtime request never stops the instance, so what it staged must not pile up there.
+    service.inject("POST", "/exec", httpx.Response(502, json={"error": "upstream_unreachable"}), times=5, skip=2)
+    with pytest.raises(SandboxError, match="upstream_unreachable"):
+        sandbox.rpc(handle, "start", payload)
+    assert list((service.root / handle.provider_ref / "control").iterdir()) == []
+    assert service.instances[handle.provider_ref]["status"] == "running"
+
+
 def test_a_busy_instance_is_retried_because_nothing_started(sandbox, service):
     handle = sandbox.create("session")
     service.inject("POST", "/exec", httpx.Response(503, json={"error": "try_again"}), times=2)
@@ -758,6 +781,16 @@ def test_staged_input_that_is_not_what_was_sent_never_runs(staging, tmp_path):
     reply = _guest.main(["run", NAME, runner, str(len(request)), digest], io.BytesIO())
     assert json.loads(base64.b64decode(reply["data"]))["exit_code"] == 0
     assert (tmp_path / "workspace/ran").exists() and list(staging.iterdir()) == []
+
+
+def test_files_an_abandoned_operation_left_staged_are_swept(staging):
+    abandoned, current = staging / ("b" * 32 + ".in"), staging / ("c" * 32 + ".in")
+    abandoned.write_bytes(b"left behind")
+    current.write_bytes(b"in use")
+    hours_ago = time.time() - 2 * 3600
+    os.utime(abandoned, (hours_ago, hours_ago))
+    _guest.main(["remove", NAME], io.BytesIO())
+    assert sorted(entry.name for entry in staging.iterdir()) == [current.name]
 
 
 def test_unknown_operations_and_wrong_argument_counts_are_refused(staging):
