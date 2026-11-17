@@ -54,6 +54,32 @@ def postgres_db(mock_engine):
     )
 
 
+def test_failed_table_creation_can_be_retried(postgres_db, mock_session):
+    """A failed CREATE TABLE must not leave the table registered on MetaData."""
+    postgres_db.Session = Mock(return_value=mock_session)
+    postgres_db.create_schema = False
+    attempts = {"retry_table": 0}
+
+    def create_once(table, *args, **kwargs):
+        if table.name == "retry_table":
+            attempts["retry_table"] += 1
+            if attempts["retry_table"] == 1:
+                raise OSError("temporary DDL outage")
+
+    with (
+        patch.object(PostgresDb, "table_exists", return_value=False),
+        patch("agno.db.postgres.postgres.is_table_available", return_value=False),
+        patch.object(Table, "create", create_once),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            postgres_db._get_or_create_table("retry_table", "knowledge", True)
+
+        table = postgres_db._get_or_create_table("retry_table", "knowledge", True)
+
+    assert table.name == "retry_table"
+    assert attempts["retry_table"] == 2
+
+
 def test_id_is_deterministic(mock_engine):
     # Initialize two databases with the same engine
     first_db = PostgresDb(db_engine=mock_engine)
