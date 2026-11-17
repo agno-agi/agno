@@ -85,6 +85,11 @@ def _problem(data: Any) -> Tuple[str, str]:
     return str(error or ""), str(data.get("message") or "")[:500]
 
 
+def _now() -> Tuple[float, float]:
+    # Wall time counts a suspended host, which the monotonic clock may not; the larger elapsed reading is the safe one.
+    return time.monotonic(), time.time()
+
+
 def _backoff(attempt: int) -> float:
     return random.uniform(0, min(8.0, 0.5 * 2**attempt))
 
@@ -406,11 +411,18 @@ class Agent37Sandbox(Sandbox):
         body = {"command": command, "user": "root", "name": uuid4().hex}
         url = f"{_EXEC}/instances/{provider_ref}/exec"
         headers = {"X-Agent37-Key": self._api_key}
-        started = time.monotonic()
+        started = _now()
         # Whether any attempt so far may have started the command.
         uncertain = False
+        reason, failure = "Agent 37 command request failed", None
         for attempt in range(_ATTEMPTS):
-            failure: Optional[BaseException] = None
+            if attempt:
+                await asyncio.sleep(_backoff(attempt - 1))
+                # Checked right before each resend, whatever delayed it: past the window Agent 37
+                # may have forgotten the name and would run the command a second time.
+                if uncertain and max(now - then for now, then in zip(_now(), started)) >= _REJOIN_SECONDS:
+                    break
+            failure = None
             try:
                 response = await self._clients.get().post(
                     url, json=body, headers=headers, timeout=httpx.Timeout(15.0, read=timeout + 30)
@@ -435,10 +447,7 @@ class Agent37Sandbox(Sandbox):
                     # A refusal answers this send only; an earlier one whose reply was lost may be running.
                     raise (SandboxError if uncertain else _Refused)(reason)
             uncertain = uncertain or not unsent
-            if attempt == _ATTEMPTS - 1 or (uncertain and time.monotonic() - started >= _REJOIN_SECONDS):
-                raise (SandboxError if uncertain else _Refused)(reason) from failure
-            await asyncio.sleep(_backoff(attempt))
-        raise SandboxError("Agent 37 command request failed")
+        raise (SandboxError if uncertain else _Refused)(reason) from failure
 
     async def _guest(
         self, provider_ref: str, operation: str, *arguments: str, data: bytes = b"", timeout: float = 15.0

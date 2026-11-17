@@ -398,8 +398,9 @@ def test_a_reply_lost_too_long_ago_is_never_resent(sandbox, service, monkeypatch
 
 
 def test_a_late_refusal_after_a_lost_reply_is_not_resent_either(sandbox, service, monkeypatch):
-    monkeypatch.setattr(agent37_sandbox, "_REJOIN_SECONDS", 0.6)
-    monkeypatch.setattr(agent37_sandbox, "_backoff", lambda attempt: 0.8)
+    monkeypatch.setattr(agent37_sandbox, "_REJOIN_SECONDS", 1.0)
+    # The resend goes out inside the window; the wait after its refusal runs past it.
+    monkeypatch.setattr(agent37_sandbox, "_backoff", lambda attempt: 1.2 if attempt else 0.1)
     handle = sandbox.create("session")
     service.inject("POST", "/exec", httpx.ReadError("dropped"), after=True)
     service.inject("POST", "/exec", httpx.Response(503, json={"error": "try_again"}))
@@ -418,6 +419,44 @@ def test_a_refusal_after_a_lost_reply_still_stops_the_instance(sandbox, service)
     with pytest.raises(SandboxError, match="rate_limited"):
         sandbox.exec(handle, ["sh", "-c", "echo ran >> runs.txt"])
     # The refusal answers the resend, not the first send, which ran.
+    assert (workspace(service, handle) / "runs.txt").read_text() == "ran\n"
+    assert service.instances[handle.provider_ref]["status"] == "stopped"
+
+
+def test_time_lost_during_backoff_expires_the_resend(sandbox, service, monkeypatch):
+    monkeypatch.setattr(agent37_sandbox, "_REJOIN_SECONDS", 0.5)
+
+    def stalled(attempt):
+        # By the time the backoff ends, Agent 37 has forgotten the first run's name.
+        service.runs.clear()
+        return 0.7
+
+    monkeypatch.setattr(agent37_sandbox, "_backoff", stalled)
+    handle = sandbox.create("session")
+    service.inject("POST", "/exec", httpx.ReadError("dropped"), after=True)
+    with pytest.raises(SandboxError, match="dropped"):
+        sandbox.exec(handle, ["sh", "-c", "echo ran >> runs.txt"])
+    assert len(service.sent("POST", "/exec")) == 1
+    assert (workspace(service, handle) / "runs.txt").read_text() == "ran\n"
+    assert service.instances[handle.provider_ref]["status"] == "stopped"
+
+
+def test_a_suspended_host_counts_toward_the_resend_window(sandbox, service, monkeypatch):
+    real, skew = agent37_sandbox._now, [0.0]
+    monkeypatch.setattr(agent37_sandbox, "_now", lambda: (real()[0], real()[1] + skew[0]))
+
+    def suspended(attempt):
+        # The machine slept through the backoff, so only the wall clock moved.
+        skew[0] = 301.0
+        service.runs.clear()
+        return 0
+
+    monkeypatch.setattr(agent37_sandbox, "_backoff", suspended)
+    handle = sandbox.create("session")
+    service.inject("POST", "/exec", httpx.ReadError("dropped"), after=True)
+    with pytest.raises(SandboxError, match="dropped"):
+        sandbox.exec(handle, ["sh", "-c", "echo ran >> runs.txt"])
+    assert len(service.sent("POST", "/exec")) == 1
     assert (workspace(service, handle) / "runs.txt").read_text() == "ran\n"
     assert service.instances[handle.provider_ref]["status"] == "stopped"
 
