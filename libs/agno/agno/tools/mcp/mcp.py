@@ -800,6 +800,9 @@ class MCPTools(Toolkit):
             await self._safe_cleanup()
             raise
 
+        if not self._initialized:
+            # initialize() swallows handshake/tool-discovery errors, so close what _connect() opened.
+            await self._safe_cleanup()
         return self._initialized
 
     def _connection_params(self, extra_headers: Optional[dict] = None) -> dict:

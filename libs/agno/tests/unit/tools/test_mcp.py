@@ -1159,6 +1159,29 @@ async def test_connect_returns_true_when_the_handshake_succeeds():
 
 
 @pytest.mark.asyncio
+async def test_connect_returns_false_and_cleans_up_when_initialize_fails():
+    """initialize() swallows tool-discovery errors, so connect() must report False and close the session."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    client_context = _SucceedingAenterContext(AsyncMock())
+
+    with (
+        patch("agno.tools.mcp.mcp._build_fastmcp_client", return_value=client_context),
+        patch.object(MCPTools, "build_tools", new=AsyncMock(side_effect=RuntimeError("list_tools failed"))),
+    ):
+        result = await tools.connect()
+
+    assert result is False
+    assert tools.initialized is False
+    assert client_context.aexit_called is True
+    assert tools.session is None
+    assert tools._session_context is None
+    assert tools._active_contexts == []
+
+
+@pytest.mark.asyncio
 async def test_connect_returns_true_when_already_initialized():
     """An already-initialized toolkit short-circuits to True without reconnecting."""
     tools = MCPTools(
