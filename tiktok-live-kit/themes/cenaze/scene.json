@@ -1,16 +1,143 @@
 {
+  "renderer": "3d",
   "hint": false,
-  "horizonY": 700,
-  "person": { "refY": 1000, "refHeight": 60, "exponent": 0.45, "idleStyle": "stand" },
-  "floor": { "top": 1040, "bottom": 1640, "left": 30, "right": 1050 },
-  "aisle": { "x": 540, "half": [[1000, 34], [1900, 100]], "lane": 90 },
-  "spacing": { "col": 0.8, "row": 0.4 },
-  "obstacles": [],
-  "seats": [[440, 980], [640, 980], [340, 980], [740, 980], [240, 980], [840, 980]],
-  "points": { "stage": [540, 930], "focus": [540, 600], "entry": [540, 2000] },
-  "emitters": [{ "preset": "nur", "at": "focus", "every": 700 }],
-  "glows": [[300, 900, 38], [780, 900, 38]],
+  "personColor": "#2b3038",
+  "camera": {
+    "position": [
+      0,
+      6.5,
+      17
+    ],
+    "target": [
+      0,
+      1.2,
+      0
+    ],
+    "fov": 52
+  },
+  "background": "#0b0e13",
+  "fog": {
+    "color": "#0b0e13",
+    "near": 16,
+    "far": 40
+  },
+  "lights": {
+    "ambient": 0.65,
+    "sun": {
+      "intensity": 0.7,
+      "position": [
+        4,
+        10,
+        6
+      ],
+      "shadows": false
+    },
+    "points": [
+      {
+        "at": [
+          -3.2,
+          1.4,
+          -2.6
+        ],
+        "color": "#ffb866",
+        "intensity": 14,
+        "distance": 9
+      },
+      {
+        "at": [
+          3.2,
+          1.4,
+          -2.6
+        ],
+        "color": "#ffb866",
+        "intensity": 14,
+        "distance": 9
+      },
+      {
+        "at": [
+          0,
+          3,
+          -5
+        ],
+        "color": "#cfd8ff",
+        "intensity": 10,
+        "distance": 12
+      }
+    ]
+  },
+  "floor": {
+    "x": [
+      -4.2,
+      4.2
+    ],
+    "z": [
+      -0.5,
+      8
+    ],
+    "color": "#171c24"
+  },
+  "aisle": {
+    "x": 0,
+    "half": 0.6
+  },
+  "spacing": 0.8,
+  "seats": [
+    [
+      -1.4,
+      -1.8
+    ],
+    [
+      1.4,
+      -1.8
+    ],
+    [
+      -2.4,
+      -1.8
+    ],
+    [
+      2.4,
+      -1.8
+    ],
+    [
+      -3.4,
+      -1.8
+    ],
+    [
+      3.4,
+      -1.8
+    ]
+  ],
+  "points": {
+    "stage": [
+      0,
+      -3.2
+    ],
+    "focus": [
+      0,
+      2,
+      -4
+    ],
+    "entry": [
+      0,
+      14
+    ]
+  },
+  "bloom": {
+    "strength": 0.45,
+    "radius": 0.5,
+    "threshold": 0.8
+  },
+  "emitters": [
+    {
+      "preset": "nur",
+      "at": "focus",
+      "every": 700
+    }
+  ],
+  "maxAnimated": 120,
   "maxTags": 8,
-  "fill": { "rows": 0 },
+  "fill": {
+    "rows": 0
+  },
   "fps": 30
 }

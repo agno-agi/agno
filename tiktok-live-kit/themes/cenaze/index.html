@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anma</title>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
+<!-- Three.js (3D sahne): tüm script'lerden önce gelmeli -->
+<script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js", "three/addons/": "/vendor/three/addons/" } }</script>
 <style>html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }</style>
 </head>
 <body>
@@ -16,6 +18,7 @@
 <script src="/sdk/fx.js"></script>
 <script src="/sdk/audio.js"></script>
 <script src="/sdk/scene.js"></script>
+<script src="/sdk/scene3d.js"></script>
 <script src="/sdk/hud.js"></script>
 <script src="/sdk/kit.js"></script>
 <!-- Phần riêng của theme (tuỳ chọn) -->

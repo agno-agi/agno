@@ -274,7 +274,7 @@
       g.add(m);
       p.mixer = new T.AnimationMixer(m); p.actions = {}; p.clip = null;
     } else {
-      const robe = new T.MeshStandardMaterial({ color: new T.Color().setHSL((220 + p.tint) / 360, 0.18, 0.55 + p.tint / 200), roughness: 0.8 });
+      const robe = new T.MeshStandardMaterial({ color: cfg.personColor ? new T.Color(cfg.personColor).offsetHSL(0, 0, p.tint / 400) : new T.Color().setHSL((220 + p.tint) / 360, 0.18, 0.55 + p.tint / 200), roughness: 0.8 }); // scene.json "personColor": yer tutucu kişilerin elbise rengi
       const body = new T.Mesh(new T.CylinderGeometry(0.2, 0.28, 1.15, 12), robe); body.position.y = 0.58;
       const head = new T.Mesh(new T.SphereGeometry(0.17, 16, 12), new T.MeshStandardMaterial({ color: '#2a201c', roughness: 0.7 })); head.position.y = 1.36;
       const torso = new T.Group(); torso.add(body, head);

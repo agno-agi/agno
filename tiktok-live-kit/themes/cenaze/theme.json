@@ -1,6 +1,6 @@
 {
-  "name": "Anma · Süleyman Çakır",
-  "description": "Sakin, saygılı anma teması. Hediyeler şansa bağlı değildir: aynı hediye her zaman aynı etkiyi yapar. Ucuz hediye = mum/gül yaprağı, büyük hediye = tek ve sakin bir an.",
+  "name": "Anma · Süleyman Çakır (3D)",
+  "description": "Sakin, saygılı anma teması. Hediyeler şansa bağlı değildir: aynı hediye her zaman aynı etkiyi yapar. Ucuz hediye = mum/gül yaprağı, büyük hediye = tek ve sakin bir an. 3D sahne: model dosyası yok, yer tutucu kişiler ve kodla çizilmiş sade mekân.",
   "width": 1080,
   "height": 1920,
   "actions": [
@@ -11,11 +11,28 @@
       "card": "1–9 JETON",
       "description": "Gönderenin yanında mum ışığı yükselir, hafif baş eğer",
       "steps": [
-        { "aura": 0.6 },
-        { "sound": "small" },
-        { "fx": "emit", "preset": "mum", "at": "head", "count": "count" },
-        { "play": "nod" },
-        { "fx": "text", "at": "head", "text": "🕯 {ten}", "color": "#f3e7c4", "size": 28 }
+        {
+          "aura": 0.6
+        },
+        {
+          "sound": "small"
+        },
+        {
+          "fx": "emit",
+          "preset": "mum",
+          "at": "head",
+          "count": "count"
+        },
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "text",
+          "at": "head",
+          "text": "🕯 {ten}",
+          "color": "#f3e7c4",
+          "size": 28
+        }
       ]
     },
     {
@@ -25,14 +42,37 @@
       "card": "10–99 JETON",
       "description": "Ön tarafa yürür, baş eğer, karanfil yaprakları bırakır, yerine döner",
       "steps": [
-        { "walk": "stage" },
-        { "pose": "stand" },
-        { "sound": "medium" },
-        { "play": "bow", "times": 1 },
-        { "fx": "emit", "preset": "karanfil", "at": "head", "count": 30 },
-        { "fx": "halo", "at": "person", "radius": 140, "color": "245,225,190" },
-        { "walk": "home" },
-        { "pose": "idle" }
+        {
+          "walk": "stage"
+        },
+        {
+          "pose": "stand"
+        },
+        {
+          "sound": "medium"
+        },
+        {
+          "play": "bow",
+          "times": 1
+        },
+        {
+          "fx": "emit",
+          "preset": "karanfil",
+          "at": "head",
+          "count": 30
+        },
+        {
+          "fx": "halo",
+          "at": "person",
+          "radius": 140,
+          "color": "245,225,190"
+        },
+        {
+          "walk": "home"
+        },
+        {
+          "pose": "idle"
+        }
       ]
     },
     {
@@ -42,14 +82,58 @@
       "card": "100+ JETON",
       "description": "Tek ve sakin bir an: ışık sütunu, yavaş yağan yapraklar, tüm saf baş eğer",
       "steps": [
-        { "sound": "big" },
-        { "camera": "person", "zoom": 1.5, "duration": 4200 },
-        { "fx": "flash", "color": "255,246,225", "strength": 0.22, "duration": 1400 },
-        { "fx": "pillar", "at": "person", "color": "255,240,205", "duration": 3200 },
-        { "fx": "halo", "at": "focus", "radius": 320, "color": "255,240,205", "duration": 4200 },
-        { "fx": "rain", "preset": "karanfil", "count": 70, "duration": 5000 },
-        { "crowd": [{ "play": "bow" }], "stagger": 900 },
-        { "fx": "text", "at": "focus", "text": "Allah rahmet eylesin", "size": 46, "duration": 4200 }
+        {
+          "sound": "big"
+        },
+        {
+          "camera": "person",
+          "zoom": 1.5,
+          "duration": 4200
+        },
+        {
+          "fx": "flash",
+          "color": "255,246,225",
+          "strength": 0.22,
+          "duration": 1400
+        },
+        {
+          "fx": "pillar",
+          "at": "person",
+          "color": "255,240,205",
+          "duration": 3200
+        },
+        {
+          "fx3d": "ring",
+          "at": "person"
+        },
+        {
+          "fx": "halo",
+          "at": "focus",
+          "radius": 320,
+          "color": "255,240,205",
+          "duration": 4200
+        },
+        {
+          "fx": "rain",
+          "preset": "karanfil",
+          "count": 70,
+          "duration": 5000
+        },
+        {
+          "crowd": [
+            {
+              "play": "bow"
+            }
+          ],
+          "stagger": 900
+        },
+        {
+          "fx": "text",
+          "at": "focus",
+          "text": "Allah rahmet eylesin",
+          "size": 46,
+          "duration": 4200
+        }
       ]
     },
     {
@@ -58,36 +142,92 @@
       "icon": "🤲",
       "description": "Sohbet komutu: baş eğer",
       "steps": [
-        { "play": "nod" },
-        { "fx": "emit", "preset": "nur", "at": "head", "count": 6 }
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "emit",
+          "preset": "nur",
+          "at": "head",
+          "count": 6
+        }
       ]
     }
   ],
   "rules": {
     "joinMode": "all",
-    "joinKeywords": ["amin", "merhaba"],
+    "joinKeywords": [
+      "amin",
+      "merhaba"
+    ],
     "bigGiftCoins": 100,
     "giftTiers": [
-      { "minCoins": 1, "action": "mum", "label": "Mum" },
-      { "minCoins": 10, "action": "cicek", "label": "Çiçek" },
-      { "minCoins": 100, "action": "an", "label": "Büyük hediye" }
+      {
+        "minCoins": 1,
+        "action": "mum",
+        "label": "Mum"
+      },
+      {
+        "minCoins": 10,
+        "action": "cicek",
+        "label": "Çiçek"
+      },
+      {
+        "minCoins": 100,
+        "action": "an",
+        "label": "Büyük hediye"
+      }
     ],
     "giftOverrides": [],
     "chatCommands": [
-      { "keywords": ["amin", "âmin"], "match": "exact", "action": "amin", "label": "Amin", "cooldownMs": 8000 },
-      { "keywords": ["rahmet", "mekanı cennet", "başımız sağolsun", "başsağlığı"], "match": "contains", "action": "amin", "label": "Dua", "cooldownMs": 8000 }
+      {
+        "keywords": [
+          "amin",
+          "âmin"
+        ],
+        "match": "exact",
+        "action": "amin",
+        "label": "Amin",
+        "cooldownMs": 8000
+      },
+      {
+        "keywords": [
+          "rahmet",
+          "mekanı cennet",
+          "başımız sağolsun",
+          "başsağlığı"
+        ],
+        "match": "contains",
+        "action": "amin",
+        "label": "Dua",
+        "cooldownMs": 8000
+      }
     ]
   },
   "characters": [],
   "animations": {},
   "npcs": [],
   "titles": [
-    { "minCoins": 0, "label": "Misafir" },
-    { "minCoins": 50, "label": "Dost" },
-    { "minCoins": 500, "label": "Vefalı dost" }
+    {
+      "minCoins": 0,
+      "label": "Misafir"
+    },
+    {
+      "minCoins": 50,
+      "label": "Dost"
+    },
+    {
+      "minCoins": 500,
+      "label": "Vefalı dost"
+    }
   ],
   "goals": [
-    { "id": "likes", "metric": "likes", "label": "Beğeni", "every": 1000 }
+    {
+      "id": "likes",
+      "metric": "likes",
+      "label": "Beğeni",
+      "every": 1000
+    }
   ],
   "filter": {
     "extraWords": []
@@ -108,7 +248,9 @@
     "follow": [],
     "title": [],
     "goal": [],
-    "cooldown": { "gift": 5000 },
+    "cooldown": {
+      "gift": 5000
+    },
     "fallbackWords": [],
     "fallback": "local"
   },
@@ -134,12 +276,23 @@
       "sub": "Allah rahmet eylesin · Mekânı cennet olsun"
     },
     "counters": true,
-    "giftCard": { "verb": "bir hediye gönderdi:", "unit": "jeton" },
+    "giftCard": {
+      "verb": "bir hediye gönderdi:",
+      "unit": "jeton"
+    },
     "tiers": true,
-    "board": { "title": "ÖN SAF", "size": 3 },
-    "ticker": { "title": "Son gönderilenler", "size": 5 },
+    "board": {
+      "title": "ÖN SAF",
+      "size": 3
+    },
+    "ticker": {
+      "title": "Son gönderilenler",
+      "size": 5
+    },
     "goal": true,
-    "guide": { "title": "Nasıl katılırım" }
+    "guide": {
+      "title": "Nasıl katılırım"
+    }
   },
   "colors": {
     "accent": "#e8dcc0",
@@ -152,15 +305,49 @@
     "placeholderRobe": "#2b3038"
   },
   "sounds": {
-    "big": { "cooldown": 12000, "duck": 0.5, "priority": true }
+    "big": {
+      "cooldown": 12000,
+      "duck": 0.5,
+      "priority": true
+    }
   },
   "text": {},
   "reactions": {
-    "chat": [{ "play": "nod" }],
-    "like": [{ "fx": "emit", "preset": "nur", "at": "head", "count": 2 }],
-    "follow": [{ "say": "🕊 Takip etti" }],
-    "share": [{ "say": "🔗 Paylaştı" }],
-    "title": [{ "aura": 0.8 }],
-    "goal": [{ "fx": "halo", "at": "focus", "radius": 260, "color": "255,240,205" }]
+    "chat": [
+      {
+        "play": "nod"
+      }
+    ],
+    "like": [
+      {
+        "fx": "emit",
+        "preset": "nur",
+        "at": "head",
+        "count": 2
+      }
+    ],
+    "follow": [
+      {
+        "say": "🕊 Takip etti"
+      }
+    ],
+    "share": [
+      {
+        "say": "🔗 Paylaştı"
+      }
+    ],
+    "title": [
+      {
+        "aura": 0.8
+      }
+    ],
+    "goal": [
+      {
+        "fx": "halo",
+        "at": "focus",
+        "radius": 260,
+        "color": "255,240,205"
+      }
+    ]
   }
 }
