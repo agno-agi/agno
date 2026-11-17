@@ -1,0 +1,25 @@
+{
+  "name": "tiktok-live-kit",
+  "version": "1.0.1",
+  "description": "Bộ khung chung cho game tương tác TikTok LIVE: nguồn TikFinity / trực tiếp, luật quà, đám đông, hiệu ứng, giọng đọc, theme thay được.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "assets:cut": "uv run --no-project --with pillow --with numpy python tools/cut-sheet.py",
+    "assets:alpha": "uv run --no-project --with pillow --with numpy python tools/black-to-alpha.py"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "lottie-web": "5.12.2",
+    "msedge-tts": "2.1.1",
+    "three": "0.186.1",
+    "tiktok-live-connector": "^2.5.0",
+    "ws": "^8.22.0"
+  },
+  "license": "MIT"
+}

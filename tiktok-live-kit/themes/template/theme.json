@@ -1,0 +1,335 @@
+{
+  "name": "Khung trống",
+  "description": "Khung theme trống của TikTok Live Kit: thay ảnh, nhân vật, hiệu ứng, chữ bằng của bạn.",
+  "width": 1080,
+  "height": 1920,
+  "actions": [
+    {
+      "id": "small",
+      "label": "Quà nhỏ",
+      "icon": "✨",
+      "card": "1 XU",
+      "description": "Người tặng sáng lên, lấp lánh, gật đầu",
+      "steps": [
+        {
+          "aura": 1
+        },
+        {
+          "sound": "small"
+        },
+        {
+          "fx": "emit",
+          "preset": "spark",
+          "at": "head",
+          "count": 14
+        },
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "text",
+          "at": "head",
+          "text": "+{total}"
+        }
+      ]
+    },
+    {
+      "id": "medium",
+      "label": "Quà vừa",
+      "icon": "🎉",
+      "card": "10 XU",
+      "description": "Lên sân khấu, cổ vũ, pháo giấy, rồi về chỗ",
+      "steps": [
+        {
+          "walk": "stage"
+        },
+        {
+          "pose": "stand"
+        },
+        {
+          "sound": "medium"
+        },
+        {
+          "play": "cheer",
+          "times": 2
+        },
+        {
+          "fx": "emit",
+          "preset": "confetti",
+          "at": "head",
+          "count": 40
+        },
+        {
+          "walk": "home"
+        },
+        {
+          "pose": "idle"
+        }
+      ]
+    },
+    {
+      "id": "big",
+      "label": "Quà lớn",
+      "icon": "🌟",
+      "card": "100+ XU",
+      "description": "Pháo hoa, pháo lạnh, mưa pháo giấy, cả phòng cổ vũ",
+      "steps": [
+        {
+          "sound": "big"
+        },
+        {
+          "fx": "fireworks",
+          "bursts": 5,
+          "fountains": 2
+        },
+        {
+          "fx": "rain",
+          "preset": "confetti",
+          "count": 120
+        },
+        {
+          "crowd": [
+            {
+              "play": "cheer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wave",
+      "label": "Vẫy tay",
+      "icon": "👋",
+      "description": "Dùng cho lệnh chat",
+      "steps": [
+        {
+          "play": "cheer"
+        }
+      ]
+    },
+    {
+      "id": "draw",
+      "label": "Rút thăm",
+      "icon": "🎴",
+      "description": "Dùng cho lệnh chat rút thăm: lá thăm hiện giữa màn, giọng đọc nội dung",
+      "steps": [
+        {
+          "play": "nod"
+        },
+        {
+          "fx": "emit",
+          "preset": "star",
+          "at": "head",
+          "count": 16
+        }
+      ]
+    }
+  ],
+  "rules": {
+    "joinMode": "all",
+    "joinKeywords": [
+      "hi",
+      "xin chao"
+    ],
+    "bigGiftCoins": 100,
+    "giftTiers": [
+      {
+        "minCoins": 1,
+        "action": "small",
+        "label": "Quà nhỏ"
+      },
+      {
+        "minCoins": 10,
+        "action": "medium",
+        "label": "Quà vừa"
+      },
+      {
+        "minCoins": 100,
+        "action": "big",
+        "label": "Quà lớn"
+      }
+    ],
+    "giftOverrides": [],
+    "chatCommands": [
+      {
+        "keywords": [
+          "hi",
+          "hello",
+          "chào"
+        ],
+        "match": "exact",
+        "action": "wave",
+        "label": "Vẫy tay",
+        "cooldownMs": 5000
+      },
+      {
+        "keywords": [
+          "rút thăm",
+          "rut tham"
+        ],
+        "match": "contains",
+        "action": "draw",
+        "label": "Rút thăm",
+        "cooldownMs": 3000,
+        "draw": "loi-chuc"
+      }
+    ]
+  },
+  "draws": {
+    "loi-chuc": {
+      "perDay": true,
+      "items": [
+        {
+          "title": "Lá số 1 · Đại cát",
+          "text": "Hôm nay làm gì cũng thuận."
+        },
+        {
+          "title": "Lá số 2 · Trung cát",
+          "text": "Kiên nhẫn một chút, tin vui sắp tới."
+        },
+        {
+          "title": "Lá số 3 · Tiểu cát",
+          "text": "Gặp người tốt, nhớ nói lời cảm ơn."
+        }
+      ]
+    }
+  },
+  "characters": [],
+  "animations": {},
+  "npcs": [
+    {
+      "id": "host",
+      "name": "Chủ phòng",
+      "at": "stage",
+      "pose": "stand",
+      "reactions": {
+        "bigGift": [
+          {
+            "play": "cheer",
+            "times": 2
+          }
+        ]
+      }
+    }
+  ],
+  "titles": [
+    {
+      "minCoins": 0,
+      "label": "Khách"
+    },
+    {
+      "minCoins": 50,
+      "label": "Fan cứng"
+    },
+    {
+      "minCoins": 500,
+      "label": "VIP"
+    }
+  ],
+  "goals": [
+    {
+      "id": "likes",
+      "metric": "likes",
+      "label": "Mục tiêu tim",
+      "every": 1000
+    }
+  ],
+  "voice": {
+    "enabled": true,
+    "voice": "vi-VN-HoaiMyNeural",
+    "giftMinCoins": 1,
+    "gift": [
+      "Cảm ơn {ten} đã tặng {qua}{lan}!"
+    ],
+    "bigGift": [
+      "Wow! Cảm ơn {ten} đã tặng {qua}{lan}. {loi}"
+    ],
+    "join": [
+      "Chào {ten}!"
+    ],
+    "chat": [
+      "{ten} nhắn: {chat}."
+    ],
+    "follow": [
+      "Cảm ơn {ten} đã theo dõi kênh."
+    ],
+    "title": [
+      "Chúc mừng {ten} lên {danh_hieu}!"
+    ],
+    "goal": [
+      "Cả phòng đã đạt {gia_tri} {muc_tieu}!"
+    ],
+    "draw": [
+      "{ten} rút được {title}. {text}"
+    ],
+    "cooldown": {
+      "join": 15000,
+      "chat": 10000
+    },
+    "delay": {
+      "draw": 1500
+    },
+    "fallbackWords": []
+  },
+  "periodic": {
+    "everyMinutes": 4,
+    "quietSeconds": 20,
+    "title": "✦ THÔNG BÁO ✦",
+    "items": [
+      "Bình luận để vào phòng, tặng quà để được vinh danh trên màn hình."
+    ]
+  },
+  "prompts": {
+    "everySeconds": 90,
+    "quietSeconds": 25,
+    "items": [
+      "Gõ «rút thăm» để xem lá thăm hôm nay nhé.",
+      "Thả tim để cả phòng đạt mục tiêu!"
+    ]
+  },
+  "hud": {
+    "title": {
+      "text": "TÊN KÊNH CỦA BẠN",
+      "sub": "Dòng phụ: khẩu hiệu, chủ đề"
+    },
+    "counters": true,
+    "giftCard": {
+      "verb": "đã tặng",
+      "unit": "xu"
+    },
+    "tiers": true,
+    "board": {
+      "title": "BẢNG VÀNG",
+      "size": 3
+    },
+    "ticker": {
+      "title": "Vừa tặng",
+      "size": 5
+    },
+    "goal": true,
+    "guide": {
+      "title": "Cách tham gia"
+    }
+  },
+  "colors": {
+    "accent": "#a9b8ff",
+    "border": "rgba(169,184,255,.6)",
+    "panel": "linear-gradient(180deg, rgba(20,24,40,.88), rgba(10,12,22,.92))",
+    "glow": "rgba(140,160,255,.7)"
+  },
+  "sounds": {
+    "big": {
+      "cooldown": 8000,
+      "duck": 0.4,
+      "priority": true
+    }
+  },
+  "text": {},
+  "reactions": {
+    "chat": [
+      {
+        "play": "nod"
+      }
+    ]
+  }
+}

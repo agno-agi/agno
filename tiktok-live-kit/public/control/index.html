@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TikTok Live Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="control.css">
+</head>
+<body>
+<div class="top">
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><line x1="16" y1="2.5" x2="16" y2="7" stroke="#2b49a3" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="3" r="2" fill="#e2542a"/><rect x="4" y="7" width="24" height="20" rx="6" fill="#2b49a3"/><rect x="8" y="12" width="16" height="9" rx="3" fill="#0b1019"/><circle cx="12.5" cy="16.5" r="1.8" fill="#5aa8ff"/><circle cx="19.5" cy="16.5" r="1.8" fill="#5aa8ff"/><rect x="1.5" y="14" width="2.5" height="6" rx="1.2" fill="#2b49a3"/><rect x="28" y="14" width="2.5" height="6" rx="1.2" fill="#2b49a3"/></svg>
+    TikTok Live Kit
+  </div>
+  <label class="theme">Theme
+    <select id="themeSel"></select>
+  </label>
+  <div class="pill"><span class="dot" id="dotTop"></span><span id="statusTop">Chưa kết nối</span></div>
+  <div class="ov">Overlay: <code id="ovUrl"></code> <button class="ghost sm" id="copyOv">Chép</button></div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="live">🔴 Live</button>
+  <button data-tab="rules">⚙️ Luật</button>
+  <button data-tab="lab">🧪 Thử nghiệm</button>
+  <button data-tab="stats">📊 Thống kê</button>
+  <button data-tab="guide">📖 Hướng dẫn</button>
+</nav>
+</div>
+
+<main>
+  <div class="col">
+    <!-- ===== Live ===== -->
+    <div class="pane" data-pane="live">
+      <section class="starter" data-starter hidden>
+        <h2>Bạn chưa có theme riêng</h2>
+        <p>Đang chạy <b>khung trống</b>: kit không kèm theme làm sẵn. Theme là cảnh, nhân vật, hiệu ứng và luật quà của riêng kênh bạn, làm cùng AI trong vài buổi.</p>
+        <ol class="steps">
+          <li><b>Nghĩ ý tưởng.</b> Mở <a target="_blank" rel="noopener" href="https://github.com/duycuf/tiktok-live-kit/blob/main/docs/IDEA.vi.md">phiếu ý tưởng</a>: không gian, người xem thành ai, quà nào làm gì, lệnh chat, giọng đọc. Chưa nghĩ ra thì để AI hỏi.</li>
+          <li><b>Mở AI trong thư mục kit</b> (Claude Code, Codex, Cursor…) rồi dán câu dưới đây. AI hỏi bạn từng phần, tóm thành bản kế hoạch, bạn đồng ý rồi mới làm.</li>
+          <li><b>Quay lại đây</b> chọn theme mới ở ô Theme phía trên, thử ở tab Thử nghiệm.</li>
+        </ol>
+        <div class="prompt"><code data-prompt>Đọc AGENTS.md rồi hỏi tôi ý tưởng theo docs/IDEA.vi.md để làm một theme mới cho TikTok Live Kit.</code><button class="sm" data-copy-prompt>Chép</button></div>
+      </section>
+      <section>
+        <h2>Kết nối live</h2>
+        <div class="row">
+          <select id="provider" title="Nguồn dữ liệu">
+            <option value="auto">Tự động (TikFinity → trực tiếp)</option>
+            <option value="tikfinity">TikFinity Desktop</option>
+            <option value="connector">Trực tiếp (không cần TikFinity)</option>
+          </select>
+          <input id="user" placeholder="Tên kênh TikTok, vd: tranvankhai" autocomplete="off">
+          <button class="primary" id="btnConnect">Kết nối</button>
+          <button id="btnStop">Ngắt</button>
+        </div>
+        <div class="status"><span class="dot" id="dot"></span><span id="statusText">Chưa kết nối</span><span class="muted" id="lastEv"></span></div>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <section id="settingsBox" hidden>
+        <h2>Cài đặt theme <span class="muted">· đổi là overlay áp dụng ngay</span></h2>
+        <div class="grid2" id="settings"></div>
+      </section>
+
+      <section>
+        <h2>Nội dung định kỳ</h2>
+        <div class="row">
+          <button id="btnPeriodic">⏱ Phát nội dung định kỳ ngay</button>
+          <span class="muted">Thông báo, lời mời tương tác của theme, phát ngay không chờ đến lượt.</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Nhật ký</h2>
+        <div id="log"></div>
+      </section>
+    </div>
+
+    <!-- ===== Luật ===== -->
+    <div class="pane" data-pane="rules" hidden>
+      <section>
+        <h2>Ai được vào sân</h2>
+        <div class="grid2">
+          <label>Vào sân khi
+            <select id="joinMode">
+              <option value="all">Mọi người tương tác (vào live, tim, chat...)</option>
+              <option value="keyword">Chỉ khi chat từ khoá, tặng quà, theo dõi, chia sẻ</option>
+            </select>
+          </label>
+          <label>Từ khoá vào sân <input id="joinKeywords" placeholder="cách nhau dấu phẩy"></label>
+          <label>Quà lớn từ (xu) <input id="bigGiftCoins" type="number" min="1"></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Bậc quà theo giá một món</h2>
+        <table><thead><tr><th>Từ (xu)</th><th>Hành động</th><th>Chữ hiển thị</th><th></th></tr></thead><tbody id="tiers"></tbody></table>
+        <button class="sm" id="addTier">+ Thêm bậc</button>
+      </section>
+
+      <section>
+        <h2>Quà riêng <span class="muted">· ưu tiên hơn bậc giá</span></h2>
+        <table><thead><tr><th>ID quà</th><th>Tên / bí danh</th><th>Hành động</th><th>Chữ hiển thị</th><th></th></tr></thead><tbody id="overrides"></tbody></table>
+        <button class="sm" id="addOverride">+ Thêm trống</button>
+        <h3>Thư viện quà đã gặp trên live <span class="muted">· bấm một quà để thêm luật riêng cho nó</span></h3>
+        <div class="gifts" id="catalog"></div>
+      </section>
+
+      <section>
+        <h2>Lệnh chat</h2>
+        <table><thead><tr><th>Từ khoá</th><th>Khớp</th><th>Hành động</th><th>Chữ</th><th>Chờ (s)</th><th></th></tr></thead><tbody id="commands"></tbody></table>
+        <button class="sm" id="addCommand">+ Thêm lệnh</button>
+      </section>
+
+      <div class="savebar">
+        <span class="muted" id="rulesMsg">Nút ▶ trên mỗi dòng cho xem hiệu ứng của dòng đó, không cần lưu.</span>
+        <button class="ghost" id="resetRules">Về mặc định của theme</button>
+        <button class="primary" id="saveRules">Lưu luật</button>
+      </div>
+    </div>
+
+    <!-- ===== Thử nghiệm ===== -->
+    <div class="pane" data-pane="lab" hidden>
+      <section>
+        <h2>Người xem giả <span class="muted">· đi qua đúng đường ống như live thật</span></h2>
+        <div class="row" id="simRow"></div>
+        <h3>Thả đám đông một lần</h3>
+        <div class="row">
+          <button data-crowd="10">10 người</button><button data-crowd="30">30 người</button><button data-crowd="60">60 người</button><button data-crowd="400">400 người</button>
+          <span class="muted">Người vào dần như live thật (khoảng 12 người mỗi giây). 400 người để thử máy có chịu nổi buổi live đông không.</span>
+        </div>
+        <h3>Tự chạy liên tục</h3>
+        <div class="row">
+          <button data-rate="0">Tắt</button><button data-rate="1">Vừa</button><button data-rate="3">Đông</button><button data-rate="10">Cực đông</button>
+          <span class="muted">Tắt và bấm Phiên mới (tab Thống kê) trước khi live thật.</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Thử quà theo nhóm giá <span class="muted">· đi qua luật đã lưu, như người xem tặng thật</span></h2>
+        <div id="giftTests"></div>
+      </section>
+
+      <section>
+        <h2>Xem thử từng hiệu ứng của theme</h2>
+        <div class="row" id="actionRow"></div>
+      </section>
+
+      <section>
+        <h2>Giọng đọc</h2>
+        <div class="row">
+          <input id="voiceText" placeholder="Câu đọc thử" value="Xin chào, đây là giọng đọc thử của kênh.">
+          <button id="btnVoice">🔊 Đọc thử</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- ===== Thống kê ===== -->
+    <div class="pane" data-pane="stats" hidden>
+      <section>
+        <h2>Phiên live này</h2>
+        <div class="stats" id="stats2"></div>
+        <div class="row">
+          <a class="btn" href="/api/export.csv">Tải CSV</a>
+          <button class="danger" id="btnReset">Phiên mới</button>
+          <span class="muted">Phiên mới đưa bảng xếp hạng và số liệu về 0.</span>
+        </div>
+      </section>
+      <section>
+        <h2>Bảng xếp hạng</h2>
+        <ol id="top"></ol>
+      </section>
+      <section>
+        <h2>Mục tiêu</h2>
+        <div id="goals"></div>
+      </section>
+    </div>
+
+    <!-- ===== Hướng dẫn ===== -->
+    <div class="pane guide" data-pane="guide" hidden>
+      <section class="starter">
+        <h2>Làm theme của bạn</h2>
+        <p>Kit không kèm theme làm sẵn, chỉ có <b>khung trống</b>. Theme là cảnh, nhân vật, hiệu ứng và luật quà của riêng kênh bạn, làm cùng AI trong vài buổi.</p>
+        <ol class="steps">
+          <li><b>Nghĩ ý tưởng.</b> Mở <a target="_blank" rel="noopener" href="https://github.com/duycuf/tiktok-live-kit/blob/main/docs/IDEA.vi.md">phiếu ý tưởng</a>: không gian, người xem thành ai, quà nào làm gì, lệnh chat, giọng đọc. Chưa nghĩ ra thì để AI hỏi.</li>
+          <li><b>Mở AI trong thư mục kit</b> (Claude Code, Codex, Cursor…) rồi dán câu dưới đây. AI hỏi bạn từng phần, tóm thành bản kế hoạch, bạn đồng ý rồi mới làm.</li>
+          <li><b>Quay lại đây</b> chọn theme mới ở ô Theme phía trên, thử ở tab Thử nghiệm.</li>
+        </ol>
+        <div class="prompt"><code data-prompt>Đọc AGENTS.md rồi hỏi tôi ý tưởng theo docs/IDEA.vi.md để làm một theme mới cho TikTok Live Kit.</code><button class="sm" data-copy-prompt>Chép</button></div>
+      </section>
+      <section>
+        <h2>Lên live trong 4 bước</h2>
+        <ol class="steps">
+          <li><b>Mở kit.</b> Chạy <code>run.bat</code>. Cửa sổ đen là server: để mở suốt buổi live. Bảng này mở ở <code class="origin"></code>.</li>
+          <li><b>Đưa hình lên phần mềm phát</b>, theo một trong ba cách ở bảng dưới.</li>
+          <li><b>Thử trước.</b> Tab <b>Thử nghiệm</b>: thả 30 người, bấm vài quà, đọc thử giọng. Xong thì <b>Tắt</b> tự chạy và bấm <b>Phiên mới</b> ở tab Thống kê.</li>
+          <li><b>Lên sóng rồi kết nối.</b> Bấm phát trực tiếp trước, sau đó ở tab <b>Live</b> gõ tên kênh (không có @), bấm <b>Kết nối</b>. Chấm xanh là quà, tim, chat đang vào.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Chọn cách phát</h2>
+        <table class="plain">
+          <thead><tr><th>Cách</th><th>Cần</th><th>Mỗi lần live bật</th></tr></thead>
+          <tbody>
+            <tr><td><b>A.</b> LIVE Studio quay cửa sổ</td><td>Tài khoản dùng được LIVE Studio</td><td><code>run.bat</code> + <code>overlay.bat</code>, Studio: Thêm nguồn → Quay màn hình cửa sổ → chrome.exe</td></tr>
+            <tr><td><b>B.</b> OBS → Virtual Camera → LIVE Studio <span class="tag">mượt nhất</span></td><td>Tài khoản dùng được LIVE Studio, có OBS</td><td><code>run.bat</code> + OBS (nguồn Browser lưu sẵn), Studio: Thêm nguồn → Camera → OBS Virtual Camera</td></tr>
+            <tr><td><b>C.</b> OBS phát bằng khoá phát</td><td>Tài khoản có khoá phát (stream key)</td><td><code>run.bat</code> + OBS, Settings → Stream → Custom</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">LIVE Studio báo "Không có quyền truy cập" thì tài khoản chưa đủ điều kiện phát từ máy tính, cần xử lý bên TikTok trước.</p>
+        <h3>Nguồn Browser trong OBS (cách B, C)</h3>
+        <ul>
+          <li>URL <code class="ovlink"></code>, rộng 1080, cao 1920, tick <i>Control audio via OBS</i>.</li>
+          <li>Cách B: chuột phải nguồn → Advanced Audio Properties → Audio Monitoring → <b>Monitor and Output</b> (camera ảo chỉ mang hình, tiếng đi qua loa).</li>
+          <li>Overlay trắng: chuột phải nguồn → Refresh.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Địa chỉ overlay hữu ích</h2>
+        <table class="plain">
+          <tbody>
+            <tr><td><a target="_blank" data-ov="">/overlay</a></td><td>Trang cho OBS / LIVE Studio (1080 × 1920)</td></tr>
+            <tr><td><a target="_blank" data-ov="?safe">/overlay?safe</a></td><td>Tô đỏ vùng bị giao diện TikTok che hoặc bị cắt trên điện thoại</td></tr>
+            <tr><td><a target="_blank" data-ov="?scene">/overlay?scene</a></td><td>Lưới đo cảnh: chân trời, sàn, lối đi, ghế, điểm mốc</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Lỗi hay gặp</h2>
+        <table class="plain">
+          <tbody>
+            <tr><td>"Không thấy TikFinity ở ws://127.0.0.1:21213"</td><td>Mở TikFinity Desktop (không dùng bản web), đăng nhập đúng kênh. Hoặc chọn <b>Trực tiếp</b>.</td></tr>
+            <tr><td>Kết nối trực tiếp báo lỗi</td><td>Kênh chưa lên sóng, hoặc gõ sai tên kênh.</td></tr>
+            <tr><td>Overlay im lặng</td><td>Cửa sổ <code>overlay.bat</code> tự phát tiếng; trong OBS tick <i>Control audio via OBS</i>.</td></tr>
+            <tr><td>Lỡ tắt cửa sổ đen</td><td>Chạy lại <code>run.bat</code>, bấm Kết nối lại.</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">Hướng dẫn đầy đủ: <a target="_blank" rel="noopener" href="https://github.com/duycuf/tiktok-live-kit/blob/main/docs/GO-LIVE.vi.md">docs/GO-LIVE.vi.md</a></p>
+      </section>
+    </div>
+  </div>
+
+  <div class="col side">
+    <div class="preview"><iframe id="preview" src="/overlay?quiet&mute" title="Xem trước overlay"></iframe></div>
+    <section class="mini">
+      <h2>Top tặng quà</h2>
+      <ol id="topMini"></ol>
+    </section>
+  </div>
+</main>
+<script src="control.js"></script>
+</body>
+</html>

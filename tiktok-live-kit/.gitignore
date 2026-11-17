@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+*.log
+data/
+.DS_Store
+**/assets/raw/
+
+# ghi chú kế hoạch nội bộ, chỉ giữ trên máy
+docs/PLAN.md
