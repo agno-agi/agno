@@ -236,7 +236,7 @@ show what Super Agent and its workers wrote:
 
 | Route | Scope | Returns |
 | --- | --- | --- |
-| GET `/company/tasks/{id}/files` | `tasks:read` and `wiki:read` | The Task's files, paged with `limit` and `page`. With `folder`, only what is directly inside that folder: its folders (`type: "folder"`), then its files |
+| GET `/company/tasks/{id}/files` | `tasks:read` and `wiki:read` | The Task's files, paged with `limit` and `page`. With `folder`, only what is directly inside that folder: its folders (`type: "folder"`, with the `file_count` and total size of every file under it), then its files |
 | GET `/company/tasks/{id}/files/{path}` | `tasks:read` and `wiki:read` | One file: `content`, `metadata` and `next_offset` |
 | GET `/company/notes` | `wiki:read` | The notes, paged the same way, with the same `folder` |
 | GET `/company/notes/{path}` | `wiki:read` | One note |

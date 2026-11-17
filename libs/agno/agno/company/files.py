@@ -239,7 +239,8 @@ class CompanyFiles:
     def _entries(location: _Location, metas: List[Any]) -> Dict[str, Any]:
         """The folders, then the files, directly inside a folder. ``metas`` is every file under it, sorted.
 
-        A folder's size is the total of the files under it and its time is the latest of theirs.
+        A folder's size and file count are the totals of the files under it, at any depth, and its time is
+        the latest of theirs.
         """
         prefix = location.path + "/" if location.path else ""
         folders: Dict[str, Dict[str, Any]] = {}
@@ -262,9 +263,16 @@ class CompanyFiles:
                 continue
             folder = folders.setdefault(
                 name,
-                {"type": "folder", "path": location.tree_path_of(prefix + name), "size_bytes": 0, "updated_at": None},
+                {
+                    "type": "folder",
+                    "path": location.tree_path_of(prefix + name),
+                    "size_bytes": 0,
+                    "file_count": 0,
+                    "updated_at": None,
+                },
             )
             folder["size_bytes"] += meta.size_bytes
+            folder["file_count"] += 1
             if meta.updated_at is not None:
                 folder["updated_at"] = max(folder["updated_at"] or meta.updated_at, meta.updated_at)
         return {"folder": location.tree_path, "entries": [*folders.values(), *files]}

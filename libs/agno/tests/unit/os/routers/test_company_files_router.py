@@ -248,6 +248,9 @@ def test_one_folder_lists_what_is_directly_inside_it(make, folder):
     ]
     assert (top["meta"]["total_count"], top["meta"]["total_pages"]) == (3, 1)
     assert rows(".") == rows("")
+    # A folder counts every file under it, at any depth, so the top folder adds up to the whole listing.
+    assert [(row["path"], row["file_count"]) for row in top["data"]] == [("data", 3), ("zeta", 1), ("report.md", None)]
+    assert sum(row["file_count"] or 1 for row in top["data"]) == len(sizes)
     # A folder has the latest time of its files and no version. A file keeps both.
     data, _, report = top["data"]
     assert data["version"] is None and data["updated_at"] is not None
@@ -264,6 +267,7 @@ def test_one_folder_lists_what_is_directly_inside_it(make, folder):
     ]
     # A listing names a folder with or without a trailing slash.
     assert rows("data/raw/") == rows("data/raw")
+    assert inside("data")["data"][0]["file_count"] == 2
     assert client.get(url + "/data/raw/events.json").json()["content"] == "[1, 2, 3]\n"
 
     # A folder with nothing in it, a name that is a file, and a name that only starts like a folder: all empty.

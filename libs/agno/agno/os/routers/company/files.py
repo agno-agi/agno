@@ -78,7 +78,10 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
             result = await tree(folder, files.aentries(f"{folder}/{inside}" if inside not in ("", ".") else folder))
             entries = result["entries"][(page - 1) * limit : page * limit]
             return paged(
-                [{**named(folder, entry), "type": entry["type"]} for entry in entries],
+                [
+                    {**named(folder, entry), "type": entry["type"], "file_count": entry.get("file_count")}
+                    for entry in entries
+                ],
                 len(result["entries"]),
                 limit,
                 page,
