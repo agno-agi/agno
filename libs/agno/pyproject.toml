@@ -146,11 +146,9 @@ code = [
 # Lift once the tools are ported to the split classes.
 confluence = ["atlassian-python-api<5"]
 crawl4ai = ["crawl4ai>=0.6.3"]
-# Pinned below 1.0: Daytona SDK 2.0 keeps only clients, DaytonaConfig and errors
-# at the package root and moves the 0.x API (CodeLanguage, Sandbox,
-# CreateSandboxFromSnapshotParams) to daytona.v0, so DaytonaTools fails to import.
-# The unbounded extra and `pip install daytona` hint then reinstall 2.x.
-# Lift once the tools are ported to daytona.v0 / daytona[v0-sdk]>=2,<3.
+# Pinned below 1.0: Daytona SDK 2.0 moved CodeLanguage, Sandbox and
+# CreateSandboxFromSnapshotParams to daytona.v0, so DaytonaTools fails to import.
+# Lift once the tools are ported to daytona.v0.
 daytona = ["daytona<1"]
 ddg = ["ddgs"]
 docling = ["docling"]
