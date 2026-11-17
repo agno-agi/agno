@@ -252,10 +252,10 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         self._roles_claim = roles_claim
 
     def _identity(self, ctx: AuthorizationContext) -> Tuple[Optional[str], Optional[List[str]]]:
-        """(subject, roles) for the engine. ``roles`` is the token-carried list
-        when a ``roles_claim`` is configured and present; otherwise None so the
-        subject's stored assignments decide."""
-        return ctx.principal_id, normalize_roles_claim(ctx.claims, self._roles_claim)
+        """(subject, roles) for the engine. ``roles`` is the context's roles when the
+        application set them, else the token-carried list when a ``roles_claim`` is
+        configured and present; otherwise None so the subject's stored assignments decide."""
+        return ctx.principal_id, ctx.roles or normalize_roles_claim(ctx.claims, self._roles_claim)
 
     def check(self, ctx: AuthorizationContext) -> bool:
         subject, roles = self._identity(ctx)
