@@ -444,7 +444,12 @@ class Qdrant(VectorDb):
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
         if len(points) > 0:
-            self.client.upsert(collection_name=self.collection, wait=False, points=points)
+            for start in range(0, len(points), batch_size):
+                self.client.upsert(
+                    collection_name=self.collection,
+                    wait=False,
+                    points=points[start : start + batch_size],
+                )
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(

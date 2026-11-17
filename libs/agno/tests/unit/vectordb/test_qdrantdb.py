@@ -136,6 +136,16 @@ def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         assert len(kwargs["points"]) == 3
 
 
+def test_insert_respects_batch_size(qdrant_db, mock_qdrant_client):
+    """Documents are upserted in batches no larger than batch_size"""
+    documents = [Document(content=f"Document {i}", name=f"doc_{i}") for i in range(5)]
+    with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768):
+        qdrant_db.insert(documents=documents, content_hash="test_hash", batch_size=2)
+
+    batches = [call.kwargs["points"] for call in mock_qdrant_client.upsert.call_args_list]
+    assert [len(points) for points in batches] == [2, 2, 1]
+
+
 def test_name_exists(qdrant_db, mock_qdrant_client):
     """Test name existence check"""
     # Test when name exists
