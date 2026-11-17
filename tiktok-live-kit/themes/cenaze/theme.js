@@ -10,7 +10,9 @@
 // iki yanda selvi ağaçları aynı hızla kayar, ortada omuzlarda taşınan örtülü tabut ve üstünde isim levhası (fotoğraf yok).
 // SHOW_COFFIN = false yapılırsa tabut gizlenir. SPEED: yolun kayma hızı (metre/sn).
 (function () {
-  const SHOW_COFFIN = true, SPEED = 1.4, NAME = 'SÜLEYMAN ÇAKIR';
+  let NAME = 'SÜLEYMAN ÇAKIR'; // levhadaki yazı theme.json > hud.title.text'ten gelir (tek yerden değişir)
+  const SHOW_COFFIN = true, SPEED = 1.4;
+  Kit.on('start', (th) => { if (th?.hud?.title?.text) NAME = String(th.hud.title.text).toUpperCase(); });
   let world = null;
   function tileTexture(T) {
     const c = document.createElement('canvas'); c.width = c.height = 256;
@@ -60,7 +62,7 @@
 
     // omuzlarda taşınan örtülü tabut + isim levhası (npc'ler köşelerde durur: scene.json / theme.json "npcs")
     if (SHOW_COFFIN) {
-      const cof = new T.Group(); cof.position.set(0, 1.28, -3.4); g.add(cof);
+      const cof = new T.Group(); cof.position.set(0, 1.28, -3.4); cof.scale.setScalar(1.25); g.add(cof);
       const box = (w, h, d, c, y = 0) => { const m = new T.Mesh(new T.BoxGeometry(w, h, d), M(c, 0.85)); m.position.y = y; cof.add(m); return m; };
       box(0.9, 0.5, 2.2, '#1d3a2c');            // koyu yeşil örtü
       box(0.94, 0.06, 2.24, '#e0d6a8', 0.1);    // örtü şeritleri
