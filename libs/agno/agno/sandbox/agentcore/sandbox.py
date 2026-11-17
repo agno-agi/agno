@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence
 from uuid import uuid4
 
 from agno.sandbox.agentcore.server import _MAX_STAGED
-from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity
+from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _retention
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
@@ -130,6 +130,7 @@ class AgentCoreSandbox(Sandbox):
         self,
         runtime_arn: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         qualifier: str = "DEFAULT",
         lifetime: int = 3600,
@@ -139,6 +140,7 @@ class AgentCoreSandbox(Sandbox):
         checkpoints: Optional["CheckpointStore"] = None,
         env: Optional[Mapping[str, str]] = None,
         execution_timeout: Optional[float] = None,
+        retain_checkpoints: Optional[int] = 3,
     ) -> None:
         try:
             import boto3
@@ -158,9 +160,13 @@ class AgentCoreSandbox(Sandbox):
             execution_timeout = min(900.0, lifetime / 2)
         if not math.isfinite(execution_timeout) or not 0 < execution_timeout < lifetime:
             raise ValueError("AgentCore execution timeout must be positive and shorter than the lifetime")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout
+        self.retain_checkpoints = _retention(retain_checkpoints)
         self.runtime_arn, self.namespace, self.qualifier, self.lifetime = runtime_arn, namespace, qualifier, lifetime
         session = boto_session or boto3.session.Session()
 
@@ -383,8 +389,12 @@ class AgentCoreSandbox(Sandbox):
         A failed or lost reply never touches the claimed computer: the caller
         reconciles. Only an unclaimed replacement microVM is stopped.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         reply = await self._invoke_for(handle, "rpc", operation=operation, payload=payload.decode())
         body = str(reply["body"])[: 4 * 1024 * 1024]
         if reply["status"] != 200:

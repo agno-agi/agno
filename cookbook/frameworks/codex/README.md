@@ -7,9 +7,14 @@ SDK version in that environment:
 uv pip install 'openai-codex==0.162.1'
 ```
 
-Authenticate through your existing Codex CLI login (`codex login`), or use
-the SDK's API-key login once. If the CLI is not on your PATH, export
-`OPENAI_API_KEY` in your shell and run:
+Export `OPENAI_API_KEY` to authenticate `CodexAgent` automatically. Agno uses
+the key from the Codex process environment, including overrides in `env` or
+`client_options.env`, before starting or resuming a thread or compacting it.
+An existing ChatGPT or other non-API-key login is preserved. Without a key,
+Codex uses its existing authentication (`codex login`).
+
+The native SDK example requires an existing login. To authenticate it directly
+with an API key, run:
 
 ```bash
 python - <<'PY'

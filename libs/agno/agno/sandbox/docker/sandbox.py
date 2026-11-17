@@ -15,7 +15,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Sequence, Tuple
 
-from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _sync
+from agno.sandbox.base import ExecResult, Sandbox, SandboxError, SandboxHandle, _identity, _retention, _sync
 
 if TYPE_CHECKING:
     from agno.sandbox.checkpoint import CheckpointStore
@@ -78,6 +78,7 @@ class DockerSandbox(Sandbox):
         self,
         image: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         cpus: float = 2.0,
         memory_mb: int = 2048,
@@ -91,6 +92,7 @@ class DockerSandbox(Sandbox):
         checkpoints: Optional["CheckpointStore"] = None,
         env: Optional[Mapping[str, str]] = None,
         execution_timeout: float = 900,
+        retain_checkpoints: Optional[int] = 3,
     ) -> None:
         for value in (image, namespace, network):
             if not isinstance(value, str) or not value or "\x00" in value:
@@ -114,6 +116,9 @@ class DockerSandbox(Sandbox):
             or any(char.isspace() or char in ":/\x00" for char in runtime_host)
         ):
             raise ValueError("Sandbox runtime host must be a bare IP address or host name")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.image = image
         self.namespace = namespace
         self.cpus = float(cpus)
@@ -144,6 +149,7 @@ class DockerSandbox(Sandbox):
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout
+        self.retain_checkpoints = _retention(retain_checkpoints)
         self._http: Dict[asyncio.AbstractEventLoop, Tuple[Any, "asyncio.Task[None]"]] = {}
         # Sync calls from several threads share the cache, and each loop's closer removes its own entry.
         self._http_lock = threading.Lock()
@@ -535,6 +541,13 @@ class DockerSandbox(Sandbox):
                     code, err = 1, b"Creation response timed out"
                 # A concurrent creator or lost response is resolved by the deterministic name.
                 current = await self.aget(name)
+                if current is None and code and b"already in use" in err:
+                    # Docker reserves the name before the container is inspectable; wait for it.
+                    for _ in range(50):
+                        await asyncio.sleep(0.1)
+                        current = await self.aget(name)
+                        if current is not None:
+                            break
                 if current is None:
                     raise SandboxError("Docker creation failed: " + err.decode(errors="replace")[:500])
             except Exception:
@@ -575,8 +588,12 @@ class DockerSandbox(Sandbox):
 
         A failed or lost reply never touches compute: the coordinator reconciles.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         if handle.runtime_url is None:
             # Exec fallback: fixed runtime argv, bounded, and never stopping compute on a failed or
             # lost reply. A control request is not a command that could run forever.

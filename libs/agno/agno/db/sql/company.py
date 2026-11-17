@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, literal, or_, select, union_all
 
+from agno.db.schemas.company import validate_company_details
+from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
+
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
     """Hide children of archived parents before counting or paging."""
@@ -41,8 +44,40 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
         raise ValueError("Product is missing or archived")
 
 
+def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
+    """Refuse an automatic acceptance when its Routine already has max_open Tasks open.
+
+    The caller holds the Product lock, so two acceptances cannot both count a free place.
+    A receipt with no max_open is not counted.
+    """
+    limit = auto_accept.get("max_open")
+    if limit is None:
+        return
+    open_now = sess.execute(
+        select(func.count())
+        .select_from(tasks)
+        .where(
+            tasks.c.routine_id == auto_accept["routine_id"],
+            tasks.c.id != task_id,
+            tasks.c.status.in_(OPEN_TASK_STATUSES),
+            tasks.c.deleted_at.is_(None),
+        )
+    ).scalar()
+    if (open_now or 0) >= limit:
+        raise OpenTaskLimitError(
+            f"Routine has {open_now} Tasks open, its limit. Complete or cancel one for it to accept more"
+        )
+
+
 def require_project(
-    sess: Any, projects: Any, project_id: Optional[str], product_id: str, task_status: Optional[str] = None
+    sess: Any,
+    projects: Any,
+    project_id: Optional[str],
+    product_id: str,
+    task_status: Optional[str] = None,
+    *,
+    reject_proposed: bool = False,
+    reject_cancelled: bool = False,
 ) -> None:
     if project_id is None:
         return
@@ -51,6 +86,10 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    if reject_cancelled and row._mapping["status"] == "cancelled":
+        raise CancelledProjectError("Cannot change Task status in a cancelled Project")
+    if reject_proposed and row._mapping["status"] == "proposed":
+        raise ValueError("Project approval is required before creating Tasks outside Backlog or moving them to Ready")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}
@@ -69,7 +108,16 @@ def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optio
     return dict(row._mapping) if row is not None else None
 
 
-def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: str) -> None:
+def lock_child(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    table: Any,
+    record_id: str,
+    restoring: bool = False,
+    reject_cancelled: bool = False,
+) -> None:
+    """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project."""
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
         return
@@ -78,7 +126,19 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
     # Read the Project again after taking the Product lock: a move may have won it.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
-        require_project(sess, projects, row._mapping["project_id"], record["product_id"])
+        status = row._mapping["status"] if restoring else None
+        require_project(
+            sess, projects, row._mapping["project_id"], record["product_id"], status, reject_cancelled=reject_cancelled
+        )
+
+
+def open_project_tasks(tasks: Any, project_id: str) -> Any:
+    """Visible non-terminal Tasks keep a Project from finishing or retiring; archived ones are hidden everywhere."""
+    return select(tasks).where(
+        tasks.c.project_id == project_id,
+        tasks.c.deleted_at.is_(None),
+        tasks.c.status.not_in(["done", "cancelled"]),
+    )
 
 
 def _event(record: Dict[str, Any], action: str, now: int, parent: Optional[Dict[str, str]] = None) -> Any:
@@ -134,10 +194,15 @@ def _restore_children(sess: Any, table: Any, condition: Any, parent: Dict[str, s
 
 
 def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
+    # Archived Tasks are hidden from lists and counts, so they must not block either.
     rows = (
         sess.execute(
             select(tasks.c.id, tasks.c.title)
-            .where(condition, tasks.c.status.in_(["ready", "in_progress", "in_review"]))
+            .where(
+                condition,
+                tasks.c.deleted_at.is_(None),
+                tasks.c.status.in_(["ready", "in_progress", "in_review"]),
+            )
             .order_by(tasks.c.id)
         )
         .mappings()
@@ -202,13 +267,7 @@ def archive_project(
     if row is None:
         return False
     _refuse_open_tasks(sess, tasks, tasks.c.project_id == project_id)
-    if (
-        updated_before is not None
-        and sess.execute(
-            select(tasks.c.id).where(tasks.c.project_id == project_id, tasks.c.status.not_in(["done", "cancelled"]))
-        ).first()
-        is not None
-    ):
+    if updated_before is not None and sess.execute(open_project_tasks(tasks, project_id)).first() is not None:
         return False
     now = int(time.time())
     sess.execute(
@@ -349,3 +408,77 @@ def link_product_routine(sess: Any, products: Any, product_id: str, schedule_id:
             .returning(products)
         ).one()
     return dict(row._mapping)
+
+
+def update_product_row(
+    sess: Any, products: Any, product_id: str, user_id: Optional[str], fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Update an active Product; replacing metadata keeps the Routine ids linked to it."""
+    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    if user_id is not None:
+        stmt = stmt.where(products.c.user_id == user_id)
+    if "metadata" in fields and "routine_ids" not in fields["metadata"]:
+        # A no-op UPDATE takes the write lock link_product_routine uses before reading the links.
+        row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.metadata)).first()
+        if row is None:
+            return None
+        routine_ids = (row[0] or {}).get("routine_ids")
+        if routine_ids:
+            fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
+    result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
+    return dict(result._mapping) if result else None
+
+
+def initialize_company_details(sess: Any, table: Any, name: str, description: Optional[str]) -> Dict[str, Any]:
+    """Keep one row: configuration fills or updates it until a human edits it, then never overwrites.
+
+    An edit always moves updated_at past created_at, so equal timestamps mean never edited.
+    """
+    validate_company_details({"name": name, "description": description})
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert = pg_insert if sess.bind.dialect.name == "postgresql" else sqlite_insert
+    now = int(time.time())
+    sess.execute(
+        insert(table)
+        .values(id="company", name=name, description=description, created_at=now, updated_at=now)
+        .on_conflict_do_nothing(index_elements=[table.c.id])
+    )
+    current = sess.execute(select(table).where(table.c.id == "company")).one()._mapping
+    if current["created_at"] != current["updated_at"] or (current["name"], current["description"]) == (
+        name,
+        description,
+    ):
+        return dict(current)
+    # Moves both timestamps: they stay equal, and a client holding the old version gets a conflict.
+    stamp = max(now, current["updated_at"] + 1)
+    sess.execute(
+        table.update()
+        .where(
+            table.c.id == "company",
+            table.c.created_at == current["created_at"],
+            table.c.updated_at == current["updated_at"],
+        )
+        .values(name=name, description=description, created_at=stamp, updated_at=stamp)
+    )
+    return dict(sess.execute(select(table).where(table.c.id == "company")).one()._mapping)
+
+
+def update_company_details(
+    sess: Any, table: Any, expected_updated_at: int, fields: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Reject stale edits atomically, including two edits made within one second."""
+    validate_company_details(fields)
+    if not fields:
+        row = sess.execute(
+            select(table).where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+        ).first()
+    else:
+        row = sess.execute(
+            table.update()
+            .where(table.c.id == "company", table.c.updated_at == expected_updated_at)
+            .values(**fields, updated_at=max(int(time.time()), expected_updated_at + 1))
+            .returning(table)
+        ).first()
+    return dict(row._mapping) if row is not None else None

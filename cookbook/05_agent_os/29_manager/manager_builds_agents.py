@@ -1,6 +1,6 @@
 """Serve an AgentOS whose manager can build and run agents.
 
-Ask OS Manager: "Create a calculator agent named Budget Helper."
+Ask Super Agent: "Create a calculator agent named Budget Helper."
 Then ask: "Run Budget Helper: what is 15% of 240?"
 
 The registry supplies the model and tools for new agents. It also includes

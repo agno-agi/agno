@@ -666,8 +666,10 @@ def test_mongo_disable_schedules_for_target_matches_tagged_and_generic_rows(monk
     # RUN_ENDPOINT_RE accepts.
     assert {"target_type": "agent", "target_id": "analyst"} in query["$or"]
     assert {"endpoint": {"$in": ["/agents/analyst/runs", "/agents/analyst/runs/"]}} in query["$or"]
-    assert update["$set"]["enabled"] is False
-    assert update["$set"]["disabled_reason"] == "target_archived:agent:analyst"
+    # A pipeline update, so updated_at can depend on the stored managed_by.
+    (stage,) = update
+    assert stage["$set"]["enabled"] is False
+    assert stage["$set"]["disabled_reason"] == {"$literal": "target_archived:agent:analyst"}
 
 
 @pytest.mark.asyncio
@@ -707,4 +709,4 @@ async def test_async_mongo_disable_schedules_for_target_matches_both_endpoint_sp
     assert count == 2
     query, update = collection.update_many.call_args[0]
     assert {"endpoint": {"$in": ["/workflows/w1/runs", "/workflows/w1/runs/"]}} in query["$or"]
-    assert update["$set"]["disabled_reason"] == "target_archived:workflow:w1"
+    assert update[0]["$set"]["disabled_reason"] == {"$literal": "target_archived:workflow:w1"}

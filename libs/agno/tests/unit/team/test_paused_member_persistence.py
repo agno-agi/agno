@@ -11,7 +11,7 @@ session reload.
 import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -155,6 +155,36 @@ async def test_async_routing_persists_completed_member_run():
         await _aroute_requirements_to_members(MagicMock(), run_response=run_response, session=session, run_context=None)
 
     session.upsert_run.assert_called_once_with(completed_response)
+
+
+@pytest.mark.asyncio
+async def test_async_routing_continues_a_remote_member_by_its_run_id():
+    from agno.agent.remote import RemoteAgent
+    from agno.team._run import _aroute_requirements_to_members
+
+    run_response, session = _make_run_response_and_session()
+
+    completed_response = MagicMock(
+        is_paused=False, content="done", run_id="member-run-1", model=None, model_provider=None
+    )
+
+    member = RemoteAgent(base_url="http://fake-host", agent_id="remote_agent")
+    member.acontinue_run = AsyncMock(return_value=completed_response)  # type: ignore[method-assign]
+    paused_copy = run_response.requirements[0]._member_run_response
+    paused_copy.model, paused_copy.model_provider = "gpt-5.6-luna", "OpenAI"
+    run_response.member_responses = [paused_copy]
+
+    with (
+        patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)),
+        patch.object(RemoteAgent, "name", new_callable=PropertyMock, return_value="Remote Agent"),
+    ):
+        await _aroute_requirements_to_members(MagicMock(), run_response=run_response, session=session, run_context=None)
+
+    assert member.acontinue_run.call_args.kwargs["run_id"] == "member-run-1"
+    assert "run_response" not in member.acontinue_run.call_args.kwargs
+    # The continued run takes the place of the paused copy in the team run, with the model only the paused copy names
+    assert run_response.member_responses == [completed_response]
+    assert (completed_response.model, completed_response.model_provider) == ("gpt-5.6-luna", "OpenAI")
 
 
 # ---------------------------------------------------------------------------
@@ -6058,3 +6088,169 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_stream", "stream"])
+def test_a_routing_failure_then_retry_counts_the_run_once_in_the_session_metrics(tmp_path, stream):
+    """A continue whose member routing fails, then retried on the cached session, counts the run once."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "routing_failure_metrics.db")
+    session_id = "s-routing-failure-metrics"
+
+    team1 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Publish the release and email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    requirements = _wire_requirements(run1.requirements)
+
+    from agno.team import _run as team_run
+
+    calls: List[int] = []
+    if stream:
+        name = "_route_requirements_to_members_stream"
+        route_stream = team_run._route_requirements_to_members_stream
+
+        def _boom_once(*args: Any, **kwargs: Any):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("router boom")
+            yield from route_stream(*args, **kwargs)
+    else:
+        name = "_route_requirements_to_members"
+        route = team_run._route_requirements_to_members
+
+        def _boom_once(*args: Any, **kwargs: Any):  # type: ignore[misc]
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("router boom")
+            return route(*args, **kwargs)
+
+    team2 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.cache_session = True
+
+    def _continue() -> None:
+        response = team2.continue_run(
+            run_response=run1, session_id=session_id, requirements=requirements, stream=stream
+        )
+        if stream:
+            for _ in response:
+                pass
+
+    with patch(f"agno.team._run.{name}", new=_boom_once):
+        with pytest.raises(RuntimeError, match="router boom"):
+            _continue()
+        _continue()
+
+    assert run1.status == RunStatus.completed
+    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
+    # Two leader calls and two member calls, 15 tokens each
+    assert session.session_data["session_metrics"]["total_tokens"] == 60
+
+
+def test_nested_teams_member_runs_are_stored_at_every_depth(monkeypatch) -> None:
+    """A member team's own member runs, kept only inside its run, are stored as runs of their own, at every depth,
+    each with its own position in the session."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._run import _persist_member_runs_for_team_run
+
+    leaf_run = RunOutput(run_id="leaf-run", session_id="team-session", parent_run_id="l3-run")
+    l3_run = TeamRunOutput(
+        run_id="l3-run", session_id="team-session", parent_run_id="l2-run", member_responses=[leaf_run]
+    )
+    l2_run = TeamRunOutput(
+        run_id="l2-run", session_id="team-session", parent_run_id="team-run", member_responses=[l3_run]
+    )
+    session = TeamSession(session_id="team-session", runs=[l2_run])
+    saved_runs = []
+    monkeypatch.setattr(
+        "agno.team._session.save_run",
+        lambda team, run, **kwargs: saved_runs.append((run.run_id, kwargs["run_index"])),
+    )
+
+    _persist_member_runs_for_team_run(Team(members=[]), session, "team-run")
+
+    assert saved_runs == [("l2-run", 0), ("l3-run", 1), ("leaf-run", 2)]
+
+
+def test_team_session_metrics_count_every_run_once() -> None:
+    """The session metrics count the team run, its members' runs of their own, and a remote member's run kept only
+    inside the team run, once each: a run written again, or a remote run also held as a run of the cached session, is
+    not counted twice."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._session import update_session_metrics
+
+    member = RunOutput(
+        run_id="member",
+        session_id="s",
+        parent_run_id="team-run",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=57),
+    )
+    # A remote member's run is stored in its own session on the AgentOS that ran it, not in the team's
+    remote = RunOutput(
+        run_id="remote",
+        session_id="s:remote_agent",
+        parent_run_id="team-run",
+        status=RunStatus.completed,
+        metrics=RunMetrics(total_tokens=1000),
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[member, remote]
+    )
+    team = Team(members=[])
+
+    # Read back: the remote run is kept only inside the team run
+    session = TeamSession(session_id="s", session_data={}, runs=[member, team_run])
+    update_session_metrics(team, session)
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 1157
+
+    # Cached: the delegation also added the remote run to the session's runs
+    session = TeamSession(session_id="s", session_data={}, runs=[member, remote, team_run])
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 1157
+
+
+def test_team_session_metrics_count_every_run_three_levels_deep() -> None:
+    """A team three levels deep counts each run once, whether a member team's own members' runs are kept only inside
+    its run, as before the team run is written, or are also runs of their own, as after."""
+    from agno.metrics import RunMetrics
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._session import update_session_metrics
+
+    leaf = RunOutput(run_id="leaf", session_id="s", parent_run_id="l3", metrics=RunMetrics(total_tokens=7))
+    level_3 = TeamRunOutput(
+        run_id="l3", session_id="s", parent_run_id="l2", metrics=RunMetrics(total_tokens=20), member_responses=[leaf]
+    )
+    level_2 = TeamRunOutput(
+        run_id="l2",
+        session_id="s",
+        parent_run_id="team-run",
+        metrics=RunMetrics(total_tokens=50),
+        member_responses=[level_3],
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run", session_id="s", metrics=RunMetrics(total_tokens=100), member_responses=[level_2]
+    )
+    team = Team(members=[])
+
+    # Before the team run is written: only the direct member's run is a run of the session
+    session = TeamSession(session_id="s", session_data={}, runs=[level_2, team_run])
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 177
+
+    # After: every member run at every depth is a run of the session too
+    session = TeamSession(session_id="s", session_data={}, runs=[level_2, level_3, leaf, team_run])
+    update_session_metrics(team, session)
+    update_session_metrics(team, session)
+    assert session.session_data["session_metrics"]["total_tokens"] == 177

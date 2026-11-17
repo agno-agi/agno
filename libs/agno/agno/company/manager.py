@@ -1,7 +1,7 @@
 """Synchronous and asynchronous management of Company Products."""
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from agno.company.summary import _serialized_summary
@@ -9,15 +9,156 @@ from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
 from agno.db.schemas.products import validate_product_fields
 
 
-def _project_proposal_id(product_id: str, name: str) -> Optional[str]:
+def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
+    """An identified agent or team may add website Sources only."""
+    if type != "website":
+        raise PermissionError("Agents may add only website Sources; local repository and path Sources require a human")
+    if executor_type not in {"agent", "team"} or not executor_id or not run_id:
+        raise ValueError("Adding a Source requires the calling agent or team and run identity")
+
+
+def _same_text(sent: Optional[str], stored: Optional[str]) -> bool:
+    """Whether two texts have the same words. No text and empty text are the same, and spacing is not compared."""
+    return (sent or "").split() == (stored or "").split()
+
+
+def _routine_provenance(endpoint: str) -> Dict[str, Any]:
+    from agno.db.schemas.scheduler import _schedule_endpoint_targets
+
+    return {"managed_by": "company", **_schedule_endpoint_targets("company", endpoint)}
+
+
+def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Routine links change only through Routine create and removal, never a metadata edit."""
+    metadata = fields.get("metadata")
+    if not isinstance(metadata, dict) or "routine_ids" not in metadata:
+        return fields
+    return {**fields, "metadata": {key: value for key, value in metadata.items() if key != "routine_ids"}}
+
+
+_AUTOMATIC_DECISIONS = {"active": "approved", "ready": "accepted", "done": "completed"}
+
+
+def _automatic_decisions(projects: Any, tasks: Any, limit: int) -> List[Dict[str, Any]]:
+    """The decisions a Routine's policy made on these records, newest first."""
+    decisions = []
+    for kind, rows in (("project", projects), ("task", tasks)):
+        for row in rows:
+            for position, entry in enumerate(row.get("transitions") or []):
+                receipt = entry.get("auto_accept")
+                if not receipt or entry.get("target") not in _AUTOMATIC_DECISIONS:
+                    continue
+                decisions.append(
+                    {
+                        "position": position,
+                        "record": kind,
+                        "id": row["id"],
+                        "title": row.get("title") or row.get("name"),
+                        "decision": _AUTOMATIC_DECISIONS[entry["target"]],
+                        "routine_id": receipt.get("routine_id"),
+                        "policy": receipt.get("policy"),
+                        "policy_author": entry.get("user_id"),
+                        "at": entry.get("created_at"),
+                    }
+                )
+    # Within one second, a record's later step comes first.
+    decisions.sort(key=lambda item: (item["at"] or 0, item.pop("position")), reverse=True)
+    return decisions[:limit]
+
+
+def _open_limit(schedule: Optional[Dict[str, Any]]) -> Optional[int]:
+    """A Routine's limit on open Tasks, when its auto-accept is on and bounded by one."""
+    from agno.company.routines import _stored_policy
+
+    metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
+    raw = metadata.get("auto_accept")
+    if not schedule or not schedule.get("enabled") or not raw or metadata.get("deleted_at") is not None:
+        return None
+    policy, _ = _stored_policy(raw)
+    return policy.max_open if policy.limits is None else None
+
+
+def _has_policy(schedule: Optional[Dict[str, Any]]) -> bool:
+    """Whether a Routine has an auto-accept policy, running or paused."""
+    metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
+    return bool(metadata.get("auto_accept")) and metadata.get("deleted_at") is None
+
+
+def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], tasks: Any) -> List[Dict[str, Any]]:
+    """The Product's Routines whose auto-accept is waiting because their open Tasks are at the limit."""
+    from agno.company.routines import _open_tasks
+
+    waiting = []
+    for schedule in schedules:
+        max_open = _open_limit(schedule)
+        if schedule is None or max_open is None:
+            continue
+        open_now = _open_tasks(tasks, schedule["id"])
+        if open_now >= max_open:
+            backlog = sum(1 for t in tasks if t.get("routine_id") == schedule["id"] and t["status"] == "backlog")
+            waiting.append(
+                {
+                    "routine_id": schedule["id"],
+                    "routine": schedule["name"].removeprefix(product["id"] + "."),
+                    "open_tasks": open_now,
+                    "max_open": max_open,
+                    "proposals_waiting": backlog,
+                    "note": "Auto-accept is at its limit. Complete or cancel an open Task for it to accept more.",
+                }
+            )
+    return waiting
+
+
+# The automatic decisions listed for a Product come from this many of its most recently changed
+# Projects and Tasks, so reading them costs one page of each.
+_DECISION_RECORDS = 100
+
+
+def _waiting_for_a_person(schedules: Any, product_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Routines whose auto_accept is declared in code and that no person has turned on."""
+    from agno.company.routines import _DECLARED, _stored_policy
+
+    waiting = []
+    for schedule in schedules:
+        payload = schedule.get("payload") or {}
+        metadata = payload.get("metadata") or {}
+        if (
+            schedule.get("managed_by") != "company"
+            or not schedule.get("enabled")
+            or not metadata.get("auto_accept")
+            or metadata.get("deleted_at") is not None
+            or payload.get("_agno_company_acceptance") != _DECLARED
+            or product_id not in (None, metadata.get("product_id"))
+        ):
+            continue
+        policy, _ = _stored_policy(metadata["auto_accept"])
+        waiting.append(
+            {
+                "routine_id": schedule["id"],
+                "routine": schedule["name"].removeprefix(str(metadata.get("product_id")) + "."),
+                "product_id": metadata.get("product_id"),
+                "default_executor": policy.default_executor,
+                "note": "This Routine declares auto-accept and does not run until a person turns it on. "
+                "Turn auto-accept on for it once; it and its declared policy then run under that person's permissions.",
+            }
+        )
+    return waiting
+
+
+def _routine_project_id(product_id: str, routine_id: Optional[str], name: str) -> str:
+    """The id of the Project a Routine proposes under this name in a Product."""
     from uuid import NAMESPACE_URL, uuid5
 
+    return str(uuid5(NAMESPACE_URL, f"company-project/{product_id}/{routine_id}/{name}"))
+
+
+def _project_proposal_id(product_id: str, name: str) -> Optional[str]:
     from agno.company.routines import _RoutineAuthorization
     from agno.run.authorization import current_authorization
 
     authority = current_authorization()
     if isinstance(authority, _RoutineAuthorization):
-        return str(uuid5(NAMESPACE_URL, f"company-project/{product_id}/{authority.routine_id}/{name}"))
+        return _routine_project_id(product_id, authority.routine_id, name)
     return None
 
 
@@ -43,6 +184,7 @@ class CompanyManager:
         purpose: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a Product."""
         fields = {"name": name, "purpose": purpose, "metadata": metadata}
@@ -50,13 +192,93 @@ class CompanyManager:
         return self.db.create_product(
             {
                 **fields,
-                "id": str(uuid4()),
+                "id": id or str(uuid4()),
                 "user_id": user_id,
                 "created_at": int(time.time()),
                 "updated_at": None,
                 "deleted_at": None,
             }
         )
+
+    def create_routine(
+        self,
+        *,
+        product_id: str,
+        routine: Any,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        check: Optional[Callable[[Dict[str, Any]], None]] = None,
+        agent_os: Any = None,
+    ) -> Dict[str, Any]:
+        """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
+
+        Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        """
+        from agno.company.declarations import Routine
+        from agno.company.routines import _declared_schedule_fields, _require_routine_product
+
+        product = self.get(product_id)
+        if product is None:
+            raise LookupError("Product not found")
+        _require_routine_product(product_id)
+        routine = Routine.model_validate(routine)
+        fields = _declared_schedule_fields(product_id, routine, self.registry, agent_os=agent_os)
+        if check is not None:
+            check(fields)
+        return self._write_routine(product_id, routine, fields, user_id)
+
+    def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        schedule = schedules.create(
+            **{key: value for key, value in fields.items() if key != "cron_expr"},
+            cron=fields["cron_expr"],
+            user_id=user_id,
+            enabled_on_create=False,
+            provenance=_routine_provenance(fields["endpoint"]),
+        )
+        linked = False
+        try:
+            if self.db.add_product_routine(product_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Product")
+            linked = True
+            enabled = schedules.enable(schedule.id, user_id=user_id) if routine.enabled else schedule
+            if enabled is None:
+                raise RuntimeError("Routine could not be enabled")
+        except Exception:
+            if linked:
+                self._unlink_routine(product_id, schedule.id)
+            schedules.delete(schedule.id, user_id=user_id)
+            raise
+        return enabled.to_dict()
+
+    def _unlink_routine(self, product_id: str, schedule_id: str) -> None:
+        product = self.get(product_id)
+        if product is not None:
+            metadata = dict(product.get("metadata") or {})
+            metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
+            self.db.update_product(product_id, metadata=metadata)
+
+    def discard_product(
+        self,
+        product_id: str,
+        *,
+        source_ids: Sequence[str] = (),
+        schedule_ids: Sequence[str] = (),
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Remove a Product whose declared records could not all be created."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        for schedule_id in schedule_ids:
+            schedules.delete(schedule_id, user_id=user_id)
+        for source_id in source_ids:
+            self.db.delete_source(source_id)
+        self.db.delete_product(product_id)
 
     def get(
         self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -91,9 +313,9 @@ class CompanyManager:
         return [{**row, "counts": counts[row["id"]]} for row in rows], total
 
     def update(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update name, purpose or metadata on an active Product."""
+        """Update name, purpose or metadata on an active Product; linked Routine ids are kept."""
         validate_product_fields(fields)
-        return self.db.update_product(product_id, user_id=user_id, **fields)
+        return self.db.update_product(product_id, user_id=user_id, **_without_routine_links(fields))
 
     def delete(self, product_id: str, user_id: Optional[str] = None) -> bool:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
@@ -216,16 +438,16 @@ class CompanyManager:
         auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization):
-            raise PermissionError("Routines propose Project completion; a human must accept the transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
-                tasks, total = self.db.get_tasks(project_id=project_id, include_deleted=True, limit=100, page=page)
+                tasks, total = self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
@@ -254,6 +476,8 @@ class CompanyManager:
         routine_id: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create task work; scoped_user_id filters parents while user_id records the creator."""
         from agno.company.routines import _RoutineAuthorization
@@ -261,7 +485,7 @@ class CompanyManager:
 
         if isinstance(current_authorization(), _RoutineAuthorization):
             raise PermissionError(
-                "Routines must propose Tasks through intake_company_source with evidence and a dedupe key"
+                "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
             )
         from agno.db.schemas.tasks import validate_task_fields
 
@@ -284,23 +508,29 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != product_id:
                 raise ValueError("Task and Project must belong to the same Product")
-        return self.db.create_task(
-            {
-                **fields,
-                "product_id": product_id,
-                "id": str(uuid4()),
-                "status": "backlog",
-                "origin": origin,
-                "routine_id": routine_id,
-                **_proposal_origin(),
-                "session_id": str(uuid4()),
-                "user_id": user_id,
-                "transitions": [],
-                "created_at": int(time.time()),
-                "updated_at": None,
-                "deleted_at": None,
-            }
-        )
+        task = {
+            **fields,
+            "product_id": product_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return self.db.create_task(task)
 
     def get_task(
         self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -339,8 +569,10 @@ class CompanyManager:
             sort_order=sort_order,
         )
 
-    def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
@@ -348,7 +580,16 @@ class CompanyManager:
         if existing is None:
             return None
         if existing["status"] != "backlog":
-            raise ValueError("Accepted task scope requires a return to Backlog")
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
         if fields.get("project_id") is not None:
@@ -357,7 +598,7 @@ class CompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        return self.db.update_task(task_id, user_id=user_id, **fields)
+        return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
@@ -366,6 +607,25 @@ class CompanyManager:
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return self.db.restore_task(task_id, user_id=user_id)
+
+    def _accept_task(self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            while True:
+                rows, total = self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
 
     def transition_task(
         self,
@@ -379,33 +639,22 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
-            raise PermissionError("Routines can propose work but cannot accept or complete it")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
-            from agno.company.execution import _executor
-
-            component = _executor(self.registry, executor_type, executor_id, accepting=True)
-            from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
-
             existing = self.db.get_task(task_id, user_id=user_id)
             if existing is None:
                 return None
-            if _is_sandboxed(component):
-                sources = []
-                page = 1
-                while True:
-                    rows, total = self.db.get_sources(product_id=existing["product_id"], limit=100, page=page)
-                    sources.extend(rows)
-                    if page * 100 >= total:
-                        break
-                    page += 1
-                _accept_sandbox(component, sources)
-            _accept_checkout(component, existing)
+            self._accept_task(existing, executor_type, executor_id)
         return self.db.transition_task(
             task_id,
             target,
@@ -416,7 +665,60 @@ class CompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
+
+    def _tasks_in(self, product_id: str, status: str) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            batch, total = self.db.get_tasks(product_id=product_id, status=status, limit=100, page=page)
+            rows.extend(batch)
+            if page * 100 >= total:
+                return rows
+            page += 1
+
+    def auto_accept_status(self, product_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Product.
+
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Product's
+        most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
+        person to finish an open Task. Both are empty, and nothing is read, for a Product whose Routines
+        have no policy.
+        """
+        product = self.get(product_id) or {}
+        routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+        schedules = [self.schedule_db.get_schedule(routine_id) for routine_id in routine_ids]
+        status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
+        if not any(_has_policy(schedule) for schedule in schedules):
+            return status
+        if any(_open_limit(schedule) is not None for schedule in schedules):
+            from agno.company.routines import _OPEN_STATUSES
+
+            tasks = [row for stage in _OPEN_STATUSES for row in self._tasks_in(product_id, stage)]
+            if _at_limit(product, schedules, tasks):
+                # Only a Routine at its limit has proposals waiting on it.
+                tasks += self._tasks_in(product_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
+        if decisions:
+            latest: Dict[str, Any] = dict(
+                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
+            projects, _ = self.db.get_projects(**latest)
+            recent, _ = self.db.get_tasks(**latest)
+            status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
+        return status
+
+    def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = ScheduleManager(self.schedule_db).list_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
     def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
@@ -492,19 +794,18 @@ class CompanyManager:
         expected_version: int,
         user_id: Optional[str] = None,
     ):
-        """Write with a filesystem version check; a scoped caller must own the Product.
+        """Write with a filesystem version check. Version zero means create only.
 
-        Company-wide pages are unowned, like shared components, and therefore
-        editable only by unscoped callers. Version zero means create only.
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_owner
+        from agno.company.playbook import _page_path, _require_product_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
         product = self.get(product_id) if product_id is not None else {}
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         provider = self.get_wiki(product_id)
         return provider.backend.filesystem.write(_page_path(path), content, expected_version=expected_version)
 
@@ -557,8 +858,8 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on an owned Product; secret values are never resolved."""
-        from agno.company.playbook import _require_owner
+        """Configure a reader on a Product; secret values are never resolved."""
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
@@ -566,7 +867,7 @@ class CompanyManager:
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return self.db.create_source(
             {
                 **fields,
@@ -593,20 +894,15 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
-        if type != "website":
-            raise PermissionError(
-                "Agents may add only website Sources; local repository and path Sources require a human"
-            )
-        if executor_type not in {"agent", "team"} or not executor_id or not run_id:
-            raise ValueError("Adding a Source requires the calling agent or team and run identity")
+        _validate_agent_source(type, executor_type, executor_id, run_id)
         validate_source_fields(dict(type=type, reference=reference, config=config))
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return self.db.create_source(
             {
                 "id": str(uuid4()),
@@ -641,8 +937,8 @@ class CompanyManager:
         )
 
     def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft delete a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = self.get_source(source_id)
         from agno.company.routines import _require_routine_product
@@ -654,12 +950,12 @@ class CompanyManager:
         product = self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return self.db.delete_source(source_id)
 
     def restore_source(self, source_id: str, user_id: Optional[str] = None):
-        """Restore a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Restore a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = self.get_source(source_id, include_deleted=True)
         if source is None:
@@ -667,7 +963,7 @@ class CompanyManager:
         product = self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return self.db.restore_source(source_id)
 
     def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -773,7 +1069,7 @@ class CompanyManager:
         self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
     ):
         """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.company.summary import (
             _STATE_PATH,
             _delivery_state,
@@ -787,7 +1083,7 @@ class CompanyManager:
         product = self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         delivery = (product.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
             raise ValueError("Product summary requires an interface and destination")
@@ -859,6 +1155,7 @@ class AsyncCompanyManager:
         purpose: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a Product."""
         fields = {"name": name, "purpose": purpose, "metadata": metadata}
@@ -866,13 +1163,93 @@ class AsyncCompanyManager:
         return await self.db.create_product(
             {
                 **fields,
-                "id": str(uuid4()),
+                "id": id or str(uuid4()),
                 "user_id": user_id,
                 "created_at": int(time.time()),
                 "updated_at": None,
                 "deleted_at": None,
             }
         )
+
+    async def create_routine(
+        self,
+        *,
+        product_id: str,
+        routine: Any,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        check: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        agent_os: Any = None,
+    ) -> Dict[str, Any]:
+        """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
+
+        Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        """
+        from agno.company.declarations import Routine
+        from agno.company.routines import _declared_schedule_fields, _require_routine_product
+
+        product = await self.get(product_id)
+        if product is None:
+            raise LookupError("Product not found")
+        _require_routine_product(product_id)
+        routine = Routine.model_validate(routine)
+        fields = _declared_schedule_fields(product_id, routine, self.registry, agent_os=agent_os)
+        if check is not None:
+            await check(fields)
+        return await self._write_routine(product_id, routine, fields, user_id)
+
+    async def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        schedule = await schedules.acreate(
+            **{key: value for key, value in fields.items() if key != "cron_expr"},
+            cron=fields["cron_expr"],
+            user_id=user_id,
+            enabled_on_create=False,
+            provenance=_routine_provenance(fields["endpoint"]),
+        )
+        linked = False
+        try:
+            if await self.db.add_product_routine(product_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Product")
+            linked = True
+            enabled = await schedules.aenable(schedule.id, user_id=user_id) if routine.enabled else schedule
+            if enabled is None:
+                raise RuntimeError("Routine could not be enabled")
+        except Exception:
+            if linked:
+                await self._unlink_routine(product_id, schedule.id)
+            await schedules.adelete(schedule.id, user_id=user_id)
+            raise
+        return enabled.to_dict()
+
+    async def _unlink_routine(self, product_id: str, schedule_id: str) -> None:
+        product = await self.get(product_id)
+        if product is not None:
+            metadata = dict(product.get("metadata") or {})
+            metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
+            await self.db.update_product(product_id, metadata=metadata)
+
+    async def discard_product(
+        self,
+        product_id: str,
+        *,
+        source_ids: Sequence[str] = (),
+        schedule_ids: Sequence[str] = (),
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Remove a Product whose declared records could not all be created."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        for schedule_id in schedule_ids:
+            await schedules.adelete(schedule_id, user_id=user_id)
+        for source_id in source_ids:
+            await self.db.delete_source(source_id)
+        await self.db.delete_product(product_id)
 
     async def get(
         self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -907,9 +1284,9 @@ class AsyncCompanyManager:
         return [{**row, "counts": counts[row["id"]]} for row in rows], total
 
     async def update(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update name, purpose or metadata on an active Product."""
+        """Update name, purpose or metadata on an active Product; linked Routine ids are kept."""
         validate_product_fields(fields)
-        return await self.db.update_product(product_id, user_id=user_id, **fields)
+        return await self.db.update_product(product_id, user_id=user_id, **_without_routine_links(fields))
 
     async def delete(self, product_id: str, user_id: Optional[str] = None) -> bool:
         """Archive a Product and its children atomically; active Tasks raise ValueError."""
@@ -1032,18 +1409,16 @@ class AsyncCompanyManager:
         auto_accept: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization):
-            raise PermissionError("Routines propose Project completion; a human must accept the transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
             page = 1
             while True:
-                tasks, total = await self.db.get_tasks(
-                    project_id=project_id, include_deleted=True, limit=100, page=page
-                )
+                tasks, total = await self.db.get_tasks(project_id=project_id, limit=100, page=page)
                 validate_project_completion(tasks)
                 if page * 100 >= total:
                     break
@@ -1072,6 +1447,8 @@ class AsyncCompanyManager:
         routine_id: Optional[str] = None,
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create task work; scoped_user_id filters parents while user_id records the creator."""
         from agno.company.routines import _RoutineAuthorization
@@ -1079,7 +1456,7 @@ class AsyncCompanyManager:
 
         if isinstance(current_authorization(), _RoutineAuthorization):
             raise PermissionError(
-                "Routines must propose Tasks through intake_company_source with evidence and a dedupe key"
+                "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
             )
         from agno.db.schemas.tasks import validate_task_fields
 
@@ -1102,23 +1479,29 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != product_id:
                 raise ValueError("Task and Project must belong to the same Product")
-        return await self.db.create_task(
-            {
-                **fields,
-                "product_id": product_id,
-                "id": str(uuid4()),
-                "status": "backlog",
-                "origin": origin,
-                "routine_id": routine_id,
-                **_proposal_origin(),
-                "session_id": str(uuid4()),
-                "user_id": user_id,
-                "transitions": [],
-                "created_at": int(time.time()),
-                "updated_at": None,
-                "deleted_at": None,
-            }
-        )
+        task = {
+            **fields,
+            "product_id": product_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                await self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return await self.db.create_task(task)
 
     async def get_task(
         self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
@@ -1157,8 +1540,10 @@ class AsyncCompanyManager:
             sort_order=sort_order,
         )
 
-    async def update_task(self, task_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields; accepted Task scope requires a return to Backlog."""
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
@@ -1166,7 +1551,16 @@ class AsyncCompanyManager:
         if existing is None:
             return None
         if existing["status"] != "backlog":
-            raise ValueError("Accepted task scope requires a return to Backlog")
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
         if "project_id" in fields and not fields["project_id"]:
             raise ValueError("A Task requires a Project")
         if fields.get("project_id") is not None:
@@ -1175,7 +1569,7 @@ class AsyncCompanyManager:
                 raise LookupError("Project not found")
             if project["product_id"] != existing["product_id"]:
                 raise ValueError("Task and Project must belong to the same Product")
-        return await self.db.update_task(task_id, user_id=user_id, **fields)
+        return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     async def delete_task(
         self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
@@ -1186,6 +1580,27 @@ class AsyncCompanyManager:
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return await self.db.restore_task(task_id, user_id=user_id)
+
+    async def _accept_task(
+        self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]
+    ) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            while True:
+                rows, total = await self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
 
     async def transition_task(
         self,
@@ -1199,33 +1614,22 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
         auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Apply an explicit transition; the caller enforces platform authorization."""
-        from agno.company.routines import _RoutineAuthorization
+        from agno.company.execution import _ExecutorAuthorization
         from agno.run.authorization import current_authorization
 
-        if isinstance(current_authorization(), _RoutineAuthorization) and target in {"ready", "done"}:
-            raise PermissionError("Routines can propose work but cannot accept or complete it")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
         if target == "ready":
-            from agno.company.execution import _executor
-
-            component = _executor(self.registry, executor_type, executor_id, accepting=True)
-            from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
-
             existing = await self.db.get_task(task_id, user_id=user_id)
             if existing is None:
                 return None
-            if _is_sandboxed(component):
-                sources = []
-                page = 1
-                while True:
-                    rows, total = await self.db.get_sources(product_id=existing["product_id"], limit=100, page=page)
-                    sources.extend(rows)
-                    if page * 100 >= total:
-                        break
-                    page += 1
-                _accept_sandbox(component, sources)
-            _accept_checkout(component, existing)
+            await self._accept_task(existing, executor_type, executor_id)
         return await self.db.transition_task(
             task_id,
             target,
@@ -1236,7 +1640,64 @@ class AsyncCompanyManager:
             executor_id=executor_id,
             expected_updated_at=expected_updated_at,
             auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
         )
+
+    async def _tasks_in(self, product_id: str, status: str) -> List[Dict[str, Any]]:
+        from agno.company.execution import _call
+
+        rows: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            batch, total = await _call(self.db, "get_tasks", product_id=product_id, status=status, limit=100, page=page)
+            rows.extend(batch)
+            if page * 100 >= total:
+                return rows
+            page += 1
+
+    async def auto_accept_status(self, product_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Product.
+
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Product's
+        most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
+        person to finish an open Task. Both are empty, and nothing is read, for a Product whose Routines
+        have no policy.
+        """
+        from agno.company.execution import _call
+
+        product = await self.get(product_id) or {}
+        routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+        schedules = [await _call(self.schedule_db, "get_schedule", routine_id) for routine_id in routine_ids]
+        status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
+        if not any(_has_policy(schedule) for schedule in schedules):
+            return status
+        if any(_open_limit(schedule) is not None for schedule in schedules):
+            from agno.company.routines import _OPEN_STATUSES
+
+            tasks = [row for stage in _OPEN_STATUSES for row in await self._tasks_in(product_id, stage)]
+            if _at_limit(product, schedules, tasks):
+                # Only a Routine at its limit has proposals waiting on it.
+                tasks += await self._tasks_in(product_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
+        if decisions:
+            latest: Dict[str, Any] = dict(
+                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
+            projects, _ = await _call(self.db, "get_projects", **latest)
+            recent, _ = await _call(self.db, "get_tasks", **latest)
+            status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
+        return status
+
+    async def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = await ScheduleManager(self.schedule_db).alist_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
 
     async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
@@ -1312,19 +1773,18 @@ class AsyncCompanyManager:
         expected_version: int,
         user_id: Optional[str] = None,
     ):
-        """Write with a filesystem version check; a scoped caller must own the Product.
+        """Write with a filesystem version check. Version zero means create only.
 
-        Company-wide pages are unowned, like shared components, and therefore
-        editable only by unscoped callers. Version zero means create only.
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_owner
+        from agno.company.playbook import _page_path, _require_product_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
         product = await self.get(product_id) if product_id is not None else {}
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         provider = await self.get_wiki(product_id)
         return await provider.backend.filesystem.awrite(_page_path(path), content, expected_version=expected_version)
 
@@ -1377,8 +1837,8 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on an owned Product; secret values are never resolved."""
-        from agno.company.playbook import _require_owner
+        """Configure a reader on a Product; secret values are never resolved."""
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
@@ -1386,7 +1846,7 @@ class AsyncCompanyManager:
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return await self.db.create_source(
             {
                 **fields,
@@ -1413,20 +1873,15 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.db.schemas.sources import validate_source_fields
 
-        if type != "website":
-            raise PermissionError(
-                "Agents may add only website Sources; local repository and path Sources require a human"
-            )
-        if executor_type not in {"agent", "team"} or not executor_id or not run_id:
-            raise ValueError("Adding a Source requires the calling agent or team and run identity")
+        _validate_agent_source(type, executor_type, executor_id, run_id)
         validate_source_fields(dict(type=type, reference=reference, config=config))
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, scoped_user_id)
+        _require_product_scope(product)
         return await self.db.create_source(
             {
                 "id": str(uuid4()),
@@ -1461,8 +1916,8 @@ class AsyncCompanyManager:
         )
 
     async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
-        """Soft delete a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = await self.get_source(source_id)
         from agno.company.routines import _require_routine_product
@@ -1474,12 +1929,12 @@ class AsyncCompanyManager:
         product = await self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return await self.db.delete_source(source_id)
 
     async def restore_source(self, source_id: str, user_id: Optional[str] = None):
-        """Restore a Source after checking its Product ownership."""
-        from agno.company.playbook import _require_owner
+        """Restore a Source."""
+        from agno.company.playbook import _require_product_scope
 
         source = await self.get_source(source_id, include_deleted=True)
         if source is None:
@@ -1487,7 +1942,7 @@ class AsyncCompanyManager:
         product = await self.get(source["product_id"])
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         return await self.db.restore_source(source_id)
 
     async def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -1593,7 +2048,7 @@ class AsyncCompanyManager:
         self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
     ):
         """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_owner
+        from agno.company.playbook import _require_product_scope
         from agno.company.summary import (
             _STATE_PATH,
             _aload_summary_state,
@@ -1607,7 +2062,7 @@ class AsyncCompanyManager:
         product = await self.get(product_id)
         if product is None:
             raise LookupError("Product not found")
-        _require_owner(product, user_id)
+        _require_product_scope(product)
         delivery = (product.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
             raise ValueError("Product summary requires an interface and destination")

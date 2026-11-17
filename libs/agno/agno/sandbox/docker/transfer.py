@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from agno.sandbox.base import SandboxError, SandboxHandle, _sync
 from agno.sandbox.checkpoint import (
     CheckpointArchive,
+    CheckpointContentError,
     CheckpointRef,
     CheckpointStore,
     _archive_bytes,
@@ -82,8 +83,9 @@ class DockerCheckpointTransfer:
                 assert process is not None and process.stdout is not None
                 while chunk := await process.stdout.read(1024 * 1024):
                     size += len(chunk)
-                    limit = self.archive.limits.max_bytes if target is not None else 65536
-                    if size > limit:
+                    if target is not None and size > self.archive.limits.max_bytes:
+                        raise CheckpointContentError("Checkpoint transfer exceeds its byte limit")
+                    if target is None and size > 65536:
                         raise SandboxError("Checkpoint transfer exceeds its byte limit")
                     if target is not None:
                         await _thread(target.write, chunk)
@@ -155,7 +157,7 @@ class DockerCheckpointTransfer:
                                 if member.linkname not in seen:
                                     raise SandboxError("Docker export has a hardlink to a missing or later entry")
                                 if excluded(member.name) != excluded(member.linkname):
-                                    raise SandboxError(
+                                    raise CheckpointContentError(
                                         "Excluded checkpoint path shares a hardlink with a retained path"
                                     )
                             seen.add(member.name)
@@ -181,10 +183,10 @@ class DockerCheckpointTransfer:
                             entries += 1
                             total += info.size
                             if entries > self.archive.limits.max_entries or total > self.archive.limits.max_bytes:
-                                raise SandboxError("Checkpoint export exceeds its limits")
+                                raise CheckpointContentError("Checkpoint export exceeds its limits")
                             target.addfile(info, archive.extractfile(member) if info.isfile() else None)
                 if target.offset > self.archive.limits.max_bytes:
-                    raise SandboxError("Checkpoint archive exceeds its limit")
+                    raise CheckpointContentError("Checkpoint archive exceeds its limit")
         self.archive.validate(destination)
 
     async def _check_mounts(self, handle: SandboxHandle) -> None:
@@ -339,6 +341,10 @@ class DockerCheckpointTransfer:
                 raise SandboxError("Restore requires an empty, unused generation")
             await self._pause(handle)
             try:
+                # This is the in-computer restore: docker cp extracts the tar as written, so
+                # symlinks to absolute paths, such as a virtualenv's interpreter link, come back
+                # verbatim. Moving this onto CheckpointArchive.restore would drop them unless it
+                # passed absolute_links=True.
                 await self._copy(handle, "-", handle.provider_ref + ":/workspace", input_file=root / "workspace.tar")
                 await self._copy(handle, "-", handle.provider_ref + ":/runtime/native", input_file=root / "native.tar")
                 await self._unpause(handle)

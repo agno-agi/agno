@@ -1,5 +1,7 @@
 """Unit tests for agno.os.scopes — scope parsing, matching, and legacy aliases."""
 
+import pytest
+
 from agno.os.scopes import (
     LEGACY_RESOURCE_ALIASES,
     check_route_scopes,
@@ -42,6 +44,23 @@ class TestCheckRouteScopes:
         result = check_route_scopes([], get_default_scope_mappings(), "GET", "/metrics/refresh/status")
         assert result.allowed is False
         result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", "/metrics/refresh/status")
+        assert result.allowed is True
+
+    @pytest.mark.parametrize("route", ["models", "sessions", "tokens", "users", "runs", "latency", "refresh/status"])
+    def test_os_metrics_needs_the_metrics_read_scope(self, route):
+        # OS metrics carry every user's run counts per model. Unmapped routes are
+        # open, so without these entries a token scoped to running one agent reads them.
+        # metrics:read passes this check; /os/metrics/users then also needs an admin.
+        result = check_route_scopes(["agents:a1:run"], get_default_scope_mappings(), "GET", f"/os/metrics/{route}")
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "GET", f"/os/metrics/{route}")
+        assert result.allowed is True
+
+    def test_os_metrics_refresh_needs_the_metrics_write_scope(self):
+        # The refresh recalculates every database's metrics, as POST /metrics/refresh does one's.
+        result = check_route_scopes(["metrics:read"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
+        assert result.allowed is False
+        result = check_route_scopes(["metrics:write"], get_default_scope_mappings(), "POST", "/os/metrics/refresh")
         assert result.allowed is True
 
 

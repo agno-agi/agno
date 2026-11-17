@@ -77,6 +77,8 @@ async def test_owner_without_run_scope_can_delegate_start_and_cancel(
             project = (
                 await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})
             ).json()
+            approval = {"target": "active", "reason": "Approved"}
+            await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
             task = (
                 await client.post(
                     "/company/tasks",

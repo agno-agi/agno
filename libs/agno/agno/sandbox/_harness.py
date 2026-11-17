@@ -24,6 +24,7 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.agents.base import BaseExternalAgent
+    from agno.sandbox.checkpoint import CheckpointStore
     from agno.sandbox.coordinator import SandboxCoordinator
 
 # The runtime sets these inside the sandbox, so the service-side values are not sent.
@@ -39,6 +40,8 @@ _RUNTIME_OWNED = frozenset(
         "strict_persistence",
         "delay_between_retries",
         "exponential_backoff",
+        # Shown to a team leader on the host; the harness inside the sandbox never reads it.
+        "role",
     }
 )
 # Host paths, process settings and native option objects have no meaning inside the sandbox.
@@ -61,7 +64,10 @@ _HARNESS_ENV_KEYS = {"claude": ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"),
 _CLAUDE_CLOUD_FLAGS = ("CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
 _DEFAULT_CHECKPOINTS = Path.home() / ".agno" / "sandbox" / "checkpoints"
 
-_coordinators: "weakref.WeakKeyDictionary[Sandbox, List[Tuple[Any, SandboxCoordinator]]]" = weakref.WeakKeyDictionary()
+# Coordinators per sandbox, keyed by the database they coordinate on (see _db_key).
+_coordinators: "weakref.WeakKeyDictionary[Sandbox, Dict[Tuple[Any, ...], SandboxCoordinator]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _is_default(item: Any, value: Any) -> bool:
@@ -85,6 +91,39 @@ def _check_db(agent: "BaseExternalAgent") -> None:
         raise ValueError("A sandboxed agent requires a PostgresDb or AsyncPostgresDb, on the agent or its AgentOS")
 
 
+def _db_key(db: Any) -> Tuple[Any, ...]:
+    """What identifies the database a coordinator runs on: its adapter, id, connection and table names.
+
+    A stored agent is rebuilt for every request, and a config with table-name overrides
+    gives each rebuild its own db instance over the registry db's engine, so the instance
+    cannot be the key: every rebuild would otherwise get a coordinator of its own.
+    """
+    serialized = dict(db.to_dict())
+    # An engine-only db serializes no connection, and the async adapter does not serialize the
+    # bindings table; the engine and the attribute always know them.
+    engine = getattr(db, "db_engine", None)
+    if engine is not None:
+        serialized["db_url"] = engine.url.render_as_string(hide_password=True)
+    serialized["sandbox_table"] = getattr(db, "sandbox_table_name", None)
+    return (type(db), *sorted((key, str(value)) for key, value in serialized.items()))
+
+
+def _existing_coordinator(agent: "BaseExternalAgent") -> Optional["SandboxCoordinator"]:
+    if agent.db is None:
+        return None
+    return _coordinators.get(_sandbox(agent), {}).get(_db_key(agent.db))
+
+
+def _register_on_db(db: Any, result: "SandboxCoordinator") -> None:
+    """The db's session delete asks every coordinator registered on it what the cascade would orphan."""
+    registered = getattr(db, "sandbox_coordinators", None)
+    if registered is None:
+        registered = []
+        db.sandbox_coordinators = registered
+    if result not in registered:
+        registered.append(result)
+
+
 async def acheck_tables(agent: "BaseExternalAgent", create: bool = True) -> None:
     """Validate the sandbox tables on the agent's database, creating them first unless ``create`` is off.
 
@@ -92,14 +131,9 @@ async def acheck_tables(agent: "BaseExternalAgent", create: bool = True) -> None
     only the log sees it; checking at startup and at submission puts the error and its
     remedy in front of the operator instead.
     """
-    from agno.sandbox.postgres import _SandboxStore
-
     _check_db(agent)
-    for db, existing in _coordinators.get(_sandbox(agent), []):
-        if db is agent.db:
-            await existing.store._ensure_tables(create)
-            return
-    await _SandboxStore(agent.db)._ensure_tables(create)  # type: ignore[arg-type]
+    # Through the coordinator, so a process that only serves deletes can still clean up after them.
+    await coordinator(agent).store._ensure_tables(create)
 
 
 def validate(agent: "BaseExternalAgent") -> None:
@@ -125,35 +159,60 @@ def validate(agent: "BaseExternalAgent") -> None:
     submission(agent, "validate", {})
 
 
+def check_queue_checkpoints(agent: "BaseExternalAgent") -> None:
+    """Refuse the host-local checkpoint default for an agent a durable queue serves."""
+    if _sandbox(agent).checkpoints is None:
+        # A durable queue hands retries to any replica, and a replica cannot restore from this
+        # host's disk; refusing here is cheaper than a recovery that fails later somewhere else.
+        raise ValueError(
+            f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}, which other queue replicas cannot "
+            "read and which does not survive losing this host; pass checkpoints= to the sandbox"
+        )
+
+
+def store(agent: "BaseExternalAgent") -> "CheckpointStore":
+    """The checkpoint store this agent's turns write to: the sandbox's own, else the file default.
+
+    A coordinator already built for this agent's sandbox and database owns the answer, so a
+    reader opens exactly the store its turns commit to.
+    """
+    sandbox = _sandbox(agent)
+    existing = _existing_coordinator(agent)
+    if existing is not None:
+        return existing.transfer.store
+    if sandbox.checkpoints is not None:
+        return sandbox.checkpoints
+    from agno.os.job_queue import get_active_queue_worker
+    from agno.sandbox.checkpoint import FileCheckpointStore
+
+    if get_active_queue_worker() is not None:
+        check_queue_checkpoints(agent)
+    log_warning(
+        f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}; pass checkpoints= to the sandbox before "
+        "running more than one host"
+    )
+    return FileCheckpointStore(_DEFAULT_CHECKPOINTS)
+
+
 def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
     """The coordinator for this agent's sandbox and database, built once per pair."""
     from agno.sandbox.coordinator import SandboxCoordinator
 
     sandbox = _sandbox(agent)
     _check_db(agent)
-    built = _coordinators.setdefault(sandbox, [])
-    for db, existing in built:
-        if db is agent.db:
-            return existing
-    store = sandbox.checkpoints
-    if store is None:
-        from agno.os.job_queue import get_active_queue_worker
-        from agno.sandbox.checkpoint import FileCheckpointStore
-
-        if get_active_queue_worker() is not None:
-            # A durable queue hands retries to any replica, and a replica cannot restore from this
-            # host's disk; refusing here is cheaper than a recovery that fails later somewhere else.
-            raise ValueError(
-                f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}, which other queue replicas cannot "
-                "read and which does not survive losing this host; pass checkpoints= to the sandbox"
-            )
-        log_warning(
-            f"Sandbox checkpoints default to {_DEFAULT_CHECKPOINTS}; pass checkpoints= to the sandbox before "
-            "running more than one host"
+    built = _coordinators.setdefault(sandbox, {})
+    key = _db_key(agent.db)
+    result = built.get(key)
+    if result is None:
+        result = SandboxCoordinator(
+            agent.db,  # type: ignore[arg-type]
+            sandbox,
+            sandbox.checkpoint_transfer(store(agent)),
+            retain_checkpoints=sandbox.retain_checkpoints,
         )
-        store = FileCheckpointStore(_DEFAULT_CHECKPOINTS)
-    result = SandboxCoordinator(agent.db, sandbox, sandbox.checkpoint_transfer(store))  # type: ignore[arg-type]
-    built.append((agent.db, result))
+        built[key] = result
+    result.agent_ids.add(agent.get_id())
+    _register_on_db(agent.db, result)
     return result
 
 
@@ -213,7 +272,33 @@ def _config(agent: "BaseExternalAgent", output_schema: Any) -> Dict[str, Any]:
         )
     if output_schema is not None:
         config["output_schema"] = output_schema
+    if agent._uses_native_hitl:
+        config["_native_hitl"] = True
     return config
+
+
+# Run options a sandboxed turn takes. A sandbox refuses any other option; a team or workflow that
+# hands its agents native options (session state, dependencies, knowledge filters) forwards only these.
+SANDBOX_RUN_OPTIONS = frozenset(
+    {
+        "run_id",
+        "session_id",
+        "user_id",
+        "yield_run_output",
+        "stream_events",
+        "background_tasks",
+        "media",
+        "output_schema",
+        "metadata",
+    }
+)
+
+
+async def asubmission_input(
+    agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any], run_id: str, session_id: str, user_id: Optional[str]
+) -> Any:
+    """The input with run dependencies added as the block an Agent adds, for a sandbox that takes none."""
+    return await agent._asandbox_input(input, kwargs, run_id, session_id, user_id)
 
 
 def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -224,12 +309,12 @@ def submission(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     if not isinstance(input, str):
         raise ValueError("Sandboxed agent input must be text")
     extra = {key: value for key, value in kwargs.items() if value is not None}
+    unknown = set(extra) - SANDBOX_RUN_OPTIONS
+    if unknown:
+        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     for key in ("run_id", "session_id", "user_id", "yield_run_output", "stream_events", "background_tasks"):
         extra.pop(key, None)
     media = _media_wire(extra.pop("media", None))
-    unknown = set(extra) - {"output_schema", "metadata"}
-    if unknown:
-        raise ValueError("Unsupported sandbox run options: " + ", ".join(sorted(unknown)))
     schema = extra.get("output_schema", agent.output_schema)
     agent._check_output_schema(schema)
     if schema is not None and not isinstance(schema, dict):
@@ -282,7 +367,12 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     from agno.run.concurrency import get_worker_ownership
     from agno.sandbox.media import decode_media
 
+    # Metadata for the session the turn creates, set by the host for a team member; not a run option.
+    session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
+    config = _config(agent, options.get("output_schema"))
+    if session_metadata and (session_metadata.get("team_id") or session_metadata.get("workflow_id")):
+        config["_nested_native_hitl"] = True
     run_id = kwargs.get("run_id") or str(uuid4())
     owner = get_worker_ownership(run_id)
     return dict(
@@ -292,12 +382,13 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
         sdk=agent._sandbox_runtime,
         user_id=kwargs.get("user_id"),
         agent_name=agent.name,
-        config=_config(agent, options.get("output_schema")),
+        config=config,
         env=env(agent),
         queue_attempt=owner.attempt if owner is not None else None,
         execution_timeout=_sandbox(agent).execution_timeout,
         **decode_media(options.get("media", [])),
         **({"metadata": options["metadata"]} if "metadata" in options else {}),
+        **({"session_metadata": session_metadata} if session_metadata else {}),
     )
 
 

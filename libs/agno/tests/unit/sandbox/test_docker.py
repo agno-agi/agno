@@ -197,6 +197,36 @@ async def test_lost_create_response_reconciles_the_same_generation():
 
 
 @pytest.mark.asyncio
+async def test_name_conflict_waits_for_the_concurrent_creators_container():
+    class ConflictingCreate(FakeDocker):
+        def __init__(self):
+            super().__init__()
+            self.hidden_inspects = 0
+
+        async def _docker(self, *args, **kwargs):
+            if args[:2] == ("container", "create"):
+                # Docker reserves the name before the container is inspectable.
+                await super()._docker(*args, **kwargs)
+                self.hidden_inspects = 2
+                return (
+                    1,
+                    b"",
+                    b'Error response from daemon: Conflict. The container name "/x" is already in use by container "y".',
+                )
+            if args[:2] == ("container", "inspect") and self.hidden_inspects:
+                self.hidden_inspects -= 1
+                self.calls.append((args, kwargs))
+                return 1, b"", b"No such container"
+            return await super()._docker(*args, **kwargs)
+
+    sandbox = ConflictingCreate()
+    handle = await sandbox.acreate("s", agent_id="coder")
+    assert handle.state == "running"
+    assert len([call for call in sandbox.calls if call[0][:2] == ("container", "create")]) == 1
+    assert sandbox.hidden_inspects == 0
+
+
+@pytest.mark.asyncio
 async def test_existing_generation_cannot_change_configuration():
     sandbox = FakeDocker()
     await sandbox.acreate("s", agent_id="coder", env={"A": "1"})

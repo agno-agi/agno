@@ -1,22 +1,33 @@
 from __future__ import annotations
 
-import asyncio
 import time
-from dataclasses import dataclass
-from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union
+from functools import partial
+from typing import Any, Dict, List, Optional, Tuple
 
 from slack_sdk.web.async_client import AsyncWebClient
 
-from agno.agent import Agent, RemoteAgent
+from agno.agents._hitl import db_call
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
     build_admin_approval_status_card,
     response_blocks,
     select_confirmation_row,
 )
-from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import open_chat_stream, resolve_session_id, slack_error_code
+from agno.os.interfaces.slack.context import EventContext, SlackContext, event_context_from_run
+from agno.os.interfaces.slack.executor import (
+    APPROVAL_NOT_RECORDED_MESSAGE,
+    NO_LONGER_ACTIVE_MESSAGE,
+    DecisionRefused,
+    cancel_expired_pause,
+    continue_run,
+    reply_error,
+)
+from agno.os.interfaces.slack.helpers import (
+    delete_awaiting_indicator,
+    post_ephemeral,
+    resolve_session_id,
+    update_message,
+)
 from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
@@ -25,490 +36,485 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
-from agno.os.interfaces.slack.state import StreamState, TaskStatus
-from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
+from agno.os.interfaces.slack.security import authorize_run, can_act
+from agno.os.interfaces.slack.types import ParsedDecision, RowActionContext, SubmitContext
 from agno.run.approval import aresolve_approval
-from agno.team import RemoteTeam, Team
-from agno.tools.slack import SlackTools
+from agno.run.base import RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error, log_info
-from agno.workflow import RemoteWorkflow, Workflow
 
-_STREAM_CHAR_LIMIT = 3900
+_NOT_ALLOWED_MESSAGE = "Only the person who started this run or an approver can decide."
+_ALREADY_SUBMITTED_MESSAGE = "Already submitted."
+_REMOTE_MESSAGE = "This run is paused on a remote AgentOS. Approve it there."
 
 
-@dataclass
-class HITLHandler:
-    slack_tools: SlackTools
-    ssl: Optional[SSLContext]
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]
-    entity_id: str
-    entity_name: str
-    entity_type: Literal["agent", "team", "workflow"]
-    task_display_mode: str
-    buffer_size: int
-    unfurl_links: bool = True
-    unfurl_media: bool = True
-    markdown: bool = True
+async def _mark_not_resumed(client: AsyncWebClient, channel: str, ts: str, blocks: List[Dict[str, Any]]) -> None:
+    notice = {"type": "context", "elements": [{"type": "mrkdwn", "text": "Could not resume this run."}]}
+    await update_message(client, channel, ts, "Could not resume", blocks + [notice])
 
-    def _client(self) -> AsyncWebClient:
-        return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
 
-    async def update_message(
-        self,
-        channel: str,
-        ts: str,
-        text: str,
-        blocks: List[Dict[str, Any]],
-    ) -> bool:
-        try:
-            await self._client().chat_update(channel=channel, ts=ts, text=text, blocks=blocks)
-            return True
-        except Exception as exc:
-            log_error(f"[HITL] chat_update failed for ts={ts}: {exc}")
-            return False
+async def _freeze_form(
+    client: AsyncWebClient,
+    sctx: SubmitContext,
+    original_blocks: List[Dict[str, Any]],
+    readonly_blocks: List[Dict[str, Any]],
+) -> None:
+    await delete_awaiting_indicator(client, sctx.channel, sctx.awaiting_ts)
+    has_inputs = any(b.get("type") == "input" for b in original_blocks)
+    has_interactive_cards = any(b.get("type") == "card" and b.get("actions") for b in original_blocks)
+    if has_inputs or has_interactive_cards:
+        await update_message(client, sctx.channel, sctx.msg_ts, "Submitted", readonly_blocks)
 
-    async def delete_awaiting_indicator(self, channel: str, awaiting_ts: Optional[str]) -> None:
-        if not awaiting_ts:
-            return
-        try:
-            await self._client().chat_delete(channel=channel, ts=awaiting_ts)
-        except Exception as exc:
-            if "message_not_found" not in str(exc):
-                log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
 
-    async def freeze_form(
-        self, ctx: SubmitContext, original_blocks: List[Dict[str, Any]], requirements: List[Any]
-    ) -> None:
-        has_inputs = any(b.get("type") == "input" for b in original_blocks)
-        has_interactive_cards = any(b.get("type") == "card" and b.get("actions") for b in original_blocks)
-        if not has_inputs and not has_interactive_cards:
-            return
+async def _show_decision(
+    client: AsyncWebClient,
+    channel: str,
+    msg_ts: str,
+    awaiting_ts: Optional[str],
+    text: str,
+    blocks: List[Dict[str, Any]],
+) -> None:
+    await delete_awaiting_indicator(client, channel, awaiting_ts)
+    await update_message(client, channel, msg_ts, text, blocks)
 
-        readonly_blocks = response_blocks(original_blocks, ctx.state_values, requirements)
-        try:
-            await self._client().chat_update(
-                channel=ctx.channel, ts=ctx.msg_ts, text="Submitted", blocks=readonly_blocks
-            )
-        except Exception as exc:
-            log_error(f"[HITL] chat_update (submit readonly) failed for {ctx.msg_ts}: {exc}")
 
-    async def validate_and_apply_decisions(
-        self,
-        ctx: SubmitContext,
-        payload: Dict[str, Any],
-        requirements: List[Any],
-    ) -> Optional[List[Any]]:
-        decisions, errors = parse_submit_payload(payload, requirements)
-        if errors:
-            detail = "\n".join(f"* {e.field}: {e.message}" for e in errors)
-            await self.post_ephemeral(
-                channel=ctx.channel, user=ctx.user_id, text=f"Please fix the following and submit again:\n{detail}"
-            )
+async def _aget_paused_run(ctx: SlackContext, run_id: str, session_id: str) -> Tuple[bool, Optional[Any]]:
+    """Whether the stored run was read, and the run while it still waits on a decision, else None."""
+    try:
+        run_output = await ctx.entity.aget_run_output(run_id=run_id, session_id=session_id)
+    except Exception as exc:
+        log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
+        return False, None
+    if run_output is None or getattr(run_output, "status", None) != RunStatus.paused:
+        return True, None
+    if not getattr(run_output, "active_requirements", None):
+        return True, None
+    # A native run whose every request expired can no longer be decided, so it ends and its card is frozen
+    if await cancel_expired_pause(ctx, run_output):
+        return True, None
+    return True, run_output
+
+
+async def _decider_context(
+    client: AsyncWebClient,
+    ctx: SlackContext,
+    *,
+    run_id: str,
+    channel: str,
+    thread_ts: str,
+    user: str,
+    owner: Optional[str],
+    card_ts: str,
+    awaiting_ts: Optional[str],
+    card_blocks: List[Dict[str, Any]],
+    team_id: Optional[str] = None,
+) -> Optional[EventContext]:
+    """The paused event context of run_id when user may decide on it; posts the ephemeral and returns None otherwise."""
+    # Remote entities keep their runs on the remote AgentOS
+    if not hasattr(ctx.entity, "aget_run_output"):
+        await post_ephemeral(client, channel, user, _REMOTE_MESSAGE, thread_ts)
+        return None
+
+    event_context = ctx.runs.find_run(run_id)
+    if event_context is None:
+        session_id = await resolve_session_id(ctx.entity, ctx.entity_id, channel, thread_ts, ctx.lookup_cache)
+        read, run_output = await _aget_paused_run(ctx, run_id, session_id)
+        if run_output is None:
+            if read:
+                # A card whose run no longer waits, e.g. its request expired, is frozen so it is not clicked again
+                # Any clicker may freeze it before can_act: its run already ended, so nothing is decided
+                await _show_decision(
+                    client,
+                    channel,
+                    card_ts,
+                    awaiting_ts,
+                    NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(card_blocks),
+                )
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
             return None
-        apply_decisions(decisions, requirements)
-        return decisions
-
-    async def post_denial_cards(self, stream: Any, decisions: List[Any], requirements: List[Any], run_id: str) -> None:
-        requirements_by_id = {r.id: r for r in requirements if r.id}
-        for decision in decisions:
-            req = requirements_by_id.get(decision.requirement_id)
-            if req is None or decision.pause_type != "confirmation" or decision.approved is True:
-                continue
-            name = tool_name(req)
-            args_dict = tool_args(req)
-            arg_parts = [f"{k}={truncate(str(v), 40)}" for k, v in args_dict.items()]
-            args_str = ", ".join(arg_parts)
-            title = truncate(f"Denied: {name}({args_str})" if args_str else f"Denied: {name}", 120)
-            try:
-                await stream.append(
-                    markdown_text="",
-                    chunks=[
-                        {
-                            "type": "task_update",
-                            "id": f"approval:{decision.requirement_id}",
-                            "title": title,
-                            "status": "complete",
-                        }
-                    ],
-                )
-            except Exception as exc:
-                log_error(
-                    f"[HITL] decision_update append failed: run_id={run_id} slack_error={slack_error_code(exc)!r} | {exc}"
-                )
-
-    async def stream_resumed_run(
-        self,
-        ctx: SubmitContext,
-        stream: Any,
-        requirements: List[Any],
-        *,
-        session_id: str,
-        user_id: Optional[str] = None,
-    ) -> StreamState:
-        state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
-        try:
-            # Inline-door admission gate: Slack-driven runs are ticketless by
-            # construction today (the interface submits inline), but a durable
-            # ticket for this run_id - however it got here - owns the
-            # continuation; the existing except below turns the 409/503 into
-            # a logged non-execution, never a double-run.
-            from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
-
-            await araise_if_ticket_owns_continue(
-                get_active_queue_worker(),
-                ctx.run_id,
-                component_type=self.entity_type,
-                component_id=getattr(self.entity, "id", None),
-            )
-            response_stream: Any = self.entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
-                run_id=ctx.run_id,
-                requirements=requirements,
-                session_id=session_id,
-                user_id=user_id,
-                stream=True,
-                stream_events=True,
-            )
-        except Exception as exc:
-            log_error(f"[HITL] acontinue_run (stream) failed for run={ctx.run_id}: {exc}")
-            return state
-
-        try:
-            async for chunk in response_stream:
-                state.collect_media(chunk)
-                ev = getattr(chunk, "event", None)
-                if ev and await process_event(ev, chunk, state, stream):
-                    break
-                if state.has_content():
-                    content = state.flush()
-                    if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
-                        await stream.append(markdown_text=content)
-                        state.stream_chars_sent += len(content)
-        except Exception as exc:
-            log_error(
-                f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
-            )
-        # Status-only stream sync (parity with the REST continue doors): a
-        # formerly-queued/streamed run's stream view must stop saying PAUSED
-        # once the continue settles - otherwise every later /resume replays
-        # the stale paused snapshot, and on Redis the pausing replica's TTL
-        # refresher keeps those keys alive indefinitely. only_if_tracked
-        # leaves never-streamed runs alone; a re-paused continue re-parks the
-        # stream as PAUSED. Best-effort: a stream-backend failure must not
-        # eat the Slack response.
-        try:
-            from agno.os.utils import acomplete_continue_stream
-
-            await acomplete_continue_stream(self.entity, ctx.run_id, session_id, only_if_tracked=True)
-        except Exception as exc:
-            log_error(f"[HITL] continue stream sync failed for run={ctx.run_id}: {exc}")
-        return state
-
-    async def complete_or_repause(
-        self,
-        ctx: SubmitContext,
-        stream: Any,
-        state: StreamState,
-    ) -> None:
-        if state.paused_event is not None:
-            requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
-            if requirements:
-                from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
-
-                new_awaiting_ts = await finalize_pause(
-                    client=self._client(),
-                    stream=stream,
-                    state=state,
-                    run_id=ctx.run_id,
-                    channel=ctx.channel,
-                    thread_ts=ctx.thread_ts,
-                    requirements=requirements,
-                    log_prefix="re-",
-                    unfurl_links=self.unfurl_links,
-                    unfurl_media=self.unfurl_media,
-                    mrkdwn=self.markdown,
-                )
-                try:
-                    await post_pause_card(
-                        self._client(),
-                        state.paused_event,
-                        ctx.channel,
-                        ctx.thread_ts,
-                        new_awaiting_ts,
-                        unfurl_links=self.unfurl_links,
-                        unfurl_media=self.unfurl_media,
-                        mrkdwn=self.markdown,
-                    )
-                except Exception as exc:
-                    log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
-                return
-
-        stop_kwargs: Dict[str, Any] = {}
-        if state.has_content():
-            stop_kwargs["markdown_text"] = state.flush()
-        if state.task_cards:
-            final_status: TaskStatus = state.terminal_status or "complete"
-            completion_chunks = state.resolve_all_pending(final_status)
-            if completion_chunks:
-                stop_kwargs["chunks"] = completion_chunks
-        try:
-            await stream.stop(**stop_kwargs)
-        except Exception as exc:
-            log_error(
-                f"[HITL] stream.stop after resume failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
-            )
-
-    async def handle_row_approve(self, payload: Dict[str, Any]) -> None:
-        ctx = extract_row_action_context(payload)
-        if ctx is None:
-            return
-
-        result = select_confirmation_row(ctx, selected="approve", include_reason_input=False)
-        await self.update_message(ctx.channel, ctx.card_ts, "Approval pending", result.blocks)
-
-        if result.should_auto_submit:
-            await self.handle_submit(synthetic_submit_payload(payload, ctx.run_id, ctx.awaiting_ts, result.blocks))
-
-    async def handle_row_reject(self, payload: Dict[str, Any]) -> None:
-        ctx = extract_row_action_context(payload)
-        if ctx is None:
-            return
-
-        result = select_confirmation_row(ctx, selected="deny", include_reason_input=True)
-        blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
-        await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
-
-    async def _get_approval_status(self, approval_id: str) -> str:
-        """Query approval status from DB."""
-        db = getattr(self.entity, "db", None)
-        if not db or not approval_id:
-            return "pending"
-        try:
-            fn = getattr(db, "get_approval", None)
-            if not fn:
-                return "pending"
-            if asyncio.iscoroutinefunction(fn):
-                approval = await fn(approval_id)
-            else:
-                approval = fn(approval_id)
-            return approval.get("status", "pending") if approval else "pending"
-        except Exception as exc:
-            log_error(f"[HITL] Failed to get approval status: {exc}")
-            return "pending"
-
-    def _update_card_to_approved(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Update approval card blocks to show approved status."""
-        new_blocks = []
-        for block in blocks:
-            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
-                block = dict(block)
-                block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
-                block["actions"] = []
-            new_blocks.append(block)
-        return new_blocks
-
-    async def _resume_after_approval(
-        self,
-        payload: Dict[str, Any],
-        run_id: str,
-        approval_id: str,
-        channel: str,
-        thread_ts: str,
-        msg_ts: str,
-        awaiting_ts: Optional[str],
-    ) -> None:
-        """Resume a paused run after admin approval."""
-        session_id = await resolve_session_id(self.entity, self.entity_id, channel, thread_ts)
-
-        try:
-            run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
-        except Exception as exc:
-            log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
-            return
-
-        if not run_output:
-            return
-
-        run_user_id = run_output.user_id
-        requirements = list(getattr(run_output, "active_requirements", None) or [])
-
-        for req in requirements:
-            if req.tool_execution and req.tool_execution.approval_id == approval_id:
-                req.confirm()
-                break
-
-        ctx = SubmitContext(
-            run_id=run_id,
-            channel=channel,
-            thread_ts=thread_ts,
-            msg_ts=msg_ts,
-            awaiting_ts=awaiting_ts,
-            user_id=(payload.get("user") or {}).get("id") or "",
-            team_id=(payload.get("team") or {}).get("id") or "",
-            state_values={},
+        event_context = await event_context_from_run(
+            ctx, run_output, owner=owner, client=client, channel=channel, team_id=team_id
         )
-        stream = await open_chat_stream(
-            self._client(),
-            channel,
-            thread_ts,
-            ctx.user_id,
-            ctx.team_id,
-            self.task_display_mode,
-            self.buffer_size,
+
+    if not await can_act(ctx, user, event_context, client):
+        await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE, thread_ts)
+        return None
+
+    if ctx.users is not None:
+        # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
+        if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
+            return None
+    return event_context
+
+
+async def _decidable_row(
+    payload: Dict[str, Any], client: AsyncWebClient, ctx: SlackContext
+) -> Optional[RowActionContext]:
+    """The clicked row when its user may decide on the run; None otherwise."""
+    row = extract_row_action_context(payload)
+    if row is None:
+        return None
+    user = (payload.get("user") or {}).get("id") or ""
+    thread_ts = (payload.get("message") or {}).get("thread_ts") or row.card_ts
+    event_context = await _decider_context(
+        client,
+        ctx,
+        run_id=row.run_id,
+        channel=row.channel,
+        thread_ts=thread_ts,
+        user=user,
+        owner=row.owner,
+        card_ts=row.card_ts,
+        awaiting_ts=row.awaiting_ts,
+        card_blocks=(payload.get("message") or {}).get("blocks") or [],
+    )
+    if event_context is None:
+        return None
+    return row
+
+
+async def _validate_and_apply_decisions(
+    client: AsyncWebClient, sctx: SubmitContext, payload: Dict[str, Any], requirements: List[RunRequirement]
+) -> Optional[List[ParsedDecision]]:
+    decisions, errors = parse_submit_payload(payload, requirements)
+    if errors:
+        detail = "\n".join(f"* {e.field}: {e.message}" for e in errors)
+        await post_ephemeral(
+            client, sctx.channel, sctx.user_id, f"Please fix the following and submit again:\n{detail}", sctx.thread_ts
         )
-        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
-        await self.complete_or_repause(ctx, stream, state)
+        return None
+    apply_decisions(decisions, requirements)
+    return decisions
 
-    async def handle_check_status(self, payload: Dict[str, Any]) -> None:
-        """Handle 'Check Status' button click for admin approval cards."""
-        # 1. Parse button value
-        actions = payload.get("actions") or []
-        if not actions:
-            return
-        button_value = actions[0].get("value") or ""
-        approval_id, req_id, run_id, awaiting_ts = decode_admin_approval_button_value(button_value)
-        if not approval_id or not req_id or not run_id:
-            log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
-            return
 
-        # 2. Extract Slack context
-        channel = payload.get("channel", {}).get("id", "")
-        message = payload.get("message", {})
-        msg_ts = message.get("ts", "")
-        thread_ts = message.get("thread_ts") or msg_ts
-        if not channel or not msg_ts or not thread_ts:
-            log_error(f"[HITL] Missing Slack context: channel={channel}, msg_ts={msg_ts}, thread_ts={thread_ts}")
-            return
+async def _resolve_required_approvals(
+    ctx: SlackContext,
+    sctx: SubmitContext,
+    decisions: List[ParsedDecision],
+    requirements: List[RunRequirement],
+) -> Optional[str]:
+    """Resolve DB approval records for tools with approval_type='required'; the ephemeral to post when one fails."""
+    db = getattr(ctx.entity, "db", None)
+    if db is None:
+        return None
 
-        # 3. Extract card info for rebuilding
-        blocks = message.get("blocks", [])
-        tool_name_str = "Tool"
-        body_text = ""
-        for block in blocks:
-            if block.get("type") == "card":
-                tool_name_str = (block.get("title", {}).get("text") or "Tool").strip("*")
-                body_text = block.get("body", {}).get("text") or ""
-                break
+    reqs_by_id = {r.id: r for r in requirements if r.id}
+    now = int(time.time())
 
-        # 4. Query approval status
-        status = await self._get_approval_status(approval_id)
+    for decision in decisions:
+        req = reqs_by_id.get(decision.requirement_id)
+        tool_exec = getattr(req, "tool_execution", None) if req else None
+        if tool_exec is None or getattr(tool_exec, "approval_type", None) != "required":
+            continue
 
-        # 5. Handle approved — delete indicator, update card, resume run
-        if status == "approved":
-            await self.delete_awaiting_indicator(channel, awaiting_ts)
-            await self.update_message(channel, msg_ts, "Approved", self._update_card_to_approved(blocks))
-            await self._resume_after_approval(payload, run_id, approval_id, channel, thread_ts, msg_ts, awaiting_ts)
-            return
+        approval_id = getattr(tool_exec, "approval_id", None)
+        if approval_id is None:
+            continue
 
-        # 6. Still pending/rejected — update card with current status
-        card = build_admin_approval_status_card(
-            tool_name=tool_name_str,
-            body_text=body_text,
+        status = "rejected" if decision.approved is False else "approved"
+        resolution_data: Dict[str, Any] = {}
+        if decision.rejected_note:
+            resolution_data["note"] = decision.rejected_note
+        if decision.input_values is not None:
+            resolution_data["values"] = decision.input_values
+        if decision.external_result is not None:
+            resolution_data["result"] = decision.external_result
+        if decision.feedback_selections is not None:
+            resolution_data["feedback"] = decision.feedback_selections
+
+        resolved = await aresolve_approval(
+            db,
+            approval_id,
             status=status,
-            req_id=req_id,
-            approval_id=approval_id,
-            run_id=run_id,
-            awaiting_ts=awaiting_ts or thread_ts,
+            resolved_by=sctx.user_id,
+            resolved_at=now,
+            resolution_data=resolution_data or None,
         )
-        new_blocks = []
-        for block in blocks:
-            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
-                new_blocks.append(card.to_dict())
-            else:
-                new_blocks.append(block)
-        await self.update_message(channel, msg_ts, f"Status: {status}", new_blocks)
+        if resolved is None:
+            # Already resolved (an earlier partial submit, or an admin in AgentOS): fine when it says the same
+            existing_status = (await _aget_approval(ctx, approval_id) or {}).get("status")
+            if existing_status in (None, "pending"):
+                return APPROVAL_NOT_RECORDED_MESSAGE
+            if existing_status != status:
+                return NO_LONGER_ACTIVE_MESSAGE
+    return None
 
-    async def _resolve_required_approvals(
-        self,
-        ctx: SubmitContext,
-        decisions: List[Any],
-        requirements: List[Any],
-    ) -> None:
-        """Resolve DB approval records for tools with approval_type='required'."""
-        db = getattr(self.entity, "db", None)
-        if db is None:
+
+async def _record_approvals(
+    ctx: SlackContext, sctx: SubmitContext, decisions: List[ParsedDecision], requirements: List[RunRequirement]
+) -> None:
+    """Record the approvals before anything resumes the run; a continue refused earlier leaves them pending."""
+    refusal = await _resolve_required_approvals(ctx, sctx, decisions, requirements)
+    if refusal is not None:
+        raise DecisionRefused(refusal)
+
+
+async def _aget_approval(ctx: SlackContext, approval_id: str) -> Optional[Dict[str, Any]]:
+    """The approval row from DB, or None."""
+    db = getattr(ctx.entity, "db", None)
+    if db is None or not approval_id:
+        return None
+    try:
+        return await db_call(db, "get_approval", approval_id)
+    except Exception as exc:
+        log_error(f"[HITL] Failed to get approval status: {exc}")
+        return None
+
+
+def _update_card_to_approved(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Update approval card blocks to show approved status."""
+    new_blocks = []
+    for block in blocks:
+        if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+            block = dict(block)
+            block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
+            block["actions"] = []
+        new_blocks.append(block)
+    return new_blocks
+
+
+def _update_card_to_no_longer_active(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Update approval card blocks to show the approval is no longer active."""
+    new_blocks = []
+    for block in blocks:
+        if block.get("type") == "actions":
+            continue
+        if block.get("type") == "card":
+            block = dict(block)
+            block["subtext"] = {"type": "mrkdwn", "text": NO_LONGER_ACTIVE_MESSAGE}
+            block["actions"] = []
+        new_blocks.append(block)
+    return new_blocks
+
+
+def _replace_admin_card(blocks: List[Dict[str, Any]], card: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return [
+        card if block.get("type") == "card" and "admin_approval" in block.get("block_id", "") else block
+        for block in blocks
+    ]
+
+
+async def handle_row_approve(payload: Dict[str, Any], client: AsyncWebClient, ctx: SlackContext) -> None:
+    row = await _decidable_row(payload, client, ctx)
+    if row is None:
+        return
+
+    result = select_confirmation_row(row, selected="approve", include_reason_input=False)
+    await update_message(client, row.channel, row.card_ts, "Approval pending", result.blocks)
+
+    if result.should_auto_submit:
+        await handle_submit(
+            synthetic_submit_payload(payload, row.run_id, row.awaiting_ts, result.blocks, row.owner), client, ctx
+        )
+
+
+async def handle_row_reject(payload: Dict[str, Any], client: AsyncWebClient, ctx: SlackContext) -> None:
+    row = await _decidable_row(payload, client, ctx)
+    if row is None:
+        return
+
+    result = select_confirmation_row(row, selected="deny", include_reason_input=True)
+    blocks = append_submit_if_needed(result.blocks, row.run_id, row.awaiting_ts, row.owner)
+    await update_message(client, row.channel, row.card_ts, "Rejection pending", blocks)
+
+
+async def handle_submit(payload: Dict[str, Any], client: AsyncWebClient, ctx: SlackContext) -> None:
+    sctx = extract_submit_context(payload)
+    if sctx is None:
+        return
+    log_info(f"[HITL] submit received: run_id={sctx.run_id} channel={sctx.channel}")
+    original_blocks = list((payload.get("message") or {}).get("blocks") or [])
+
+    event_context = await _decider_context(
+        client,
+        ctx,
+        run_id=sctx.run_id,
+        channel=sctx.channel,
+        thread_ts=sctx.thread_ts,
+        user=sctx.user_id,
+        owner=sctx.owner,
+        card_ts=sctx.msg_ts,
+        awaiting_ts=sctx.awaiting_ts,
+        card_blocks=original_blocks,
+        team_id=sctx.team_id,
+    )
+    if event_context is None:
+        return
+
+    # One continuation per run: a double click or a second approver gets an ephemeral, never a second run
+    if not ctx.runs.claim_run(sctx.run_id):
+        await post_ephemeral(client, sctx.channel, sctx.user_id, _ALREADY_SUBMITTED_MESSAGE, sctx.thread_ts)
+        return
+    try:
+        # Re-read after the claim: an earlier submit may have continued the run since the first read
+        read, run_output = await _aget_paused_run(ctx, sctx.run_id, event_context.session_id)
+        if run_output is None:
+            if read:
+                await _show_decision(
+                    client,
+                    sctx.channel,
+                    sctx.msg_ts,
+                    sctx.awaiting_ts,
+                    NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(original_blocks),
+                )
+            await post_ephemeral(client, sctx.channel, sctx.user_id, NO_LONGER_ACTIVE_MESSAGE, sctx.thread_ts)
             return
+        requirements = list(run_output.active_requirements)
 
-        reqs_by_id = {r.id: r for r in requirements if r.id}
-        now = int(time.time())
-
-        for decision in decisions:
-            req = reqs_by_id.get(decision.requirement_id)
-            tool_exec = getattr(req, "tool_execution", None) if req else None
-            if tool_exec is None or getattr(tool_exec, "approval_type", None) != "required":
-                continue
-
-            approval_id = getattr(tool_exec, "approval_id", None)
-            if approval_id is None:
-                continue
-
-            status = "rejected" if decision.approved is False else "approved"
-            resolution_data: Dict[str, Any] = {}
-            if decision.rejected_note:
-                resolution_data["note"] = decision.rejected_note
-            if decision.input_values is not None:
-                resolution_data["values"] = decision.input_values
-            if decision.external_result is not None:
-                resolution_data["result"] = decision.external_result
-            if decision.feedback_selections is not None:
-                resolution_data["feedback"] = decision.feedback_selections
-
-            await aresolve_approval(
-                db,
-                approval_id,
-                status=status,
-                resolved_by=ctx.user_id,
-                resolved_at=now,
-                resolution_data=resolution_data or None,
-            )
-
-    async def handle_submit(self, payload: Dict[str, Any]) -> None:
-        ctx = extract_submit_context(payload)
-        if ctx is None:
-            return
-        session_id = await resolve_session_id(self.entity, self.entity_id, ctx.channel, ctx.thread_ts)
-        log_info(f"[HITL] submit received: run_id={ctx.run_id} channel={ctx.channel}")
-
-        await self.delete_awaiting_indicator(ctx.channel, ctx.awaiting_ts)
-
-        try:
-            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=session_id)  # type: ignore[union-attr]
-        except Exception as exc:
-            log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
-            run_output = None
-
-        active_reqs = getattr(run_output, "active_requirements", None) if run_output else None
-        if not run_output or not active_reqs:
-            await self.post_ephemeral(channel=ctx.channel, user=ctx.user_id, text="This approval is no longer active.")
-            return
-
-        run_user_id = run_output.user_id
-        requirements = list(active_reqs)
-
-        decisions = await self.validate_and_apply_decisions(ctx, payload, requirements)
+        decisions = await _validate_and_apply_decisions(client, sctx, payload, requirements)
         if decisions is None:
             return
 
-        await self._resolve_required_approvals(ctx, decisions, requirements)
+        readonly_blocks = response_blocks(original_blocks, sctx.state_values, requirements)
 
-        original_blocks = list((payload.get("message") or {}).get("blocks") or [])
-        await self.freeze_form(ctx, original_blocks, requirements)
-
-        stream = await open_chat_stream(
-            self._client(),
-            ctx.channel,
-            ctx.thread_ts,
-            ctx.user_id,
-            ctx.team_id,
-            self.task_display_mode,
-            self.buffer_size,
-        )
-
-        await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
-        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
-        await self.complete_or_repause(ctx, stream, state)
-
-    async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
         try:
-            await self._client().chat_postEphemeral(channel=channel, user=user, text=text)
-        except Exception as exc:
-            log_error(f"[HITL] chat_postEphemeral failed: {exc}")
+            resumed = await continue_run(
+                event_context,
+                client,
+                ctx,
+                requirements,
+                decisions=decisions,
+                before_continue=partial(_record_approvals, ctx, sctx, decisions, requirements),
+                on_accepted=partial(_freeze_form, client, sctx, original_blocks, readonly_blocks),
+                clicker=sctx.user_id,
+            )
+        except DecisionRefused as exc:
+            # The card stays live: the decision never reached the run
+            await post_ephemeral(
+                client, sctx.channel, sctx.user_id, str(exc) or NO_LONGER_ACTIVE_MESSAGE, sctx.thread_ts
+            )
+            return
+        except Exception as e:
+            log_error(f"[HITL] continuation failed for run={sctx.run_id}: {e}")
+            await _mark_not_resumed(client, sctx.channel, sctx.msg_ts, readonly_blocks)
+            await reply_error(e, event_context, client, ctx)
+            return
+        if not resumed:
+            await _mark_not_resumed(client, sctx.channel, sctx.msg_ts, readonly_blocks)
+    finally:
+        ctx.runs.release_run(sctx.run_id)
+
+
+async def handle_check_status(payload: Dict[str, Any], client: AsyncWebClient, ctx: SlackContext) -> None:
+    """Handle 'Check Status' button click for admin approval cards."""
+    # 1. Parse button value
+    actions = payload.get("actions") or []
+    if not actions:
+        return
+    button_value = actions[0].get("value") or ""
+    approval_id, req_id, run_id, awaiting_ts, owner = decode_admin_approval_button_value(button_value)
+    if not approval_id or not req_id or not run_id:
+        log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
+        return
+
+    # 2. Extract Slack context
+    channel = (payload.get("channel") or {}).get("id", "")
+    message = payload.get("message") or {}
+    msg_ts = message.get("ts", "")
+    thread_ts = message.get("thread_ts") or msg_ts
+    user = (payload.get("user") or {}).get("id") or ""
+    if not channel or not msg_ts or not thread_ts:
+        log_error(f"[HITL] Missing Slack context: channel={channel}, msg_ts={msg_ts}, thread_ts={thread_ts}")
+        return
+
+    event_context = await _decider_context(
+        client,
+        ctx,
+        run_id=run_id,
+        channel=channel,
+        thread_ts=thread_ts,
+        user=user,
+        owner=owner,
+        card_ts=msg_ts,
+        awaiting_ts=awaiting_ts,
+        card_blocks=message.get("blocks", []),
+        team_id=(payload.get("team") or {}).get("id"),
+    )
+    if event_context is None:
+        return
+
+    # 3. Extract card info for rebuilding
+    blocks = message.get("blocks", [])
+    tool_name_str = "Tool"
+    body_text = ""
+    for block in blocks:
+        if block.get("type") == "card":
+            tool_name_str = (block.get("title", {}).get("text") or "Tool").strip("*")
+            body_text = block.get("body", {}).get("text") or ""
+            break
+
+    # 4. Query approval status
+    approval = await _aget_approval(ctx, approval_id)
+    status = (approval or {}).get("status", "pending")
+    card = build_admin_approval_status_card(
+        tool_name=tool_name_str,
+        body_text=body_text,
+        status=status,
+        req_id=req_id,
+        approval_id=approval_id,
+        run_id=run_id,
+        awaiting_ts=awaiting_ts,
+        owner=owner,
+    )
+
+    # 5. Still pending: refresh the card, keeping the indicator ts as it was
+    if status not in ("approved", "rejected"):
+        await update_message(client, channel, msg_ts, f"Status: {status}", _replace_admin_card(blocks, card.to_dict()))
+        return
+
+    # 6. Decided by the admin: continue the run either way, so a rejection does not leave it paused
+    if not ctx.runs.claim_run(run_id):
+        await post_ephemeral(client, channel, user, _ALREADY_SUBMITTED_MESSAGE, thread_ts)
+        return
+    try:
+        read, run_output = await _aget_paused_run(ctx, run_id, event_context.session_id)
+        if run_output is None:
+            if read:
+                await _show_decision(
+                    client,
+                    channel,
+                    msg_ts,
+                    awaiting_ts,
+                    NO_LONGER_ACTIVE_MESSAGE,
+                    _update_card_to_no_longer_active(blocks),
+                )
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
+            return
+        requirements = list(run_output.active_requirements)
+        decided = next(
+            (r for r in requirements if r.tool_execution and r.tool_execution.approval_id == approval_id), None
+        )
+        if decided is None:
+            # The run waits on something else now; continuing would leave this approval unresolved
+            await post_ephemeral(client, channel, user, NO_LONGER_ACTIVE_MESSAGE, thread_ts)
+            return
+        if status == "approved":
+            decided.confirm()
+            decided_text, decided_blocks = "Approved", _update_card_to_approved(blocks)
+        else:
+            decided.reject(((approval or {}).get("resolution_data") or {}).get("note"))
+            decided_text, decided_blocks = "Status: rejected", _replace_admin_card(blocks, card.to_dict())
+
+        try:
+            resumed = await continue_run(
+                event_context,
+                client,
+                ctx,
+                requirements,
+                on_accepted=partial(_show_decision, client, channel, msg_ts, awaiting_ts, decided_text, decided_blocks),
+                clicker=user,
+            )
+        except DecisionRefused as exc:
+            await post_ephemeral(client, channel, user, str(exc) or NO_LONGER_ACTIVE_MESSAGE, thread_ts)
+            return
+        except Exception as e:
+            log_error(f"[HITL] continuation failed for run={run_id}: {e}")
+            await _mark_not_resumed(client, channel, msg_ts, decided_blocks)
+            await reply_error(e, event_context, client, ctx)
+            return
+        if not resumed:
+            await _mark_not_resumed(client, channel, msg_ts, decided_blocks)
+    finally:
+        ctx.runs.release_run(run_id)

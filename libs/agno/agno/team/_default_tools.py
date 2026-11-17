@@ -68,6 +68,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
@@ -88,6 +89,7 @@ from agno.utils.response import (
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+    get_member_session_id,
 )
 from agno.utils.timer import Timer
 
@@ -100,6 +102,20 @@ _MEMBER_TERMINAL_EVENT_TYPES = (
     TeamMemberRunCompletedEvent,
     TeamMemberRunErrorEvent,
 )
+
+
+def _member_run_kwargs(team: "Team", member: Any) -> Dict[str, Any]:
+    """Run options that tell a harness member (Claude Code, Codex) it runs for this team.
+
+    Membership is passed on every call instead of being stored on the member, because the same
+    harness agent instance can also run on its own, for example when AgentOS serves it directly.
+    A native Agent or sub-team gets nothing extra.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if isinstance(member, BaseExternalAgent):
+        return {"_team_id": team.id}
+    return {}
 
 
 def _cascading_cancel_run(run_id: str) -> bool:
@@ -119,7 +135,9 @@ async def _acascading_cancel_run(run_id: str) -> bool:
     return await _team_acancel_run(run_id)
 
 
-def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def _get_update_user_memory_function(
+    team: "Team", user_id: Optional[str] = None, run_response: Optional[TeamRunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """
         Use this function to submit a task to modify the Agent's memory.
@@ -133,7 +151,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = team.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = team.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     async def aupdate_user_memory(task: str) -> str:
@@ -149,7 +169,9 @@ def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None
             str: A string indicating the status of the update.
         """
         team.memory_manager = cast(MemoryManager, team.memory_manager)
-        response = await team.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await team.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:
@@ -487,7 +509,7 @@ def _get_delegate_task_function(
 
         # If team has send_media_to_model=False, ensure member agent also has it set to False
         # This allows tools to access files while preventing models from receiving them
-        if not team.send_media_to_model:
+        if not team.send_media_to_model and hasattr(member_agent, "send_media_to_model"):
             member_agent.send_media_to_model = False
 
         # 2. Handle respond_directly nuances
@@ -502,8 +524,13 @@ def _get_delegate_task_function(
             if member_agent.output_schema is not None:
                 team._member_response_model = member_agent.output_schema
 
-        # 3. Handle enable_agentic_knowledge_filters on the member agent
-        if team.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+        # 3. Handle enable_agentic_knowledge_filters on the member agent. Only a native member has
+        # this setting; a harness member (Claude Code, Codex) has no knowledge base.
+        if (
+            team.enable_agentic_knowledge_filters
+            and hasattr(member_agent, "enable_agentic_knowledge_filters")
+            and not member_agent.enable_agentic_knowledge_filters
+        ):
             member_agent.enable_agentic_knowledge_filters = team.enable_agentic_knowledge_filters
 
         # 4. Determine team context to send
@@ -587,15 +614,11 @@ def _get_delegate_task_function(
 
         # Scrub the member run based on that member's storage flags before storing
         if member_agent_run_response:
-            if (
-                not member_agent.store_media
-                or not member_agent.store_tool_messages
-                or not member_agent.store_history_messages
-            ):
+            if not member_storage(member_agent).keeps_all:
                 from agno.agent._run import scrub_run_output_for_storage
 
                 # Recorded before the scrub: by here the ids exist nowhere else.
-                if not member_agent.store_media:
+                if not member_storage(member_agent).media:
                     _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
@@ -664,15 +687,11 @@ def _get_delegate_task_function(
 
         # Scrub the member run based on that member's storage flags before storing
         if member_agent_run_response:
-            if (
-                not member_agent.store_media
-                or not member_agent.store_tool_messages
-                or not member_agent.store_history_messages
-            ):
+            if not member_storage(member_agent).keeps_all:
                 from agno.agent._run import scrub_run_output_for_storage
 
                 # Recorded before the scrub: by here the ids exist nowhere else.
-                if not member_agent.store_media:
+                if not member_storage(member_agent).media:
                     _record_opted_out_media(run_response, member_agent_run_response)
                 scrub_run_output_for_storage(member_agent, run_response=member_agent_run_response)  # type: ignore[arg-type]
 
@@ -724,8 +743,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -738,11 +757,10 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     metadata=run_context.metadata,
                     add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     yield_run_output=True,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 draining_after_cancel = False
                 for member_agent_run_output_event in member_agent_run_response_stream:
@@ -785,8 +803,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,  # type: ignore
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -798,10 +816,9 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -910,8 +927,8 @@ def _get_delegate_task_function(
                 member_agent_run_response_stream = member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -924,11 +941,10 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     yield_run_output=True,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 draining_after_cancel = False
                 async for member_agent_run_response_event in member_agent_run_response_stream:
@@ -971,8 +987,8 @@ def _get_delegate_task_function(
                 member_agent_run_response = await member_agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
+                    # Local members share the team's session_id; a remote member keeps its own
+                    session_id=get_member_session_id(member_agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -984,10 +1000,9 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
+                    **_member_run_kwargs(team, member_agent),
                 )
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
                 # Also check if the parent team's run was cancelled while the member was executing
@@ -1080,8 +1095,8 @@ def _get_delegate_task_function(
                     member_agent_run_response_stream = member_agent.run(
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
@@ -1089,9 +1104,7 @@ def _get_delegate_task_function(
                         files=files,
                         stream=True,
                         stream_events=stream_events or team.stream_member_events,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
                         debug_mode=debug_mode,
                         dependencies=run_context.dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
@@ -1099,6 +1112,7 @@ def _get_delegate_task_function(
                         metadata=run_context.metadata,
                         run_id=member_run_id,
                         yield_run_output=True,
+                        **_member_run_kwargs(team, member_agent),
                     )
                     draining_after_cancel = False
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
@@ -1144,23 +1158,22 @@ def _get_delegate_task_function(
                     member_agent_run_response = member_agent.run(  # type: ignore
                         input=member_agent_task if not history else history,
                         user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
+                        # Local members share the team's session_id; a remote member keeps its own
+                        session_id=get_member_session_id(member_agent, session.session_id),
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,
                         audio=audio,
                         files=files,
                         stream=False,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
+                        knowledge_filters=member_knowledge_filters(member_agent, run_context),
                         debug_mode=debug_mode,
                         dependencies=run_context.dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
                         add_session_state_to_context=add_session_state_to_context,
                         metadata=run_context.metadata,
                         run_id=member_run_id,
+                        **_member_run_kwargs(team, member_agent),
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -1255,7 +1268,7 @@ def _get_delegate_task_function(
                 member_stream = agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
-                    session_id=session.session_id,
+                    session_id=get_member_session_id(agent, session.session_id),
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1264,15 +1277,14 @@ def _get_delegate_task_function(
                     stream=True,
                     stream_events=stream_events or team.stream_member_events,
                     debug_mode=debug_mode,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not agent.knowledge_filters and agent.knowledge
-                    else None,
+                    knowledge_filters=member_knowledge_filters(agent, run_context),
                     dependencies=run_context.dependencies,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
                     run_id=member_run_id,
                     yield_run_output=True,
+                    **_member_run_kwargs(team, agent),
                 )
                 member_agent_run_response = None
                 try:
@@ -1389,8 +1401,8 @@ def _get_delegate_task_function(
                         member_agent_run_response = await member_agent.arun(
                             input=member_agent_task if not history else history,
                             user_id=user_id,
-                            # All members have the same session_id
-                            session_id=session.session_id,
+                            # Local members share the team's session_id; a remote member keeps its own
+                            session_id=get_member_session_id(member_agent, session.session_id),
                             session_state=member_session_state_copy,  # Send a copy to the agent
                             images=images,
                             videos=videos,
@@ -1399,14 +1411,13 @@ def _get_delegate_task_function(
                             stream=False,
                             stream_events=stream_events,
                             debug_mode=debug_mode,
-                            knowledge_filters=run_context.knowledge_filters
-                            if not member_agent.knowledge_filters and member_agent.knowledge
-                            else None,
+                            knowledge_filters=member_knowledge_filters(member_agent, run_context),
                             dependencies=run_context.dependencies,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             metadata=run_context.metadata,
                             run_id=member_run_id,
+                            **_member_run_kwargs(team, member_agent),
                         )
                         check_if_run_cancelled(member_agent_run_response)
                         if run_response.run_id is not None:

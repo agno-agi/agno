@@ -1,12 +1,15 @@
 """Work lifecycle parity on PostgreSQL and SQLite, sync and native async."""
 
+import asyncio
 import inspect
+import threading
 import time
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agno.agent import Agent
 from agno.company import AsyncCompanyManager, CompanyManager
@@ -60,11 +63,177 @@ def manager(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("db", ["postgres", "async_postgres"], indirect=True)
+async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypatch):
+    import agno.db.sql.company as company
+
+    m = manager(db)
+    product = await call(m.create, name="Project move race")
+    approved = await call(m.create_project, product_id=product["id"], name="Approved")
+    proposed = await call(m.create_project, product_id=product["id"], name="Proposed")
+    await call(m.transition_project, project_id=approved["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=approved["id"], title="Draft")
+    accept_args = (task["id"], "ready", "Accept")
+    accept_kwargs = {"executor_type": "agent", "executor_id": "writer"}
+
+    if isinstance(db, AsyncPostgresDb):
+        paused = asyncio.Event()
+        proceed = asyncio.Event()
+        original = AsyncSession.run_sync
+
+        async def pause_before_lock(session, fn, *args, **kwargs):
+            if asyncio.current_task() is acceptance and fn is company.lock_product:
+                paused.set()
+                await asyncio.wait_for(proceed.wait(), 10)
+            return await original(session, fn, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncSession, "run_sync", pause_before_lock)
+            acceptance = asyncio.create_task(db.transition_task(*accept_args, **accept_kwargs))
+            await asyncio.wait_for(paused.wait(), 10)
+            moved = await db.update_task(task["id"], project_id=proposed["id"])
+            proceed.set()
+            with pytest.raises(ValueError, match="Project approval is required"):
+                await acceptance
+    else:
+        paused = threading.Event()
+        proceed = threading.Event()
+        original = company.lock_product
+
+        def pause_before_lock(*args, **kwargs):
+            if not paused.is_set():
+                paused.set()
+                assert proceed.wait(10)
+            return original(*args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(company, "lock_product", pause_before_lock)
+            acceptance = asyncio.create_task(asyncio.to_thread(db.transition_task, *accept_args, **accept_kwargs))
+            assert await asyncio.to_thread(paused.wait, 10)
+            moved = await asyncio.to_thread(db.update_task, task["id"], project_id=proposed["id"])
+            proceed.set()
+            with pytest.raises(ValueError, match="Project approval is required"):
+                await acceptance
+
+    assert moved is not None
+    current = await call(db.get_task, task["id"])
+    assert current["project_id"] == proposed["id"]
+    assert current["status"] == "backlog"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("db", ["postgres", "async_postgres"], indirect=True)
+async def test_postgres_transition_hides_archived_or_other_owner_task(db):
+    m = manager(db)
+    product = await call(m.create, name="Archived work")
+    project = await call(m.create_project, product_id=product["id"], name="Project")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Draft", user_id="alice")
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop", user_id="bob") is None
+    await call(m.delete_task, task["id"])
+    await call(m.delete_project, project["id"])
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop") is None
+    assert await call(db.transition_task, task["id"], "cancelled", "Stop", user_id="bob") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_status", ["backlog", "ready"])
+async def test_cancelled_project_allows_task_cleanup_only(db, initial_status):
+    m = manager(db)
+    product = await call(m.create, name="Rejected plan")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    if initial_status == "ready":
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+        task = await call(
+            m.transition_task,
+            task_id=task["id"],
+            target="ready",
+            reason="Accept",
+            executor_type="agent",
+            executor_id="writer",
+        )
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Reject")
+
+    blocked_target = "ready" if initial_status == "backlog" else "backlog"
+    with pytest.raises(ValueError, match="cancelled Project"):
+        await call(
+            m.transition_task,
+            task_id=task["id"],
+            target=blocked_target,
+            reason="Restart",
+            **({"executor_type": "agent", "executor_id": "writer"} if blocked_target == "ready" else {}),
+        )
+    stored = await call(m.get_task, task["id"])
+    assert stored["status"] == initial_status
+    assert stored["transitions"] == task["transitions"]
+
+    cleaned = await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+    assert cleaned["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_proposed_project_allows_backlog_task_cancellation(db):
+    m = manager(db)
+    product = await call(m.create, name="Draft plan")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+
+    cancelled = await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
+    assert cancelled["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_project_rejects_new_task_run_reservation(db):
+    m = manager(db)
+    product = await call(m.create, name="Rejected run")
+    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    ready = await call(
+        m.transition_task,
+        task_id=task["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Reject")
+
+    assert await call(db.start_task_run, task["id"], 1, ready["transitions"]) is None
+    assert await call(m.get_task, task["id"]) == ready
+
+
+@pytest.mark.asyncio
+async def test_cancelled_project_allows_started_task_run_to_finish(db):
+    m = manager(db)
+    product = await call(m.create, name="Run in progress")
+    project = await call(m.create_project, product_id=product["id"], name="Work")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
+    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    ready = await call(
+        m.transition_task,
+        task_id=task["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    running = await call(db.start_task_run, task["id"], 1, ready["transitions"])
+    assert running is not None
+    await call(m.transition_project, project_id=project["id"], target="cancelled", reason="Stop")
+
+    completed = await call(db.complete_task_run, task["id"], running["job_id"], {"status": "COMPLETED"})
+    assert completed is not None
+    assert completed["status"] == "in_review"
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list_tasks) == ([], 0)
     parent = await call(m.create, name="SDK", user_id="alice")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
         m.create_task,
         product_id=parent["id"],
@@ -95,8 +264,15 @@ async def test_lifecycle_and_owner_guards(db):
         assert result["status"] == state
     assert [entry["target"] for entry in result["transitions"]] == states
     assert all(entry["user_id"] == "reviewer" for entry in result["transitions"])
+    done = result
+    result = await call(m.transition_task, task_id=rid, target="cancelled", reason="Withdrawn", accepted_by="reviewer")
+    assert result["status"] == "cancelled"
+    assert [entry["target"] for entry in result["transitions"]] == states + ["cancelled"]
+    assert result["transitions"][-1]["from"] == "done" and result["transitions"][-1]["user_id"] == "reviewer"
+    for kept in ("executor_type", "executor_id", "accepted_by", "accepted_at", "result"):
+        assert result[kept] == done[kept]
     with pytest.raises(ValueError):
-        await call(m.transition_task, task_id=rid, target="cancelled", reason="Terminal")
+        await call(m.transition_task, task_id=rid, target="cancelled", reason="Again")
     assert await call(m.restore_task, rid) is None
     assert await call(m.delete_task, rid)
     assert await call(m.get_task, rid) is None
@@ -105,7 +281,7 @@ async def test_lifecycle_and_owner_guards(db):
     assert (await call(m.list_tasks))[1] == 0
     assert (await call(m.list_tasks, include_deleted=True))[1] == 1
     assert await call(m.restore_task, rid, user_id="bob") is None
-    assert (await call(m.restore_task, rid))["status"] == "done"
+    assert (await call(m.restore_task, rid))["status"] == "cancelled"
     assert await call(m.get_task, "missing") is None
     assert await call(m.transition_task, task_id="missing", target="cancelled", reason="Missing") is None
 
@@ -142,6 +318,7 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
     m = manager(db)
     parent = await call(m.create, name="SDK", user_id="alice")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     with pytest.raises(LookupError):
         await call(
             m.create_task,
@@ -152,6 +329,7 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
             project_id=project["id"],
         )
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
     for fields in [
         {"status": "done"},
@@ -178,6 +356,7 @@ async def test_custom_table_migrations_and_configuration_roundtrip(db):
     m = manager(db)
     parent = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
         m.create_task, product_id=parent["id"], title="Roundtrip", user_id="alice", project_id=project["id"]
     )
@@ -203,6 +382,7 @@ async def test_task_acceptance_and_project_consistency(db):
     with pytest.raises(ValueError):
         await call(m.create_task, product_id=a["id"], title="Wrong", project_id=project["id"])
     own_project = await call(m.create_project, product_id=a["id"], name="Release")
+    await call(m.transition_project, project_id=own_project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=a["id"], title="Work", project_id=own_project["id"])
     with pytest.raises(ValueError):
         await call(m.update_task, task["id"], project_id=project["id"])
@@ -218,11 +398,143 @@ async def test_task_acceptance_and_project_consistency(db):
     assert ready["accepted_by"] == "alice"
     assert ready["accepted_at"] >= task["created_at"]
     with pytest.raises(ValueError, match="Backlog"):
-        await call(m.update_task, task["id"], brief="Changed")
-    assert await call(db.update_task, task["id"], brief="Bypass") is None
+        await call(m.update_task, task["id"], executor_id="stale")
+    assert await call(db.update_task, task["id"], executor_id="stale") is None
     backlog = await call(m.transition_task, task_id=task["id"], target="backlog", reason="Rescope", accepted_by="alice")
     assert all(backlog[k] is None for k in ["executor_id", "executor_type", "accepted_at", "accepted_by"])
     assert (await call(m.update_task, task["id"], brief="Changed"))["brief"] == "Changed"
+
+
+STAGES = ["backlog", "ready", "in_progress", "in_review", "done", "cancelled"]
+STRUCTURAL = [{"executor_id": "stale"}, {"evidence": [{"url": "https://example.test"}]}, {"executor_type": "team"}]
+
+
+async def task_at(m, stage):
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    task = await call(m.create_task, product_id=product["id"], title="Original", brief="Body", project_id=project["id"])
+    if stage == "cancelled":
+        return await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop"), project
+    for target in ["ready", "in_progress", "in_review", "done"][: STAGES.index(stage)]:
+        kwargs = {"executor_type": "agent", "executor_id": "writer"} if target == "ready" else {}
+        task = await call(m.transition_task, task_id=task["id"], target=target, reason="Move", **kwargs)
+    return task, project
+
+
+def content_only(row):
+    return {k: v for k, v in row.items() if k not in {"title", "brief", "updated_at"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES)
+async def test_title_edits_at_every_stage_and_the_manager_edits_a_brief_only_in_backlog(db, stage, monkeypatch):
+    m = manager(db)
+    task, _ = await task_at(m, stage)
+    monkeypatch.setattr(time, "time", lambda: 2_000_000_000)
+    if stage == "backlog":
+        edited = await call(m.update_task, task["id"], title="Retitled", brief="Rewritten")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Rewritten", 2_000_000_000)
+    else:
+        for fields in [{"brief": "Rewritten"}, {"brief": None}, {"title": "Retitled", "brief": "Rewritten"}]:
+            with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
+                await call(m.update_task, task["id"], **fields)
+        assert await call(m.get_task, task["id"]) == task
+        # The stored brief sent with a new title is not a brief edit, however it is spaced.
+        edited = await call(m.update_task, task["id"], title="Retitled", brief=" Body\n")
+        assert (edited["title"], edited["brief"], edited["updated_at"]) == ("Retitled", "Body", 2_000_000_000)
+    assert content_only(edited) == content_only(task)
+    # The store writes what it is given; the manager decides what an accepted Task accepts.
+    for fields in [{"title": "Storage title"}, {"brief": "Storage brief"}, {"brief": None}]:
+        direct = await call(db.update_task, task["id"], **fields)
+        assert direct is not None and content_only(direct) == content_only(task)
+        assert {k: direct[k] for k in fields} == fields
+    twice = await call(m.update_task, task["id"], title="Again")
+    assert twice["title"] == "Again" and twice["brief"] is None and content_only(twice) == content_only(task)
+    assert (await call(m.update_task, "missing", title="Nope")) is None
+    assert (await call(db.update_task, "missing", title="Nope")) is None
+    with pytest.raises(ValueError, match="title"):
+        await call(m.update_task, task["id"], title=" ")
+    assert (await call(m.get_task, task["id"]))["title"] == "Again"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES)
+async def test_expected_status_makes_the_content_write_conditional(db, stage):
+    m = manager(db)
+    task, _ = await task_at(m, stage)
+    stale = "ready" if stage == "backlog" else "backlog"
+    assert await call(db.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
+    assert await call(m.update_task, task["id"], expected_status=stale, title="Stale") is None
+    if stage == "backlog":
+        assert await call(m.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale") is None
+    else:
+        # The manager refuses a brief outside Backlog before the store compares the stage.
+        with pytest.raises(ValueError, match="^Accepted task scope requires a return to Backlog$"):
+            await call(m.update_task, task["id"], expected_status=stale, title="Stale", brief="Stale")
+    assert await call(m.get_task, task["id"]) == task
+    assert await call(m.update_task, task["id"], expected_status=stage, title="Fresh") is not None
+    assert (await call(m.get_task, task["id"]))["title"] == "Fresh"
+    assert (await call(db.update_task, task["id"], expected_status=stage, brief="Direct"))["brief"] == "Direct"
+    if stage == "backlog":
+        assert (await call(m.update_task, task["id"], brief="Human"))["brief"] == "Human"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES[1:])
+@pytest.mark.parametrize("structural", STRUCTURAL, ids=lambda f: next(iter(f)))
+async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_atomic(db, stage, structural):
+    m = manager(db)
+    task, project = await task_at(m, stage)
+    other = await call(m.create_project, product_id=task["product_id"], name="Other")
+    for fields in [structural, {"project_id": other["id"]}]:
+        with pytest.raises(ValueError, match="Backlog"):
+            await call(m.update_task, task["id"], **fields)
+        with pytest.raises(ValueError, match="Backlog"):
+            await call(m.update_task, task["id"], title="Mixed", brief="Mixed", **fields)
+        assert await call(db.update_task, task["id"], **fields) is None
+        assert await call(db.update_task, task["id"], title="Mixed", brief="Mixed", **fields) is None
+    assert await call(m.get_task, task["id"]) == task
+
+
+@pytest.mark.asyncio
+async def test_archived_task_and_archived_parent_still_refuse_content_edits(db):
+    m = manager(db)
+    task, project = await task_at(m, "done")
+    assert await call(m.delete_task, task["id"])
+    assert await call(m.update_task, task["id"], title="Archived") is None
+    assert await call(db.update_task, task["id"], title="Archived") is None
+    await call(m.restore_task, task["id"])
+    assert await call(m.delete_project, project["id"])
+    assert await call(m.update_task, task["id"], title="Archived parent") is None
+    with pytest.raises(ValueError, match="archived"):
+        await call(db.update_task, task["id"], title="Archived parent")
+
+
+@pytest.mark.asyncio
+async def test_a_transition_applies_only_to_the_stage_and_run_the_caller_observed(db):
+    m = manager(db)
+    task, _ = await task_at(m, "ready")
+    running = await call(db.start_task_run, task["id"], 1, task["transitions"])
+    reviewed = await call(db.complete_task_run, task["id"], running["job_id"], {"status": "COMPLETED"})
+    assert reviewed["status"] == "in_review"
+    observed = dict(expected_status="in_review", expected_job_id=reviewed["job_id"])
+
+    # A caller that observed another stage, or another run, changes nothing.
+    for stale in ({**observed, "expected_status": "ready"}, {**observed, "expected_job_id": "another-run"}):
+        assert await call(db.transition_task, task["id"], "done", "Stale", **stale) is None
+        assert await call(m.transition_task, task_id=task["id"], target="done", reason="Stale", **stale) is None
+    assert (await call(db.get_task, task["id"]))["status"] == "in_review"
+
+    done = await call(m.transition_task, task_id=task["id"], target="done", reason="Good", **observed)
+    assert done["status"] == "done"
+    # A second reviewer who observed the same review cannot send the finished Task back, even in the same second.
+    executor = {"executor_type": "agent", "executor_id": "writer"}
+    assert (
+        await call(m.transition_task, task_id=task["id"], target="ready", reason="Redo", **executor, **observed) is None
+    )
+    saved = await call(db.get_task, task["id"])
+    assert (saved["status"], saved["transitions"][-1]["reason"]) == ("done", "Good")
 
 
 @pytest.mark.asyncio
@@ -232,15 +544,92 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
     m = manager(db)
     parent = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=parent["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
+    if isinstance(db, (PostgresDb, AsyncPostgresDb)):
+        import agno.db.sql.company as company
+
+        if isinstance(db, AsyncPostgresDb):
+            paused = asyncio.Event()
+            proceed = asyncio.Event()
+            attempted = asyncio.Event()
+            original_run_sync = AsyncSession.run_sync
+            second = None
+
+            async def hold_first_transition(session, fn, *args, **kwargs):
+                if asyncio.current_task() is first and fn is company.require_project:
+                    paused.set()
+                    await asyncio.wait_for(proceed.wait(), 5)
+                if asyncio.current_task() is second and fn is company.lock_product:
+                    attempted.set()
+                return await original_run_sync(session, fn, *args, **kwargs)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(AsyncSession, "run_sync", hold_first_transition)
+                first = asyncio.create_task(
+                    m.transition_task(
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Current",
+                        executor_type="agent",
+                        executor_id="current",
+                    )
+                )
+                await asyncio.wait_for(paused.wait(), 5)
+                second = asyncio.create_task(m.transition_task(task_id=task["id"], target="backlog", reason="Rescope"))
+                await asyncio.wait_for(attempted.wait(), 5)
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(second), 0.05)
+                proceed.set()
+                accepted = await first
+                returned = await asyncio.wait_for(second, 5)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            original = task_schema.task_transition_fields
+            original_lock = company.lock_product
+            owner = threading.current_thread()
+            attempted = threading.Event()
+
+            def tracked_lock(*args, **kwargs):
+                if threading.current_thread() is not owner:
+                    attempted.set()
+                return original_lock(*args, **kwargs)
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pending = None
+
+                def start_competing_move(existing, *args, **kwargs):
+                    nonlocal pending
+                    if pending is None:
+                        pending = pool.submit(m.transition_task, task_id=task["id"], target="backlog", reason="Rescope")
+                        assert attempted.wait(5)
+                        assert not pending.done()
+                    return original(existing, *args, **kwargs)
+
+                with monkeypatch.context() as patch:
+                    patch.setattr(task_schema, "task_transition_fields", start_competing_move)
+                    patch.setattr(company, "lock_product", tracked_lock)
+                    accepted = m.transition_task(
+                        task_id=task["id"],
+                        target="ready",
+                        reason="Current",
+                        executor_type="agent",
+                        executor_id="current",
+                    )
+                assert pending is not None
+                returned = pending.result(timeout=5)
+        assert accepted["status"] == "ready" and returned["status"] == "backlog"
+        saved = await call(m.get_task, task["id"])
+        assert saved["status"] == "backlog" and saved["executor_id"] is None
+        assert [entry["reason"] for entry in saved["transitions"]] == ["Current", "Rescope"]
+        return
     # Capture the observed row at the SQL validation boundary. The later writer
     # sees Backlog again, but must not overwrite the intervening history.
     original = task_schema.task_transition_fields
     if isinstance(db, AsyncBaseDb):
         # Native async concurrency is covered by the same SQL predicate. Use
         # two async transactions below instead of reentering the event loop.
-        import asyncio
-
         observed = asyncio.Event()
         resume = asyncio.Event()
         first = True
@@ -316,7 +705,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resource", ["projects", "tasks"])
 @pytest.mark.parametrize("isolation", [False, True])
-async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, isolation):
+async def test_http_collaborative_work_and_shared_deletion(db, resource, isolation):
     import jwt
     from httpx import ASGITransport, AsyncClient
 
@@ -343,6 +732,8 @@ async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, i
     m = manager(db)
     product = await call(m.create, name="Shared", user_id="alice")
     project = await call(m.create_project, product_id=product["id"], name="Shared project", user_id="alice")
+    if resource == "tasks":
+        await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     app = AgentOS(
         agents=[Agent(id="writer")],
         id=os_id,
@@ -402,7 +793,7 @@ async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, i
         assert accepted.json()["transitions"][-1]["user_id"] == "bob"
         if resource == "tasks":
             assert accepted.json()["accepted_by"] == "bob"
-            assert (await client.patch(path, json={field: "Frozen"}, headers=headers("bob"))).status_code == 409
+            assert (await client.patch(path, json={"executor_id": "other"}, headers=headers("bob"))).status_code == 409
             returned = await client.post(
                 path + "/transitions", json={"target": "backlog", "reason": "Clarify scope"}, headers=headers("bob")
             )
@@ -417,5 +808,56 @@ async def test_http_collaborative_work_and_owner_scoped_deletion(db, resource, i
         assert (await client.delete(path, headers=headers("alice"))).status_code == 204
         assert (await client.get(path, headers=headers("bob"))).status_code == 404
         assert (await client.get(path, params={"include_deleted": True}, headers=headers("bob"))).status_code == 200
-        assert (await client.post(path + "/restore", headers=headers("bob"))).status_code == (403 if isolation else 200)
+        # Archive and restore need only the delete scope; the creator stays recorded.
+        restored = await client.post(path + "/restore", headers=headers("bob"))
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["user_id"] == "alice"
         assert (await client.patch(root + "/missing", json={field: "No"}, headers=headers("bob"))).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_store_refuses_an_automatic_acceptance_past_the_routines_open_limit(db):
+    from agno.db.schemas.tasks import OpenTaskLimitError
+
+    m = manager(db)
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    tasks = [
+        await call(
+            m.create_task,
+            product_id=product["id"],
+            title=f"Task {n}",
+            project_id=project["id"],
+            origin="routine",
+            routine_id="routine" if n < 3 else "other-routine",
+        )
+        for n in range(4)
+    ]
+    receipt = {"routine_id": "routine", "policy": "version", "max_open": 1}
+
+    async def accept(task, auto_accept):
+        return await call(
+            db.transition_task,
+            task["id"],
+            "ready",
+            "Authorized Routine proposal",
+            executor_type="agent",
+            executor_id="writer",
+            expected_updated_at=task["updated_at"],
+            auto_accept=auto_accept,
+        )
+
+    first = await accept(tasks[0], receipt)
+    assert first["status"] == "ready" and first["transitions"][-1]["auto_accept"] == receipt
+    with pytest.raises(OpenTaskLimitError, match="^Routine has 1 Tasks open, its limit"):
+        await accept(tasks[1], receipt)
+    assert (await call(db.get_task, tasks[1]["id"]))["status"] == "backlog"
+    # Another Routine's Tasks do not count, and a receipt with no bound is not counted at all.
+    assert (await accept(tasks[3], {**receipt, "routine_id": "other-routine"}))["status"] == "ready"
+    assert (await accept(tasks[2], {"routine_id": "routine", "policy": "version"}))["status"] == "ready"
+    # A finished Task makes room.
+    for target in ("cancelled",):
+        await call(db.transition_task, first["id"], target, "Not needed")
+        await call(db.transition_task, tasks[2]["id"], target, "Not needed")
+    assert (await accept(tasks[1], receipt))["status"] == "ready"

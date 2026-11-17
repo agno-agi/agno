@@ -1,5 +1,65 @@
 # Test log
 
+## PR #11394 review, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Re-ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+at commit `285aacbb5` using `.venvs/demo/bin/python`.
+
+**Result:** Sync and async listings matched the manifest description, and the
+agent description remained unset. No model calls or hosted deployment tests.
+The manager/runner unit suites returned 655 passed and one warning-capture
+failure in `test_the_ignored_child_version_pin_is_said_out_loud`. The same
+failure reproduced alone on both the PR and base commit `9153aacd83` using
+the same environment. Ruff lint and formatting checks passed for changed Python files.
+
+---
+
+## Manifest discovery descriptions, 2026-10-30
+
+### manager_discovery.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_discovery.py`
+with `.venv/bin/python`, a temporary SQLite database, and no model calls.
+The agent has only a manifest description. Both sync and async manager
+discovery return that description without changing the agent's description.
+
+**Result:** Both listings matched and contained the configured description.
+The cookbook also passed in an isolated development environment, alongside
+656 manager/runner tests and the full format/validation scripts. The shared
+`.venv` validation reported nine existing typing errors in unchanged Google/AWS
+model files. No API key, hosted deployment, or live-model routing was exercised.
+
+---
+
+## Focused documentation lookup, 2026-10-19
+
+### manager_source.py
+
+**Status:** PASS
+
+**Description:** Constructed the example with branch source and a temporary
+working directory, without model or network calls. Inspected the configured
+documentation tool; the manager unit suite exercises direct sync/async lookup
+with a scripted model.
+
+**Result:** OS Manager and Platform Manager share one docs toolkit. The scripted
+manager lookup completes with one docs tool call, two model invocations, and no
+member runs. This verifies the available execution path, not live-model routing
+quality or latency. Live conversations remain an opt-in check. Follow-up unit
+regressions verify that both path and provider roots retain search and direct
+read access to requested artifacts under `tmp`. After splitting the changes, the
+independent manager branch passed 578 manager, authorization and workspace tests
+with one skip. The source example also constructs without the retrieval or
+Parallel copying changes.
+
+---
+
 ## Manager package and default offloading, 2026-10-14
 
 ### basic_manager.py
@@ -573,5 +633,222 @@ unrelated SDK typing errors; optional Telegram files were excluded.
 
 Tests use disposable data and scripted models. No live model, hosted docs,
 PostgreSQL or frontend rendering checks were performed.
+
+---
+
+## Focused execution limits, 2026-10-19
+
+### basic_manager.py
+
+**Status:** PASS
+
+**Description:** Constructed the serving example with checkout source in a temporary
+working directory. No provider calls or shared database writes.
+
+**Result:** Coordinator limit is 8; both specialists have limit 24. The example
+continues to expose the framework-owned manager.
+
+---
+
+### Manager execution and explanation regressions
+
+**Status:** PASS
+
+**Description:** The manager, Company playbook/tools and run-authorization suites
+passed 424 tests. New scripted-model checks exercise sequential and batched tool
+calls, sync/async runs, both streaming modes, reuse across turns, and both sides
+of delegation. Configuration tests cover overrides, zero, opt-out and invalid
+values; standalone Product Manager and application agents retain their policies.
+
+**Result:** Ordinary tools execute only within the configured per-invocation
+limit. All manager roles receive the shared focus/evidence instructions. Scripted
+models verify plumbing and enforcement, not live-model reasoning quality.
+
+---
+
+### Live framework manager rehearsal
+
+**Status:** PASS
+
+**Description:** Ran four conversations using GPT-6.1 Sol, low reasoning, default
+framework prompts/limits and Agno documentation access against a disposable SQLite
+database and source fixture. Counted coordinator and persisted member tools.
+
+**Result:** Final run: conceptual learning explanation used 3 calls (22.35s),
+learning configuration used 4 (27.35s), agent publication used 4 (22.07s), and one
+Project with two unaccepted Backlog Tasks used 13 (48.66s). Publication and Company
+records were verified from storage; the published agent was not executed. The
+configuration answer explicitly distinguished file configuration from attachment
+and actual learning execution.
+
+An earlier configuration attempt used 6 calls; guidance was tightened to read
+named files directly and count result read-backs in the explanation budget before
+the successful rerun. These are single-run behavioral checks, not a guarantee
+across models. Execution limits remain per invocation; offloaded-result reads
+are exempt, and model turns/tokens and dispatched application runs are not capped.
+
+---
+
+## Framework concept grounding, 2026-10-19
+
+### manager_source.py conversation checks
+
+**Status:** PASS
+
+**Description:** Added the exact questions "what is agno" and "can you tell me
+about learning machines" to the manual rehearsal. Live docs search previously
+ranked CLI pages above the product overview; the old learning-machines response
+explained generic ML training. Updated shared instructions to choose relevant
+product overviews, preserve Agno terminology, distinguish business knowledge,
+and honor explicitly general questions. Basic explanations omit unsolicited code.
+
+**Result:** With GPT-6.1 Sol (low reasoning) and disposable storage, framework-only
+checks answered both questions from Agno documentation and preserved an explicitly
+general supervised/unsupervised ML question.
+
+The manager unit suite passed 255 tests; full format and validation scripts passed.
+These are local behavioral samples against live docs, not hosted deployment proof
+or a guarantee of factual accuracy on every run.
+
+---
+
+## Template without appended manager instructions, 2026-10-20
+
+**Status:** PASS for four manager scenarios; Company proposal state check failed.
+
+**Description:** Removed Railway's entire application manager prompt and exercised
+its existing isolated PostgreSQL cases with GPT-6.1 Sol. The unknown-file
+configuration lookup initially spent its budget listing/searching. A follow-up
+found the definitions but passed four calls to a specialist in addition to the
+delegation. Shared framework guidance now prioritizes reading definitions after
+one targeted search and subtracts the delegation from the explanation budget.
+Basic explanations explicitly stay within 200 words unless more detail is asked.
+
+**Result:** Targeted runs passed learning explanation, configured learning,
+README onboarding and read-only diagnostics without application-component
+execution. The template supplied no manager instructions or configuration-path
+hint. The configured-learning answer passed both evidence/budget checks and its
+semantic judge. The separate Product Manager fixture produced one unaccepted
+Project/Task with correct source evidence, but its strict business-state check
+failed after a decision-log write; this is not a full release-suite pass.
+
+The template's 26 offline/PostgreSQL tests and full formatting/type checks passed
+before concurrent template refactoring. The framework manager suite passed 255
+tests and full format/validation passed. A superseded rehearsal was invalidated
+by changing its test environment installation while it was still running; those
+runtime errors are excluded from the targeted validation above. No hosted rollout
+or template-runtime restart was performed.
+
+---
+
+## Prompt simplification, 2026-10-20
+
+### basic_manager.py and manager regressions
+
+**Status:** PASS
+
+**Description:** Constructed the basic example in a temporary directory and ran the
+255 manager tests after shortening shared guidance and moving role-specific rules
+into the existing coordinator and operator prompts.
+
+**Result:** The example retains the 8/24 defaults without explicit overrides.
+All tests and full format/validation scripts pass. Live-model checks above predate
+this simplification and were not rerun.
+
+---
+
+## Shared prompt scope, 2026-10-20
+
+### Manager regressions
+
+**Status:** PASS
+
+**Description:** Reduced the shared member guidance to scope, stopping, evidence
+and execution rules. Framework-explanation guidance now reaches only the lead and
+Platform Manager, which have documentation access, and no longer names specific
+questions. Removed the four-call explanation allowance, which asked the lead to
+count member calls and read-backs it cannot observe.
+
+**Result:** The manager unit suite passes, including a new check that Platform
+Builder and Product Manager receive the shared rules but not the explanation
+guidance. Live-model checks were not rerun for this change.
+
+---
+
+## External engineer dispatch, 2026-10-22
+
+### `libs/agno/tests/unit/os/test_manager.py::test_manager_discovers_and_runs_external_agents`
+
+**Status:** PASS
+
+**Description:** Both Claude Engineer and Codex Engineer appear in OS Manager's
+roster and execute through the sync and async runner tools. The real adapter
+lifecycle uses stubbed harness responses and a temporary SQLite database. Checks
+cover ID/name lookup, follow-up history, user isolation, saved runs, dispatch
+metadata, permission denial, the shared session-admission guard, and removal
+from the live roster after copying the manager.
+
+**Result:** All four cases passed. The manager and runner suites passed 644 tests;
+the Studio and Claude/Codex adapter suites passed 1,279 tests (including the
+runner suite again). The four new cases also passed in an isolated development
+environment. Full format/validation passed there with SQLAlchemy 2.0.55; the
+shared demo environment reports unrelated Google/AWS provider typing errors.
+The README example was not run against live models or harness processes; no
+provider calls were made.
+
+---
+
+### Manager identity compatibility — 2026-11-06
+
+**Status:** PASS
+
+**Description:** Canonical IDs and legacy URL/grant compatibility; persisted legacy permissions, history, pagination and paused specialist continuation; private specialists and explicit catalog collisions.
+
+**Result:** 355 manager/scope/idempotency tests and 126 run authorization tests passed. PostgreSQL sync/async legacy session pagination and managed-grant revocation passed against a dedicated local database. `manager_discovery.py` passed without model calls. Repository format and validation passed in an isolated current development environment. The preexisting shared environment failed baseline mypy with 189 dependency/type errors; it was not modified. Live model/provider calls were not exercised.
+
+### Internal manager ID separator (2026-11-09)
+
+**Status:** PASS
+
+**Description:** Built-ins now use `super--agent`, `company--manager`, `platform--builder`, and `platform--manager`. Single-hyphen names remain available to user components; original `*-internal` aliases still resolve to the built-ins.
+
+**Result:** 436 manager/run-authorization cases and 14 focused ownership/grant/deny regressions passed. User-owned IDs coexist with the built-ins, preserve their own session history, and neither grant nor deny access to internal managers. Full formatting and validation passed. No model calls were made.
+
+### Manager alias review fixes (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The built-in FGA provider and PublicSurface treat former manager IDs as the current ones, new Routines and policy writes store current IDs, schedule endpoint checks accept either spelling, and each database is checked once for catalog collisions.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Manager, authorization, FGA, public config and Routine tests passed, and new Postgres alias tests passed against local pgvector. No model calls were made.
+
+### Former manager IDs removed (2026-11-09)
+
+**Status:** PASS
+
+**Description:** The `*-internal` IDs no longer resolve and stay reserved. Requests that use them get an error naming the new ID, and startup refuses managed-role policies that still use them. Upgrade checked on PostgreSQL by writing with the previous code and reading with this one.
+
+**Result:** `manager_discovery.py` and `check_manager_permissions.py` passed without model calls. Old URLs return 422 with the new ID, new URLs work, an old session can still be continued by its session ID, and old sessions drop out of lists filtered by the new ID. No model calls were made.
+
+---
+
+
+### Public manager IDs and final review — 2026-11-10
+
+**Status:** PASS
+
+**Description:** Canonical IDs are now `superagent`, `company-manager`, `platform-builder` and `platform-manager`. The final combined manager, run-authorization, Company API/Routine, former-ID migration and company-details integration suite passed 636 tests with no skips. It includes synchronous/asynchronous SQLite and disposable PostgreSQL, exact grants and denies, catalog collisions, and IDs generated from component names. Full format and validation scripts passed. Tests used deterministic models; no paid model calls or deployment.
+
+**Result:** Public IDs route correctly; private specialists remain private; former IDs are rejected, and old managed-role policies block startup. Unrelated user IDs retain separate permissions/history. The earlier double-hyphen decision and alias behavior recorded above are superseded.
+
+---
+
+### Super Agent direct tools: offline checks (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Super Agent does the work itself with direct tools and has one member, Platform Builder. Ran `manager_diagnostics.py`, `manager_discovery.py` and `check_manager_permissions.py` with a placeholder `OPENAI_API_KEY`. Loaded `basic_manager.py`, `manager_source.py`, `manager_with_resources.py`, `manager_builds_agents.py` and `manager_user_access.py` with `runpy` to build each AgentOS without serving it. Each Super Agent has members `['platform-builder']`, `tool_call_limit` 24 and `num_history_runs` 5. `manager_source.py` has `list_files`, `read_file` and `search_content` on Super Agent.
+
+**Result:** Diagnostics returned overall WARN: 5 checks PASS, 2 SKIP, and authorization disabled WARN. Discovery listed the components. All seven permission checks passed. `manager_with_resources.py` had duplicate `list_files`, `read_file` and `search_content` tools from the notebook and `root`; Super Agent keeps the first, so source reads went to the notebook. The example now sets no `root`, and the construction check found no duplicate tool names. Conversations in the serving examples need a live model and were not run. No model calls were made.
 
 ---

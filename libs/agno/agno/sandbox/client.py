@@ -82,6 +82,10 @@ class SandboxRuntimeClient:
         committed for this session, Claude's session id or Codex's thread id, when it has one:
         the runtime refuses to run, without calling the model, unless the sandbox holds exactly
         that conversation. Leave it None for a session's first turn."""
+        if (config or {}).get("_native_hitl", False):
+            capabilities = await self._rpc(computer, "capabilities", {"execution_id": execution_id})
+            if "native_hitl_v1" not in capabilities.get("capabilities", []):
+                raise SandboxError("Rebuild the sandbox image: native human-in-the-loop is unsupported")
         response = await self._rpc(
             computer,
             "start",
@@ -135,6 +139,31 @@ class SandboxRuntimeClient:
                 **({"metadata": metadata} if metadata is not None else {}),
             )
         )
+
+    async def aresolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """Deliver one decision to the exact native request waiting in the runtime: a confirm or
+        reject, or the answers to its questions."""
+        answer = (
+            {"answers": decision["answers"]} if "answers" in decision else {"confirmed": decision["confirmed"] is True}
+        )
+        return await self._rpc(
+            execution.computer,
+            "resolve",
+            {
+                "execution_id": execution.execution_id,
+                "run_id": execution.run_id,
+                "agent_id": execution.computer.agent_id,
+                "session_id": execution.computer.session_id,
+                "tool_call_id": decision["tool_call_id"],
+                **answer,
+                "digest": decision["digest"],
+                "owner": decision["owner"],
+            },
+        )
+
+    def resolve(self, execution: RuntimeExecution, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous decision delivery."""
+        return _sync(self.aresolve(execution, decision))
 
     async def apoll(self, execution: RuntimeExecution, *, cursor: int = 0, wait: float = 0.0) -> RuntimePage:
         """One page from the journal. ``wait`` long-polls inside the container for up to that

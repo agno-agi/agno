@@ -333,6 +333,7 @@ class Router:
     def _prepare_single_step(self, step: Any) -> Any:
         """Prepare a single step for execution."""
         from agno.agent.agent import Agent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
@@ -343,7 +344,7 @@ class Router:
 
         if callable(step) and hasattr(step, "__name__"):
             return Step(name=step.__name__, description="User-defined callable step", executor=step)
-        elif isinstance(step, Agent):
+        elif isinstance(step, (Agent, BaseExternalAgent)):
             return Step(name=step.name, description=step.description, agent=step)
         elif isinstance(step, Team):
             return Step(name=step.name, description=step.description, team=step)

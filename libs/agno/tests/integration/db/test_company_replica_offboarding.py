@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -47,9 +48,12 @@ async def test_ticketless_checkpoint_on_another_replica_remains_running(system, 
         **{name: str(tmp_path / name) for name in ("started", "release", "tool")},
     }
     log_path = tmp_path / "replica.log"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[3])
     with log_path.open("w") as log:
         process = subprocess.Popen(
             [sys.executable, "-m", "tests.integration.db.company_replica_worker", json.dumps(config)],
+            env=env,
             stdout=log,
             stderr=log,
         )
@@ -114,6 +118,8 @@ async def test_disabled_owner_blocks_new_work_but_allows_collaborator_cancel(
     ) as client:
         product = (await client.post("/company/products", json={"name": "Product"})).json()
         project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})).json()
+        approval = {"target": "active", "reason": "Approved"}
+        await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
         task = (
             await client.post(
                 "/company/tasks",
@@ -202,7 +208,6 @@ async def test_refresh_with_mongo_history_continues_completion_proposals(system,
     client, db, _, _, _ = system
     task = await accepted(client)
     await _call(db, "transition_task", task["id"], "cancelled", "No work needed")
-    await _call(db, "transition_project", task["project_id"], "active", "Begin")
     schedule_db = (AsyncMongoDb if asynchronous else MongoDb)(db_url=url, db_name="company_refresh_" + uuid4().hex)
     manager = (AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager)(db, schedule_db=schedule_db)
     now = int(time.time())

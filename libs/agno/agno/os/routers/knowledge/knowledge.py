@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import math
@@ -117,7 +118,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None, description="Content name (auto-generated from file/URL if not provided)"),
         description: Optional[str] = Form(None, description="Content description for context"),
-        url: Optional[str] = Form(None, description="URL to fetch content from (JSON array or single URL string)"),
+        url: Optional[str] = Form(
+            None, description="Single URL string, optionally JSON encoded. Submit multiple URLs in separate requests."
+        ),
         metadata: Optional[str] = Form(None, description="JSON metadata object for additional content properties"),
         file: Optional[UploadFile] = File(None, description="File to upload for processing"),
         text_content: Optional[str] = Form(None, description="Raw text content to process"),
@@ -171,6 +174,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 # If it's not valid JSON, treat as a single URL string
                 parsed_urls = url
 
+            if not isinstance(parsed_urls, str) or not parsed_urls.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="URL must be a single non-empty string; submit each URL separately.",
+                )
+
         # # Parse metadata with proper error handling
         parsed_metadata = None
         if metadata:
@@ -194,6 +203,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             )
         else:
             file_data = None
+
+        if not file and not text_content and not parsed_urls:
+            raise HTTPException(status_code=400, detail="Provide a file, text_content, or URL to upload.")
 
         if not name:
             if file and file.filename:
@@ -1744,7 +1756,12 @@ async def process_content(
             else:
                 log_debug(f"Could not resolve reader with id: {reader_id}")
         if chunker and content.reader:
-            # Set the chunker name on the reader - let the reader handle it internally
+            # The reader belongs to the knowledge base - either a custom reader from
+            # `Knowledge(readers=...)` or a default one it has already resolved - so
+            # writing this upload's chunker onto it would leak into every later upload
+            # that uses the same reader. Give this run its own shallow copy; the
+            # chunking strategy is replaced on the copy, never on the shared reader.
+            content.reader = copy.copy(content.reader)
             content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
             log_debug(f"Set chunking strategy: {chunker}")
 

@@ -68,15 +68,25 @@ async def _drain(task: asyncio.Task[Any]) -> Optional[BaseException]:
     return None if task.cancelled() else task.exception()
 
 
-async def _thread(function: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+async def _thread(
+    function: Callable[..., _T], *args: Any, release: Optional[Callable[[_T], object]] = None, **kwargs: Any
+) -> _T:
     # Filesystem work cannot be stopped by cancelling its awaiter. Drain it so the
     # caller never races cleanup/retry against a still-writing background thread.
+    # ``release`` frees a result that finished under the cancellation, which the caller never receives.
     task = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError as cancelled:
         failure = await _drain(task)
         if failure is None:
+            if release is not None and not task.cancelled():
+                try:
+                    release(task.result())
+                except Exception as error:
+                    # The cancellation stays the outcome; a cleanup that failed under it is
+                    # chained on as the diagnostic, never raised in its place.
+                    raise cancelled from error
             raise
         # Cancellation stays the outcome, but the write that died under it is still the
         # useful diagnostic, so chain it on rather than discarding it.
@@ -89,6 +99,14 @@ class CheckpointObjectNotFound(SandboxError):
     Retention, storage loss or an external deletion removes objects that references
     still point at. It is a condition of the storage rather than of the request, so a
     service answers it as storage being unavailable, not as a missing resource.
+    """
+
+
+class CheckpointContentError(SandboxError):
+    """The captured files cannot be checkpointed as they stand.
+
+    The cause is in the files themselves, such as a special file, a link that escapes
+    its root or a tree over the limits, so capturing them again fails the same way.
     """
 
 
@@ -126,25 +144,29 @@ def _name(name: str) -> PurePosixPath:
         or path.is_absolute()
         or any(p in ("", ".", "..") for p in name.split("/"))
     ):
-        raise SandboxError("Unsafe checkpoint path")
+        raise CheckpointContentError("Unsafe checkpoint path")
     if path.parts[0] not in _ROOTS and name != _MANIFEST:
-        raise SandboxError("Checkpoint path is outside declared roots")
+        raise CheckpointContentError("Checkpoint path is outside declared roots")
     return path
 
 
 def _link(name: str, target: str) -> None:
-    if not target or target.startswith("/") or "\\" in target or "\x00" in target:
-        raise SandboxError(f"Unsafe checkpoint symlink {name!r} -> {target!r}; exclude it before capture")
+    if not target or "\\" in target or "\x00" in target:
+        raise CheckpointContentError(f"Unsafe checkpoint symlink {name!r} -> {target!r}; exclude it before capture")
+    # An absolute target names the computer's own filesystem, so it is kept verbatim and
+    # only ever materialized inside a computer.
+    if target.startswith("/"):
+        return
     resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), target))
     if PurePosixPath(resolved).parts[0] != PurePosixPath(name).parts[0]:
-        raise SandboxError(
+        raise CheckpointContentError(
             f"Checkpoint symlink {name!r} -> {target!r} escapes its durable root; exclude it before capture"
         )
 
 
 def _validate_link_graph(members: Mapping[str, tarfile.TarInfo]) -> None:
     for name, info in members.items():
-        if not info.issym():
+        if not info.issym() or info.linkname.startswith("/"):
             continue
         root = name.split("/", 1)[0]
         pending = name.split("/")[:-1] + info.linkname.split("/")
@@ -156,17 +178,20 @@ def _validate_link_graph(members: Mapping[str, tarfile.TarInfo]) -> None:
                 continue
             if part == "..":
                 if len(resolved) <= 1:
-                    raise SandboxError("Checkpoint symlink chain escapes its durable root")
+                    raise CheckpointContentError("Checkpoint symlink chain escapes its durable root")
                 resolved.pop()
                 continue
             resolved.append(part)
             if resolved[0] != root:
-                raise SandboxError("Checkpoint symlink chain escapes its durable root")
+                raise CheckpointContentError("Checkpoint symlink chain escapes its durable root")
             target = members.get("/".join(resolved))
             if target is not None and target.issym():
+                if target.linkname.startswith("/"):
+                    # The rest of the chain is in the computer's own filesystem.
+                    break
                 hops += 1
                 if hops > 40:
-                    raise SandboxError("Checkpoint contains a symlink cycle or excessive indirection")
+                    raise CheckpointContentError("Checkpoint contains a symlink cycle or excessive indirection")
                 resolved.pop()
                 pending = target.linkname.split("/") + pending
 
@@ -181,7 +206,7 @@ def _resolved(path: Path) -> Path:
         os.stat(path)
     except OSError as error:
         if error.errno == errno.ELOOP:
-            raise SandboxError("Checkpoint contains a symlink cycle or an unfollowable chain") from error
+            raise CheckpointContentError("Checkpoint contains a symlink cycle or an unfollowable chain") from error
     return path.resolve()
 
 
@@ -322,6 +347,10 @@ class CheckpointArchive:
     exclusions are relative to either root, for example ``native/auth.json``.
     User workspace files, including ignored/untracked files, are otherwise kept.
     Restore rejects special files, hardlinks, escaping symlinks and duplicate paths.
+
+    A symlink to an absolute path, such as a virtualenv's interpreter link, is kept
+    verbatim: it names the computer's filesystem, not the one of whoever restores it, so
+    only a restore inside the computer recreates it.
     """
 
     def __init__(self, limits: CheckpointLimits = CheckpointLimits(), *, compress: bool = True) -> None:
@@ -364,6 +393,7 @@ class CheckpointArchive:
         # Only possible while the excluded path exists: once its original is unlinked, a
         # surviving link is indistinguishable from a file that was never excluded.
         excluded_inodes: Dict[Tuple[int, int], str] = {}
+        links: Dict[str, tarfile.TarInfo] = {}
 
         def collect(path: Path, name: str) -> None:
             entry = path.lstat()
@@ -403,7 +433,7 @@ class CheckpointArchive:
                     _name(name)
                     count += 1
                     if count > self.limits.max_entries:
-                        raise SandboxError("Checkpoint has too many entries")
+                        raise CheckpointContentError("Checkpoint has too many entries")
                     entry = path.lstat()
                     info = tarfile.TarInfo(name)
                     info.mode = entry.st_mode & 0o777
@@ -415,7 +445,7 @@ class CheckpointArchive:
                     elif stat.S_ISLNK(entry.st_mode):
                         info.type, info.linkname = tarfile.SYMTYPE, os.readlink(path)
                     else:
-                        raise SandboxError(
+                        raise CheckpointContentError(
                             f"Checkpoint contains an unsupported file type at {name!r}; exclude it before capture"
                         )
                     if info.isdir():
@@ -424,17 +454,19 @@ class CheckpointArchive:
                             add(child, name + "/" + child.name)
                     elif info.issym():
                         _link(name, info.linkname)
-                        root = root_paths[PurePosixPath(name).parts[0]]
-                        if not _resolved(path).is_relative_to(root):
-                            raise SandboxError("Checkpoint symlink chain escapes its durable root")
+                        # Checked against the captured graph once every link is known, never
+                        # by resolving here: an absolute target would be read on this host.
+                        links[name] = info
                         archive.addfile(info)
                     elif info.isfile():
                         alias = excluded_inodes.get((entry.st_dev, entry.st_ino))
                         if alias is not None:
-                            raise SandboxError(f"Checkpoint entry {name!r} is a hardlink to excluded {alias!r}")
+                            raise CheckpointContentError(
+                                f"Checkpoint entry {name!r} is a hardlink to excluded {alias!r}"
+                            )
                         size += info.size
                         if size > self.limits.max_bytes:
-                            raise SandboxError("Checkpoint data exceeds its limit")
+                            raise CheckpointContentError("Checkpoint data exceeds its limit")
                         with _regular(path) as source:
                             before = os.fstat(source.fileno())
                             if (before.st_ino, before.st_dev, before.st_size, before.st_mtime_ns) != (
@@ -455,19 +487,20 @@ class CheckpointArchive:
                     else:
                         raise SandboxError("Checkpoint contains an unsupported file type")
                     if sink.tell() > self.limits.max_bytes:
-                        raise SandboxError("Checkpoint archive exceeds its limit")
+                        raise CheckpointContentError("Checkpoint archive exceeds its limit")
 
                 for name in sorted(_ROOTS):
                     add(root_paths[name], name)
+                _validate_link_graph(links)
                 # Closed here, not by the block, because only an open encoder reports the
                 # expanded length and the end-of-archive marker has to be in it first.
                 archive.close()
                 if sink.tell() > self.limits.max_bytes:
-                    raise SandboxError("Checkpoint archive exceeds its limit")
+                    raise CheckpointContentError("Checkpoint archive exceeds its limit")
             # Restore bounds the stored bytes too, and compression is not guaranteed to
             # shrink what it wraps.
             if destination.stat().st_size > self.limits.max_bytes:
-                raise SandboxError("Checkpoint archive exceeds its limit")
+                raise CheckpointContentError("Checkpoint archive exceeds its limit")
         except BaseException:
             destination.unlink(missing_ok=True)
             raise
@@ -485,7 +518,7 @@ class CheckpointArchive:
             if member.name in members:
                 raise SandboxError("Duplicate checkpoint path")
             if not (member.isdir() or member.isfile() or member.issym()) or member.sparse is not None:
-                raise SandboxError(
+                raise CheckpointContentError(
                     f"Checkpoint contains an unsupported file type at {member.name!r}; exclude it before capture"
                 )
             if member.size < 0 or (not member.isfile() and member.size != 0):
@@ -495,7 +528,7 @@ class CheckpointArchive:
             total += member.size
             members[member.name] = member
             if total > self.limits.max_bytes or len(members) > self.limits.max_entries:
-                raise SandboxError("Checkpoint exceeds restore limits")
+                raise CheckpointContentError("Checkpoint exceeds restore limits")
         if any(root not in members or not members[root].isdir() for root in _ROOTS):
             raise SandboxError("Checkpoint is missing durable roots")
         for name in members:
@@ -531,8 +564,20 @@ class CheckpointArchive:
     async def avalidate(self, source: Path) -> Dict[str, Any]:
         return await _thread(self.validate, source)
 
-    def restore(self, source: Path, destination: Path) -> Dict[str, Any]:
+    def restore(self, source: Path, destination: Path, *, absolute_links: bool = False) -> Dict[str, Any]:
         """Restore into a new directory; failure never exposes a partial destination.
+
+        ``destination`` then holds the archive's two roots: ``workspace/``, the agent's
+        working directory as the turn left it, with the pinned checkout under
+        ``workspace/repository`` when the agent has a repository configured, and
+        ``native/``, the harness home with its conversation transcript and local history
+        database, less the credential files excluded at capture. The manifest is not
+        written out; its state is the return value.
+
+        Symlinks to absolute paths are left out unless ``absolute_links`` is set, so
+        nothing restored on a host can lead to that host's own files. Set it only inside
+        the computer the restored roots belong to, where those paths are the ones the
+        captured links named.
 
         The parent directory is trusted coordinator-owned storage. It must not be
         writable by sandbox processes or concurrent callers targeting this path.
@@ -558,7 +603,8 @@ class CheckpointArchive:
                         if member.isdir():
                             path.mkdir(mode=0o700)
                         elif member.issym():
-                            path.symlink_to(member.linkname)
+                            if not member.linkname.startswith("/"):
+                                path.symlink_to(member.linkname)
                         else:
                             extracted = archive.extractfile(member)
                             assert extracted is not None
@@ -566,16 +612,20 @@ class CheckpointArchive:
                                 shutil.copyfileobj(extracted, output, _CHUNK)
                             path.chmod(member.mode & 0o777)
                     for name, member in members.items():
-                        if member.issym():
+                        if member.issym() and not member.linkname.startswith("/"):
                             root = temporary / PurePosixPath(name).parts[0]
                             if not _resolved(temporary / name).is_relative_to(root):
-                                raise SandboxError("Checkpoint symlink chain escapes its durable root")
+                                raise CheckpointContentError("Checkpoint symlink chain escapes its durable root")
+                    # After the check, which would otherwise resolve them against this filesystem.
+                    for name, member in members.items():
+                        if absolute_links and member.issym() and member.linkname.startswith("/"):
+                            (temporary / name).symlink_to(member.linkname)
                     # Last pass, deepest first: materializing a child retimes its parent,
                     # and a directory stays writable until its own children exist.
                     for name, member in sorted(members.items(), reverse=True):
-                        if name == _MANIFEST:
-                            continue
                         path = temporary / name
+                        if name == _MANIFEST or not os.path.lexists(path):
+                            continue
                         times = (member.mtime, member.mtime)
                         try:
                             if member.issym():
@@ -597,8 +647,8 @@ class CheckpointArchive:
         finally:
             _discard(temporary)
 
-    async def arestore(self, source: Path, destination: Path) -> Dict[str, Any]:
-        return await _thread(self.restore, source, destination)
+    async def arestore(self, source: Path, destination: Path, *, absolute_links: bool = False) -> Dict[str, Any]:
+        return await _thread(self.restore, source, destination, absolute_links=absolute_links)
 
 
 @runtime_checkable
@@ -625,10 +675,12 @@ class CheckpointStore(Protocol):
     async def aput(self, source: Path) -> CheckpointRef: ...
 
     def verify(self, reference: CheckpointRef) -> None:
-        """Re-read the stored object and raise unless its size and digest both match.
+        """Check the stored object and raise unless its size and digest both match.
 
-        Raises ``CheckpointObjectNotFound`` when storage no longer holds it. Reading one
-        back is ``open_archive``'s job: an object need not have a path.
+        A store may answer from what it recorded at ``put`` rather than re-reading the
+        bytes; ``open_archive`` always checks the bytes it hands out. Raises
+        ``CheckpointObjectNotFound`` when storage no longer holds it. Reading one back is
+        ``open_archive``'s job: an object need not have a path.
         """
         ...
 
@@ -665,7 +717,8 @@ class FileCheckpointStore:
     A service-host local disk does not cover host loss. Production callers must
     choose storage whose replication/durability matches their recovery promise.
     Objects are unreachable until a database transaction publishes their reference.
-    Deletion/retention is intentionally separate from compute destruction.
+    Deletion/retention is intentionally separate from compute destruction. Objects are
+    stored read-only, so a path leased by ``open_archive`` cannot alter them.
     """
 
     def __init__(self, root: Path, *, max_bytes: int = 1024 * 1024 * 1024) -> None:
@@ -691,6 +744,9 @@ class FileCheckpointStore:
                     output.write(chunk)
                 output.flush()
                 os.fsync(output.fileno())
+                # Every name for this object, including the ones open_archive leases out, shares
+                # its mode, so the bytes a reference describes cannot be edited through any of them.
+                os.fchmod(output.fileno(), 0o400)
             reference = CheckpointRef(digest.hexdigest(), size)
             target = self.root / reference.sha256
             try:

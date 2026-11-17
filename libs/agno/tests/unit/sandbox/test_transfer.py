@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agno.sandbox import SandboxError, SandboxHandle
-from agno.sandbox.checkpoint import CheckpointArchive, FileCheckpointStore
+from agno.sandbox.checkpoint import CheckpointArchive, CheckpointContentError, FileCheckpointStore
 from agno.sandbox.docker import DockerCheckpointTransfer, DockerSandbox
 from agno.sandbox.transfer import DEFAULT_NATIVE_EXCLUSIONS, CheckpointTransfer
 
@@ -95,7 +95,7 @@ def test_combine_rejects_hardlinks_between_excluded_and_retained_paths(tmp_path,
         )
 
 
-def test_combine_names_absolute_virtualenv_link_and_accepts_its_exclusion(tmp_path):
+def test_combine_keeps_absolute_virtualenv_links_for_the_next_computer(tmp_path):
     exported(tmp_path / "native.tar", "native", [])
     exported(
         tmp_path / "workspace.tar",
@@ -103,7 +103,8 @@ def test_combine_names_absolute_virtualenv_link_and_accepts_its_exclusion(tmp_pa
         [
             ("workspace/.venv", tarfile.DIRTYPE, ""),
             ("workspace/.venv/bin", tarfile.DIRTYPE, ""),
-            ("workspace/.venv/bin/python", tarfile.SYMTYPE, "/usr/local/bin/python3"),
+            ("workspace/.venv/bin/python3", tarfile.SYMTYPE, "/usr/local/bin/python3"),
+            ("workspace/.venv/bin/python", tarfile.SYMTYPE, "python3"),
             ("workspace/app.py", tarfile.REGTYPE, b"print(1)"),
         ],
     )
@@ -111,12 +112,27 @@ def test_combine_names_absolute_virtualenv_link_and_accepts_its_exclusion(tmp_pa
         DockerSandbox("python:test", namespace="test"), FileCheckpointStore(tmp_path / "objects")
     )
     exports = {"workspace": tmp_path / "workspace.tar", "native": tmp_path / "native.tar"}
-    with pytest.raises(SandboxError, match="workspace/.venv/bin/python"):
-        transfer._combine(exports, tmp_path / "rejected.tar", {}, DEFAULT_NATIVE_EXCLUSIONS)
-    transfer._combine(exports, tmp_path / "result.tar", {}, (*DEFAULT_NATIVE_EXCLUSIONS, "workspace/.venv"))
-    with tarfile.open(tmp_path / "result.tar") as archive:
-        assert "workspace/app.py" in archive.getnames()
-        assert not any(name.startswith("workspace/.venv") for name in archive.getnames())
+    transfer._combine(exports, tmp_path / "result.tar", {}, DEFAULT_NATIVE_EXCLUSIONS)
+    (tmp_path / "import").mkdir()
+    transfer._split(tmp_path / "result.tar", tmp_path / "import")
+    with tarfile.open(tmp_path / "import/workspace.tar") as archive:
+        links = {member.name: member.linkname for member in archive if member.issym()}
+    assert links == {".venv/bin/python3": "/usr/local/bin/python3", ".venv/bin/python": "python3"}
+
+
+def test_combine_rejects_special_files_as_content_it_cannot_checkpoint(tmp_path):
+    exported(tmp_path / "native.tar", "native", [])
+    exported(tmp_path / "workspace.tar", "workspace", [("workspace/pipe", tarfile.FIFOTYPE, "")])
+    transfer = DockerCheckpointTransfer(
+        DockerSandbox("python:test", namespace="test"), FileCheckpointStore(tmp_path / "objects")
+    )
+    with pytest.raises(CheckpointContentError, match="workspace/pipe"):
+        transfer._combine(
+            {"workspace": tmp_path / "workspace.tar", "native": tmp_path / "native.tar"},
+            tmp_path / "result.tar",
+            {},
+            DEFAULT_NATIVE_EXCLUSIONS,
+        )
 
 
 @pytest.mark.parametrize(
