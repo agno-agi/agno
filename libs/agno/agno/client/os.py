@@ -18,6 +18,10 @@ from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
+    EvalSuiteCaseInput,
+    EvalSuiteInput,
+    EvalSuiteRunInput,
+    EvalSuiteSchema,
     UpdateEvalRunRequest,
 )
 from agno.os.routers.knowledge.schemas import (
@@ -2490,6 +2494,122 @@ class AgentOSClient:
         )
         if data is None:
             return None
+        return EvalSchema.model_validate(data)
+
+    async def list_eval_suites(self, headers: Optional[Dict[str, str]] = None) -> List[EvalSuiteSchema]:
+        """List the eval suites registered on the OS that the caller may read.
+
+        Args:
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            List[EvalSuiteSchema]: The registered eval suites with their cases
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        data = await self._aget("/eval-suites", headers=headers)
+        return [EvalSuiteSchema.model_validate(item) for item in data]
+
+    async def get_eval_suite(self, suite_id: str, headers: Optional[Dict[str, str]] = None) -> EvalSuiteSchema:
+        """Get a registered eval suite by ID.
+
+        Args:
+            suite_id: ID of the eval suite to retrieve
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            EvalSuiteSchema: The eval suite and its cases
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        data = await self._aget(f"/eval-suites/{suite_id}", headers=headers)
+        return EvalSuiteSchema.model_validate(data)
+
+    async def run_eval_suite(
+        self,
+        suite_id: str,
+        tag: Optional[str] = None,
+        case_name: Optional[str] = None,
+        default_timeout: int = 120,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> EvalSchema:
+        """Run a registered eval suite, or the cases selected by tag or name.
+
+        Args:
+            suite_id: ID of the eval suite to run
+            tag: Run only the cases with this tag
+            case_name: Run only the case with this name
+            default_timeout: Default per-case timeout in seconds
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            EvalSchema: The suite run, with per-case results in eval_data
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        # Use schema for type-safe payload construction
+        payload = EvalSuiteRunInput(tag=tag, case_name=case_name, default_timeout=default_timeout)
+        data = await self._apost(
+            f"/eval-suites/{suite_id}/runs",
+            payload.model_dump(exclude_none=True, mode="json"),
+            params=params,
+            headers=headers,
+        )
+        return EvalSchema.model_validate(data)
+
+    async def run_eval_suite_from_body(
+        self,
+        name: str,
+        cases: List[EvalSuiteCaseInput],
+        tag: Optional[str] = None,
+        case_name: Optional[str] = None,
+        default_timeout: int = 120,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> EvalSchema:
+        """Run eval cases sent in the request against a registered agent or team.
+
+        Args:
+            name: Name for the suite run
+            cases: The cases to run; all must target the same agent or team
+            tag: Run only the cases with this tag
+            case_name: Run only the case with this name
+            default_timeout: Default per-case timeout in seconds
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            EvalSchema: The suite run, with per-case results in eval_data
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        # Use schema for type-safe payload construction
+        payload = EvalSuiteInput(name=name, cases=cases, tag=tag, case_name=case_name, default_timeout=default_timeout)
+        data = await self._apost(
+            "/eval-suites", payload.model_dump(exclude_none=True, mode="json"), params=params, headers=headers
+        )
         return EvalSchema.model_validate(data)
 
     # Knowledge Operations

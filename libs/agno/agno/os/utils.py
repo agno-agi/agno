@@ -12,6 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.eval.suite import EvalSuite
 from agno.exceptions import AgnoError, ComponentRehydrationError, RunNotContinuableError
 from agno.factory import (
     FactoryContextRequired,
@@ -1764,6 +1765,14 @@ def _serve_stored_agent(agent: Any, registry: Optional[Registry]) -> Any:
         require_host_execution_allowed(agent, registry)
         agent.store_events = True
     return agent
+
+
+def get_eval_suite_by_id(suite_id: str, eval_suites: Optional[List[EvalSuite]]) -> Optional[EvalSuite]:
+    """The registered eval suite with this id, or None."""
+    for eval_suite in eval_suites or []:
+        if eval_suite.id == suite_id:
+            return eval_suite
+    return None
 
 
 def get_agent_by_id(

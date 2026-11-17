@@ -31,3 +31,13 @@
 **Result:** 4/4 cases passed with exit code 0 (1/1 with `--name books_the_chosen_slot`). The first case reported `tools_called: ["get_open_slots"]` in a generated `eval-offers_open_slots-<hex>` session; the second reported `session_id: "booking-1"` with `tools_called: ["create_appointment"]`; the third offered no slots; the fourth named the Golden Gate Bridge and offered both slots with `tools_called: ["get_open_slots"]`.
 
 ---
+
+### suite_agent_os.py
+
+**Status:** PASS
+
+**Description:** Serves an AgentOS with one `EvalSuite` over HTTP. Exercised `GET /eval-suites`, `GET /eval-suites/{id}` (404 for an unknown id), `POST /eval-suites/{id}/runs` with `{"tag": "smoke"}`, `{}` and a tag that matches nothing (400), then `GET /eval-runs?agent_id=math-tutor&eval_types=suite`.
+
+**Result:** The list shows the suite with both cases. The tag run reported `summary: {"total": 1, "passed": 1}` with `tools_called: ["factorial"]`; the full run `{"total": 2, "passed": 2}`. Each run is one eval run of type `suite` stamped `agent_id: "math-tutor"`, with no per-case rows beside it.
+
+---

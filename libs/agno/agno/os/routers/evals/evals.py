@@ -1,20 +1,35 @@
 import logging
 from copy import deepcopy
-from typing import List, Optional, Union, cast
+from dataclasses import replace
+from typing import Any, Dict, List, Optional, Union, cast
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from starlette._utils import get_route_path
 
 from agno.agent import Agent, RemoteAgent
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID
+from agno.eval.suite import Case, EvalSuite, JudgeMode, arun_cases
+from agno.eval.utils import async_log_eval
 from agno.exceptions import AgnoError
+from agno.models.base import Model
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
+from agno.os.middleware.user_scope import (
+    apply_scope_to_kwargs,
+    assert_session_writable,
+    caller_is_admin,
+    get_scoped_user_id,
+)
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
+    EvalSuiteInput,
+    EvalSuiteRunInput,
+    EvalSuiteSchema,
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import (
@@ -34,7 +49,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_team_by_id
+from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_eval_suite_by_id, get_team_by_id
 from agno.remote.base import RemoteDb
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
@@ -60,7 +75,7 @@ async def _require_eval_target_run_access(request: Request, *, resource_type: st
     await arecord_decision(
         request,
         allowed=False,
-        target=f"{request.method} /eval-runs {resource_type}/{resource_id}",
+        target=f"{request.method} {get_route_path(request.scope)} {resource_type}/{resource_id}",
         principal=getattr(request.state, "user_id", None),
         required_scopes=[f"{resource_type}:{resource_id}:run"],
         scopes=list(getattr(request.state, "scopes", None) or []),
@@ -71,10 +86,30 @@ async def _require_eval_target_run_access(request: Request, *, resource_type: st
     raise HTTPException(status_code=403, detail=f"Access denied to run this {singular}")
 
 
+async def _readable_eval_suites(request: Request, eval_suites: Optional[List[EvalSuite]]) -> List[EvalSuite]:
+    """The registered suites whose agent or team the caller may read, as GET /agents and /teams filter.
+
+    A suite lists its target id and case names, so a caller who cannot see the agent or team must
+    not see its suite either. Every suite runs one target, so this is one check per suite.
+    """
+    if not getattr(request.state, "authorization_enabled", False):
+        return list(eval_suites or [])
+    from agno.os.auth import afilter_resources_by_access
+
+    agent_targets = [s.cases[0].agent for s in eval_suites or [] if s.cases[0].agent is not None]
+    team_targets = [s.cases[0].team for s in eval_suites or [] if s.cases[0].team is not None]
+    readable = [
+        *await afilter_resources_by_access(request, agent_targets, "agents"),
+        *await afilter_resources_by_access(request, team_targets, "teams"),
+    ]
+    return [s for s in eval_suites or [] if any((s.cases[0].agent or s.cases[0].team) is target for target in readable)]
+
+
 def get_eval_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    eval_suites: Optional[List[EvalSuite]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     """Create eval router with comprehensive OpenAPI documentation for agent/team evaluation endpoints."""
@@ -89,7 +124,7 @@ def get_eval_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams)
+    return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams, eval_suites=eval_suites)
 
 
 def attach_routes(
@@ -97,6 +132,7 @@ def attach_routes(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    eval_suites: Optional[List[EvalSuite]] = None,
 ) -> APIRouter:
     @router.get(
         "/eval-runs",
@@ -439,6 +475,8 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
     ) -> Optional[EvalSchema]:
         db = await get_db(dbs, db_id, table)
+        if eval_run_input.eval_type == EvalType.SUITE:
+            raise HTTPException(status_code=400, detail="Run a suite with POST /eval-suites/{suite_id}/runs")
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -589,14 +627,395 @@ def attach_routes(
 
         return eval_run
 
+    @router.get(
+        "/eval-suites",
+        response_model=List[EvalSuiteSchema],
+        status_code=200,
+        operation_id="get_eval_suites",
+        summary="List Evaluation Suites",
+        description="List the eval suites registered on this OS, with the cases each one runs.",
+        responses={
+            200: {
+                "description": "Evaluation suites retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "sales-setter-quality",
+                                "name": "Sales setter quality",
+                                "description": None,
+                                "cases": [
+                                    {
+                                        "name": "offers_open_slots",
+                                        "agent_id": "sales-setter",
+                                        "team_id": None,
+                                        "tags": ["smoke"],
+                                        "timeout_seconds": 120,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                },
+            }
+        },
+    )
+    async def get_eval_suites(request: Request) -> List[EvalSuiteSchema]:
+        return [
+            EvalSuiteSchema.from_eval_suite(eval_suite)
+            for eval_suite in await _readable_eval_suites(request, eval_suites)
+        ]
+
+    @router.get(
+        "/eval-suites/{suite_id}",
+        response_model=EvalSuiteSchema,
+        status_code=200,
+        operation_id="get_eval_suite",
+        summary="Get Evaluation Suite",
+        description="Retrieve an eval suite and the cases it runs.",
+        responses={
+            200: {
+                "description": "Evaluation suite retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "sales-setter-quality",
+                            "name": "Sales setter quality",
+                            "description": None,
+                            "cases": [
+                                {
+                                    "name": "offers_open_slots",
+                                    "agent_id": "sales-setter",
+                                    "team_id": None,
+                                    "tags": ["smoke"],
+                                    "timeout_seconds": 120,
+                                }
+                            ],
+                        }
+                    }
+                },
+            },
+            404: {"description": "Evaluation suite not found", "model": NotFoundResponse},
+        },
+    )
+    async def get_eval_suite(request: Request, suite_id: str) -> EvalSuiteSchema:
+        eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
+        if eval_suite is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+        # Same 404 as an unknown id, so the route does not reveal a suite the caller cannot read.
+        if eval_suite not in await _readable_eval_suites(request, eval_suites):
+            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+        return EvalSuiteSchema.from_eval_suite(eval_suite)
+
+    async def _run_eval_suite(
+        request: Request,
+        db: Union[BaseDb, AsyncBaseDb],
+        eval_suite: EvalSuite,
+        *,
+        tag: Optional[str],
+        name: Optional[str],
+        timeout: int,
+        eval_input: Dict[str, Any],
+    ) -> EvalSchema:
+        """Run the selected cases of a suite and store the result as one eval run of type suite.
+
+        Shared by the registered-suite and the body-defined routes, so both gate, run and persist
+        the same way; eval_input is what a client posts again to rerun.
+        """
+        # Resolved before the run: get_scoped_user_id raises 403 and the suite below makes real model calls.
+        # The scheduler sentinel identifies the caller, not the owner, so a scheduled run stays unowned.
+        state_user_id = getattr(request.state, "user_id", None)
+        creator_user_id = get_scoped_user_id(request) or (
+            None if state_user_id == INTERNAL_SCHEDULER_USER_ID else state_user_id
+        )
+        selected = eval_suite.select(tag=tag, name=name)
+        if not selected:
+            raise HTTPException(status_code=400, detail="No cases match the given tag or name")
+        # The caller's identity wins over a user_id set on the case, as on the run routes, so a case runs
+        # and writes its session as the caller. A case's own user_id applies only when there is no caller.
+        if creator_user_id is not None:
+            selected = tuple(replace(case, user_id=creator_user_id) for case in selected)
+        # Values the middleware put on request.state (from token claims) win over the case's own, as on
+        # the run routes, so a posted or registered case cannot override what the caller's token sets.
+        state_overrides = {
+            field: getattr(request.state, field)
+            for field in ("session_id", "session_state", "dependencies", "metadata")
+            if getattr(request.state, field, None) is not None
+        }
+        if state_overrides:
+            selected = tuple(replace(case, **state_overrides) for case in selected)
+        # The suite RUNS every selected agent or team with real model calls, so each distinct
+        # target is gated like the run endpoints, the same way a single eval is.
+        # AgentOS registers every target object at startup, so these are the real ids.
+        agent_ids = {case.agent.id for case in selected if case.agent is not None}
+        team_ids = {case.team.id for case in selected if case.team is not None}
+        for resource_type, resource_ids in (("agents", agent_ids), ("teams", team_ids)):
+            for resource_id in sorted(resource_ids):  # type: ignore[type-var]
+                await _require_eval_target_run_access(request, resource_type=resource_type, resource_id=resource_id)  # type: ignore[arg-type]
+        # A case pinned to a session must not write into another user's session, as on the run routes.
+        for case in selected:
+            if case.session_id:
+                target = case.agent if case.agent is not None else case.team
+                await assert_session_writable(
+                    getattr(target, "db", None) or db,
+                    case.session_id,
+                    case.user_id or getattr(target, "user_id", None),
+                    session_type=SessionType.AGENT if case.agent is not None else SessionType.TEAM,
+                    is_admin=caller_is_admin(request),
+                )
+
+        # No db= here: the per-case checks would each persist their own eval run next to the
+        # suite's, and the suite record below already carries every case's result.
+        suite_result = await arun_cases(selected, default_timeout=timeout)
+
+        # A suite runs one agent or one team, so the run is stamped with it like every other eval
+        # and GET /eval-runs?agent_id= or ?team_id= finds its history.
+        agent_id = next(iter(agent_ids), None)
+        team_id = next(iter(team_ids), None)
+        eval_run = EvalSchema.from_suite_result(
+            eval_suite=eval_suite,
+            result=suite_result,
+            run_id=str(uuid4()),
+            eval_input=eval_input,
+            agent_id=agent_id,
+            team_id=team_id,
+        )
+        # Persisted like a single eval run: a failed write is logged and the report is still returned,
+        # so the model calls behind it are not lost.
+        await async_log_eval(
+            db=db,
+            run_id=eval_run.id,
+            run_data=eval_run.eval_data,
+            eval_type=EvalType.SUITE,
+            eval_input=eval_input,
+            agent_id=agent_id,
+            team_id=team_id,
+            name=eval_run.name,
+        )
+        # Attribute the created run to the caller. Best-effort, as for a single eval run.
+        if creator_user_id is not None:
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                else:
+                    db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                eval_run.user_id = creator_user_id
+            except Exception as e:
+                log_warning(f"Could not set owner on eval run {eval_run.id}: {e}")
+        return eval_run
+
+    @router.post(
+        "/eval-suites/{suite_id}/runs",
+        response_model=EvalSchema,
+        status_code=200,
+        operation_id="run_eval_suite",
+        summary="Execute Evaluation Suite",
+        description=(
+            "Run an eval suite, or the subset selected by tag or case name, and store the result as an "
+            "eval run of type 'suite'. The per-case results and the pass rate are in eval_data."
+        ),
+        responses={
+            200: {
+                "description": "Evaluation suite executed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "f2b2d72f-e9e2-4f0e-8810-0a7e1ff58614",
+                            "agent_id": "sales-setter",
+                            "team_id": None,
+                            "name": "Sales setter quality",
+                            "eval_type": "suite",
+                            "eval_data": {
+                                "summary": {"total": 2, "passed": 2, "failed": 0, "status": "PASS"},
+                                "cases": [{"name": "offers_open_slots", "passed": True}],
+                            },
+                            "eval_input": {
+                                "suite_id": "sales-setter-quality",
+                                "tag": None,
+                                "case_name": None,
+                                "default_timeout": 120,
+                            },
+                            "created_at": "2025-08-27T15:41:59Z",
+                            "updated_at": "2025-08-27T15:41:59Z",
+                        }
+                    }
+                },
+            },
+            400: {"description": "No case matched the selection", "model": BadRequestResponse},
+            404: {"description": "Evaluation suite not found", "model": NotFoundResponse},
+        },
+    )
+    async def run_eval_suite(
+        request: Request,
+        suite_id: str,
+        suite_run_input: Optional[EvalSuiteRunInput] = Body(None, description="Optional tag or case selection"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
+        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
+    ) -> EvalSchema:
+        db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote databases")
+        eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
+        if eval_suite is None:
+            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+        suite_run_input = suite_run_input or EvalSuiteRunInput()
+        return await _run_eval_suite(
+            request,
+            db,
+            eval_suite,
+            tag=suite_run_input.tag,
+            name=suite_run_input.case_name,
+            timeout=suite_run_input.default_timeout,
+            eval_input={"suite_id": suite_id, **suite_run_input.model_dump()},
+        )
+
+    @router.post(
+        "/eval-suites",
+        response_model=EvalSchema,
+        status_code=200,
+        operation_id="run_eval_suite_from_body",
+        summary="Execute Evaluation Suite From Body",
+        description=(
+            "Run the cases posted in the body against registered agents or teams and store the result as an "
+            "eval run of type 'suite'. The body is saved as eval_input, so posting it again reruns the suite."
+        ),
+        responses={
+            200: {
+                "description": "Evaluation suite executed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "f2b2d72f-e9e2-4f0e-8810-0a7e1ff58614",
+                            "agent_id": "sales-setter",
+                            "team_id": None,
+                            "name": "Sales setter smoke",
+                            "eval_type": "suite",
+                            "eval_data": {
+                                "summary": {"total": 1, "passed": 1, "failed": 0, "status": "PASS"},
+                                "cases": [{"name": "offers_open_slots", "passed": True}],
+                            },
+                            "eval_input": {
+                                "name": "Sales setter smoke",
+                                "cases": [
+                                    {
+                                        "name": "offers_open_slots",
+                                        "agent_id": "sales-setter",
+                                        "input": "Can I book a call tomorrow?",
+                                        "criteria": "Offers at least one open slot",
+                                    }
+                                ],
+                                "tag": None,
+                                "case_name": None,
+                                "default_timeout": 120,
+                            },
+                            "created_at": "2025-08-27T15:41:59Z",
+                            "updated_at": "2025-08-27T15:41:59Z",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Cases target more than one agent or team, or none matched",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "Agent or team not found", "model": NotFoundResponse},
+        },
+    )
+    async def run_eval_suite_from_body(
+        request: Request,
+        eval_suite_input: EvalSuiteInput,
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for evaluation"),
+        table: Optional[str] = Query(default=None, description="Table to use for evaluation"),
+    ) -> EvalSchema:
+        db = await get_db(dbs, db_id, table)
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote databases")
+        # One target per suite, as every eval stamps exactly one agent or team.
+        targets = {(case.agent_id, case.team_id) for case in eval_suite_input.cases}
+        if len(targets) > 1:
+            raise HTTPException(status_code=400, detail="All cases in a suite must run the same agent or team")
+        agent_id, team_id = targets.pop()
+        # Gated before the lookup, as run_eval does: a caller without run rights must not learn
+        # from a 404 whether the id exists.
+        await _require_eval_target_run_access(
+            request,
+            resource_type="agents" if agent_id else "teams",
+            resource_id=cast(str, agent_id or team_id),
+        )
+        # create_fresh, as for a single eval: one copy for this request, never the shared instance.
+        agent: Optional[Agent] = None
+        team: Optional[Team] = None
+        if agent_id:
+            resolved_agent = get_agent_by_id(agent_id=agent_id, agents=agents, create_fresh=True)
+            if resolved_agent is None:
+                raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
+            if not isinstance(resolved_agent, Agent):
+                raise HTTPException(
+                    status_code=501, detail="Evaluation suites are not supported for remote or external agents"
+                )
+            agent = resolved_agent
+        else:
+            resolved_team = get_team_by_id(team_id=cast(str, team_id), teams=teams, create_fresh=True)
+            if resolved_team is None:
+                raise HTTPException(status_code=404, detail=f"Team with id '{team_id}' not found")
+            if not isinstance(resolved_team, Team):
+                raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote teams")
+            team = resolved_team
+        # A posted case names its judge as text; it is built here, as POST /eval-runs builds its model.
+        judge_models: List[Optional[Model]] = []
+        for case_input in eval_suite_input.cases:
+            judge_model = None
+            if case_input.judge_model_id and case_input.judge_model_provider:
+                model_string = f"{case_input.judge_model_provider}:{case_input.judge_model_id}"
+                try:
+                    judge_model = get_model(model_string)
+                except Exception as e:
+                    raise HTTPException(status_code=422, detail=f"Invalid judge model '{model_string}': {e}")
+            judge_models.append(judge_model)
+        cases = tuple(
+            Case(
+                name=case_input.name,
+                input=case_input.input,
+                agent=agent,
+                team=team,
+                judge_model=judge_model,
+                tags=tuple(case_input.tags),
+                timeout_seconds=case_input.timeout_seconds,
+                criteria=case_input.criteria,
+                judge_mode=JudgeMode(case_input.judge_mode),
+                judge_threshold=case_input.judge_threshold,
+                expected_tool_calls=tuple(case_input.expected_tool_calls)
+                if case_input.expected_tool_calls is not None
+                else None,
+                allow_additional_tool_calls=case_input.allow_additional_tool_calls,
+                session_id=case_input.session_id,
+                session_state=case_input.session_state,
+                dependencies=case_input.dependencies,
+                metadata=case_input.metadata,
+                knowledge_filters=case_input.knowledge_filters,
+            )
+            for case_input, judge_model in zip(eval_suite_input.cases, judge_models)
+        )
+        # The posted suite exists for this request only, so it gets a throwaway id.
+        eval_suite = EvalSuite(id=str(uuid4()), name=eval_suite_input.name, cases=cases)
+        return await _run_eval_suite(
+            request,
+            db,
+            eval_suite,
+            tag=eval_suite_input.tag,
+            name=eval_suite_input.case_name,
+            timeout=eval_suite_input.default_timeout,
+            eval_input=eval_suite_input.model_dump(),
+        )
+
     return router
 
 
 def parse_eval_types_filter(
     eval_types: Optional[str] = Query(
         default=None,
-        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability)",
-        examples=["accuracy,agent_as_judge,performance,reliability"],
+        description="Comma-separated eval types (accuracy,agent_as_judge,performance,reliability,suite)",
+        examples=["accuracy,agent_as_judge,performance,reliability,suite"],
     ),
 ) -> Optional[List[EvalType]]:
     """Parse comma-separated eval types into EvalType enums for filtering evaluation runs."""

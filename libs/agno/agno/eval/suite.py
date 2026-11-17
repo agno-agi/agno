@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Case",
     "CaseResult",
+    "EvalSuite",
     "JudgeMode",
     "SuiteResult",
     "acli",
@@ -141,6 +142,29 @@ class Case:
             raise ValueError(f"case {self.name!r}: judge_mode must be a JudgeMode, got {self.judge_mode!r}")
         if self.judge_mode == JudgeMode.NUMERIC and not 1 <= self.judge_threshold <= 10:
             raise ValueError(f"case {self.name!r}: judge_threshold must be 1-10, got {self.judge_threshold}")
+
+
+@dataclass(frozen=True)
+class EvalSuite:
+    """A named set of cases, so AgentOS can list and run the suite by id."""
+
+    id: str
+    cases: Tuple[Case, ...]
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    def select(self, *, tag: Optional[str] = None, name: Optional[str] = None) -> Tuple[Case, ...]:
+        """The cases a tag or case name selects."""
+        return tuple(case for case in self.cases if _case_matches(case, tag=tag, name=name))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The suite as listed, without running it."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "cases": [_case_summary(case, default_timeout=120) for case in self.cases],
+        }
 
 
 @dataclass
@@ -289,6 +313,17 @@ def _component_id(case: Case) -> str:
     if case.team is not None:
         return case.team.id or case.name
     return case.name
+
+
+def _case_summary(case: Case, *, default_timeout: int) -> Dict[str, Any]:
+    """The case as listed, without running it: the --list payload and the suite route share it."""
+    return {
+        "name": case.name,
+        "agent_id": _component_id(case) if case.agent is not None else None,
+        "team_id": _component_id(case) if case.team is not None else None,
+        "tags": list(case.tags),
+        "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else default_timeout,
+    }
 
 
 def _case_matches(case: Case, *, tag: Optional[str], name: Optional[str]) -> bool:
@@ -519,8 +554,9 @@ async def _arun_case(
         agent_id=_component_id(case) if case.agent is not None else None,
         team_id=_component_id(case) if case.team is not None else None,
         # Dedicated session per case so eval traffic doesn't pollute the agent or team's history,
-        # unless the case names the session to run in
-        session_id=case.session_id or f"eval-{case.name}-{uuid4().hex[:8]}",
+        # unless the case names the session to run in. The name is cut to fit a 128-char column and a
+        # "/" is replaced so the session route can fetch the id.
+        session_id=case.session_id or f"eval-{case.name[:100].replace('/', '-')}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
 
@@ -558,7 +594,7 @@ async def _arun_case(
 
 
 async def arun_cases(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     tag: Optional[str] = None,
     name: Optional[str] = None,
@@ -594,6 +630,9 @@ async def arun_cases(
     fires on a cancelled RunOutput - a server-side cancel_run, or a KeyboardInterrupt
     agno converts into one.
     """
+    # An EvalSuite is its cases plus an id; the runner only needs the cases.
+    if isinstance(cases, EvalSuite):
+        cases = cases.cases
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
     results: List[CaseResult] = []
@@ -653,7 +692,7 @@ async def arun_cases(
 
 
 def run_cases(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     tag: Optional[str] = None,
     name: Optional[str] = None,
@@ -852,7 +891,7 @@ def _write_json_output(console: "Console", path: Path, payload: Dict[str, Any]) 
 
 
 async def acli(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,
@@ -895,6 +934,8 @@ async def acli(
         return exc.code if isinstance(exc.code, int) else 2
 
     console = Console()
+    if isinstance(cases, EvalSuite):
+        cases = cases.cases
     selected = [case for case in cases if _case_matches(case, tag=args.tag, name=args.name)]
     if not selected:
         console.print(f"[red]no cases selected[/red] {escape(f'(name={args.name!r}, tag={args.tag!r})')}")
@@ -904,18 +945,7 @@ async def acli(
     if args.list_cases:
         _print_case_list(console, selected, default_timeout=args.timeout)
         if args.json_output is not None:
-            payload = {
-                "cases": [
-                    {
-                        "name": case.name,
-                        "agent_id": _component_id(case) if case.agent is not None else None,
-                        "team_id": _component_id(case) if case.team is not None else None,
-                        "tags": list(case.tags),
-                        "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else args.timeout,
-                    }
-                    for case in selected
-                ]
-            }
+            payload = {"cases": [_case_summary(case, default_timeout=args.timeout) for case in selected]}
             if not _write_json_output(console, args.json_output, payload):
                 return 1
         return 0
@@ -1030,7 +1060,7 @@ async def acli(
 
 
 def cli(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,

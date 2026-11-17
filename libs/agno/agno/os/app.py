@@ -22,6 +22,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import database_error_message
+from agno.eval.suite import EvalSuite
 from agno.exceptions import AgnoError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
@@ -403,6 +404,7 @@ class AgentOS:
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
+        eval_suites: Optional[List[EvalSuite]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: Union[bool, "Authorization"] = False,
@@ -451,6 +453,7 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
+            eval_suites: List of eval suites to include in the OS
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
             company: Enable Company Products, inheriting db unless a Company database is provided.
@@ -537,6 +540,7 @@ class AgentOS:
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
+        self.eval_suites = eval_suites
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -817,6 +821,7 @@ class AgentOS:
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
+        self._drop_eval_suites_with_unregistered_targets()
 
         if self.tracing:
             self._setup_tracing()
@@ -956,6 +961,7 @@ class AgentOS:
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
+        self._drop_eval_suites_with_unregistered_targets()
         self._auto_discover_databases()
         self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
@@ -1041,6 +1047,7 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
+                eval_suites=self.eval_suites,
             ),
             get_metrics_router(
                 dbs=self.dbs,
@@ -1269,6 +1276,47 @@ class AgentOS:
 
         if duplicate_ids:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
+
+    def _drop_eval_suites_with_unregistered_targets(self) -> None:
+        """Keep only the eval suites this OS can serve: a unique id, at least one case, and every case
+        running the same local agent or team registered on this OS.
+
+        Any other suite is dropped with a warning instead of raising: an eval suite is optional, so a
+        misconfigured one must never stop the OS.
+        """
+        agents = self._agents
+        teams = self._teams
+        registered: List[EvalSuite] = []
+        seen_ids: set[str] = set()
+        for eval_suite in self.eval_suites or []:
+            if not eval_suite.id or not eval_suite.cases:
+                log_warning(f"Eval suite '{eval_suite.id}' is not served: it needs an id and at least one case.")
+                continue
+            if eval_suite.id in seen_ids:
+                log_warning(f"Eval suite '{eval_suite.id}' is not served: another eval suite already uses this id.")
+                continue
+            unregistered = [
+                case
+                for case in eval_suite.cases
+                if (case.agent is not None and not any(case.agent is agent for agent in agents))
+                or (case.team is not None and not any(case.team is team for team in teams))
+            ]
+            if unregistered:
+                log_warning(
+                    f"Eval suite '{eval_suite.id}' is not served: case '{unregistered[0].name}' runs an agent or "
+                    "team that is not registered on this AgentOS. Pass the same object in agents= or teams=."
+                )
+                continue
+            # One target per suite, as every eval stamps exactly one agent or team.
+            if len({id(case.agent if case.agent is not None else case.team) for case in eval_suite.cases}) > 1:
+                log_warning(
+                    f"Eval suite '{eval_suite.id}' is not served: its cases run more than one agent or team. "
+                    "Split it into one suite per agent or team."
+                )
+                continue
+            seen_ids.add(eval_suite.id)
+            registered.append(eval_suite)
+        self.eval_suites = registered or None
 
     @property
     def _agents(self) -> List[Agent]:
@@ -2161,6 +2209,7 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
+                eval_suites=self.eval_suites,
             ),
             get_metrics_router(
                 dbs=self.dbs,
@@ -2328,6 +2377,8 @@ class AgentOS:
         # This allows middleware (like JWT) to access these values
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
+        # The schedule permission check resolves a suite run endpoint to the suite's agent or team
+        fastapi_app.state.eval_suites = self.eval_suites
 
         # Store internal service token for scheduler auth bypass
         if self._internal_service_token:
