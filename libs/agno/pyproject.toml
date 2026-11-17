@@ -93,7 +93,7 @@ langfuse = ["langfuse"]
 
 # Dependencies for External Agent Harnesses
 claude = ["claude-agent-sdk>=0.2.148"]
-codex = ["openai-codex"]
+codex = ["openai-codex>=0.163.0"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -111,7 +111,10 @@ infinity = ["infinity_client"]
 litellm = ["litellm>=1.83.0"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-mistral = ["mistralai>=2.0.0"]
+mistral = [
+    "mistralai>=2.0.0",
+    "httpx2!=2.16.1",  # 2.16.1 made QueryParamTypes a string alias, so mistralai raises SyntaxError on import; fixed in 2.16.2
+]
 ollama = ["ollama"]
 openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
@@ -429,7 +432,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
-    "openai-codex==0.163.0; python_version >= '3.10'",
+    "openai-codex>=0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

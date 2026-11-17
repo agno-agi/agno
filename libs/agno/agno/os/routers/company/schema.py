@@ -283,6 +283,13 @@ class WikiReadResponse(BaseModel):
     metadata: WikiPageResponse
 
 
+class CompanyFileReadResponse(WikiReadResponse):
+    """One read of a file in tasks/ or notes/. A long file takes more than one read."""
+
+    # Where the next read starts. Null when this read reached the end of the file.
+    next_offset: Optional[int] = None
+
+
 class DecisionResponse(BaseModel):
     id: str
     decision: str
