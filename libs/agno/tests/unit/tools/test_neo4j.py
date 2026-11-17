@@ -36,7 +36,9 @@ def test_list_labels_runtime_error():
 
         tools = Neo4jTools("uri", "user", "password")
         labels = tools.list_labels()
-        assert labels == []
+        assert isinstance(labels, str)
+        assert labels.startswith("Error listing labels:")
+        assert "Query failed" in labels
 
 
 def test_list_relationship_types():
@@ -60,7 +62,9 @@ def test_list_relationship_types_error():
 
         tools = Neo4jTools("uri", "user", "password")
         rel_types = tools.list_relationship_types()
-        assert rel_types == []
+        assert isinstance(rel_types, str)
+        assert rel_types.startswith("Error listing relationship types:")
+        assert "Query failed" in rel_types
 
 
 def test_get_schema():
@@ -89,7 +93,9 @@ def test_get_schema_error():
 
         tools = Neo4jTools("uri", "user", "password")
         schema = tools.get_schema()
-        assert schema == []
+        assert isinstance(schema, str)
+        assert schema.startswith("Error getting Neo4j schema:")
+        assert "Schema query failed" in schema
 
 
 def test_run_cypher_query():
@@ -118,7 +124,9 @@ def test_run_cypher_query_error():
 
         tools = Neo4jTools("uri", "user", "password")
         result = tools.run_cypher_query("INVALID QUERY")
-        assert result == []
+        assert isinstance(result, str)
+        assert result.startswith("Error running Cypher query:")
+        assert "Cypher query failed" in result
 
 
 def test_initialization_with_env_vars():
