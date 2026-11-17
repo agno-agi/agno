@@ -160,7 +160,7 @@ def test_insert_default_sends_single_upsert(qdrant_db, mock_qdrant_client):
 def test_insert_rejects_non_positive_batch_size(qdrant_db, mock_qdrant_client, batch_size):
     """A non-positive batch_size raises before embedding or upserting"""
     documents = [Document(content="Document", name="doc")]
-    with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768) as mock_embed:
+    with patch.object(qdrant_db.embedder, "get_embedding_and_usage", return_value=([0.1] * 768, None)) as mock_embed:
         with pytest.raises(ValueError, match="batch_size"):
             qdrant_db.insert(documents=documents, content_hash="test_hash", batch_size=batch_size)
 
@@ -201,13 +201,19 @@ async def test_async_insert_default_sends_single_upsert(qdrant_db):
 
 
 @pytest.mark.asyncio
-async def test_async_insert_rejects_non_positive_batch_size(qdrant_db):
-    """Async insert raises on a non-positive batch_size before any upsert"""
+@pytest.mark.parametrize("batch_size", [0, -1])
+async def test_async_insert_rejects_non_positive_batch_size(qdrant_db, batch_size):
+    """Async insert raises on a non-positive batch_size before embedding or upserting"""
     async_client = AsyncMock()
     qdrant_db._async_client = async_client
-    with pytest.raises(ValueError, match="batch_size"):
-        await qdrant_db.async_insert(documents=[Document(content="Document")], content_hash="test_hash", batch_size=0)
+    mock_embed = AsyncMock(return_value=([0.1] * 768, None))
+    with patch.object(qdrant_db.embedder, "async_get_embedding_and_usage", mock_embed):
+        with pytest.raises(ValueError, match="batch_size"):
+            await qdrant_db.async_insert(
+                documents=[Document(content="Document")], content_hash="test_hash", batch_size=batch_size
+            )
 
+    mock_embed.assert_not_awaited()
     async_client.upsert.assert_not_called()
 
 
