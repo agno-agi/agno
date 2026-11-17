@@ -17,8 +17,8 @@
   function tileTexture(T) {
     const c = document.createElement('canvas'); c.width = c.height = 256;
     const x = c.getContext('2d');
-    x.fillStyle = '#1b2029'; x.fillRect(0, 0, 256, 256);
-    for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) { x.fillStyle = `hsl(215,12%,${28 + ((r * 7 + q * 13) % 5) * 2}%)`; x.fillRect(q * 64 + 2, r * 64 + 2, 60, 60); }
+    x.fillStyle = '#9d9684'; x.fillRect(0, 0, 256, 256);
+    for (let r = 0; r < 4; r++) for (let q = 0; q < 4; q++) { x.fillStyle = `hsl(40,14%,${66 + ((r * 7 + q * 13) % 5) * 2}%)`; x.fillRect(q * 64 + 2, r * 64 + 2, 60, 60); }
     const t = new T.CanvasTexture(c); t.wrapS = t.wrapT = T.RepeatWrapping; t.repeat.set(4, 12); t.colorSpace = T.SRGBColorSpace;
     return t;
   }
@@ -41,24 +41,34 @@
     const ground = put(new T.Mesh(new T.PlaneGeometry(9, 40), new T.MeshStandardMaterial({ map: tex, roughness: 0.9 })), 0, 0.004, -4);
     ground.rotation.x = -Math.PI / 2;
     // kaldırım şeritleri
-    for (const x of [-5.2, 5.2]) put(new T.Mesh(new T.BoxGeometry(2.4, 0.18, 40), M('#222831')), x, 0.09, -4);
+    for (const x of [-5.2, 5.2]) put(new T.Mesh(new T.BoxGeometry(2.4, 0.18, 40), M('#b9b2a2')), x, 0.09, -4);
 
-    // kayan selvi ağaçları (iki yan, 8 sıra)
+    // kayan ağaçlar (iki yan): gövde + yuvarlak taç
     const trees = [];
+    const leaf = [M('#3f7a3a'), M('#4b8a3f'), M('#356b34')];
     for (let i = 0; i < 8; i++) for (const sx of [-1, 1]) {
-      const h = 3.6 + ((i * 5 + (sx > 0 ? 2 : 0)) % 4) * 0.5;
-      const tr = put(new T.Mesh(new T.ConeGeometry(0.5, h, 10), M('#10201a')), sx * 4.8, h / 2, 12 - i * 3.6); trees.push(tr);
+      const z = 12 - i * 3.6, th = new T.Group(); th.position.set(sx * 4.9, 0, z);
+      const tr = new T.Mesh(new T.CylinderGeometry(0.12, 0.16, 1.5, 8), M('#5a4430')); tr.position.y = 0.75; th.add(tr);
+      const cr = new T.Mesh(new T.SphereGeometry(0.95 + ((i + (sx > 0 ? 1 : 0)) % 3) * 0.12, 14, 10), leaf[(i + (sx > 0 ? 1 : 0)) % 3]); cr.position.y = 2.2; th.add(cr);
+      g.add(th); trees.push(th);
     }
-    // uzakta kubbe ve minare (sabit)
-    put(new T.Mesh(new T.SphereGeometry(2.6, 24, 12, 0, 6.283, 0, Math.PI / 2), M('#171c24')), -6, 4.6, -16);
-    put(new T.Mesh(new T.CylinderGeometry(2.6, 2.6, 1.2, 24), M('#171c24')), -6, 4.0, -16);
-    put(new T.Mesh(new T.CylinderGeometry(0.28, 0.36, 12, 12), M('#171c24')), 6.5, 6, -15);
-    put(new T.Mesh(new T.ConeGeometry(0.42, 1.8, 12), M('#171c24')), 6.5, 12.9, -15);
-
-    // yıldızlı gece
-    const pts = []; for (let i = 0; i < 220; i++) pts.push((Math.random() - 0.5) * 60, 8 + Math.random() * 14, -20 - Math.random() * 6);
-    const sg = new T.BufferGeometry(); sg.setAttribute('position', new T.Float32BufferAttribute(pts, 3));
-    g.add(new T.Points(sg, new T.PointsMaterial({ color: '#cfd8ff', size: 0.07, sizeAttenuation: true })));
+    // sokağın iki yanında kayan binalar (pencereli)
+    const winTex = (() => {
+      const c = document.createElement('canvas'); c.width = 128; c.height = 256; const x = c.getContext('2d');
+      x.fillStyle = '#d9cfba'; x.fillRect(0, 0, 128, 256);
+      for (let r = 0; r < 6; r++) for (let q = 0; q < 3; q++) { x.fillStyle = (r * 3 + q) % 7 === 0 ? '#e8d28a' : '#5f7690'; x.fillRect(14 + q * 38, 14 + r * 40, 26, 28); }
+      const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace; return t;
+    })();
+    const blocks = [];
+    for (let i = 0; i < 6; i++) for (const sx of [-1, 1]) {
+      const h = 7 + ((i * 3 + (sx > 0 ? 1 : 0)) % 4) * 1.6, w = 4.4, d = 5.2;
+      const b = new T.Mesh(new T.BoxGeometry(w, h, d), new T.MeshStandardMaterial({ map: winTex, roughness: 0.9 }));
+      b.position.set(sx * 7.4, h / 2, 11 - i * 5.4); g.add(b); blocks.push(b);
+    }
+    // uzakta minare (sabit, açık renk)
+    put(new T.Mesh(new T.CylinderGeometry(0.3, 0.4, 14, 12), M('#d8d2c4')), 3.5, 7, -24);
+    put(new T.Mesh(new T.ConeGeometry(0.46, 2, 12), M('#8d9aa8')), 3.5, 15, -24);
+    put(new T.Mesh(new T.CylinderGeometry(0.55, 0.55, 0.22, 12), M('#c9c2b2')), 3.5, 10.4, -24);
 
     // omuzlarda taşınan örtülü tabut + isim levhası (npc'ler köşelerde durur: scene.json / theme.json "npcs")
     if (SHOW_COFFIN) {
@@ -70,7 +80,7 @@
       const plate = new T.Mesh(new T.PlaneGeometry(1.0, 0.31), new T.MeshBasicMaterial({ map: plaqueTexture(T) }));
       plate.position.set(0, 0.55, 1.14); plate.rotation.x = -0.35; cof.add(plate);
     }
-    k.scene.add(g); world = { tex, trees }; return true;
+    k.scene.add(g); world = { tex, trees, blocks }; return true;
   }
   let last = performance.now();
   Kit.on('frame', (t) => {
@@ -78,6 +88,7 @@
     const dt = Math.min(60, t - last) / 1000; last = t;
     world.tex.offset.y += (SPEED * dt) / (40 / 12);          // yol kayar
     for (const tr of world.trees) { tr.position.z += SPEED * dt; if (tr.position.z > 14) tr.position.z -= 28.8; }
+    for (const b of world.blocks) { b.position.z += SPEED * dt; if (b.position.z > 14) b.position.z -= 32.4; }
   });
   const tm = setInterval(() => { if (build()) clearInterval(tm); }, 300);
 })();

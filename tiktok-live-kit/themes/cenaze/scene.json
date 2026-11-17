@@ -1,7 +1,7 @@
 {
   "renderer": "3d",
   "hint": false,
-  "personColor": "#0e1014",
+  "personColor": "#101216",
   "camera": {
     "position": [
       0,
@@ -15,52 +15,32 @@
     ],
     "fov": 55
   },
-  "background": "#0b0e13",
+  "background": "#a9c4e0",
   "fog": {
-    "color": "#0b0e13",
-    "near": 18,
-    "far": 46
+    "color": "#b8cfe6",
+    "near": 22,
+    "far": 60
   },
   "lights": {
-    "ambient": 0.65,
+    "ambient": 1.0,
     "sun": {
-      "intensity": 0.7,
+      "intensity": 1.9,
       "position": [
-        4,
-        10,
-        6
+        5,
+        12,
+        8
       ],
       "shadows": false
     },
     "points": [
       {
         "at": [
-          -3.2,
-          1.4,
-          -2.6
-        ],
-        "color": "#ffb866",
-        "intensity": 14,
-        "distance": 9
-      },
-      {
-        "at": [
-          3.2,
-          1.4,
-          -2.6
-        ],
-        "color": "#ffb866",
-        "intensity": 14,
-        "distance": 9
-      },
-      {
-        "at": [
           0,
           3,
-          -5
+          -2
         ],
-        "color": "#cfd8ff",
-        "intensity": 10,
+        "color": "#fff1d0",
+        "intensity": 8,
         "distance": 12
       }
     ]
@@ -74,7 +54,7 @@
       0.2,
       8
     ],
-    "color": "#171c24"
+    "color": "#9a9382"
   },
   "aisle": {
     "x": 0,
@@ -127,9 +107,9 @@
     ]
   },
   "bloom": {
-    "strength": 0.45,
-    "radius": 0.5,
-    "threshold": 0.8
+    "strength": 0.12,
+    "radius": 0.4,
+    "threshold": 0.95
   },
   "emitters": [],
   "maxAnimated": 120,
