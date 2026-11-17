@@ -1285,10 +1285,10 @@ def _slack_super_agent(db, authorization, **slack_kwargs):
 
     secret = "manager-test-signing-key-at-least-32-characters"
     auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
-    if authorization == "default_principal":
+    if authorization == "default_role":
         auth.define_role("slack-member", ["teams:run", "agents:restricted:run"])
         auth.assign("slack-bot", "slack-member")
-        slack_kwargs["default_principal"] = "slack-bot"
+        slack_kwargs["default_role"] = "slack-bot"
     restricted = Agent(id="restricted", model=ManagerAnswerModel("restricted ran"), db=db)
     os = AgentOS(
         id="manager-test",
@@ -1317,7 +1317,7 @@ async def _send_slack_message(ctx, text="hello"):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("authorization", [True, False, "default_principal"])
+@pytest.mark.parametrize("authorization", [True, False, "default_role"])
 async def test_slack_super_agent_without_users_answers(db, authorization):
     pytest.importorskip("slack_bolt")
     os, ctx = _slack_super_agent(db, authorization)
@@ -1334,9 +1334,9 @@ async def test_slack_super_agent_without_users_answers(db, authorization):
         # A Slack user not in users= runs with no roles under authorization
         (True, "run_agent", {"agent_id": "restricted", "message": "x"}, "Permission required: agents:restricted:run"),
         (True, "get_run_activity", {}, "Permission required: agent_os:admin"),
-        # The default principal's role decides instead
-        ("default_principal", "run_agent", {"agent_id": "restricted", "message": "x"}, None),
-        ("default_principal", "get_run_activity", {}, "Permission required: agent_os:admin"),
+        # The default role decides instead
+        ("default_role", "run_agent", {"agent_id": "restricted", "message": "x"}, None),
+        ("default_role", "get_run_activity", {}, "Permission required: agent_os:admin"),
         # With authorization off nothing is checked
         (False, "run_agent", {"agent_id": "restricted", "message": "x"}, None),
         (False, "get_run_activity", {}, None),
@@ -1356,9 +1356,9 @@ async def test_slack_super_agent_without_users_checks_tool_permissions(db, autho
 
 
 @pytest.mark.asyncio
-async def test_slack_default_principal_without_the_run_grant_is_refused(db):
+async def test_slack_default_role_without_the_run_grant_is_refused(db):
     pytest.importorskip("slack_bolt")
-    os, ctx = _slack_super_agent(db, True, default_principal="nobody")
+    os, ctx = _slack_super_agent(db, True, default_role="nobody")
     os.manager.model = ManagerAnswerModel("super agent answered")
     client = await _send_slack_message(ctx)
     assert not client.chat_postMessage.called

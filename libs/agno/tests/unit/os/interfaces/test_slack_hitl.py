@@ -651,9 +651,9 @@ class TestRestoredAuthorityWithoutUsers:
         assert fake.calls[0]["event_context"].authority is authority
 
     @pytest.mark.asyncio
-    async def test_click_after_registry_clear_restores_default_principal_authority(self):
+    async def test_click_after_registry_clear_restores_default_role_authority(self):
         entity = _make_entity(_paused_run([_make_requirement()]))
-        ctx = make_ctx(agent=entity, default_principal="slack-bot")
+        ctx = make_ctx(agent=entity, default_role="slack-bot")
         authority = object()
         authorize = AsyncMock(return_value=authority)
         fake = FakeContinue()

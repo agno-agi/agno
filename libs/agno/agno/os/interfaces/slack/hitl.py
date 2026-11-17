@@ -142,7 +142,7 @@ async def _decider_context(
         return None
 
     # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
-    if ctx.users is not None:
+    if ctx.users is not None and ctx.users.get(event_context.owner) is not None:
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
             return None
     elif not await authorize_unmapped(ctx, event_context, client, user, thread_ts):

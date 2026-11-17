@@ -303,8 +303,8 @@ async def test_handle_message_super_agent_without_users_runs_under_a_jwt_middlew
 
 
 @pytest.mark.asyncio
-async def test_handle_message_without_users_runs_as_the_slack_user_with_the_default_principals_access():
-    ctx = make_ctx(default_principal="slack-bot")
+async def test_handle_message_without_users_runs_as_the_slack_user_with_the_default_roles_access():
+    ctx = make_ctx(default_role="slack-bot")
     authority = object()
     authorize = AsyncMock(return_value=authority)
     with (
@@ -315,6 +315,35 @@ async def test_handle_message_without_users_runs_as_the_slack_user_with_the_defa
     authorize.assert_awaited_once_with(ctx.app, "slack-bot", "agents", "agent-1")
     event_context = run_event.call_args.args[0]
     assert (event_context.user_id, event_context.authority) == ("U123", authority)
+
+
+@pytest.mark.parametrize("authorization", [True, False], ids=["authorization-on", "authorization-off"])
+@pytest.mark.asyncio
+async def test_handle_message_member_not_in_users_runs_with_the_default_roles_access(authorization):
+    from agno.agent import Agent
+    from agno.os import AgentOS
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    app = AgentOS(id="slack-handlers", agents=[Agent(id="agent-1")], telemetry=False).get_app()
+    if authorization:
+        app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+    ctx = make_ctx(users={"U999": "alice"}, default_role="slack-bot").bind(app)
+    authority = object()
+    authorize = AsyncMock(return_value=authority)
+    client = make_async_client_mock()
+    with (
+        patch("agno.os.interfaces.slack.security.resolve_principal_authorization", authorize),
+        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
+    ):
+        await handle_message(make_event_body(), client, ctx)
+    if authorization:
+        authorize.assert_awaited_once_with(ctx.app, "slack-bot", "agents", "agent-1")
+        event_context = run_event.call_args.args[0]
+        assert (event_context.user_id, event_context.authority) == ("U123", authority)
+    else:
+        # Without authorization the default role grants nothing, so users= still refuses the member
+        assert not run_event.called
+        assert client.chat_postEphemeral.call_args.kwargs["text"] == _NOT_LINKED_MESSAGE
 
 
 @pytest.mark.asyncio

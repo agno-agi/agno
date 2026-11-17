@@ -169,10 +169,9 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                # A run user not in users= started the Task with the default principal's access
-                principal = (
-                    self.ctx.default_principal if self.ctx.users is None and self.ctx.default_principal else user_id
-                )
+                # A run user not mapped by users= started the Task with the default role's access
+                mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
+                principal = self.ctx.default_role if self.ctx.default_role and not mapped else user_id
                 authority = await self.company.authorize(app, principal, self.ctx.entity_id)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
@@ -246,7 +245,8 @@ class TaskDelivery:
             sender = (message.get("user") or "", message.get("bot_id") or "")
             self.ctx.lookup_cache.set(key, sender)
         user, bot_id = sender
-        if self.ctx.users is not None:
+        # A member users= leaves out is derived as without users= when a default role is set
+        if self.ctx.users is not None and (self.ctx.default_role is None or (user or bot_id) in self.ctx.users):
             return self.ctx.users.get(user or bot_id)
         if self.ctx.resolve_user_identity:
             sender_id = user or bot_id

@@ -176,14 +176,14 @@ def _delivery(
     slack: FakeSlack,
     users: Optional[Dict[str, str]] = None,
     resolve_user_identity: bool = False,
-    default_principal: Optional[str] = None,
+    default_role: Optional[str] = None,
 ):
     ctx = SimpleNamespace(
         company=CompanyBridge(agent_os),
         entity=Team(id=ENTITY_ID, members=[], db=db),
         entity_id=ENTITY_ID,
         users=users,
-        default_principal=default_principal,
+        default_role=default_role,
         resolve_user_identity=resolve_user_identity,
         web=lambda: slack,
         lookup_cache=LookupCache(),
@@ -502,16 +502,28 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
 
 
 @pytest.mark.parametrize(
-    "default_principal, posted",
-    [("slack-bot", True), ("slack-runner", False), (None, False)],
-    ids=["default-principal-reads-tasks", "default-principal-cannot-read-tasks", "no-default-principal"],
+    "users, default_role, posted",
+    [
+        (None, "slack-bot", True),
+        (None, "slack-runner", False),
+        (None, None, False),
+        (USERS, "slack-bot", True),
+        (USERS, None, False),
+    ],
+    ids=[
+        "default-role-reads-tasks",
+        "default-role-cannot-read-tasks",
+        "no-default-role",
+        "not-in-users-default-role-reads-tasks",
+        "not-in-users-no-default-role",
+    ],
 )
 @pytest.mark.asyncio
-async def test_unmapped_user_gets_result_through_the_default_principal(tmp_path, default_principal, posted):
-    # Without users=, the run's user is the Slack id and the default principal holds the access
+async def test_unmapped_user_gets_result_through_the_default_role(tmp_path, users, default_role, posted):
+    # A user users= does not map runs as the Slack id, and the default role holds the access
     db, agent_os = _authorized_company(tmp_path, "U_DAVE")
     slack = FakeSlack(root_user="U_DAVE")
-    await _delivery(agent_os, db, slack, default_principal=default_principal).sweep()
+    await _delivery(agent_os, db, slack, users=users, default_role=default_role).sweep()
     assert bool(slack.posted()) is posted
 
 
