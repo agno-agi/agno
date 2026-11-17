@@ -65,6 +65,20 @@
       put(new T.Mesh(new T.BoxGeometry(2.04, 0.04, 0.76), M('#d8cfa8', 0.8)), 0, 0.68, -4.2);  // örtü şeridi
     }
 
+    // siyah araçlar (arkada iki yanda) ve çelenkler
+    const paint = M('#07090c', 0.35), glass = M('#1a222c', 0.2);
+    for (const [x, z, ry] of [[-8.2, -5.2, 0.35], [8.2, -5.2, -0.35]]) {
+      const car = new T.Group(); car.position.set(x, 0, z); car.rotation.y = ry; g.add(car);
+      const b = new T.Mesh(new T.BoxGeometry(4.4, 0.8, 1.9), paint); b.position.y = 0.7; car.add(b);
+      const c = new T.Mesh(new T.BoxGeometry(2.2, 0.7, 1.7), glass); c.position.set(-0.2, 1.4, 0); car.add(c);
+      for (const wx of [-1.4, 1.4]) for (const wz of [-0.95, 0.95]) { const w = new T.Mesh(new T.CylinderGeometry(0.38, 0.38, 0.3, 14), M('#0b0c0e')); w.rotation.x = Math.PI / 2; w.position.set(wx, 0.38, wz); car.add(w); }
+    }
+    for (const x of [-2.2, 2.2]) {
+      const w = put(new T.Mesh(new T.TorusGeometry(0.42, 0.12, 10, 24), M('#1f3d2a', 0.95)), x, 0.62, -5.1);
+      for (let i = 0; i < 9; i++) { const a = (i / 9) * 6.283; const f = new T.Mesh(new T.SphereGeometry(0.07, 8, 6), M(i % 2 ? '#b11d2a' : '#e8e8e0')); f.position.set(x + Math.cos(a) * 0.42, 0.62 + Math.sin(a) * 0.42, -5.1); g.add(f); }
+      put(new T.Mesh(new T.CylinderGeometry(0.03, 0.03, 0.62, 6), M('#2a2118')), x, 0.3, -5.15);
+    }
+
     // mumlar
     const wax = M('#efe6d2', 0.8), flame = new T.MeshBasicMaterial({ color: '#ffcf80' });
     for (const x of [-3.2, 3.2]) {

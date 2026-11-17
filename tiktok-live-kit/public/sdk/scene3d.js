@@ -305,6 +305,21 @@
     }
     add(new T.Mesh(new T.CylinderGeometry(0.05, 0.055, 0.1, 8), skin), 0, 1.45, 0);                 // boyun
     add(new T.Mesh(new T.SphereGeometry(0.12, 14, 12), skin), 0, 1.56, 0).scale.set(0.92, 1.08, 1);  // baş
+    if (cfg.humanoidStyle === 'suit') { // takım elbiseli jenerik tipler: beyaz gömlek, kravat, güneş gözlüğü, bazılarında fötr şapka / uzun palto
+      const k2 = (h >>> 3) % 10;
+      add(new T.Mesh(new T.BoxGeometry(0.13, 0.3, 0.02), M('#f2f2ee')), 0, 1.3, 0.17);                      // gömlek
+      add(new T.Mesh(new T.BoxGeometry(0.035, 0.28, 0.025), M(['#5a1218', '#14171c', '#1d2a44'][h % 3])), 0, 1.29, 0.185); // kravat
+      if (k2 < 7) add(new T.Mesh(new T.BoxGeometry(0.21, 0.04, 0.03), M('#050607', 0.3)), 0, 1.575, 0.115); // güneş gözlüğü
+      if (k2 >= 6) { // uzun palto
+        add(new T.Mesh(new T.CylinderGeometry(0.2, 0.27, 0.62, 12), robe), 0, 0.62, 0);
+      }
+      if (k2 === 8 || k2 === 9) { // fötr şapka
+        add(new T.Mesh(new T.CylinderGeometry(0.2, 0.2, 0.018, 16), M('#0c0e11')), 0, 1.64, 0);
+        add(new T.Mesh(new T.CylinderGeometry(0.11, 0.125, 0.13, 14), M('#0c0e11')), 0, 1.71, 0);
+      } else add(new T.Mesh(new T.SphereGeometry(0.128, 12, 8, 0, 6.283, 0, 1.25), M(['#0e0b09', '#1d150f', '#4a4a4a'][(h >>> 5) % 3])), 0, 1.58, -0.01);
+      g.traverse((o) => { if (o.isMesh) o.castShadow = renderer.shadowMap.enabled; });
+      return g;
+    }
     const kind = (h >>> 3) % 4; // 0 saç, 1 beyaz takke, 2 başörtüsü, 3 kasket
     if (kind === 2) {
       const sc = M(['#2a2f3a', '#3b3f4a', '#1c2a24', '#4a3b40'][(h >>> 5) % 4], 0.95);

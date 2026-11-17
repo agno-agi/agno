@@ -1,7 +1,7 @@
 {
   "renderer": "3d",
   "hint": false,
-  "personColor": "#20252d",
+  "personColor": "#0e1014",
   "camera": {
     "position": [
       0,
@@ -140,5 +140,6 @@
     "rows": 0
   },
   "fps": 30,
-  "humanoid": true
+  "humanoid": true,
+  "humanoidStyle": "suit"
 }
