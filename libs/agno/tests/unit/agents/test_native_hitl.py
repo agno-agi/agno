@@ -959,7 +959,6 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
     )
     incoming.put({"method": "thread/status/changed", "params": {}})
     event, ready = await asyncio.wait_for(bridge.queue.get(), 2)
-    ready.set()
     for _ in range(100):
         if notifications:
             break
@@ -985,6 +984,7 @@ async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch,
         return decided
 
     monkeypatch.setattr(_hitl, "read_run", read)
+    ready.set()
     continued, acknowledged = await asyncio.wait_for(bridge.queue.get(), 3)
     assert continued.event == "RunContinued"
     assert not sent, "The native execution must wait for the continuation to be recorded"
