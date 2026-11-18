@@ -454,6 +454,7 @@ def _run(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 3. Resolve dependencies
@@ -862,6 +863,7 @@ def _run_stream(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 3. Resolve dependencies
@@ -1601,6 +1603,7 @@ async def _arun(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 3. Resolve dependencies
@@ -2217,6 +2220,7 @@ async def _arun_stream(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 3. Resolve dependencies
@@ -4805,6 +4809,7 @@ async def _acontinue_run(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 4. Prepare run response
@@ -5325,6 +5330,7 @@ async def _acontinue_run_stream(
                     user_id=user_id,
                     session_id=session_id,
                     run_id=run_context.run_id,
+                    files=file_artifacts,
                 )
 
                 # 3. Resolve dependencies

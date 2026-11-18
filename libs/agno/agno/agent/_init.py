@@ -411,8 +411,9 @@ def _initialize_session_state(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     run_id: Optional[str] = None,
+    files: Optional[Sequence[Any]] = None,
 ) -> Dict[str, Any]:
-    """Inject current_user_id, current_session_id, and current_run_id into session_state.
+    """Inject current_user_id, current_session_id, current_run_id, and file metadata into session_state.
 
     These transient values are stripped before persisting to the database (see _session.py)
     but must be available at runtime so that tool functions and instruction templates can
@@ -424,6 +425,21 @@ def _initialize_session_state(
         session_state["current_session_id"] = session_id
     if run_id is not None:
         session_state["current_run_id"] = run_id
+    if files:
+        session_files = session_state.setdefault("files", [])
+        for f in files:
+            file_meta = {}
+            name = getattr(f, "name", None) or getattr(f, "filename", None)
+            f_id = getattr(f, "id", None) or getattr(f, "file_id", None)
+            if isinstance(f, dict):
+                name = name or f.get("name") or f.get("filename")
+                f_id = f_id or f.get("id") or f.get("file_id")
+            if name:
+                file_meta["filename"] = name
+            if f_id:
+                file_meta["file_id"] = f_id
+            if file_meta and file_meta not in session_files:
+                session_files.append(file_meta)
     return session_state
 
 
