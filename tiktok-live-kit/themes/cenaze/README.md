@@ -11,6 +11,11 @@ Aynı hediye her zaman aynı etkiyi yapar; rastgele ödül, çekiliş veya "şan
 | 10–99 jeton | **Çiçek**: ön tarafa yürür, baş eğer, karanfil yaprağı bırakır, yerine döner |
 | 100+ jeton | **Tek an**: kamera gönderene yaklaşır, ışık sütunu, yavaş yağan yapraklar, tüm saf baş eğer, "Allah rahmet eylesin" + seslendirme (12 sn bekleme) |
 
+## Hediye rolleri
+- **Gül / 1–9 jeton (Omuz ver):** gönderen tabutun yanında durur (6 kişiye kadar), 30 sn sonra yerine döner.
+- **Parmak Kalp / Finger Heart (Fotoğrafı taşı):** gönderen çerçeveyi tabutun önünde taşır (aynı anda tek kişi).
+- **10–99 jeton (Çelenk)** ve **100+ jeton (Büyük saygı)** fiyat kademesiyle eşlenir. Adlar `theme.json > rules.giftOverrides` içinde düzenlenir.
+
 ## Ön saf (koltuklar)
 En çok gönderen ilk 6 kişi, sırayla `scene.json > seats[0], seats[1], …` koltuklarına oturur; sıra değişirse yer değiştirir.
 

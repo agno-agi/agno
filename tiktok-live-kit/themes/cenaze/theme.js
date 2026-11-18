@@ -134,3 +134,53 @@
   });
   Live.on('reset', () => taken.fill(null));
 })();
+
+// "Fotoğrafı taşı" (Parmak Kalp): gönderen tabutun önündeki noktaya yürür, çerçeveyi önünde tutar, sonra yerine döner.
+// Çerçevede siluet görünür; assets/portrait.png (veya .jpg) varsa o görünür (bkz. README). Aynı anda tek kişi taşır.
+(function () {
+  const HOLD = 30000;
+  let frame = null, carrier = null, busy = false;
+  function portraitTexture(T) {
+    const c = document.createElement('canvas'); c.width = 240; c.height = 300;
+    const x = c.getContext('2d'), t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace;
+    function draw(img) {
+      x.fillStyle = '#1a1710'; x.fillRect(0, 0, 240, 300);
+      x.strokeStyle = '#d8cfa8'; x.lineWidth = 12; x.strokeRect(6, 6, 228, 288);
+      if (img) { const r = Math.max(204 / img.width, 264 / img.height), w = img.width * r, h = img.height * r; x.save(); x.beginPath(); x.rect(18, 18, 204, 264); x.clip(); x.drawImage(img, 18 + (204 - w) / 2, 18 + (264 - h) / 2, w, h); x.restore(); }
+      else {
+        const g = x.createLinearGradient(0, 18, 0, 282); g.addColorStop(0, '#4a4f58'); g.addColorStop(1, '#22252b'); x.fillStyle = g; x.fillRect(18, 18, 204, 264);
+        x.fillStyle = '#0c0d10';
+        x.beginPath(); x.ellipse(120, 120, 34, 40, 0, 0, 6.283); x.fill();
+        x.beginPath(); x.ellipse(120, 82, 62, 9, 0, 0, 6.283); x.fill(); x.fillRect(93, 52, 54, 32);
+        x.beginPath(); x.moveTo(20, 282); x.lineTo(40, 200); x.quadraticCurveTo(120, 168, 200, 200); x.lineTo(220, 282); x.closePath(); x.fill();
+      }
+      t.needsUpdate = true;
+    }
+    draw(null);
+    for (const f of ['assets/portrait.png', 'assets/portrait.jpg']) { const im = new Image(); im.onload = () => draw(im); im.src = f; }
+    return t;
+  }
+  function ensureFrame() {
+    if (frame) return frame;
+    const k = Kit.scene.three; if (!k || !k.scene || !k.THREE) return null;
+    const T = k.THREE, g = new T.Group();
+    const back = new T.Mesh(new T.BoxGeometry(0.5, 0.62, 0.04), new T.MeshStandardMaterial({ color: '#3a2c18', roughness: 0.6 })); g.add(back);
+    const pic = new T.Mesh(new T.PlaneGeometry(0.46, 0.575), new T.MeshBasicMaterial({ map: portraitTexture(T) })); pic.position.z = 0.025; g.add(pic);
+    g.visible = false; k.scene.add(g); frame = g; return g;
+  }
+  Kit.action('foto', (person) => {
+    if (!person || person.npc || busy || !ensureFrame()) return;
+    busy = true;
+    const P = Kit.scene.P;
+    P.walkTo(person, 'foto'); P.pose(person, 'stand');
+    P.do(person, () => { carrier = person; });
+    P.wait(person, HOLD);
+    P.walkTo(person, 'home'); P.pose(person, 'idle');
+    P.do(person, () => { carrier = null; busy = false; if (frame) frame.visible = false; });
+  });
+  Kit.on('frame', () => {
+    if (!frame) return;
+    if (carrier && carrier.obj) { frame.visible = true; frame.position.set(carrier.wx, 1.2, carrier.wz + 0.3); frame.rotation.y = 0; }
+  });
+  Live.on('reset', () => { carrier = null; busy = false; if (frame) frame.visible = false; });
+})();

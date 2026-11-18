@@ -152,6 +152,37 @@
           "count": 6
         }
       ]
+    },
+    {
+      "id": "foto",
+      "label": "Fotoğrafı taşı",
+      "icon": "🖼️",
+      "card": "5 JETON",
+      "description": "Gönderen çerçeveyi tutarak tabutun önünde yürür, sonra yerine döner (aynı anda tek kişi)",
+      "steps": [
+        {
+          "aura": 0.6
+        },
+        {
+          "sound": "small"
+        },
+        {
+          "fx": "emit",
+          "preset": "nur",
+          "at": "head",
+          "count": 8
+        },
+        {
+          "fx": "text",
+          "at": "head",
+          "text": "🖼 {ten}",
+          "color": "#f3e7c4",
+          "size": 28
+        },
+        {
+          "js": "foto"
+        }
+      ]
     }
   ],
   "rules": {
@@ -188,6 +219,15 @@
         ],
         "action": "mum",
         "label": "Omuz ver"
+      },
+      {
+        "names": [
+          "finger heart",
+          "parmak kalp",
+          "parmak kalbi"
+        ],
+        "action": "foto",
+        "label": "Fotoğrafı taşı"
       }
     ],
     "chatCommands": [
