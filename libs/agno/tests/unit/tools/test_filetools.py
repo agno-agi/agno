@@ -99,6 +99,36 @@ def test_save_and_read_file():
         assert read_content == content
 
 
+@pytest.mark.parametrize(
+    ("original", "separator", "real_lines"),
+    [
+        ("a\nb\nc\n", "\n", 3),
+        ("", "\n", 0),
+        ("\n", "\n", 1),
+        ("a\n\n", "\n", 2),
+        ("a||b||", "||", 2),
+        ("||", "||", 1),
+        ("a|||", "||", 2),
+        ("aaa", "aa", 2),
+        ("a\nb\nc", "\n", 3),
+        ("你好\n世界\n", "\n", 2),
+    ],
+)
+def test_read_file_trailing_line_separator_does_not_exceed_max_lines(tmp_path, original, separator, real_lines):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(original.encode("utf-8"))
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+    tools.max_file_lines = real_lines
+
+    # Reading with max_file_lines == real_lines must succeed
+    assert tools.read_file("sample.txt") == original
+
+    # Reading with max_file_lines < real_lines must return error
+    if real_lines > 0:
+        tools.max_file_lines = real_lines - 1
+        assert tools.read_file("sample.txt") == "Error reading file: file too long. Use read_file_chunk instead"
+
+
 def test_list_files_returns_relative_paths():
     """Test that list_files returns relative paths, not absolute paths."""
     with tempfile.TemporaryDirectory() as tmp_dir:

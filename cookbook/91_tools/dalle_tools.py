@@ -19,16 +19,18 @@ agent_specific = Agent(
     tools=[
         DalleTools(
             enable_create_image=True,
-            model="dall-e-3",
+            model="gpt-image-2",
             size="1024x1024",
-            quality="standard",
+            quality="medium",
         )
     ],
     name="Basic DALL-E Generator",
 )
 
 # Example 3: High-quality custom DALL-E generator
-custom_dalle = DalleTools(all=True, model="dall-e-3", size="1792x1024", quality="hd")
+custom_dalle = DalleTools(
+    all=True, model="gpt-image-2", size="1536x1024", quality="high"
+)
 
 agent_custom = Agent(
     tools=[custom_dalle],
@@ -50,8 +52,10 @@ if __name__ == "__main__":
         "Create a panoramic nature scene showing a peaceful mountain lake at sunset",
         markdown=True,
     )
-    if response.images and response.images[0].url:
-        download_image(
-            url=response.images[0].url,
-            output_path=str(Path(__file__).parent.joinpath("tmp/nature.jpg")),
-        )
+    output_path = Path(__file__).parent.joinpath("tmp/nature.png")
+    if response.images and response.images[0].content:
+        # GPT Image models return the image bytes directly
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(response.images[0].content)
+    elif response.images and response.images[0].url:
+        download_image(url=response.images[0].url, output_path=str(output_path))

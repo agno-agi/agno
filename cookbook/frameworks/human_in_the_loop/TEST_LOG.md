@@ -1,5 +1,15 @@
 # Test log: harness permission requests in the chat
 
+### agentos.py — Codex 0.167.2 (2026-11-16)
+
+**Status:** PASS (Codex through the AgentOS API)
+
+**Description:** Loaded `cookbook/frameworks/human_in_the_loop/agentos.py` and entered the application's lifespan, including its durable Postgres queue worker. Submitted real Codex runs and continued their persisted pauses through the HTTP routes using an ASGI client. Built the cookbook sandbox image from this checkout with `openai-codex==0.167.2`; changed the exact-version guard only in the temporary image copy and bypassed it in the host test process. Repository implementation and dependency pins remain unchanged.
+
+**Result:** All three runs completed. Rejecting the command approval left no `confirm-test.txt` in the saved sandbox checkpoint. Accepting it created `workspace/confirm-test.txt` containing exactly `confirmed`. The native `request_user_input` tool paused with Red/Blue options; continuing with Blue reached the same waiting run, which replied "You picked Blue." Submission and continuation returned HTTP 202. Run IDs: reject `43195328-60c6-4029-adb0-81e272beed3e`, accept `49272fbd-2b05-4f13-bed9-e8a89806657a`, question `3c652b09-c90f-4c67-bbde-f40c9578f701`. This validates the Codex cookbook's API, queue, sandbox and native transport; browser rendering and Claude were not exercised. Temporary driver and output: `/private/tmp/codex-167-cookbooks/`.
+
+---
+
 ### agentos.py
 
 **Status:** NOT YET RUN live with the chat flow

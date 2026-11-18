@@ -4,7 +4,7 @@ Serve Super Agent in Slack
 
 Serve AgentOS's built-in Super Agent in Slack. Start an accepted Company Task
 and its result is posted back into the same thread. Sandbox only as written:
-without authorization, every member of the Slack workspace drives Super Agent.
+without users=, every member of the Slack workspace drives Super Agent.
 
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY, PostgreSQL (./cookbook/scripts/run_pgvector.sh) for the durable queue
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/super_agent.py

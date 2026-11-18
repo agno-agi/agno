@@ -20,8 +20,10 @@ try:
         DaytonaConfig,
         Sandbox,
     )
-except ImportError:
-    raise ImportError("`daytona` not installed. Please install using `pip install daytona`")
+except ImportError as e:
+    raise ImportError(
+        "`daytona` is missing or incompatible. Please install a supported SDK with `pip install 'daytona<1'`."
+    ) from e
 
 DEFAULT_INSTRUCTIONS = dedent(
     """\
