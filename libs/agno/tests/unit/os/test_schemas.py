@@ -225,3 +225,166 @@ def test_run_schemas_expose_the_cancellation_stage(schema_name, id_field):
     assert with_stage.cancellation_stage == "PENDING"
     without = schema_cls.from_dict({"run_id": "r2", id_field: "x", "status": "CANCELLED"})
     assert without.cancellation_stage is None
+
+
+def test_team_session_detail_chat_history_includes_member_messages():
+    """GET /sessions/{session_id} must return the complete chat history for team
+    sessions, including member-agent messages — matching what GET /sessions/{id}/runs
+    already exposes. The SDK helper get_chat_history() keeps skipping member
+    messages, since it builds model context rather than the REST payload."""
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    team_run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="t1",
+        parent_run_id=None,
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="What is the weather in Tokyo?"),
+            Message(role="assistant", content="Delegating to the weather agent."),
+        ],
+    )
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="weather-agent",
+        parent_run_id="team-run-1",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Get the weather in Tokyo."),
+            Message(role="assistant", content="It is sunny in Tokyo."),
+        ],
+    )
+    session = TeamSession(
+        session_id="team-session-1",
+        team_id="t1",
+        session_data={"session_name": "Weather session"},
+        runs=[team_run, member_run],
+        created_at=1719859200,
+        updated_at=1719859200,
+    )
+
+    schema = TeamSessionDetailSchema.from_session(session)
+
+    contents = [message["content"] for message in schema.chat_history or []]
+    assert "Delegating to the weather agent." in contents
+    assert "It is sunny in Tokyo." in contents
+
+    # The SDK helper is for model context and must keep excluding member messages
+    sdk_contents = [message.content for message in session.get_chat_history()]
+    assert "Delegating to the weather agent." in sdk_contents
+    assert "It is sunny in Tokyo." not in sdk_contents
+
+
+def test_team_session_detail_chat_history_uses_member_first_persistence_order():
+    """On the default team path, delegate_task_to_member upserts the member run
+    before _cleanup_and_store upserts the parent team run, so session.runs is
+    stored member-first. get_messages() walks stored run order, so the REST
+    chat_history lists the member messages before the leader's turn. This test
+    pins that storage-order behavior; conversational reordering is a separate
+    change."""
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="weather-agent",
+        parent_run_id="team-run-1",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Get the weather in Tokyo."),
+            Message(role="assistant", content="It is sunny in Tokyo."),
+        ],
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="t1",
+        parent_run_id=None,
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="What is the weather in Tokyo?"),
+            Message(role="assistant", content="Delegating to the weather agent."),
+        ],
+    )
+    session = TeamSession(
+        session_id="team-session-1",
+        team_id="t1",
+        session_data={"session_name": "Weather session"},
+        runs=[member_run, team_run],
+        created_at=1719859200,
+        updated_at=1719859200,
+    )
+
+    schema = TeamSessionDetailSchema.from_session(session)
+
+    contents = [message["content"] for message in schema.chat_history or []]
+    assert "It is sunny in Tokyo." in contents
+    assert "Delegating to the weather agent." in contents
+    # Storage order is preserved: the member's messages come before the leader's
+    assert contents.index("It is sunny in Tokyo.") < contents.index("Delegating to the weather agent.")
+
+    # The SDK helper is for model context and must keep excluding member messages
+    sdk_contents = [message.content for message in session.get_chat_history()]
+    assert "It is sunny in Tokyo." not in sdk_contents
+
+
+@pytest.mark.parametrize("member_first", [False, True])
+def test_team_session_detail_preserves_nested_and_shared_runs(member_first):
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    leader = TeamRunOutput(
+        run_id="leader",
+        team_id="team",
+        status=RunStatus.completed,
+        messages=[Message(role="user", content="request"), Message(role="assistant", content="leader")],
+    )
+    nested = TeamRunOutput(
+        run_id="nested",
+        team_id="subteam",
+        parent_run_id="leader",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="nested")],
+    )
+    member = RunOutput(
+        run_id="member",
+        agent_id="agent",
+        parent_run_id="nested",
+        status=RunStatus.error,
+        messages=[
+            Message(role="system", content="system"),
+            Message(role="tool", content="tool"),
+            Message(role="assistant", content="old", from_history=True),
+            Message(role="assistant", content="member partial output"),
+        ],
+    )
+    shared = RunOutput(
+        run_id="shared",
+        agent_id="shared-agent",
+        status=RunStatus.completed,
+        messages=[Message(role="assistant", content="shared")],
+    )
+    session = TeamSession(session_id="session", team_id="team")
+    runs = [member, nested, leader, shared] if member_first else [leader, nested, member, shared]
+    for run in runs:
+        session.upsert_run(run)
+    session.upsert_run(member)
+    expected = (
+        ["member partial output", "nested", "request", "leader", "shared"]
+        if member_first
+        else ["request", "leader", "nested", "member partial output", "shared"]
+    )
+
+    detail = TeamSessionDetailSchema.from_session(session)
+
+    assert [message["content"] for message in detail.chat_history or []] == expected
+    assert [message.content for message in session.get_chat_history()] == ["request", "leader", "shared"]
