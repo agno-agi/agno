@@ -589,7 +589,7 @@ def _derive_entrypoint_schema(
     requires_user_input: bool,
     user_input_fields: Optional[Tuple[str, ...]],
 ) -> _EntrypointSchema:
-    from inspect import getdoc, signature
+    from inspect import Parameter, getdoc, signature
 
     from agno.utils.json_schema import get_json_schema
 
@@ -626,6 +626,17 @@ def _derive_entrypoint_schema(
         # Filter out return type and only process parameters
         excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS]
         excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
+
+        # A variadic parameter takes no keyword bind: *items is filled by
+        # position and **fields by its own keys. `execute` forwards the model's
+        # arguments verbatim, so advertising either as a property asked for a
+        # call that is either impossible (*items) or one level too deep
+        # (fields={"name": ...} arrives as the key "fields").
+        excluded_params.extend(
+            name
+            for name, param in sig.parameters.items()
+            if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD)
+        )
 
         # Also exclude parameters whose types are framework-injected,
         # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
