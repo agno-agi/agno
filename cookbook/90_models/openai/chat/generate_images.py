@@ -8,18 +8,20 @@ Cookbook example for `openai/chat/generate_images.py`.
 from pathlib import Path
 
 from agno.agent import Agent, RunOutput
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.tools.dalle import DalleTools
+from agno.tools.openai import OpenAITools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
 image_agent = Agent(
-    model=OpenAIChat(id="gpt-5.6-luna"),
-    tools=[DalleTools()],
-    description="You are an AI agent that can generate images using DALL-E.",
-    instructions="When the user asks you to create an image, use the `create_image` tool to create the image.",
+    model=OpenAIChat(id="gpt-5.6-luna", reasoning_effort="none"),
+    db=InMemoryDb(),
+    tools=[OpenAITools(enable_transcription=False, enable_speech_generation=False)],
+    description="You are an AI agent that can generate images.",
+    instructions="When the user asks you to create an image, use the `generate_image` tool to create the image.",
     markdown=True,
 )
 
