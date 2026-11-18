@@ -6,7 +6,7 @@ Changes:
 """
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.migrations.utils import quote_db_identifier
+from agno.db.migrations.utils import get_db_type, quote_db_identifier
 from agno.utils.log import log_error, log_info
 
 try:
@@ -22,7 +22,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if table_type != "approvals":
@@ -51,7 +51,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if table_type != "approvals":
@@ -78,7 +78,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if table_type != "approvals":
@@ -107,7 +107,7 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was reverted, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if table_type != "approvals":
@@ -206,7 +206,7 @@ async def _async_index_exists(sess, db_schema: str, table_name: str, index_name:
 def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for PostgreSQL."""
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -250,7 +250,7 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
 async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for async PostgreSQL."""
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -302,7 +302,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
 def _migrate_mysql(db: BaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for MySQL."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -349,7 +349,7 @@ def _migrate_mysql(db: BaseDb, table_name: str) -> bool:
 async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for async MySQL."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -401,7 +401,7 @@ async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
 def _migrate_singlestore(db: BaseDb, table_name: str) -> bool:
     """Add run_status column to approvals table for SingleStore."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -540,7 +540,7 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
 def _revert_postgres(db: BaseDb, table_name: str) -> bool:
     """Revert: drop run_status column from approvals table for PostgreSQL."""
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -583,7 +583,7 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
 async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
     """Revert: drop run_status column from approvals table for async PostgreSQL."""
     db_schema = db.db_schema or "public"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -627,7 +627,7 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
 def _revert_mysql(db: BaseDb, table_name: str) -> bool:
     """Revert: drop run_status column from approvals table for MySQL."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -670,7 +670,7 @@ def _revert_mysql(db: BaseDb, table_name: str) -> bool:
 async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
     """Revert: drop run_status column from approvals table for async MySQL."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -715,7 +715,7 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
 def _revert_singlestore(db: BaseDb, table_name: str) -> bool:
     """Revert: drop run_status column from approvals table for SingleStore."""
     db_schema = db.db_schema or "agno"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
