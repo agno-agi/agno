@@ -6,12 +6,14 @@ Changes:
 - Change JSON to JSONB for PostgreSQL
 """
 
+import json
 import time
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.string import sanitize_postgres_strings
 
 try:
     from sqlalchemy import text
@@ -274,9 +276,8 @@ def _convert_json_to_jsonb(
     sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "PostgresDb"
 ) -> None:
     quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
+    columns_by_table: Dict[str, List[str]] = {}
     for column_name, table_name in json_columns:
-        quoted_table = quote_db_identifier(db_type, table_name)
-        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         col_type = sess.execute(
             text(
@@ -290,17 +291,34 @@ def _convert_json_to_jsonb(
             ),
             {"schema": db_schema, "table_name": table_name, "column_name": column_name},
         ).scalar()
-
         if col_type == "json":
-            log_info(f"-- Converting {table_name}.{column_name} from JSON to JSONB")
-            sess.execute(
+            columns_by_table.setdefault(table_name, []).append(column_name)
+
+    for table_name, column_names in columns_by_table.items():
+        quoted_table = quote_db_identifier(db_type, table_name)
+        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
+        for column_name in column_names:
+            # jsonb rejects a \u0000 escape that json accepts: clean those rows with the sanitizer
+            # agno applies on write since 2.3.22, so they match what it writes today.
+            rows = sess.execute(
                 text(
-                    f"""
-                    ALTER TABLE {table_full_name}
-                    ALTER COLUMN {column_name} TYPE JSONB USING {column_name}::jsonb
-                    """
+                    f"SELECT ctid::text, {column_name}::text FROM {table_full_name} "
+                    f"WHERE strpos({column_name}::text, '\\u0000') > 0"
                 )
-            )
+            ).fetchall()
+            for ctid, value in rows:
+                sess.execute(
+                    text(
+                        f"UPDATE {table_full_name} SET {column_name} = CAST(:value AS json) WHERE ctid = CAST(:ctid AS tid)"
+                    ),
+                    {"ctid": ctid, "value": json.dumps(sanitize_postgres_strings(json.loads(value)))},
+                )
+            if rows:
+                log_info(f"-- Removed NUL characters from {len(rows)} {table_name}.{column_name} value(s)")
+        log_info(f"-- Converting {table_name}.{', '.join(column_names)} from JSON to JSONB")
+        # One ALTER TABLE for all the columns, so PostgreSQL rewrites the table once, not once per column.
+        clauses = ", ".join(f"ALTER COLUMN {column} TYPE JSONB USING {column}::jsonb" for column in column_names)
+        sess.execute(text(f"ALTER TABLE {table_full_name} {clauses}"))
 
 
 async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
@@ -444,9 +462,8 @@ async def _async_convert_json_to_jsonb(
     sess: Any, db_schema: str, json_columns: List[Tuple[str, str]], db_type: str = "AsyncPostgresDb"
 ) -> None:
     quoted_schema = quote_db_identifier(db_type, db_schema) if db_schema else None
+    columns_by_table: Dict[str, List[str]] = {}
     for column_name, table_name in json_columns:
-        quoted_table = quote_db_identifier(db_type, table_name)
-        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
         # Check current type
         result = await sess.execute(
             text(
@@ -460,18 +477,36 @@ async def _async_convert_json_to_jsonb(
             ),
             {"schema": db_schema, "table_name": table_name, "column_name": column_name},
         )
-        col_type = result.scalar()
+        if result.scalar() == "json":
+            columns_by_table.setdefault(table_name, []).append(column_name)
 
-        if col_type == "json":
-            log_info(f"-- Converting {table_name}.{column_name} from JSON to JSONB")
-            await sess.execute(
-                text(
-                    f"""
-                    ALTER TABLE {table_full_name}
-                    ALTER COLUMN {column_name} TYPE JSONB USING {column_name}::jsonb
-                    """
+    for table_name, column_names in columns_by_table.items():
+        quoted_table = quote_db_identifier(db_type, table_name)
+        table_full_name = f"{quoted_schema}.{quoted_table}" if quoted_schema else quoted_table
+        for column_name in column_names:
+            # jsonb rejects a \u0000 escape that json accepts: clean those rows with the sanitizer
+            # agno applies on write since 2.3.22, so they match what it writes today.
+            rows = (
+                await sess.execute(
+                    text(
+                        f"SELECT ctid::text, {column_name}::text FROM {table_full_name} "
+                        f"WHERE strpos({column_name}::text, '\\u0000') > 0"
+                    )
                 )
-            )
+            ).fetchall()
+            for ctid, value in rows:
+                await sess.execute(
+                    text(
+                        f"UPDATE {table_full_name} SET {column_name} = CAST(:value AS json) WHERE ctid = CAST(:ctid AS tid)"
+                    ),
+                    {"ctid": ctid, "value": json.dumps(sanitize_postgres_strings(json.loads(value)))},
+                )
+            if rows:
+                log_info(f"-- Removed NUL characters from {len(rows)} {table_name}.{column_name} value(s)")
+        log_info(f"-- Converting {table_name}.{', '.join(column_names)} from JSON to JSONB")
+        # One ALTER TABLE for all the columns, so PostgreSQL rewrites the table once, not once per column.
+        clauses = ", ".join(f"ALTER COLUMN {column} TYPE JSONB USING {column}::jsonb" for column in column_names)
+        await sess.execute(text(f"ALTER TABLE {table_full_name} {clauses}"))
 
 
 def _migrate_mysql(db: BaseDb, table_type: str, table_name: str) -> bool:
