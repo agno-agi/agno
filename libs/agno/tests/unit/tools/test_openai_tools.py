@@ -123,24 +123,21 @@ def _fake_image_client(data, output_format=None):
     return fake_client
 
 
-def _b64_item(payload: bytes, revised_prompt=None):
+def _b64_item(payload: bytes):
     import base64
     from unittest.mock import MagicMock
 
-    return MagicMock(b64_json=base64.b64encode(payload).decode(), revised_prompt=revised_prompt)
+    return MagicMock(b64_json=base64.b64encode(payload).decode())
 
 
-def test_generate_image_returns_every_image_with_revised_prompt():
-    fake_client = _fake_image_client(
-        [_b64_item(b"one", revised_prompt="a fluffy yak"), _b64_item(b"two")], output_format="webp"
-    )
+def test_generate_image_returns_every_image():
+    fake_client = _fake_image_client([_b64_item(b"one"), _b64_item(b"two")], output_format="webp")
     with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
         result = OpenAITools(api_key="test-key", image_n=2).generate_image(prompt="a yak")
 
     assert fake_client.images.generate.call_args.kwargs["n"] == 2
     assert result.content == "2 images generated successfully."
     assert [image.content for image in result.images] == [b"one", b"two"]
-    assert [image.revised_prompt for image in result.images] == ["a fluffy yak", None]
     assert all(image.mime_type == "image/webp" for image in result.images)
 
 
@@ -180,6 +177,27 @@ def test_gpt_image_2_custom_resolution_is_sent_unchanged(size):
         OpenAITools(api_key="test-key", image_size=size).generate_image(prompt="a yak")
 
     assert fake_client.images.generate.call_args.kwargs["size"] == size
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2", "chatgpt-image-latest"])
+def test_generate_image_never_sends_response_format(model):
+    fake_client = _fake_image_client([_b64_item(b"one")])
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        result = OpenAITools(api_key="test-key", image_model=model).generate_image(prompt="a yak")
+
+    assert "response_format" not in fake_client.images.generate.call_args.kwargs
+    assert result.images[0].content == b"one"
+
+
+def test_image_style_is_not_sent_and_logs_deprecation():
+    fake_client = _fake_image_client([_b64_item(b"one")])
+    with patch("agno.tools.openai.log_warning") as log_warning:
+        tools = OpenAITools(api_key="test-key", image_style="vivid")
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        tools.generate_image(prompt="a yak")
+
+    assert "style" not in fake_client.images.generate.call_args.kwargs
+    assert "style option is deprecated" in log_warning.call_args.args[0]
 
 
 def test_unknown_image_model_is_not_validated():

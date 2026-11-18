@@ -105,6 +105,24 @@ def test_url_response_is_still_attached():
     assert "https://example.com/cat.png" in result.content
 
 
+def test_style_is_not_sent_and_logs_deprecation():
+    with patch("agno.tools.dalle.log_warning") as log_warning:
+        tools = DalleTools(api_key="test-key", style="vivid")
+
+    _, request = _generate(tools, [_image_data(b64_json=base64.b64encode(b"png").decode())])
+
+    assert "style" not in request
+    assert any("style option is deprecated" in call.args[0] for call in log_warning.call_args_list)
+
+
+def test_b64_response_has_no_revised_prompt():
+    tools = DalleTools(api_key="test-key")
+
+    result, _ = _generate(tools, [_image_data(b64_json=base64.b64encode(b"png").decode(), revised_prompt="ignored")])
+
+    assert result.images[0].revised_prompt is None
+
+
 def test_init_logs_deprecation_pointing_to_openai_tools():
     with patch("agno.tools.dalle.log_warning") as log_warning:
         DalleTools(api_key="test-key")

@@ -29,6 +29,12 @@ IMAGE_MODEL_OPTIONS: Dict[str, Dict[str, List[str]]] = {
 }
 
 
+STYLE_DEPRECATION = (
+    "The image style option is deprecated and ignored: OpenAI image models reject the style parameter. "
+    "It will be removed in a future release."
+)
+
+
 def validate_image_options(model: Optional[str], n: int, size: Optional[str], quality: Optional[str]) -> None:
     """Raise ValueError for an image count, size or quality the model does not accept."""
     if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
@@ -59,7 +65,7 @@ class OpenAITools(Toolkit):
         image_model (str, optional): Model to use for image generation. Default is "gpt-image-2".
         image_quality (str, optional): Quality setting for image generation.
         image_size (str, optional): Size setting for image generation, e.g. "1024x1024" or "auto". gpt-image-2 also accepts custom resolutions.
-        image_style (str, optional): Style setting for image generation.
+        image_style (str, optional): Deprecated and ignored; image models reject the style parameter.
         image_n (int): Number of images to generate per call. Default is 1.
     """
 
@@ -97,6 +103,8 @@ class OpenAITools(Toolkit):
         self.image_n = image_n
         if all or enable_image_generation:
             validate_image_options(image_model, image_n, image_size, image_quality)
+            if image_style is not None:
+                log_warning(STYLE_DEPRECATION)
 
         tools: List[Any] = []
         if all or enable_transcription:
@@ -143,25 +151,15 @@ class OpenAITools(Toolkit):
                 "n": self.image_n,
                 "size": self.image_size,
                 "quality": self.image_quality,
-                "style": self.image_style,
             }
             extra_params = {k: v for k, v in extra_params.items() if v is not None}
 
-            # gpt-image-1 by default outputs a base64 encoded image but other models do not
-            # so we add a response_format parameter to have consistent output.
-            if self.image_model and self.image_model.startswith("gpt-image"):
-                response = OpenAIClient(api_key=self.api_key).images.generate(
-                    model=self.image_model,
-                    prompt=prompt,
-                    **extra_params,  # type: ignore
-                )
-            else:
-                response = OpenAIClient(api_key=self.api_key).images.generate(
-                    model=self.image_model,
-                    prompt=prompt,
-                    response_format="b64_json",
-                    **extra_params,  # type: ignore
-                )
+            # Image models return base64 only and reject response_format and style, so neither is sent.
+            response = OpenAIClient(api_key=self.api_key).images.generate(
+                model=self.image_model,
+                prompt=prompt,
+                **extra_params,  # type: ignore
+            )
             if not (hasattr(response, "data") and response.data):
                 log_warning("OpenAI API did not return any data.")
                 return ToolResult(content="Failed to generate image: No data received from API.")
@@ -172,14 +170,12 @@ class OpenAITools(Toolkit):
             for data in response.data:
                 if not (hasattr(data, "b64_json") and data.b64_json):
                     continue
-                revised_prompt = getattr(data, "revised_prompt", None)
                 images.append(
                     Image(
                         id=str(uuid4()),
                         content=base64.b64decode(data.b64_json),
                         mime_type=mime_type,
                         original_prompt=prompt,
-                        revised_prompt=revised_prompt if isinstance(revised_prompt, str) else None,
                     )
                 )
 

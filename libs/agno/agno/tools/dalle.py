@@ -14,7 +14,7 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
-from agno.tools.openai import IMAGE_MODEL_OPTIONS, validate_image_options
+from agno.tools.openai import IMAGE_MODEL_OPTIONS, STYLE_DEPRECATION, validate_image_options
 
 
 class DalleTools(Toolkit):
@@ -47,6 +47,8 @@ class DalleTools(Toolkit):
         if model not in IMAGE_MODEL_OPTIONS:
             raise ValueError(f"Invalid model. Please choose from {', '.join(IMAGE_MODEL_OPTIONS)}.")
         validate_image_options(model, n, size, quality)
+        if style is not None:
+            log_warning(STYLE_DEPRECATION)
 
         if not self.api_key:
             log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
@@ -84,10 +86,6 @@ class DalleTools(Toolkit):
                 "quality": self.quality,
                 "size": self.size,
             }
-            # OpenAI removed the dall-e-3 'style' parameter from the images API
-            # (400 "Unknown parameter"); only forward it when explicitly set.
-            if self.style is not None:
-                request_params["style"] = self.style
             response: ImagesResponse = client.images.generate(**request_params)
             log_debug("Image generated successfully")
 
@@ -111,7 +109,6 @@ class DalleTools(Toolkit):
                             content=base64.b64decode(img.b64_json),
                             mime_type=f"image/{getattr(response, 'output_format', None) or 'png'}",
                             original_prompt=prompt,
-                            revised_prompt=img.revised_prompt,
                         )
                         generated_images.append(image)
                         response_str += "Image has been generated\n"
