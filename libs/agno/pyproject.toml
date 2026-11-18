@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.2.0"
+version = "3.2.1"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -93,7 +93,7 @@ langfuse = ["langfuse"]
 
 # Dependencies for External Agent Harnesses
 claude = ["claude-agent-sdk>=0.2.148"]
-codex = ["openai-codex"]
+codex = ["openai-codex>=0.163.0"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint
@@ -111,7 +111,10 @@ infinity = ["infinity_client"]
 litellm = ["litellm>=1.83.0"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-mistral = ["mistralai>=2.0.0"]
+mistral = [
+    "mistralai>=2.0.0",
+    "httpx2!=2.16.1",  # 2.16.1 made QueryParamTypes a string alias, so mistralai raises SyntaxError on import; fixed in 2.16.2
+]
 ollama = ["ollama"]
 openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
@@ -143,7 +146,10 @@ code = [
 # Lift once the tools are ported to the split classes.
 confluence = ["atlassian-python-api<5"]
 crawl4ai = ["crawl4ai>=0.6.3"]
-daytona = ["daytona"]
+# Pinned below 1.0: Daytona SDK 2.0 moved CodeLanguage, Sandbox and
+# CreateSandboxFromSnapshotParams to daytona.v0, so DaytonaTools fails to import.
+# Lift once the tools are ported to daytona.v0.
+daytona = ["daytona<1"]
 ddg = ["ddgs"]
 docling = ["docling"]
 duckdb = ["duckdb"]
@@ -429,7 +435,7 @@ embedders = [
 # All libraries for testing
 tests = [
     "claude-agent-sdk>=0.2.148",
-    "openai-codex==0.163.0; python_version >= '3.10'",
+    "openai-codex>=0.163.0; python_version >= '3.10'",
   "agno[pages]",
     "agno[a2a]",
     "agno[slack]",

@@ -1055,6 +1055,7 @@ class AgentOS:
         ]
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
+            from agno.os.routers.company.files import get_company_files_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -1071,6 +1072,7 @@ class AgentOS:
             )
             updated_routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_company_runs_router(self))
+            updated_routers.append(get_company_files_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):
@@ -1180,16 +1182,6 @@ class AgentOS:
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
             if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
-                from agno.os.auth import _has_authorization_middleware
-
-                # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
-                ):
-                    raise ValueError(
-                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                        "pass Slack(users={slack_user_id: principal_id})."
-                    )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:
                     from agno.os.interfaces.slack.company import CompanyBridge
@@ -2173,6 +2165,7 @@ class AgentOS:
         ]
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
+            from agno.os.routers.company.files import get_company_files_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
             from agno.os.routers.company.products import get_products_router
@@ -2187,6 +2180,7 @@ class AgentOS:
             routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
             routers.append(get_playbook_router(db=self._company_db, settings=self.settings))
             routers.append(get_company_runs_router(self))
+            routers.append(get_company_files_router(self))
         # Routes that require a database
         if self.db is not None:
             if isinstance(self.db, BaseDb):
