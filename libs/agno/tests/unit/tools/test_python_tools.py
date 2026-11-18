@@ -130,6 +130,33 @@ def test_run_python_code_error(python_tools):
     assert "Error running python code" in result
 
 
+@pytest.mark.parametrize("execution", ["code", "save_and_run", "file"])
+@pytest.mark.parametrize("value", [None, False, 0, "", [], {}])
+def test_execution_returns_defined_falsy_variables(python_tools, temp_dir, execution, value):
+    code = f"tool_result = {value!r}"
+    if execution == "code":
+        result = python_tools.run_python_code(code, "tool_result")
+    elif execution == "save_and_run":
+        result = python_tools.save_to_file_and_run("result.py", code, "tool_result")
+    else:
+        (temp_dir / "result.py").write_text(code, encoding="utf-8")
+        result = python_tools.run_python_file_return_variable("result.py", "tool_result")
+    assert result == str(value)
+
+
+@pytest.mark.parametrize("execution", ["code", "save_and_run", "file"])
+def test_execution_still_reports_missing_variables(python_tools, temp_dir, execution):
+    code = "tool_result = None"
+    if execution == "code":
+        result = python_tools.run_python_code(code, "missing_result")
+    elif execution == "save_and_run":
+        result = python_tools.save_to_file_and_run("result.py", code, "missing_result")
+    else:
+        (temp_dir / "result.py").write_text(code, encoding="utf-8")
+        result = python_tools.run_python_file_return_variable("result.py", "missing_result")
+    assert result == "Variable missing_result not found"
+
+
 @patch("subprocess.check_call")
 def test_pip_install_package(mock_check_call, python_tools):
     # Test pip package installation

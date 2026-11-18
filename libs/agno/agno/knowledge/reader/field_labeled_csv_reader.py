@@ -34,6 +34,11 @@ class FieldLabeledCSVReader(Reader):
         self.format_headers = format_headers
         self.skip_empty_fields = skip_empty_fields
 
+    @staticmethod
+    def _get_stream_name(file: IO[Any]) -> str:
+        stream_name = getattr(file, "name", None)
+        return stream_name.split(".")[0] if isinstance(stream_name, str) else "csv_file"
+
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Chunking is not supported - each row is already a logical document unit."""
@@ -105,12 +110,12 @@ class FieldLabeledCSVReader(Reader):
                 )
             else:
                 log_debug(f"Reading retrieved file: {getattr(file, 'name', 'BytesIO')}")
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
+                csv_name = name or self._get_stream_name(file)
                 file.seek(0)
                 content = file.read()
                 if isinstance(content, bytes):
                     content = content.decode(self.encoding or "utf-8")
-                file_content = io.StringIO(content)
+                file_content = io.StringIO(content, newline="")
 
             documents = []
 
@@ -179,10 +184,10 @@ class FieldLabeledCSVReader(Reader):
         """Read a CSV file asynchronously and convert each row to a field-labeled document.
 
         Raises:
-            ValueError: If page_size is less than zero.
+            ValueError: If page_size is not positive.
         """
-        if page_size < 0:
-            raise ValueError("page_size cannot be a negative value.")
+        if page_size <= 0:
+            raise ValueError("page_size must be a positive value.")
 
         try:
             if isinstance(file, Path):
@@ -191,16 +196,16 @@ class FieldLabeledCSVReader(Reader):
                 log_debug(f"Reading async: {file}")
                 async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
                     content = await file_content.read()
-                    file_content_io = io.StringIO(content)
+                    file_content_io = io.StringIO(content, newline="")
                 csv_name = name or file.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
-                csv_name = name or getattr(file, "name", "csv_file").split(".")[0]
+                csv_name = name or self._get_stream_name(file)
                 file.seek(0)
                 content = file.read()
                 if isinstance(content, bytes):
                     content = content.decode(self.encoding or "utf-8")
-                file_content_io = io.StringIO(content)
+                file_content_io = io.StringIO(content, newline="")
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)

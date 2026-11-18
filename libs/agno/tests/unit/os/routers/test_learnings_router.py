@@ -1,6 +1,7 @@
 """Tests for the learnings REST API router."""
 
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -579,16 +580,38 @@ class TestIDORScoping:
         assert resp.status_code == 403
         mock_db.list_learnings.assert_not_called()
 
-    def test_create_null_user_id_creates_global(self, jwt_client, mock_db):
-        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+    def test_create_without_user_id_is_pinned_to_the_caller(self, jwt_client, mock_db):
+        """A scoped caller owns what it writes: an omitted user_id does not create an ownerless
+        (global) row that every user's agent reads and only an admin may change."""
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-A"))
         resp = jwt_client.post(
             "/learnings",
             json={"learning_type": "agent_memory", "content": {"hello": "world"}, "agent_id": "ag-1"},
         )
         assert resp.status_code == 201
         kwargs = mock_db.upsert_learning.call_args[1]
-        assert kwargs["user_id"] is None
+        assert kwargs["user_id"] == "user-A"
         assert kwargs["agent_id"] == "ag-1"
+
+    def test_create_session_context_for_another_users_session_is_refused(self, jwt_client, mock_db):
+        """session_context is read back by session id alone, so a row keyed to another user's
+        session would be injected into that user's next run."""
+        mock_db.get_session = MagicMock(return_value=SimpleNamespace(user_id="user-B"))
+        resp = jwt_client.post(
+            "/learnings",
+            json={"learning_type": "session_context", "content": {"summary": "x"}, "session_id": "sess-B"},
+        )
+        assert resp.status_code == 404
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_session_context_for_own_session_is_allowed(self, jwt_client, mock_db):
+        mock_db.get_session = MagicMock(return_value=SimpleNamespace(user_id="user-A"))
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, _make_learning(user_id="user-A")])
+        resp = jwt_client.post(
+            "/learnings",
+            json={"learning_type": "session_context", "content": {"summary": "x"}, "session_id": "sess-A"},
+        )
+        assert resp.status_code == 201, resp.text
 
     def test_create_matching_user_id_allowed(self, jwt_client, mock_db):
         # existence check -> None (not present), then readback -> created
