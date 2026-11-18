@@ -10,7 +10,8 @@ from agno.knowledge.document import Document
 from agno.vectordb.lancedb import LanceDb
 
 TEST_TABLE = "test_isolation_table"
-TEST_PATH = "tmp/test_lancedb_isolation"
+# One folder per xdist worker, so parallel workers never delete each other's database.
+TEST_PATH = f"tmp/test_lancedb_isolation_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 
 
 @pytest.fixture

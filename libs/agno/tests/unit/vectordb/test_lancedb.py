@@ -9,7 +9,8 @@ from agno.vectordb.lancedb import LanceDb
 from agno.vectordb.search import SearchType
 
 TEST_TABLE = "test_table"
-TEST_PATH = "tmp/test_lancedb"
+# One folder per xdist worker, so parallel workers never delete each other's database.
+TEST_PATH = f"tmp/test_lancedb_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 
 
 @pytest.fixture
