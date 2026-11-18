@@ -67,6 +67,41 @@ async def test_get_or_create_table_creates_when_not_available_and_create_flag_se
 
 
 @pytest.mark.asyncio
+async def test_failed_table_creation_can_be_retried(async_postgres_db):
+    """A failed CREATE TABLE must not leave the table registered on MetaData."""
+    async_postgres_db.create_schema = False
+    attempts = {"create": 0}
+
+    async def run_sync(fn, *args, **kwargs):
+        attempts["create"] += 1
+        if attempts["create"] == 1:
+            raise OSError("temporary DDL outage")
+
+    conn = Mock(run_sync=run_sync)
+    begin_ctx = Mock(__aenter__=AsyncMock(return_value=conn), __aexit__=AsyncMock(return_value=None))
+    async_postgres_db.db_engine.begin = Mock(return_value=begin_ctx)
+
+    # Every index already exists, so only the table DDL goes through run_sync.
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock(return_value=Mock(scalar=Mock(return_value=1)))
+    async_postgres_db.async_session_factory = Mock(return_value=session)
+
+    with (
+        patch.object(AsyncPostgresDb, "table_exists", AsyncMock(return_value=False)),
+        patch.object(AsyncPostgresDb, "upsert_schema_version", AsyncMock()),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            await async_postgres_db._create_table("retry_table", "knowledge")
+
+        table = await async_postgres_db._create_table("retry_table", "knowledge")
+
+    assert table.name == "retry_table"
+    assert attempts["create"] == 2
+
+
+@pytest.mark.asyncio
 async def test_get_schedules_default_swallows_error(async_postgres_db, monkeypatch):
     """Test that get_schedules returns ([], 0) on DB failure by default"""
 
