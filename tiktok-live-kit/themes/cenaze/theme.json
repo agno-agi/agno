@@ -218,7 +218,8 @@
           "gul"
         ],
         "action": "mum",
-        "label": "Omuz ver"
+        "label": "Omuz ver",
+        "giftId": "5655"
       },
       {
         "names": [
@@ -233,7 +234,8 @@
           "kalp me"
         ],
         "action": "mum",
-        "label": "Omuz ver"
+        "label": "Omuz ver",
+        "giftId": "7934"
       },
       {
         "names": [
@@ -242,14 +244,16 @@
           "parmak kalbi"
         ],
         "action": "foto",
-        "label": "Fotoğrafı taşı"
+        "label": "Fotoğrafı taşı",
+        "giftId": "5487"
       },
       {
         "names": [
           "rosa"
         ],
         "action": "cicek",
-        "label": "Çelenk"
+        "label": "Çelenk",
+        "giftId": "8913"
       },
       {
         "names": [
@@ -284,6 +288,23 @@
         ],
         "action": "an",
         "label": "Büyük saygı"
+      },
+      {
+        "names": [
+          "gg"
+        ],
+        "action": "mum",
+        "label": "Omuz ver",
+        "giftId": "6064"
+      },
+      {
+        "names": [
+          "confetti",
+          "konfeti"
+        ],
+        "action": "an",
+        "label": "Büyük saygı",
+        "giftId": "5585"
       }
     ],
     "chatCommands": [
