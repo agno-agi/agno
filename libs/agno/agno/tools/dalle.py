@@ -6,7 +6,7 @@ from uuid import uuid4
 from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from openai import OpenAI
@@ -14,35 +14,28 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
-_GPT_IMAGE_OPTIONS = {
-    "sizes": ["auto", "1024x1024", "1536x1024", "1024x1536"],
-    "qualities": ["auto", "low", "medium", "high"],
-}
-# Sizes and qualities each image model accepts.
-MODEL_OPTIONS: Dict[str, Dict[str, List[str]]] = {
-    "gpt-image-2": _GPT_IMAGE_OPTIONS,
-    "gpt-image-1": _GPT_IMAGE_OPTIONS,
-    "gpt-image-1-mini": _GPT_IMAGE_OPTIONS,
-    "dall-e-3": {"sizes": ["1024x1024", "1792x1024", "1024x1792"], "qualities": ["auto", "standard", "hd"]},
-    "dall-e-2": {"sizes": ["256x256", "512x512", "1024x1024"], "qualities": ["auto", "standard"]},
-}
+from agno.tools.openai import IMAGE_MODEL_OPTIONS, STYLE_DEPRECATION, validate_image_options
 
 
 class DalleTools(Toolkit):
+    """Deprecated: use OpenAITools(enable_transcription=False, enable_speech_generation=False) instead."""
+
     def __init__(
         self,
         model: str = "gpt-image-2",
         n: int = 1,
-        size: Optional[
-            Literal["auto", "1024x1024", "1536x1024", "1024x1536", "256x256", "512x512", "1792x1024", "1024x1792"]
-        ] = "1024x1024",
-        quality: Literal["auto", "low", "medium", "high", "standard", "hd"] = "auto",
+        size: Optional[str] = "1024x1024",
+        quality: Literal["auto", "low", "medium", "high"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        log_warning(
+            "DalleTools is deprecated and will be removed in a future release, as OpenAI has retired the DALL-E models. "
+            "Use OpenAITools(enable_transcription=False, enable_speech_generation=False) instead."
+        )
         self.model = model
         self.n = n
         self.size = size
@@ -51,17 +44,11 @@ class DalleTools(Toolkit):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
 
         # Validations
-        if model not in MODEL_OPTIONS:
-            raise ValueError(f"Invalid model. Please choose from {', '.join(MODEL_OPTIONS)}.")
-        options = MODEL_OPTIONS[model]
-        if size not in options["sizes"]:
-            raise ValueError(f"Invalid size for {model}. Please choose from {', '.join(options['sizes'])}.")
-        if quality not in options["qualities"]:
-            raise ValueError(f"Invalid quality for {model}. Please choose from {', '.join(options['qualities'])}.")
-        if not isinstance(n, int) or n <= 0:
-            raise ValueError("Invalid number of images. Please provide a positive integer.")
-        if model == "dall-e-3" and n > 1:
-            raise ValueError("Dall-e-3 only supports a single image generation.")
+        if model not in IMAGE_MODEL_OPTIONS:
+            raise ValueError(f"Invalid model. Please choose from {', '.join(IMAGE_MODEL_OPTIONS)}.")
+        validate_image_options(model, n, size, quality)
+        if style is not None:
+            log_warning(STYLE_DEPRECATION)
 
         if not self.api_key:
             log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
@@ -99,10 +86,6 @@ class DalleTools(Toolkit):
                 "quality": self.quality,
                 "size": self.size,
             }
-            # OpenAI removed the dall-e-3 'style' parameter from the images API
-            # (400 "Unknown parameter"); only forward it when explicitly set.
-            if self.style is not None:
-                request_params["style"] = self.style
             response: ImagesResponse = client.images.generate(**request_params)
             log_debug("Image generated successfully")
 
@@ -126,7 +109,6 @@ class DalleTools(Toolkit):
                             content=base64.b64decode(img.b64_json),
                             mime_type=f"image/{getattr(response, 'output_format', None) or 'png'}",
                             original_prompt=prompt,
-                            revised_prompt=img.revised_prompt,
                         )
                         generated_images.append(image)
                         response_str += "Image has been generated\n"
