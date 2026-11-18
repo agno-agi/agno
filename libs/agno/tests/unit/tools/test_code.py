@@ -3,6 +3,7 @@
 Kernel-backed behavior lives in tests/integration/tools/test_code_kernel.py.
 """
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -19,7 +20,44 @@ from agno.tools.code.code_mode import (  # noqa: E402
     derive_handle_name,
     handle_names_for,
 )
-from agno.tools.code.kernel import KernelSession, OutputAccumulator  # noqa: E402
+from agno.tools.code.kernel import KernelSession, LoopRunner, OutputAccumulator  # noqa: E402
+
+
+@pytest.mark.parametrize("stop_on_worker", [False, True])
+def test_loop_runner_closes_stopped_loops_and_can_restart(stop_on_worker):
+    runner = LoopRunner()
+    started = []
+
+    async def current_loop():
+        return asyncio.get_running_loop()
+
+    try:
+        for _ in range(2):
+            loop = runner.submit(current_loop()).result(timeout=5)
+            thread = runner._thread
+            assert thread is not None
+            started.append((loop, thread))
+            if stop_on_worker:
+                loop.call_soon_threadsafe(runner.stop)
+                thread.join(timeout=5)
+            else:
+                runner.stop()
+            # Repeated shutdown is safe, including before the worker exits.
+            runner.stop()
+            assert not runner.started
+
+        assert started[0][0] is not started[1][0]
+        for loop, thread in started:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            assert loop.is_closed()
+    finally:
+        runner.stop()
+        for loop, thread in started:
+            thread.join(timeout=5)
+            if not thread.is_alive() and not loop.is_closed():
+                loop.close()
+
 
 # ------------------------------------------------------------------
 # Handle-name derivation
