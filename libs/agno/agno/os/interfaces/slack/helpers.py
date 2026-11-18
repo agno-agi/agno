@@ -436,9 +436,18 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                 log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
 
 
-async def post_ephemeral(client: Any, channel: str, user: str, text: str, thread_ts: Optional[str] = None) -> None:
+async def post_ephemeral(
+    client: Any,
+    channel: str,
+    user: str,
+    text: str,
+    thread_ts: Optional[str] = None,
+    blocks: Optional[List[Dict[str, Any]]] = None,
+) -> None:
     try:
-        await client.chat_postEphemeral(channel=channel, user=user, text=text, thread_ts=thread_ts)
+        # blocks only when given, so every other ephemeral is posted exactly as before
+        extra = {"blocks": blocks} if blocks else {}
+        await client.chat_postEphemeral(channel=channel, user=user, text=text, thread_ts=thread_ts, **extra)
     except Exception as exc:
         log_error(f"[HITL] chat_postEphemeral failed: {exc}")
 

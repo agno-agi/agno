@@ -37,6 +37,7 @@ hands each event to the interface. The demo environment installs both.
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
 | `super_agent.py` | Super Agent starts Company Tasks and posts their results back to the thread |
+| `super_agent_linked_accounts.py` | Super Agent where each member acts as their linked os.agno.com account |
 
 ## Slack App Setup
 
@@ -114,7 +115,7 @@ The manifest asks for these bot scopes:
 | `channels:read`, `groups:read` | Resolve public and private channel names |
 | `files:read`, `files:write` | Download incoming files and upload results |
 | `users:read` | Resolve Slack users and bots |
-| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`) |
+| `users:read.email` | Resolve an email identity (`resolve_user_identity=True`, `user_memory.py`, `super_agent_linked_accounts.py`) |
 
 The history scopes are needed for two reasons. Slack delivers a message event
 only when the app holds the history scope of that conversation type. And Super
@@ -441,6 +442,47 @@ check permissions there:
 A `JWTMiddleware` you add yourself must list `/slack/*` in
 `excluded_route_paths`, because Slack signs its requests and sends no token; the
 list replaces the defaults, so keep `/health` and `/docs` in it.
+
+### Super Agent with Agno Accounts
+
+`super_agent_linked_accounts.py` runs each member as their own os.agno.com
+account, with the permissions that account has on this AgentOS. No role is
+defined for Slack.
+
+Setup:
+
+1. On os.agno.com, open the AgentOS's Settings > Security. Turn on JWT and set
+   the public key as `JWT_VERIFICATION_KEY`.
+2. Generate an OS service token there and set it as `AGNO_OS_SERVICE_TOKEN`.
+   Revoke it there to stop linking at once.
+3. Serve with `AgentOS(authorization=True)`. Add `users:read` and
+   `users:read.email` to the Slack app.
+
+How it works:
+
+- Each message asks the platform which account the sender is linked to. A
+  linked member with access gets a 15-minute token for this AgentOS. The SDK
+  verifies it with `JWT_VERIFICATION_KEY` and runs the message as that account's
+  email, with the token's scopes. Tasks started from Slack keep those scopes.
+- A member who is not linked gets a private **Link your Agno account** button.
+  It opens os.agno.com, where they sign in and confirm. Their next message runs.
+  The account must be an active member of the organization that owns this
+  AgentOS, and, when Slack shares the member's email, have that same email.
+- A linked account that lost access (removed from the organization, no
+  `os:read`, JWT turned off, or no plan for a remote AgentOS) gets the reason and
+  the button again. Nothing runs.
+- Approving, denying, and stopping re-check the run owner's account. Another
+  Slack account linked to the same Agno account may act on the run. Only the
+  member gets a link button; anyone else is told the owner is not linked.
+- A Task result is posted only when the author of the starting message is still
+  linked to the run's account and may read Tasks.
+- Members in `users=` keep their mapping. `default_role=` does not apply to
+  Super Agent while linking is on.
+
+Linking is on only for Super Agent, with `AGNO_OS_SERVICE_TOKEN` set and
+authorization verifying JWTs. Otherwise the behavior above this section applies,
+and a warning is logged once when the token is set but JWT verification is off.
+Set `AGNO_PLATFORM_API_URL` to use a platform other than os.agno.com.
 
 ## Limits
 

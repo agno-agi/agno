@@ -21,6 +21,7 @@ from agno.os.interfaces.slack.components import Card
 from agno.os.interfaces.slack.ids import (
     ACTION_CHECK_STATUS,
     ACTION_EXTERNAL_RESULT,
+    ACTION_LINK_ACCOUNT,
     ACTION_REJECT_REASON,
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
@@ -389,6 +390,20 @@ def build_submit_button(run_id: str, awaiting_ts: Optional[str], owner: Optional
         value=encode_submit_button_value(run_id, awaiting_ts, owner),
     )
     return ActionsBlock(block_id=pause_block_id(run_id), elements=[submit_btn]).to_dict()
+
+
+def build_link_prompt(text: str, url: str) -> List[Dict[str, Any]]:
+    """A message with a button that opens the page where a Slack member links their Agno account."""
+    button = ButtonElement(
+        action_id=ACTION_LINK_ACCOUNT,
+        text=PlainTextObject(text="Link your Agno account", emoji=True),
+        style="primary",
+        url=url,
+    )
+    return [
+        SectionBlock(text=MarkdownTextObject(text=text)).to_dict(),
+        ActionsBlock(elements=[button]).to_dict(),
+    ]
 
 
 def select_confirmation_row(
