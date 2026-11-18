@@ -74,9 +74,29 @@ def media_to_content_item(
             import httpx
 
             headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
-            response = httpx.get(url, follow_redirects=True, headers=headers)
-            response.raise_for_status()
-            item["data"] = base64.b64encode(response.content).decode("utf-8")
+            # Cap the download size: media URLs are attacker-influenceable input
+            # (user input or model tool calls), and `response.content` materializes
+            # the whole body before any size check, allowing an arbitrarily large
+            # body plus a ~1.33x base64 copy in memory.
+            max_bytes = 25 * 1024 * 1024  # 25 MiB
+            with httpx.Client(follow_redirects=True, headers=headers) as client:
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > max_bytes:
+                        raise ValueError(
+                            f"media exceeds size limit of {max_bytes} bytes"
+                        )
+                    chunks = []
+                    size = 0
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > max_bytes:
+                            raise ValueError(
+                                f"media exceeds size limit of {max_bytes} bytes"
+                            )
+                        chunks.append(chunk)
+            item["data"] = base64.b64encode(b"".join(chunks)).decode("utf-8")
             return item
         except Exception as e:
             log_warning(f"Failed to download {content_type} from URL {url}: {e}")
