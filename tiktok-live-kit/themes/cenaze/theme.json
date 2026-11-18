@@ -222,12 +222,68 @@
       },
       {
         "names": [
+          "tiktok"
+        ],
+        "action": "mum",
+        "label": "Omuz ver"
+      },
+      {
+        "names": [
+          "heart me",
+          "kalp me"
+        ],
+        "action": "mum",
+        "label": "Omuz ver"
+      },
+      {
+        "names": [
           "finger heart",
           "parmak kalp",
           "parmak kalbi"
         ],
         "action": "foto",
         "label": "Fotoğrafı taşı"
+      },
+      {
+        "names": [
+          "rosa"
+        ],
+        "action": "cicek",
+        "label": "Çelenk"
+      },
+      {
+        "names": [
+          "perfume",
+          "parfum",
+          "parfüm"
+        ],
+        "action": "cicek",
+        "label": "Çelenk"
+      },
+      {
+        "names": [
+          "donut",
+          "doughnut"
+        ],
+        "action": "cicek",
+        "label": "Çelenk"
+      },
+      {
+        "names": [
+          "hat and mustache",
+          "sapka ve biyik",
+          "şapka ve bıyık"
+        ],
+        "action": "cicek",
+        "label": "Çelenk"
+      },
+      {
+        "names": [
+          "hand hearts",
+          "el kalbi"
+        ],
+        "action": "an",
+        "label": "Büyük saygı"
       }
     ],
     "chatCommands": [

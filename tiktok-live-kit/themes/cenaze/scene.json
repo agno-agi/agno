@@ -148,5 +148,6 @@
   "fps": 30,
   "humanoid": true,
   "humanoidStyle": "suit",
-  "procession": true
+  "procession": true,
+  "walkSpeed": 3.4
 }
