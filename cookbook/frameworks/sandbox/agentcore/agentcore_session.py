@@ -12,11 +12,14 @@ By default turn 2 looks the sandbox up again with create, as a new request would
 the same session and generation name the same microVM, so the harness resumes
 with nothing to restore. --replace checkpoints the computer after turn 1,
 destroys it and restores generation 2 on a fresh microVM, the path a session
-takes after its microVM ends.
+takes after its microVM ends. --resume takes the warm path on a runtime deployed
+with --session-storage: it checkpoints after turn 1, ends the microVM, and brings
+the same generation back from the copy kept on session storage.
 """
 
 import argparse
 import os
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -54,10 +57,16 @@ def main() -> None:
     parser.add_argument(
         "--model", help="Bedrock model for claude, OpenAI model for codex"
     )
-    parser.add_argument(
+    path = parser.add_mutually_exclusive_group()
+    path.add_argument(
         "--replace",
         action="store_true",
         help="Run turn 2 on a new microVM restored from a checkpoint",
+    )
+    path.add_argument(
+        "--resume",
+        action="store_true",
+        help="Run turn 2 on the same generation resumed from session storage",
     )
     args = parser.parse_args()
 
@@ -105,14 +114,25 @@ def main() -> None:
                 sandbox, FileCheckpointStore(Path(directory) / "objects")
             )
             run_turn(client, handles[0], 1, args.harness, turns[0], config)
-            if args.replace:
+            if args.replace or args.resume:
                 reference = transfer.capture(handles[0], state={"turn": 1})
                 print(f"Checkpoint {reference.sha256[:12]}, {reference.size} bytes")
                 sandbox.destroy(handles[0])
-                handles.append(sandbox.create(**identity, generation=2))
-                assert handles[1].provider_ref != handles[0].provider_ref
-                assert transfer.restore(handles[1], reference) == {"turn": 1}
-                print("Restored generation 2 on", handles[1].provider_ref)
+                started = time.monotonic()
+                if args.replace:
+                    handles.append(sandbox.create(**identity, generation=2))
+                    assert handles[1].provider_ref != handles[0].provider_ref
+                    assert transfer.restore(handles[1], reference) == {"turn": 1}
+                    print("Restored generation 2 on", handles[1].provider_ref)
+                else:
+                    resumed, state = transfer.resume(
+                        "example", reference, agent_id="coder", env=env
+                    )
+                    handles.append(resumed)
+                    assert resumed.provider_ref == handles[0].provider_ref
+                    assert resumed.name != handles[0].name and state == {"turn": 1}
+                    print("Resumed generation 1 from session storage")
+                print(f"Ready for turn 2 in {time.monotonic() - started:.1f}s")
             else:
                 # A later request finds the same computer by its session and generation.
                 assert (
@@ -123,7 +143,13 @@ def main() -> None:
         print("Workspace after both turns:", listing)
         if args.harness != "fixture":
             assert "BLUE-HERON" in content, "Turn 2 lost the conversation"
-            place = "a restored microVM" if args.replace else "the same microVM"
+            place = (
+                "a restored microVM"
+                if args.replace
+                else "a resumed microVM"
+                if args.resume
+                else "the same microVM"
+            )
             print(f"Turn 2 recalled the codeword on {place}.")
     finally:
         for handle in handles:
