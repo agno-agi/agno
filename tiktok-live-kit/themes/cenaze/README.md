@@ -21,3 +21,7 @@ Sohbet sesli okunmaz (`voice.chat` boş); isterseniz bir şablon ekleyin.
 
 ## Kişiselleştirme
 Başlık/alt başlık: `theme.json > hud.title`. Tarih, ayet/dua metni vb. aileyle birlikte karar verip oraya eklenmeli.
+
+## Çerçeve resmi (isteğe bağlı)
+Tabuttaki levhanın çerçevesinde varsayılan olarak yüzsüz bir siluet görünür. `themes/cenaze/assets/portrait.png` (veya `.jpg`) dosyası koyarsanız çerçevede o görünür.
+Repoda hazır görsel yoktur. Yalnızca yayın ve kullanım hakkı sizde olan bir görseli koyun: görselin sahibinden ve görüntüsü kullanılan kişiden yazılı izin gerekir (karakter adı için alınan izin tek başına oyuncunun yüzünü veya fotoğraf telifini kapsamayabilir). Sorumluluk dosyayı koyan kişidedir.

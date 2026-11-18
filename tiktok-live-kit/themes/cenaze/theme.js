@@ -22,24 +22,37 @@
     const t = new T.CanvasTexture(c); t.wrapS = t.wrapT = T.RepeatWrapping; t.repeat.set(4, 12); t.colorSpace = T.SRGBColorSpace;
     return t;
   }
-  // Levha: solda yüzsüz siluet (şapkalı, paltolu, özgün çizim), sağda ad. Fotoğraf kullanılmaz.
+  // Levha: solda çerçeve, sağda ad. Çerçevede varsayılan olarak yüzsüz siluet (özgün çizim) görünür.
+  // İsteğe bağlı: themes/cenaze/assets/portrait.png (veya .jpg) dosyası varsa çerçevede o görünür.
+  // Dosyayı yalnızca yayın / kullanım hakkı SİZDE olan bir görselle koyun (kişi ve görsel sahibinden yazılı izin). Repoda hazır görsel yoktur.
   function plaqueTexture(T) {
     const c = document.createElement('canvas'); c.width = 640; c.height = 200;
     const x = c.getContext('2d');
-    x.fillStyle = '#1a1710'; x.fillRect(0, 0, 640, 200);
-    x.strokeStyle = '#d8cfa8'; x.lineWidth = 8; x.strokeRect(8, 8, 624, 184);
-    // siluet çerçevesi
-    x.fillStyle = '#2a2a2a'; x.fillRect(24, 24, 150, 152);
-    const grd = x.createLinearGradient(0, 24, 0, 176); grd.addColorStop(0, '#4a4f58'); grd.addColorStop(1, '#22252b');
-    x.fillStyle = grd; x.fillRect(24, 24, 150, 152);
-    x.fillStyle = '#0c0d10';
-    x.beginPath(); x.ellipse(99, 82, 24, 28, 0, 0, 6.283); x.fill();                 // baş
-    x.beginPath(); x.ellipse(99, 56, 44, 7, 0, 0, 6.283); x.fill();                   // şapka kenarı
-    x.fillRect(79, 36, 40, 22);                                                       // şapka tacı
-    x.beginPath(); x.moveTo(26, 176); x.lineTo(40, 124); x.quadraticCurveTo(99, 100, 158, 124); x.lineTo(172, 176); x.closePath(); x.fill(); // omuz / palto
-    x.fillStyle = '#efe6c8'; x.font = '700 50px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.fillText(NAME, 410, 100, 430);
-    const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace; return t;
+    const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace;
+    function frame(img) {
+      x.fillStyle = '#1a1710'; x.fillRect(0, 0, 640, 200);
+      x.strokeStyle = '#d8cfa8'; x.lineWidth = 8; x.strokeRect(8, 8, 624, 184);
+      if (img) { // görseli çerçeveye "cover" olarak sığdır
+        const r = Math.max(150 / img.width, 152 / img.height), w = img.width * r, h = img.height * r;
+        x.save(); x.beginPath(); x.rect(24, 24, 150, 152); x.clip(); x.drawImage(img, 24 + (150 - w) / 2, 24 + (152 - h) / 2, w, h); x.restore();
+      } else {
+        const grd = x.createLinearGradient(0, 24, 0, 176); grd.addColorStop(0, '#4a4f58'); grd.addColorStop(1, '#22252b');
+        x.fillStyle = grd; x.fillRect(24, 24, 150, 152);
+        x.fillStyle = '#0c0d10';
+        x.beginPath(); x.ellipse(99, 82, 24, 28, 0, 0, 6.283); x.fill();                 // baş
+        x.beginPath(); x.ellipse(99, 56, 44, 7, 0, 0, 6.283); x.fill();                   // şapka kenarı
+        x.fillRect(79, 36, 40, 22);                                                       // şapka tacı
+        x.beginPath(); x.moveTo(26, 176); x.lineTo(40, 124); x.quadraticCurveTo(99, 100, 158, 124); x.lineTo(172, 176); x.closePath(); x.fill(); // omuz / palto
+      }
+      x.fillStyle = '#efe6c8'; x.font = '700 50px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText(NAME, 410, 100, 430);
+      t.needsUpdate = true;
+    }
+    frame(null);
+    for (const f of ['assets/portrait.png', 'assets/portrait.jpg']) {
+      const im = new Image(); im.onload = () => frame(im); im.src = f;
+    }
+    return t;
   }
   function build() {
     const k = Kit.scene.three;
