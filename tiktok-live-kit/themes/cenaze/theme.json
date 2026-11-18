@@ -9,7 +9,7 @@
       "label": "Omuz ver",
       "icon": "🤝",
       "card": "1–9 JETON",
-      "description": "Gönderen alaya omuz verir: parlar, baş eğer",
+      "description": "Gönderen tabuta omuz verir: yanına yürür, bir süre durur, sonra yerine döner (en fazla 6 kişi aynı anda)",
       "steps": [
         {
           "aura": 0.6
@@ -24,14 +24,14 @@
           "count": "count"
         },
         {
-          "play": "nod"
-        },
-        {
           "fx": "text",
           "at": "head",
           "text": "🤝 {ten}",
           "color": "#f3e7c4",
           "size": 28
+        },
+        {
+          "js": "omuz"
         }
       ]
     },
@@ -330,7 +330,7 @@
       "verb": "bir hediye gönderdi:",
       "unit": "jeton"
     },
-    "tiers": true,
+    "tiers": false,
     "board": {
       "title": "ÖN SAF",
       "size": 3

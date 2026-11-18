@@ -117,3 +117,20 @@
   });
   const tm = setInterval(() => { if (build()) clearInterval(tm); }, 300);
 })();
+
+// "Omuz ver" (1–9 jeton / Gül): gönderen tabutun yanındaki boş noktaya yürür, HOLD süre durur, sonra yerine döner.
+// Noktalar scene.json "points" içinde omuz0..omuz5 (en fazla 6 kişi aynı anda; doluysa yalnızca efekt çalışır).
+(function () {
+  const HOLD = 30000, taken = new Array(6).fill(null);
+  Kit.action('omuz', (person) => {
+    if (!person || person.npc || taken.includes(person.id)) return;
+    const i = taken.indexOf(null);
+    if (i < 0) return;
+    taken[i] = person.id;
+    const P = Kit.scene.P;
+    P.walkTo(person, 'omuz' + i); P.pose(person, 'stand'); P.wait(person, HOLD);
+    P.walkTo(person, 'home'); P.pose(person, 'idle');
+    P.do(person, () => { taken[i] = null; });
+  });
+  Live.on('reset', () => taken.fill(null));
+})();
