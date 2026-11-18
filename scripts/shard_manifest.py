@@ -27,13 +27,19 @@ def pytest_collection_finish(session: Any) -> None:
     # xdist workers collect the same tests, so one of them writes for the shard.
     if path and os.environ.get("PYTEST_XDIST_WORKER", "gw0") == "gw0":
         selected = [item.nodeid for item in session.items]
-        Path(path).write_text(json.dumps({"collected": _collected, "selected": selected}))
+        Path(path).write_text(
+            json.dumps({"collected": _collected, "selected": selected})
+        )
 
 
 def _listed(label: str, node_ids: List[str]) -> List[str]:
     shown = [f"  {node_id}" for node_id in sorted(node_ids)[:MAX_LISTED]]
     hidden = len(node_ids) - len(shown)
-    return [f"{label}: {len(node_ids)}", *shown, *([f"  ... and {hidden} more"] if hidden else [])]
+    return [
+        f"{label}: {len(node_ids)}",
+        *shown,
+        *([f"  ... and {hidden} more"] if hidden else []),
+    ]
 
 
 def find_problems(manifests: Dict[str, Dict[str, List[str]]], splits: int) -> List[str]:
@@ -41,13 +47,17 @@ def find_problems(manifests: Dict[str, Dict[str, List[str]]], splits: int) -> Li
         return [f"Expected {splits} shard manifests, found {len(manifests)}"]
 
     problems: List[str] = []
-    collections = {name: set(manifest["collected"]) for name, manifest in manifests.items()}
+    collections = {
+        name: set(manifest["collected"]) for name, manifest in manifests.items()
+    }
     expected = set().union(*collections.values())
     for name, collected in sorted(collections.items()):
         if collected != expected:
             problems += _listed(f"{name} did not collect", list(expected - collected))
 
-    runs = Counter(node_id for manifest in manifests.values() for node_id in manifest["selected"])
+    runs = Counter(
+        node_id for manifest in manifests.values() for node_id in manifest["selected"]
+    )
     missing = [node_id for node_id in expected if node_id not in runs]
     duplicated = [node_id for node_id, count in runs.items() if count > 1]
     if missing:
@@ -63,7 +73,10 @@ def main() -> int:
     parser.add_argument("--splits", type=int, required=True)
     args = parser.parse_args()
 
-    manifests = {path.stem: json.loads(path.read_text()) for path in args.manifest_dir.glob("*.json")}
+    manifests = {
+        path.stem: json.loads(path.read_text())
+        for path in args.manifest_dir.glob("*.json")
+    }
     problems = find_problems(manifests, args.splits)
     if problems:
         print("\n".join(problems))
