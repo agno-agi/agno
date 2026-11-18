@@ -29,6 +29,21 @@ if TYPE_CHECKING:
     AnyValkeyClient = Union[ValkeyClientType, ValkeyClusterClientType]
 
 
+def valkey_client_seed(valkey_client: Any) -> Optional[str]:
+    """The server a client connects to, as a stable id seed; None when the client does not say."""
+    # GLIDE keeps its configuration only in the private _config; without it there is no address to read.
+    config = getattr(valkey_client, "_config", None)
+    addresses = getattr(config, "addresses", None)
+    if not addresses:
+        return None
+    # A unix socket address keeps the default host and port, so its path is what names the server.
+    nodes = ",".join(sorted(str(getattr(a, "unix_socket_path", None) or f"{a.host}:{a.port}") for a in addresses))
+    database = getattr(config, "database_id", None) or 0
+    if isinstance(valkey_client, GlideClusterClient):
+        return f"valkey-cluster://{nodes}/{database}"
+    return f"valkey://{nodes}/{database}"
+
+
 # Kept small: a batch is a single request, which the client waits 250 milliseconds for by default
 VALKEY_BATCH_LIMIT = 100
 

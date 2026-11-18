@@ -58,6 +58,7 @@ from agno.db.utils import (
     get_metrics_reopen_session_ids,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
+    log_unstable_client_id,
     merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metrics_calculation_enabled,
@@ -150,7 +151,14 @@ class FirestoreDb(BaseDb):
             ValueError: If neither project_id nor db_client is provided.
         """
         if id is None:
-            seed = project_id or str(db_client)
+            # str(client) holds a memory address, so a client is seeded from its project, plus its database when
+            # that is not the default one (the client keeps the database name only in the private _database).
+            project = getattr(db_client, "project", None)
+            database = getattr(db_client, "_database", None)
+            client_seed = f"{project}/{database}" if project and database not in (None, "(default)") else project
+            if not (project_id or client_seed) and db_client is not None:
+                log_unstable_client_id(type(self).__name__)
+            seed = project_id or client_seed or str(db_client)
             id = generate_id(seed)
 
         super().__init__(
