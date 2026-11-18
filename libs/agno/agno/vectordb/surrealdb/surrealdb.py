@@ -15,7 +15,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace
 from agno.vectordb.distance import Distance
 
 
@@ -433,6 +433,9 @@ class SurrealDb(VectorDb):
 
         """
         # See ``insert``
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._ensure_schema()
         # UPSERT replaces by record id, so clear this owner's chunks first or a shrunken document
         # leaves its dropped chunks behind
@@ -809,6 +812,9 @@ class SurrealDb(VectorDb):
 
         """
         # See ``insert``
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         await self._async_ensure_schema()
         # See ``upsert``; the guard and its delete run on the async client
         if await self.async_content_hash_exists(content_hash, user_id=user_id):

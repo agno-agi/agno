@@ -761,6 +761,8 @@ class File(BaseModel):
             "application/vnd.ms-powerpoint",  # .ppt
             "application/vnd.ms-excel",  # .xls
             "application/vnd.ms-outlook",  # .msg
+            "application/zip",  # .zip
+            "message/rfc822",  # .eml
             "text/javascript",
             "application/x-python",
             "text/x-python",

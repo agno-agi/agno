@@ -1,8 +1,8 @@
 # Run Lifecycle
 
-These five examples cover the lifecycle APIs around an AgentOS agent run:
+These six examples cover the lifecycle APIs around an AgentOS agent run:
 background submission and polling, cancellation, resumable SSE, persisted
-checkpoints, and background hooks.
+checkpoints, background hooks, and preprocessing uploads before the model call.
 
 ## Setup
 
@@ -24,6 +24,7 @@ Each server example listens on port 7777. Start only one at a time.
 | `sse_reconnect.py` | Resume both a new background SSE run and a background continuation with raw `httpx`. |
 | `checkpoints.py` | List `tool-batch` checkpoints and continue from a selected `message_index`. |
 | `hooks_in_background.py` | Choose AgentOS-wide background hooks or mix blocking and per-hook background work. |
+| `unpack_archives.py` | Replace an uploaded `.zip` with the files inside it from a `pre_hook`. |
 
 ## Run states
 

@@ -25,7 +25,7 @@ from agno.models.google import GeminiInteractions
 
 agent = Agent(
     model=GeminiInteractions(
-        agent="antigravity-preview-05-2026",
+        agent="antigravity-preview-09-2026",
         environment="remote",
     ),
     markdown=True,

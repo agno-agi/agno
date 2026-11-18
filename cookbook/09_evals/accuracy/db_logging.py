@@ -10,7 +10,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval, AccuracyResult
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.calculator import CalculatorTools
 
 # ---------------------------------------------------------------------------
@@ -25,9 +25,9 @@ db = PostgresDb(db_url=db_url, eval_table="eval_runs_cookbook")
 evaluation = AccuracyEval(
     db=db,
     name="Calculator Evaluation",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-terra"),
     agent=Agent(
-        model=OpenAIChat(id="gpt-5.6-luna"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         tools=[CalculatorTools()],
     ),
     input="What is 10*5 then to the power of 2? do it step by step",

@@ -2,7 +2,7 @@ import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from ag_ui.core import (
@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
@@ -96,6 +96,17 @@ async def run_entity(
             )
         else:
             # Fresh run: new user input
+            if isinstance(entity, (RemoteAgent, RemoteTeam)):
+                # A RunContext is an in-process object: RemoteAgent/RemoteTeam forward every
+                # unknown kwarg as a form field, and the remote AgentOS would hand the
+                # stringified object to Agent.arun. Send the wire fields it carries instead.
+                run_kwargs["session_state"] = session_state
+                run_kwargs["dependencies"] = ui_deps
+                if client_tools:
+                    # Dropped: the remote agent cannot pause back into this process's session.
+                    log_warning("AG-UI client tools are not forwarded to remote agents or teams")
+            else:
+                run_kwargs["run_context"] = run_context
             response_stream = entity.arun(  # type: ignore
                 input=user_input,
                 stream=True,
@@ -107,7 +118,6 @@ async def run_entity(
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
-                run_context=run_context,
                 **run_kwargs,
             )
 
@@ -148,6 +158,28 @@ def attach_routes(
             user_id or getattr(entity, "user_id", None),
             is_admin=caller_is_admin(request),
         )
+
+        # A trailing tool message resumes a paused run with caller-supplied answers, which
+        # is a /continue. REST, MCP and the WebSocket all refuse to continue a run that is
+        # paused on an admin-required approval; this transport must too, or the run's
+        # initiator confirms the approval themselves by replaying the tool call here.
+        # Decided before the stream opens so the refusal is a real 403.
+        tool_messages = extract_tool_messages(run_input.messages or [])
+        if tool_messages:
+            from agno.os.auth import run_continuation_blocked_reason
+            from agno.os.interfaces.agui.resume import find_resume_target_run_id
+
+            entity_db = getattr(entity, "db", None)
+            run_id = await find_resume_target_run_id(entity, run_input.thread_id, tool_messages)
+            reason = await run_continuation_blocked_reason(
+                entity_db,
+                run_id,
+                authorization_enabled=bool(getattr(request.state, "authorization_enabled", False)),
+                user_scopes=list(getattr(request.state, "scopes", None) or []),
+                request=request,
+            )
+            if reason:
+                raise HTTPException(status_code=403, detail=reason)
 
         async def event_generator():
             async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore

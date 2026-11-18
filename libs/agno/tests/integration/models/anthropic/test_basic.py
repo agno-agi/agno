@@ -9,7 +9,7 @@ from agno.models.anthropic import Claude
 @pytest.fixture(scope="module")
 def claude_model():
     """Fixture that provides a Claude model and reuses it across all tests in the module."""
-    return Claude(id="claude-sonnet-4-5-20250929")
+    return Claude(id="claude-sonnet-5-5")
 
 
 def _assert_metrics(response: RunOutput):
@@ -22,6 +22,14 @@ def _assert_metrics(response: RunOutput):
     assert output_tokens > 0
     assert total_tokens > 0
     assert total_tokens == input_tokens + output_tokens
+
+
+def _assert_text_stream(chunks):
+    """Current Claude models think by default, so a stream also carries hidden-thinking and
+    signature chunks with no text. Check that the text chunks are strings that add up to a reply."""
+    text_chunks = [chunk.content for chunk in chunks if chunk.content is not None]
+    assert all(isinstance(text, str) for text in text_chunks)
+    assert "".join(text_chunks)
 
 
 def test_basic(claude_model):
@@ -41,8 +49,7 @@ def test_basic_stream(claude_model):
     agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
     run_stream = agent.run("Say 'hi'", stream=True)
-    for chunk in run_stream:
-        assert chunk.content is not None
+    _assert_text_stream(list(run_stream))
 
 
 @pytest.mark.asyncio
@@ -63,8 +70,8 @@ async def test_async_basic(claude_model):
 async def test_async_basic_stream(claude_model):
     agent = Agent(model=claude_model, markdown=True, telemetry=False)
 
-    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
-        assert response.content is not None
+    chunks = [chunk async for chunk in agent.arun("Share a 2 sentence horror story", stream=True)]
+    _assert_text_stream(chunks)
 
 
 def test_with_memory(claude_model):

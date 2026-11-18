@@ -15,7 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -76,7 +76,7 @@ class Qdrant(VectorDb):
             timeout (Optional[float]): Request timeout (REST: default 5s, gRPC: unlimited).
             host (Optional[str]): Qdrant host (default: "localhost" if not specified).
             path (Optional[str]): Path for local persistence (QdrantLocal).
-            reranker (Optional[Reranker]): Optional reranker for result refinement.
+            reranker (Optional[Reranker]): Optional reranker for result refinement. Deprecated: pass the reranker to Knowledge instead.
             search_type (SearchType): Whether to use vector, keyword or hybrid search.
             dense_vector_name (str): Dense vector name.
             sparse_vector_name (str): Sparse vector name.
@@ -367,12 +367,26 @@ class Qdrant(VectorDb):
             return doc_id
         return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
 
+    @staticmethod
+    def _validate_batch_size(batch_size: Optional[int]) -> None:
+        """Reject a non-positive batch_size before any embedding work is done."""
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
+
+    @staticmethod
+    def _batch_points(points: List[Any], batch_size: Optional[int]) -> List[List[Any]]:
+        """Split points into upsert batches; ``None`` keeps them in a single batch."""
+        if not points:
+            return []
+        size = batch_size or len(points)
+        return [points[start : start + size] for start in range(0, len(points), size)]
+
     def insert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
-        batch_size: int = 10,
+        batch_size: Optional[int] = None,
         user_id: Optional[str] = None,
     ) -> None:
         """
@@ -381,9 +395,10 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            batch_size (int): Batch size for inserting documents
+            batch_size (Optional[int]): Max points per upsert request. ``None`` sends all points in one request
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        self._validate_batch_size(batch_size)
         # create() only runs for collections that don't exist, so pre-v3 ones are ensured here
         self._ensure_user_id_payload_index_sync()
         log_debug(f"Inserting {len(documents)} documents")
@@ -443,8 +458,8 @@ class Qdrant(VectorDb):
                 )
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
-        if len(points) > 0:
-            self.client.upsert(collection_name=self.collection, wait=False, points=points)
+        for batch in self._batch_points(points, batch_size):
+            self.client.upsert(collection_name=self.collection, wait=False, points=batch)
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(
@@ -453,6 +468,7 @@ class Qdrant(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> None:
         """
         Insert documents asynchronously.
@@ -461,7 +477,9 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
+            batch_size (Optional[int]): Max points per upsert request. ``None`` sends all points in one request
         """
+        self._validate_batch_size(batch_size)
         # See ``insert`` — pre-v3 collections get the tenant index from the write path
         await self._ensure_user_id_payload_index_async()
         log_debug(f"Inserting {len(documents)} documents asynchronously")
@@ -487,12 +505,8 @@ class Qdrant(VectorDb):
                             log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
                 except Exception as e:
-                    # Check if this is a rate limit error - don't fall back as it would make things worse
-                    error_str = str(e).lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                     if is_rate_limit:
                         log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -562,8 +576,8 @@ class Qdrant(VectorDb):
         # Process all documents in parallel
         points = await asyncio.gather(*[process_document(doc) for doc in documents])
 
-        if len(points) > 0:
-            await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
+        for batch in self._batch_points(list(points), batch_size):
+            await self.async_client.upsert(collection_name=self.collection, wait=False, points=batch)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
     def upsert(
@@ -581,6 +595,9 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         log_debug("Redirecting the request to insert")
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -600,6 +617,13 @@ class Qdrant(VectorDb):
         if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
             await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
+
+    def _dense_vector(self, vector: Any) -> Optional[List[float]]:
+        """Named-vector searches return a mapping, so pull the dense vector out of it."""
+        if isinstance(vector, dict):
+            dense = vector.get(self.dense_vector_name)
+            return list(dense) if dense is not None else None
+        return vector
 
     def search(
         self,
@@ -822,7 +846,7 @@ class Qdrant(VectorDb):
                     meta_data=result.payload["meta_data"],
                     content=result.payload["content"],
                     embedder=self.embedder,
-                    embedding=result.vector,  # type: ignore
+                    embedding=self._dense_vector(result.vector),
                     usage=result.payload.get("usage"),
                     content_id=result.payload.get("content_id"),
                 )

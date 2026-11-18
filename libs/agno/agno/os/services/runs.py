@@ -9,6 +9,7 @@ selection) and passes them back verbatim.
 from typing import Any, Dict, List, Optional, Union
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutput
 from agno.run.requirement import RunRequirement
@@ -78,6 +79,12 @@ async def continue_paused_run(
         get_active_queue_worker(), run_id, component_type=component_type, component_id=getattr(component, "id", None)
     )
     if isinstance(component, Workflow):
+        from agno.run.authorization import current_authorization, require_task_authority
+
+        # The tool-level check covers only steps that call a tool, so a run that a Company Task
+        # started is refused here, as on the REST and WebSocket continue doors.
+        stored = await component.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
+        require_task_authority(getattr(stored, "metadata", None), current_authorization())
         result: AnyRunOutput = await component.acontinue_run(
             run_id=run_id,
             session_id=session_id,
@@ -112,7 +119,7 @@ async def continue_paused_run(
 
 
 async def cancel_component_run(
-    component: Union[Agent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
+    component: Union[Agent, BaseExternalAgent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
 ) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 

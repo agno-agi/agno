@@ -222,12 +222,17 @@ def test_non_string_title_annotation_is_refused():
 
 def test_the_valid_key_list_matches_the_installed_protocol_model():
     """The allowlist is a copy of the protocol's own field set. If an SDK bump adds a
-    hint, this fails here rather than rejecting a developer's valid annotation."""
+    hint, this fails here rather than rejecting a developer's valid annotation.
+
+    The MCP SDK v2 renames the Python attributes to snake_case but keeps the
+    protocol's camelCase wire names as field aliases, so the comparison is made
+    against the aliases -- the names the protocol actually defines."""
     from mcp.types import ToolAnnotations
 
     from agno.tools.annotations import TOOL_ANNOTATION_KEYS
 
-    assert set(TOOL_ANNOTATION_KEYS) == set(ToolAnnotations.model_fields)
+    wire_fields = {field.alias or name for name, field in ToolAnnotations.model_fields.items()}
+    assert set(TOOL_ANNOTATION_KEYS) == wire_fields
 
 
 def test_validation_stores_a_copy_so_a_later_edit_cannot_smuggle_a_key_in():
@@ -416,7 +421,9 @@ async def test_presentation_is_never_duck_typed_off_a_non_function_tool():
 
     published = await _tool_by_name(os, "look_alike")
 
-    assert published.title is None
+    # FastMCP 4 derives a display title from the tool name when none is published, so
+    # title may be set -- but never from the look-alike attribute on the object.
+    assert published.title != "Should Not Be Used"
     assert published.annotations is None
 
 
@@ -446,7 +453,7 @@ _BUILTIN_HINTS = {
 
 async def test_every_builtin_tool_publishes_the_hints_it_claims():
     """The bar a listing review applies to a customer's tools, applied to our own."""
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig())
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=True))
 
     published = await _tools_by_name(os)
 
@@ -469,7 +476,7 @@ async def test_no_tool_this_server_owns_leaves_a_required_hint_unset():
     agent = _agent()
     os = AgentOS(
         agents=[agent],
-        mcp=MCPConfig(tools=[agent, agent.as_tool(name="ask_chief", description="Ask.")]),
+        mcp=MCPConfig(default_tools=True, tools=[agent, agent.as_tool(name="ask_chief", description="Ask.")]),
     )
 
     for name, entry in (await _tools_by_name(os)).items():

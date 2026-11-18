@@ -9,7 +9,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.websearch import WebSearchTools
@@ -19,13 +19,13 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 team_member = Agent(
     name="News Searcher",
-    model=OpenAIChat("gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     role="Searches the web for the latest news.",
-    tools=[WebSearchTools(enable_news=True)],
+    tools=[WebSearchTools(enable_search=False, enable_news=True)],
 )
 team = Team(
     name="News Research Team",
-    model=OpenAIChat("gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     members=[team_member],
     markdown=True,
     show_members_responses=True,
