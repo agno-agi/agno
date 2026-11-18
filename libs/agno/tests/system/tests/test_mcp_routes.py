@@ -23,7 +23,6 @@ and require both gateway and remote servers to be running.
 
 import json
 import uuid
-from datetime import timedelta
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -32,8 +31,10 @@ import pytest
 # Skip all tests if mcp is not installed
 pytest.importorskip("mcp")
 
+import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
 
@@ -47,25 +48,29 @@ class MCPTestClient:
         self.session: Optional[ClientSession] = None
         self._context = None
         self._session_context = None
+        self._http_client = None
         self._active_contexts = []
 
     async def connect(self):
         """Connect to the MCP server."""
         try:
-            # Create streamable HTTP client with timeout
-            self._context = streamablehttp_client(
-                url=self.url,
+            # MCP SDK v2: streamable_http_client takes only url/http_client, so the
+            # headers and timeouts ride on the httpx2 client built here.
+            self._http_client = create_mcp_http_client(
                 headers=self.headers,
-                timeout=timedelta(seconds=REQUEST_TIMEOUT),
-                sse_read_timeout=timedelta(seconds=REQUEST_TIMEOUT),
+                timeout=httpx2.Timeout(REQUEST_TIMEOUT, read=REQUEST_TIMEOUT),
             )
+            http_client = await self._http_client.__aenter__()
+            self._active_contexts.append(self._http_client)
+
+            self._context = streamable_http_client(self.url, http_client=http_client)
             session_params = await self._context.__aenter__()
             self._active_contexts.append(self._context)
-            # streamablehttp_client returns a tuple of (read, write, session_id_callable)
-            read, write, _ = session_params
+            # streamable_http_client yields TransportStreams, a (read, write) 2-tuple
+            read, write = session_params
 
-            # Create client session with timeout
-            self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=REQUEST_TIMEOUT))
+            # Create client session with timeout (float seconds in v2)
+            self._session_context = ClientSession(read, write, read_timeout_seconds=float(REQUEST_TIMEOUT))
             self.session = await self._session_context.__aenter__()
             self._active_contexts.append(self._session_context)
 
@@ -98,6 +103,14 @@ class MCPTestClient:
             finally:
                 self._context = None
 
+        if self._http_client:
+            try:
+                await self._http_client.__aexit__(None, None, None)
+            except Exception as e:
+                errors.append(f"HTTP client cleanup error: {e}")
+            finally:
+                self._http_client = None
+
         if errors:
             print(f"Errors during close: {'; '.join(errors)}")
 
@@ -113,7 +126,7 @@ class MCPTestClient:
         if not self.session:
             raise RuntimeError("Not connected")
         result = await self.session.call_tool(tool_name, arguments)
-        if result.isError:
+        if result.is_error:
             raise Exception(f"Tool call failed: {result.content}")
 
         # Parse the response
@@ -281,7 +294,7 @@ async def test_run_agent(mcp_client: MCPTestClient):
     # Check the result has expected fields
     assert result is not None
     # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
+    # answer happens to be JSON); structured ids live in structured_content.
     assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
@@ -299,7 +312,7 @@ async def test_run_remote_agent(mcp_client: MCPTestClient):
     # Check the result has expected fields
     assert result is not None
     # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
+    # answer happens to be JSON); structured ids live in structured_content.
     assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
@@ -317,7 +330,7 @@ async def test_run_remote_team(mcp_client: MCPTestClient):
     # Check the result has expected fields
     assert result is not None
     # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
+    # answer happens to be JSON); structured ids live in structured_content.
     assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
@@ -335,7 +348,7 @@ async def test_run_local_workflow(mcp_client: MCPTestClient):
     # Check the result has expected fields
     assert result is not None
     # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
+    # answer happens to be JSON); structured ids live in structured_content.
     assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
@@ -353,7 +366,7 @@ async def test_run_remote_workflow(mcp_client: MCPTestClient):
     # Check the result has expected fields
     assert result is not None
     # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
+    # answer happens to be JSON); structured ids live in structured_content.
     assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 

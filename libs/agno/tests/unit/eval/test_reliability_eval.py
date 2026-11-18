@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+from agno.db.in_memory import InMemoryDb
+from agno.db.sqlite import SqliteDb
 from agno.eval.reliability import ReliabilityEval
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -652,3 +654,50 @@ def test_still_paused_call_fails():
     # self-contradictory payload).
     assert any("delete_file" in entry for entry in result.missing_tool_calls)
     assert "delete_file" not in result.passed_tool_calls
+
+
+# ---------------------------------------------------------------------------
+# run_id is per execution: one run() call, one row, one id
+# ---------------------------------------------------------------------------
+
+
+async def test_arun_logs_distinct_run_id_per_execution():
+    """Async path also stores a distinct run_id per execution."""
+    db = InMemoryDb()
+    evaluation = ReliabilityEval(
+        agent_response=_make_response(_make_execution("multiply")),
+        expected_tool_calls=["multiply"],
+        db=db,
+        telemetry=False,
+        show_spinner=False,
+    )
+
+    first = await evaluation.arun(print_results=False)
+    second = await evaluation.arun(print_results=False)
+
+    runs = db.get_eval_runs()
+    assert len(runs) == 2
+    assert first.run_id != second.run_id
+    assert {run.run_id for run in runs} == {first.run_id, second.run_id}
+
+
+def test_rerun_stores_a_row_and_a_file_per_run(tmp_path):
+    """run_id is the evals table primary key and create_eval_run is a plain insert, so a reused
+    id made the second write raise and be swallowed. The file sink is keyed the same way, so one
+    rerun is enough to cover both. InMemoryDb has no uniqueness and cannot show the failure."""
+    db = SqliteDb(db_file=str(tmp_path / "evals.db"))
+    evaluation = ReliabilityEval(
+        agent_response=_make_response(_make_execution("multiply")),
+        expected_tool_calls=["multiply"],
+        db=db,
+        telemetry=False,
+        show_spinner=False,
+        file_path_to_save_results=str(tmp_path / "{run_id}.json"),
+    )
+
+    first = evaluation.run(print_results=False)
+    second = evaluation.run(print_results=False)
+
+    assert {run.run_id for run in db.get_eval_runs()} == {first.run_id, second.run_id}
+    assert (tmp_path / f"{first.run_id}.json").exists()
+    assert (tmp_path / f"{second.run_id}.json").exists()

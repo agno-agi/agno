@@ -1,8 +1,12 @@
 import asyncio
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 try:
     from pymongo.errors import DuplicateKeyError
@@ -13,24 +17,81 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo.utils import (
+    abulk_upsert_aggregate_metrics_rows,
+    abulk_upsert_component_metrics,
     apply_pagination,
     apply_sorting,
-    bulk_upsert_metrics,
-    calculate_date_metrics,
+    areopen_metrics_day,
+    areopen_metrics_days_from,
+    areopen_metrics_month,
+    aupsert_aggregate_metrics_row,
+    build_component_metrics_legacy_json_runs_filter,
+    build_component_metrics_legacy_runs,
+    build_component_metrics_legacy_runs_projection,
+    build_component_metrics_legacy_session,
+    build_component_metrics_runs_projection,
+    build_metrics_by_owner_projection,
+    build_metrics_days_pipeline,
+    build_metrics_fingerprint_pipeline,
+    build_metrics_rows_filter,
+    build_metrics_rows_projection,
     create_collection_indexes_async,
-    deserialize_cultural_knowledge_from_db,
-    fetch_all_sessions_data,
-    get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
+from agno.db.utils import (
+    AGGREGATE_METRICS_COUNT_COLUMNS,
+    AGGREGATE_METRICS_ROWS_FIELDS,
+    HISTORY_SKIP_STATUSES,
+    METRICS_BATCH_SIZE,
+    METRICS_LOCK_SECONDS,
+    METRICS_REFRESH_ID,
+    METRICS_STOPPED_ERROR,
+    add_metrics_month_totals,
+    aggregate_metrics_rows_to_write,
+    build_aggregate_metrics_month_rows,
+    build_aggregate_metrics_rows,
+    build_metrics_by_owner_from_rows,
+    build_metrics_from_aggregate_metrics,
+    build_single_run_row,
+    calculate_date_component_metrics,
+    component_metrics_rows_to_write,
+    database_error_message,
+    deserialize_metrics_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_session_json_fields,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    get_metrics_legacy_runs,
+    get_metrics_reopen_session_ids,
+    get_months_to_calculate_metrics_for,
+    list_metrics_totals_models,
+    merge_metrics_totals,
+    merge_runs_table_with_legacy_blob,
+    metrics_calculation_enabled,
+    metrics_day_completed,
+    metrics_day_to_reopen,
+    metrics_days_since_last_calculation,
+    metrics_full_months,
+    metrics_month_end,
+    metrics_nested_run_ids,
+    metrics_refresh_status,
+    metrics_remote_member_team_session_ids,
+    metrics_versions,
+    resolve_metrics_fields,
+    total_metrics_rows,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -147,11 +208,14 @@ class AsyncMongoDb(AsyncBaseDb):
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
+        runs_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
+        component_metrics_collection: Optional[str] = None,
+        aggregate_metrics_collection: Optional[str] = None,
+        metrics_refreshes_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
-        culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         learnings_collection: Optional[str] = None,
@@ -175,9 +239,12 @@ class AsyncMongoDb(AsyncBaseDb):
             session_collection (Optional[str]): Name of the collection to store sessions.
             memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
+            component_metrics_collection (Optional[str]): Name of the collection to store the metrics of each agent,
+                team and workflow.
+            aggregate_metrics_collection (Optional[str]): Name of the collection to store the metrics of each user.
+            metrics_refreshes_collection (Optional[str]): Name of the collection to store the metrics refreshes.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
-            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             learnings_collection (Optional[str]): Name of the collection to store learnings.
@@ -198,17 +265,24 @@ class AsyncMongoDb(AsyncBaseDb):
         super().__init__(
             id=id,
             session_table=session_collection,
+            runs_table=runs_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,
+            component_metrics_table=component_metrics_collection,
+            aggregate_metrics_table=aggregate_metrics_collection,
+            metrics_refreshes_table=metrics_refreshes_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
-            culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
             learnings_table=learnings_collection,
             schedules_table=schedules_collection,
             schedule_runs_table=schedule_runs_collection,
         )
+        if metrics_collection is not None:
+            log_warning(
+                "metrics_collection is deprecated; use component_metrics_collection and aggregate_metrics_collection."
+            )
 
         # Detect client type if provided
         if db_client is not None:
@@ -236,6 +310,14 @@ class AsyncMongoDb(AsyncBaseDb):
         self._database: Optional[AsyncMongoDatabaseType] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute.
+        # stop_metrics_refresh_on_read sets it to infinity, so reads never calculate
+        self._metrics_refreshed_at: float = 0.0
+        # Reads warn once that the deprecated metrics collection is served until a first calculate_metrics has finished
+        self._deprecated_metrics_logged: bool = False
+        # The days whose metrics a write could not reopen, retried by the next write
+        self._metrics_days_not_reopened: Set[date] = set()
+
     async def table_exists(self, table_name: str) -> bool:
         """Check if a collection with the given name exists in the MongoDB database.
 
@@ -252,11 +334,13 @@ class AsyncMongoDb(AsyncBaseDb):
         """Create all configured MongoDB collections if they don't exist."""
         collections_to_create = [
             ("sessions", self.session_table_name),
+            ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
-            ("metrics", self.metrics_table_name),
+            ("component_metrics", self.component_metrics_table_name),
+            ("aggregate_metrics", self.aggregate_metrics_table_name),
+            ("metrics_refreshes", self.metrics_refreshes_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
-            ("culture", self.culture_table_name),
             ("schedules", self.schedules_table_name),
             ("schedule_runs", self.schedule_runs_table_name),
         ]
@@ -395,6 +479,17 @@ class AsyncMongoDb(AsyncBaseDb):
                 )
             return self.session_collection
 
+        if table_type == "runs":
+            if reset_cache or getattr(self, "runs_collection", None) is None:
+                if self.runs_table_name is None:
+                    raise ValueError("Runs collection was not provided on initialization")
+                self.runs_collection = await self._get_or_create_collection(
+                    collection_name=self.runs_table_name,
+                    collection_type="runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.runs_collection
+
         if table_type == "memories":
             if reset_cache or getattr(self, "memory_collection", None) is None:
                 if self.memory_table_name is None:
@@ -417,6 +512,39 @@ class AsyncMongoDb(AsyncBaseDb):
                 )
             return self.metrics_collection
 
+        if table_type == "component_metrics":
+            if reset_cache or getattr(self, "component_metrics_collection", None) is None:
+                if self.component_metrics_table_name is None:
+                    raise ValueError("Component metrics collection was not provided on initialization")
+                self.component_metrics_collection = await self._get_or_create_collection(
+                    collection_name=self.component_metrics_table_name,
+                    collection_type="component_metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.component_metrics_collection
+
+        if table_type == "aggregate_metrics":
+            if reset_cache or getattr(self, "aggregate_metrics_collection", None) is None:
+                if self.aggregate_metrics_table_name is None:
+                    raise ValueError("Aggregate metrics collection was not provided on initialization")
+                self.aggregate_metrics_collection = await self._get_or_create_collection(
+                    collection_name=self.aggregate_metrics_table_name,
+                    collection_type="aggregate_metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.aggregate_metrics_collection
+
+        if table_type == "metrics_refreshes":
+            if reset_cache or getattr(self, "metrics_refreshes_collection", None) is None:
+                if self.metrics_refreshes_table_name is None:
+                    raise ValueError("Metrics refreshes collection was not provided on initialization")
+                self.metrics_refreshes_collection = await self._get_or_create_collection(
+                    collection_name=self.metrics_refreshes_table_name,
+                    collection_type="metrics_refreshes",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.metrics_refreshes_collection
+
         if table_type == "evals":
             if reset_cache or getattr(self, "eval_collection", None) is None:
                 if self.eval_table_name is None:
@@ -438,17 +566,6 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
-
-        if table_type == "culture":
-            if reset_cache or getattr(self, "culture_collection", None) is None:
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = await self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
-            return self.culture_collection
 
         if table_type == "traces":
             if reset_cache or getattr(self, "traces_collection", None) is None:
@@ -526,8 +643,13 @@ class AsyncMongoDb(AsyncBaseDb):
             if not hasattr(self, f"_{collection_name}_initialized"):
                 if not create_collection_if_not_found:
                     return None
+                table_created = collection_type == "sessions" and not await self.table_exists(collection_name)
                 # Create indexes asynchronously for async MongoDB collections
                 await create_collection_indexes_async(collection, collection_type)
+                # Store the schema version for the created sessions collection, which holds no legacy runs for metrics
+                if table_created:
+                    latest_schema_version = MigrationManager(self).latest_schema_version
+                    await self.upsert_schema_version(table_name=collection_name, version=latest_schema_version.public)
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
             else:
@@ -548,13 +670,276 @@ class AsyncMongoDb(AsyncBaseDb):
             aggregate_cursor_or_coro = await aggregate_cursor_or_coro
         return await aggregate_cursor_or_coro.to_list(length=length)
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    async def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the schema version stamped for the given table.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+        Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        runs migrations instead of skipping the table.
+        """
+        doc = await self.database[self.versions_table_name].find_one({"table_name": table_name})
+        if doc is None:
+            return "2.0.0"
+        return doc.get("version") or "2.0.0"
+
+    async def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Record the schema version stamp for the given table."""
+        await self.database[self.versions_table_name].update_one(
+            {"table_name": table_name},
+            {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
+            upsert=True,
+        )
+
+    async def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session documents.
+
+        See :meth:`MongoDb.cleanup_legacy_runs_field` for the contract.
+        """
+        collection = await self._get_collection(table_type="sessions")
+        if collection is None:
+            log_info(f"{self.session_table_name} collection does not exist, nothing to clean up")
+            return False
+
+        if not force:
+            pending = await collection.count_documents({"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}})
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        log_info(f"Unsetting legacy runs field from {self.session_table_name} documents")
+        result = await collection.update_many(
+            {"runs": {"$exists": True}},
+            {"$unset": {"runs": ""}},
+        )
+        log_info(f"Unset runs on {result.modified_count} session document(s)")
+        return result.modified_count > 0 or result.matched_count > 0
+
+    # -- Run methods --
+    async def _get_session_runs_docs(
+        self, runs_collection: AsyncMongoCollectionType, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, push "most recent N context-relevant runs" down to
+        the DB: drop member sub-runs (``parent_run_id`` set) and terminal-skip
+        statuses, sort newest-first, take N, then reverse back to chronological
+        order. ``$nin``/``None`` in Mongo also match a null or missing field, so
+        this keeps runs whose ``status`` is null/absent — mirroring the SQL
+        ``status IS NULL OR status NOT IN (...)`` fast path.
+        """
+        if limit is not None:
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$match": {
+                        "session_id": session_id,
+                        "parent_run_id": None,
+                        "status": {"$nin": HISTORY_SKIP_STATUSES},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_ri": {"$ifNull": ["$run_index", 0]},
+                        "_ca": {"$ifNull": ["$created_at", 0]},
+                    }
+                },
+                {"$sort": {"_ri": -1, "_ca": -1}},
+                {"$limit": limit},
+            ]
+            docs = await self._aggregate_to_list(runs_collection, pipeline, length=limit)
+            run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
+            run_docs.reverse()  # back to chronological order
+            return run_docs
+
+        pipeline = [
+            {"$match": {"session_id": session_id}},
+            {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
+            {"$sort": {"_ri": 1, "_ca": 1}},
+        ]
+        docs = await self._aggregate_to_list(runs_collection, pipeline, length=None)
+        return [doc["run_data"] for doc in docs if "run_data" in doc]
+
+    async def _get_sessions_runs_docs(
+        self, runs_collection: AsyncMongoCollectionType, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        cursor = runs_collection.find({"session_id": {"$in": session_ids}}).sort(
+            [("session_id", 1), ("run_index", 1), ("created_at", 1)]
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        async for doc in cursor:
+            sid = doc.get("session_id")
+            run_data = doc.get("run_data")
+            if sid is None or run_data is None:
+                continue
+            runs_by_session.setdefault(sid, []).append(run_data)
+        return runs_by_session
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run document into the runs collection (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            if runs_collection is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1, "created_at": 1})
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+            # The stored created_at, which a resumed run keeps
+            if existing is not None and existing.get("created_at") is not None:
+                row["created_at"] = existing["created_at"]
+
+            await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+            await self._reopen_metrics_days([row["created_at"]])
+        except Exception as e:
+            log_error(f"Exception upserting run into runs collection: {str(e)}")
+            raise e
+
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return None
+            doc = await collection.find_one({"run_id": run_id})
+            if doc is None:
+                return None
+            if not deserialize:
+                return doc
+            return deserialize_run(doc.get("run_type"), doc["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return [] if deserialize else ([], 0)
+
+            query: Dict[str, Any] = {}
+            if session_id is not None:
+                query["session_id"] = session_id
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if workflow_id is not None:
+                query["workflow_id"] = workflow_id
+            if status is not None:
+                query["status"] = status.value if isinstance(status, RunStatus) else status
+
+            total_count = await collection.count_documents(query)
+
+            cursor = collection.find(query)
+            sort_criteria = apply_sorting({}, sort_by, sort_order)
+            if sort_criteria:
+                cursor = cursor.sort(sort_criteria)
+            else:
+                cursor = cursor.sort([("run_index", 1), ("created_at", 1)])
+
+            query_args = apply_pagination({}, limit, page)
+            if query_args.get("skip"):
+                cursor = cursor.skip(query_args["skip"])
+            if query_args.get("limit"):
+                cursor = cursor.limit(query_args["limit"])
+
+            run_rows = await cursor.to_list(length=None)
+
+            if not deserialize:
+                return run_rows, total_count
+            return [deserialize_run(doc.get("run_type"), doc["run_data"]) for doc in run_rows]
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session document's legacy ``runs``
+        array (partial-migration hygiene — see ``MongoDb`` for rationale)."""
+        if not run_ids:
+            return
+        try:
+            sessions = await self._get_collection(table_type="sessions")
+            if sessions is None:
+                return
+            await sessions.update_many(
+                {"runs.run_id": {"$in": list(run_ids)}},
+                {"$pull": {"runs": {"run_id": {"$in": list(run_ids)}}}},
+            )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
+    async def delete_run(self, run_id: str) -> bool:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return False
+            result = await collection.delete_one({"run_id": run_id})
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return result.deleted_count > 0
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return
+            result = await collection.delete_many({"run_id": {"$in": run_ids}})
+            await self._ascrub_run_ids_from_legacy_blob(run_ids)
+            log_debug(f"Successfully deleted {result.deleted_count} runs")
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
 
@@ -575,6 +960,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return False
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
@@ -583,9 +969,12 @@ class AsyncMongoDb(AsyncBaseDb):
             if result.deleted_count == 0:
                 log_debug(f"No session found to delete with session_id: {session_id}")
                 return False
-            else:
-                log_debug(f"Successfully deleted session with session_id: {session_id}")
-                return True
+
+            if runs_collection is not None:
+                await runs_collection.delete_many({"session_id": session_id})
+
+            log_debug(f"Successfully deleted session with session_id: {session_id}")
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -602,11 +991,19 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": {"$in": session_ids}}
             if user_id is not None:
                 query["user_id"] = user_id
             result = await collection.delete_many(query)
+
+            if runs_collection is not None:
+                runs_query: Dict[str, Any] = {"session_id": {"$in": session_ids}}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                await runs_collection.delete_many(runs_query)
+
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
@@ -619,6 +1016,7 @@ class AsyncMongoDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -640,6 +1038,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return None
+            runs_collection = await self._get_collection(table_type="runs")
 
             query = {"session_id": session_id}
             if user_id is not None:
@@ -650,6 +1049,28 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
 
             session = deserialize_session_json_fields(result)
+
+            # Attach the runs stored in the runs collection, merged with any runs
+            # still sitting in the legacy `runs` field (so partially-migrated
+            # sessions don't silently lose history).
+            legacy_runs = session.get("runs")
+            if runs_collection is not None and runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB.
+                session["runs"] = await self._get_session_runs_docs(runs_collection, session_id, limit=runs_limit)
+            elif runs_collection is not None:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one field, so "last N" can't be pushed
+                # down — load all, merge, then filter+slice to match the migrated path.
+                runs_data = await self._get_session_runs_docs(runs_collection, session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                session["runs"] = merged
+            elif runs_limit is not None:
+                # No runs collection yet (fully un-migrated): filter+slice the blob.
+                merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                session["runs"] = filter_context_runs(merged)[-runs_limit:]
+
             if not deserialize:
                 return session
 
@@ -672,6 +1093,7 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -686,7 +1108,7 @@ class AsyncMongoDb(AsyncBaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
-            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -700,6 +1122,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return [] if deserialize else ([], 0)
+            runs_collection = await self._get_collection(table_type="runs")
 
             # Filtering
             query: Dict[str, Any] = {}
@@ -728,7 +1151,15 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     query["created_at"] = {"$lte": end_timestamp}
             if session_name is not None:
-                query["session_data.session_name"] = {"$regex": session_name, "$options": "i"}
+                query["session_data.session_name"] = {"$regex": re.escape(session_name), "$options": "i"}
+
+            if filter_expr is not None:
+                from agno.db.session_filters import normalize_session_filter, session_filter_to_mongo
+
+                expression = normalize_session_filter(filter_expr)
+                if expression is not None:
+                    advanced = session_filter_to_mongo(expression)
+                    query = {"$and": [query, advanced]} if query else advanced
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -751,6 +1182,14 @@ class AsyncMongoDb(AsyncBaseDb):
             if records is None:
                 return [] if deserialize else ([], 0)
             sessions_raw = [deserialize_session_json_fields(record) for record in records]
+
+            if runs_collection is not None and sessions_raw:
+                runs_by_session = await self._get_sessions_runs_docs(
+                    runs_collection, [s["session_id"] for s in sessions_raw]
+                )
+                for s in sessions_raw:
+                    runs_data = runs_by_session.get(s["session_id"], [])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 
             if not deserialize:
                 return sessions_raw, total_count
@@ -790,6 +1229,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return None
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
@@ -815,6 +1255,12 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
 
             deserialized_session = deserialize_session_json_fields(result)
+
+            if runs_collection is not None:
+                runs_data = await self._get_session_runs_docs(runs_collection, session_id)
+                deserialized_session["runs"] = merge_runs_table_with_legacy_blob(
+                    runs_data, deserialized_session.get("runs")
+                )
 
             if not deserialize:
                 return deserialized_session
@@ -845,9 +1291,20 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
-            existing = await collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            existing = await collection.find_one(
+                {"session_id": session_dict.get("session_id")},
+                {
+                    "user_id": 1,
+                    "agent_id": 1,
+                    "team_id": 1,
+                    "workflow_id": 1,
+                    "runs": 1,
+                    "created_at": 1,
+                    "session_data.compaction_metrics": 1,
+                },
+            )
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
@@ -866,7 +1323,6 @@ class AsyncMongoDb(AsyncBaseDb):
                     "session_type": SessionType.AGENT.value,
                     "agent_id": session_dict.get("agent_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "agent_data": session_dict.get("agent_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -874,33 +1330,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
-
-                session = result  # type: ignore
-
-                if not deserialize:
-                    return session
-
-                return AgentSession.from_dict(session)  # type: ignore
-
             elif isinstance(session, TeamSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": session_dict.get("team_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "team_data": session_dict.get("team_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -908,34 +1343,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
-
-                # MongoDB stores native objects, no deserialization needed for document fields
-                session = result  # type: ignore
-
-                if not deserialize:
-                    return session
-
-                return TeamSession.from_dict(session)  # type: ignore
-
-            else:
+            elif isinstance(session, WorkflowSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -943,25 +1356,42 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
+            # Preserve the legacy `runs` field as a frozen backup. find_one_and_replace
+            # replaces the whole document, so carry any existing legacy blob forward; runs
+            # now live in their own collection and only cleanup_legacy_runs_field() reclaims
+            # it. Dropping it here would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                record["runs"] = existing["runs"]
+            # The stored created_at, which keeps the session on the day it was created
+            if existing and existing.get("created_at") is not None:
+                record["created_at"] = existing["created_at"]
 
-                session = result  # type: ignore
+            reopen_session_ids = get_metrics_reopen_session_ids(
+                [{**existing, "session_id": session.session_id}] if existing else [], [record]
+            )
+            try:
+                result = await collection.find_one_and_replace(
+                    filter=upsert_filter,
+                    replacement=record,
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+            except DuplicateKeyError:
+                return None
+            if not result:
+                return None
+            if result["session_id"] in reopen_session_ids:
+                await self._reopen_metrics_days([result.get("created_at")])
 
-                if not deserialize:
-                    return session
+            result["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
-                return WorkflowSession.from_dict(session)  # type: ignore
+            if not deserialize:
+                return result
+
+            return deserialize_session(None, result)
 
         except Exception as e:
             log_error(f"Exception upserting session: {str(e)}")
@@ -998,17 +1428,43 @@ class AsyncMongoDb(AsyncBaseDb):
                     for result in [await self.upsert_session(session, deserialize=deserialize)]
                     if result is not None
                 ]
-
             from pymongo import ReplaceOne
 
             operations = []
             results: List[Union[Session, Dict[str, Any]]] = []
 
+            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions if s is not None}
+
+            # Preserve the legacy `runs` field as a frozen backup. ReplaceOne replaces the
+            # whole document, so fetch any existing legacy blobs up front and carry them
+            # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
+            # would lose history for sessions not yet migrated to the runs collection.
+            legacy_runs_by_id: Dict[str, Any] = {}
+            stored_sessions: Dict[str, Dict[str, Any]] = {}
+            if sessions_by_id:
+                async for doc in collection.find(
+                    {"session_id": {"$in": list(sessions_by_id.keys())}},
+                    {
+                        "session_id": 1,
+                        "user_id": 1,
+                        "agent_id": 1,
+                        "team_id": 1,
+                        "workflow_id": 1,
+                        "runs": 1,
+                        "created_at": 1,
+                        "session_data.compaction_metrics": 1,
+                    },
+                ):
+                    stored_sessions[doc["session_id"]] = doc
+                    if doc.get("runs") is not None:
+                        legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+            records: List[Dict[str, Any]] = []
+
             for session in sessions:
                 if session is None:
                     continue
 
-                session_dict = session.to_dict()
+                session_dict = session.to_dict(include_runs=False)
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1019,7 +1475,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.AGENT.value,
                         "agent_id": session_dict.get("agent_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "agent_data": session_dict.get("agent_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1033,7 +1488,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.TEAM.value,
                         "team_id": session_dict.get("team_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "team_data": session_dict.get("team_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1047,7 +1501,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.WORKFLOW.value,
                         "workflow_id": session_dict.get("workflow_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "workflow_data": session_dict.get("workflow_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1058,13 +1511,26 @@ class AsyncMongoDb(AsyncBaseDb):
                 else:
                     continue
 
+                legacy_runs = legacy_runs_by_id.get(session.session_id)
+                if legacy_runs is not None:
+                    record["runs"] = legacy_runs
+                # The stored created_at, which keeps the session on the day it was created
+                existing = stored_sessions.get(session.session_id)
+                if existing and existing.get("created_at") is not None:
+                    record["created_at"] = existing["created_at"]
+
+                records.append(record)
                 operations.append(
                     ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)
                 )
 
             if operations:
+                reopen_session_ids = get_metrics_reopen_session_ids(list(stored_sessions.values()), records)
                 # Execute bulk write
                 await collection.bulk_write(operations)
+                await self._reopen_metrics_days(
+                    [record["created_at"] for record in records if record["session_id"] in reopen_session_ids]
+                )
 
                 # Fetch the results
                 session_ids = [session.session_id for session in sessions if session and session.session_id]
@@ -1072,6 +1538,11 @@ class AsyncMongoDb(AsyncBaseDb):
 
                 async for doc in cursor:
                     session_dict = doc
+                    original_session = sessions_by_id.get(doc.get("session_id"))
+                    session_dict["runs"] = [
+                        run if isinstance(run, dict) else run.to_dict()
+                        for run in (original_session.runs if original_session else None) or []
+                    ]
 
                     if deserialize:
                         session_type = doc.get("session_type")
@@ -1117,9 +1588,6 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             memory_id (str): The ID of the memory to delete.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the memory belongs to this user.
-
-        Returns:
-            bool: True if the memory was deleted, False otherwise.
 
         Raises:
             Exception: If there is an error deleting the memory.
@@ -1208,7 +1676,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory_id (str): The ID of the memory to get.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
             user_id (Optional[str]): The ID of the user to verify ownership. If provided, only return the memory if it belongs to this user.
 
         Returns:
@@ -1265,7 +1733,7 @@ class AsyncMongoDb(AsyncBaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
-            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -1290,7 +1758,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
-                query["memory"] = {"$regex": search_content, "$options": "i"}
+                query["memory"] = {"$regex": re.escape(search_content), "$options": "i"}
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -1395,7 +1863,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             memory (UserMemory): The memory to upsert.
-            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[UserMemory, Dict[str, Any]]]:
@@ -1549,344 +2017,985 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
-    # -- Cultural Knowledge methods --
-    async def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            await collection.delete_many({})
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            await collection.delete_one({"id": id})
-            log_debug(f"Deleted cultural knowledge with ID: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return None
-
-            result = await collection.find_one({"id": id})
-            if result is None:
-                return None
-
-            # Remove MongoDB's _id field
-            result_filtered = {k: v for k, v in result.items() if k != "_id"}
-
-            if not deserialize:
-                return result_filtered
-
-            return deserialize_cultural_knowledge_from_db(result_filtered)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                if not deserialize:
-                    return [], 0
-                return []
-
-            # Build query
-            query: Dict[str, Any] = {}
-            if agent_id is not None:
-                query["agent_id"] = agent_id
-            if team_id is not None:
-                query["team_id"] = team_id
-            if name is not None:
-                query["name"] = {"$regex": name, "$options": "i"}
-
-            # Get total count for pagination
-            total_count = await collection.count_documents(query)
-
-            # Apply sorting
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-
-            # Apply pagination
-            query_args = apply_pagination({}, limit, page)
-
-            cursor = collection.find(query)
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            # Remove MongoDB's _id field from all results
-            results_filtered = [{k: v for k, v in item.items() if k != "_id"} async for item in cursor]
-
-            if not deserialize:
-                return results_filtered, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in MongoDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture", create_collection_if_not_found=True)
-            if collection is None:
-                return None
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the document with serialized content
-            update_doc = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            result = await collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
-
-            if result.upserted_id:
-                update_doc["_id"] = result.upserted_id
-
-            # Remove MongoDB's _id field
-            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
-
-            if not deserialize:
-                return doc_filtered
-
-            return deserialize_cultural_knowledge_from_db(doc_filtered)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
-
     # -- Metrics methods --
+    async def _reopen_metrics_days(self, created_ats: Sequence[Optional[int]]) -> None:
+        """Reopen the metrics of each day a write changed, right after the write, so the next calculation rebuilds
+        it. A day it could not reopen is retried by the next write.
 
-    async def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get all sessions of all types for metrics calculation."""
+        Args:
+            created_ats (Sequence[Optional[int]]): The stored created_at of each run or session the write changed.
+        """
+        days = sorted(
+            {day for created_at in created_ats if (day := metrics_day_to_reopen(created_at)) is not None}
+            | self._metrics_days_not_reopened
+        )
+        if not days:
+            return
         try:
-            collection = await self._get_collection(table_type="sessions")
-            if collection is None:
-                return []
-
-            query = {}
-            if start_timestamp is not None:
-                query["created_at"] = {"$gte": start_timestamp}
-            if end_timestamp is not None:
-                if "created_at" in query:
-                    query["created_at"]["$lte"] = end_timestamp
-                else:
-                    query["created_at"] = {"$lte": end_timestamp}
-
-            projection = {
-                "user_id": 1,
-                "session_data": 1,
-                "runs": 1,
-                "created_at": 1,
-                "session_type": 1,
-            }
-
-            results = await collection.find(query, projection).to_list(length=None)
-            return results
-
-        except Exception as e:
-            log_error(f"Exception reading from sessions collection: {str(e)}")
-            return []
-
-    async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed."""
-        try:
-            result = await collection.find_one({}, sort=[("date", -1)], limit=1)
-
-            if result is not None:
-                result_date = datetime.strptime(result["date"], "%Y-%m-%d").date()
-                if result.get("completed"):
-                    return result_date + timedelta(days=1)
-                else:
-                    return result_date
-
-            # No metrics records. Return the date of the first recorded session.
-            first_session_result = await self.get_sessions(
-                sort_by="created_at", sort_order="asc", limit=1, deserialize=False
+            # Looked up only when a day reopens. Never created here: none exists when no day was calculated yet
+            if getattr(self, "aggregate_metrics_collection", None) is None and not await self.table_exists(
+                self.aggregate_metrics_table_name
+            ):
+                self._metrics_days_not_reopened.clear()
+                return
+            aggregate_metrics_collection = await self._get_collection(
+                table_type="aggregate_metrics", create_collection_if_not_found=True
             )
-            first_session_date = first_session_result[0][0]["created_at"] if first_session_result[0] else None  # type: ignore
-
-            if first_session_date is None:
-                return None
-
-            return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
-
+            if aggregate_metrics_collection is None:
+                return
+            for day in days:
+                await areopen_metrics_day(aggregate_metrics_collection, day)
+            self._metrics_days_not_reopened.difference_update(days)
         except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {str(e)}")
+            self._metrics_days_not_reopened.update(days)
+            log_warning(
+                f"Could not reopen the metrics of {', '.join(str(day) for day in days)}: {database_error_message(e)}"
+            )
+
+    async def _get_metrics_refresh_row(
+        self, refreshes_collection: AsyncMongoCollectionType
+    ) -> Tuple[Optional[Dict[str, Any]], int]:
+        """Get the document of the metrics refreshes collection, and the locked_at at or before which its lock is
+        stale, by the process clock."""
+        stale_lock_threshold = int(time.time()) - METRICS_LOCK_SECONDS
+        return await refreshes_collection.find_one({"id": METRICS_REFRESH_ID}, {"_id": False}), stale_lock_threshold
+
+    async def _claim_metrics_refresh(
+        self, refreshes_collection: AsyncMongoCollectionType, worker_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Claim the document of the metrics refreshes collection, so one process calculates metrics at a time.
+
+        Args:
+            refreshes_collection (AsyncMongoCollectionType): The metrics refreshes collection.
+            worker_id (str): The id of this calculation, which heartbeats and releases the claim.
+
+        Returns:
+            Optional[Dict[str, Any]]: The claimed document, with when the last calculation finished and its
+                fingerprint. None when another process holds it.
+        """
+        now = int(time.time())
+        try:
+            # One update, so two processes never both find the document free. A held one fails the filter, so the
+            # upsert inserts a second document with its id and is refused with a duplicate key error
+            return await refreshes_collection.find_one_and_update(
+                {
+                    "id": METRICS_REFRESH_ID,
+                    # A stale lock is taken over: the process that held it stopped
+                    "$or": [{"locked_by": None}, {"locked_at": {"$lte": now - METRICS_LOCK_SECONDS}}],
+                },
+                {
+                    "$set": {
+                        "locked_by": worker_id,
+                        "locked_at": now,
+                        "started_at": now,
+                        "status": "running",
+                        "error": None,
+                    },
+                    "$setOnInsert": {"finished_at": None, "fingerprint": None},
+                },
+                projection={"_id": False},
+                upsert=True,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
             return None
 
-    async def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics."""
+    async def _heartbeat_metrics_refresh(self, refreshes_collection: AsyncMongoCollectionType, worker_id: str) -> bool:
+        """Refresh locked_at for this worker's metrics refresh. False when another process took it over."""
+        result = await refreshes_collection.update_one(
+            {"id": METRICS_REFRESH_ID, "locked_by": worker_id}, {"$set": {"locked_at": int(time.time())}}
+        )
+        # Matched, not modified: a heartbeat in the second of the claim leaves locked_at as it is
+        return result.matched_count > 0
+
+    async def _release_metrics_refresh(
+        self,
+        refreshes_collection: AsyncMongoCollectionType,
+        worker_id: Optional[str],
+        error: Optional[str] = None,
+        fingerprint: Optional[List[Any]] = None,
+        stopped: bool = False,
+        claimed_fingerprint: Optional[List[Any]] = None,
+    ) -> None:
+        """Release the document of the metrics refreshes collection: completed, with the fingerprint, without an
+        error, failed with one, and as the last completed refresh left it when the calculation stopped.
+
+        Args:
+            refreshes_collection (AsyncMongoCollectionType): The metrics refreshes collection.
+            worker_id (Optional[str]): The id of the calculation that claimed the document. None writes the document
+                only while no process holds it, and creates it before any refresh.
+            error (Optional[str]): The error the calculation failed with. None when it completed.
+            fingerprint (Optional[List[Any]]): The fingerprint of yesterday and today, stored once it completed.
+            stopped (bool): Whether the calculation stopped before it finished.
+            claimed_fingerprint (Optional[List[Any]]): The fingerprint of the claimed document. A rebuild that marked
+                another one since keeps its mark.
+        """
+        values: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+        if stopped:
+            # The days it did not reach stay open for the next calculation; a first one that stopped has none to show
+            finished = {"$ne": ["$finished_at", None]}
+            values.update(
+                status={"$cond": [finished, "completed", "failed"]},
+                error={"$cond": [finished, None, METRICS_STOPPED_ERROR]},
+            )
+        elif error is None:
+            values.update(status="completed", error=None, finished_at=int(time.time()))
+            # A rebuild that marked the fingerprint after the claim keeps its mark, so the next calculation rebuilds
+            # yesterday and today
+            values["fingerprint"] = {
+                "$cond": [
+                    {"$eq": ["$fingerprint", {"$literal": claimed_fingerprint}]},
+                    {"$literal": fingerprint},
+                    "$fingerprint",
+                ]
+            }
+        else:
+            values.update(status="failed", error=error)
         try:
-            collection = await self._get_collection(table_type="metrics", create_collection_if_not_found=True)
-            if collection is None:
-                return None
+            if worker_id is None:
+                # Before any refresh there is no document to update. A held one fails the filter, so the upsert inserts
+                # a second document with its id and is refused with a duplicate key error
+                try:
+                    await refreshes_collection.update_one(
+                        {"id": METRICS_REFRESH_ID, "locked_by": None},
+                        {
+                            "$set": values,
+                            "$setOnInsert": {"started_at": int(time.time()), "finished_at": None, "fingerprint": None},
+                        },
+                        upsert=True,
+                    )
+                except DuplicateKeyError:
+                    pass
+            else:
+                await refreshes_collection.update_one(
+                    {"id": METRICS_REFRESH_ID, "locked_by": worker_id}, [{"$set": values}]
+                )
+        except Exception as e:
+            log_debug(f"Error releasing metrics refresh: {e}")
 
-            starting_date = await self._get_metrics_calculation_starting_date(collection)
-            if starting_date is None:
-                log_info("No session data found. Won't calculate metrics.")
-                return None
-
-            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
-            if not dates_to_process:
-                log_info("Metrics already calculated for all relevant dates.")
-                return None
-
-            start_timestamp = int(
-                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+    async def _get_metrics_fingerprint(
+        self,
+        sessions_collection: AsyncMongoCollectionType,
+        runs_collection: Optional[AsyncMongoCollectionType],
+        yesterday: date,
+    ) -> Optional[List[Any]]:
+        """Get the count and update times of the sessions and runs of yesterday and today. None while one of them was
+        updated in the current second, which a second update in that same second would leave unchanged."""
+        start_timestamp = int(datetime.combine(yesterday, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp())
+        current_time = int(time.time())
+        fingerprint: List[Any] = [yesterday.isoformat()]
+        for source_collection in [sessions_collection, runs_collection]:
+            if source_collection is None:
+                continue
+            result = await self._aggregate_to_list(
+                source_collection, build_metrics_fingerprint_pipeline(start_timestamp)
             )
-            end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
-                .replace(tzinfo=timezone.utc)
-                .timestamp()
-            )
-
-            sessions = await self._get_all_sessions_for_metrics_calculation(
-                start_timestamp=start_timestamp, end_timestamp=end_timestamp
-            )
-            all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
-            )
-            if not all_sessions_data:
-                log_info("No new session data found. Won't calculate metrics.")
+            count = result[0]["count"] if result else 0
+            total_updated_at = result[0]["total_updated_at"] if result else None
+            latest_updated_at = result[0]["latest_updated_at"] if result else None
+            if latest_updated_at is not None and latest_updated_at >= current_time:
                 return None
+            fingerprint.extend([count, int(total_updated_at or 0)])
+        return fingerprint
 
-            results = []
-            metrics_records = []
+    async def _get_metrics_dates_to_calculate(
+        self,
+        aggregate_metrics_collection: AsyncMongoCollectionType,
+        sessions_collection: AsyncMongoCollectionType,
+        runs_collection: Optional[AsyncMongoCollectionType],
+        refresh_row: Dict[str, Any],
+        rebuild_from: Optional[date] = None,
+    ) -> Tuple[List[date], Optional[List[Any]]]:
+        """Get the days whose metrics a calculation rebuilds, and the fingerprint of yesterday and today.
 
-            for date_to_process in dates_to_process:
-                date_key = date_to_process.isoformat()
-                sessions_for_date = all_sessions_data.get(date_key, {})
+        Args:
+            aggregate_metrics_collection (AsyncMongoCollectionType): The aggregate metrics collection.
+            sessions_collection (AsyncMongoCollectionType): The sessions collection.
+            runs_collection (Optional[AsyncMongoCollectionType]): The runs collection.
+            refresh_row (Dict[str, Any]): The document of the metrics refreshes collection, from
+                _claim_metrics_refresh.
+            rebuild_from (Optional[date]): The first day of a rebuild.
 
-                # Skip dates with no sessions
-                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+        Returns:
+            Tuple[List[date], Optional[List[Any]]]: The days, oldest first, and the fingerprint to keep on the document
+                of the metrics refreshes collection.
+        """
+        today = datetime.now(timezone.utc).date()
+        yesterday = today - timedelta(days=1)
+        dates_to_process: Set[date] = set()
+        fingerprint = await self._get_metrics_fingerprint(sessions_collection, runs_collection, yesterday)
+        first_calculation = refresh_row["finished_at"] is None
+        # Yesterday and today, when their sessions or runs changed since the last calculation
+        if first_calculation or fingerprint is None or fingerprint != refresh_row["fingerprint"]:
+            dates_to_process.update([yesterday, today])
+
+        # Every earlier day still open: not yet completed, or reopened by a write since
+        dates_to_process.update(
+            deserialize_metrics_row(document)["date"]
+            for document in await aggregate_metrics_collection.find(
+                {
+                    "aggregation_period": "daily",
+                    "user_id": "",
+                    "completed": False,
+                    "date": {"$lt": yesterday.isoformat()},
+                },
+                {"_id": False, "date": 1},
+            ).to_list(length=None)
+        )
+        # Every earlier day from the day before the last calculation finished, whose writes reopened nothing while it
+        # was yesterday or today
+        if not first_calculation:
+            dates_to_process.update(metrics_days_since_last_calculation(refresh_row["finished_at"], yesterday))
+
+        # Until a first calculation has finished, every day with a session or a run not yet completed; with
+        # rebuild_from, every day with one from that date on. Only days with data, so one session dated long ago never
+        # builds every empty day since
+        if first_calculation or rebuild_from is not None:
+            completed_days: Set[date] = set()
+            if first_calculation:
+                completed_days = {
+                    deserialize_metrics_row(document)["date"]
+                    for document in await aggregate_metrics_collection.find(
+                        {"aggregation_period": "daily", "user_id": "", "completed": True}, {"_id": False, "date": 1}
+                    ).to_list(length=None)
+                }
+            for source_collection in [sessions_collection, runs_collection]:
+                if source_collection is None:
                     continue
+                for result in await self._aggregate_to_list(source_collection, build_metrics_days_pipeline()):
+                    data_date = date(1970, 1, 1) + timedelta(days=int(result["_id"]))
+                    # A rebuild takes every day with data from its first day, completed or not
+                    rebuilt = rebuild_from is not None and data_date >= rebuild_from
+                    if data_date <= today and (rebuilt or (first_calculation and data_date not in completed_days)):
+                        dates_to_process.add(data_date)
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+        return sorted(dates_to_process), fingerprint
 
-            if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)  # type: ignore
+    async def _get_open_metrics_months(self, aggregate_metrics_collection: AsyncMongoCollectionType) -> List[date]:
+        """Get the first day of every month before the current one whose month row is still open: not completed yet,
+        or reopened by a day a calculation rebuilt before it stopped."""
+        current_month = datetime.now(timezone.utc).date().replace(day=1)
+        return [
+            deserialize_metrics_row(document)["date"]
+            for document in await aggregate_metrics_collection.find(
+                {
+                    "aggregation_period": "monthly",
+                    "user_id": "",
+                    "completed": False,
+                    "date": {"$lt": current_month.isoformat()},
+                },
+                {"_id": False, "date": 1},
+            ).to_list(length=None)
+        ]
 
-            return results
+    async def _get_metrics_legacy_runs(
+        self,
+        sessions_collection: AsyncMongoCollectionType,
+        runs_collection: Optional[AsyncMongoCollectionType],
+        start_timestamp: int,
+        end_timestamp: int,
+    ) -> Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+        """Get the runs not yet migrated out of the sessions' legacy runs field, created in the given time range.
+
+        Sessions are read a batch at a time, and the legacy runs of each batch created in the range are checked
+        against the runs collection before the next batch is read.
+
+        Args:
+            sessions_collection (AsyncMongoCollectionType): The sessions collection.
+            runs_collection (Optional[AsyncMongoCollectionType]): The runs collection. A run it also holds is read from there.
+            start_timestamp (int): The start of the range, included.
+            end_timestamp (int): The end of the range, not included.
+
+        Returns:
+            Tuple[Dict[date, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]: The legacy runs by the UTC day they
+                were created on, and by their id.
+        """
+        cursor = sessions_collection.find(
+            {
+                # A session holds runs created after it started and before it was last written
+                "created_at": {"$lt": end_timestamp},
+                "runs": {"$ne": None},
+                "$or": [
+                    {"updated_at": {"$gte": start_timestamp}},
+                    {"updated_at": None, "created_at": {"$gte": start_timestamp}},
+                ],
+            },
+            build_component_metrics_legacy_runs_projection(),
+        ).batch_size(METRICS_BATCH_SIZE)
+        legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+        legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+        while True:
+            sessions = await cursor.to_list(length=METRICS_BATCH_SIZE)
+            if not sessions:
+                break
+            legacy_json_runs_filter = build_component_metrics_legacy_json_runs_filter(sessions)
+            if legacy_json_runs_filter is not None:
+                legacy_json_runs: Dict[Any, List[Dict[str, Any]]] = {}
+                # A session at a time, so a JSON string read whole is reduced before the next session is read
+                async for session in sessions_collection.find(legacy_json_runs_filter, {"runs": 1}):
+                    legacy_json_runs[session["_id"]] = build_component_metrics_legacy_runs(session["runs"])
+                sessions = [build_component_metrics_legacy_session(session, legacy_json_runs) for session in sessions]
+            legacy_runs = [
+                legacy_run
+                for legacy_run in get_metrics_legacy_runs(sessions)
+                if start_timestamp <= (legacy_run["created_at"] or 0) < end_timestamp
+            ]
+            # The runs collection wins on a run in both, as merge_runs_table_with_legacy_blob does
+            migrated_run_ids: Set[str] = set()
+            if runs_collection is not None:
+                legacy_run_ids = [legacy_run["run_id"] for legacy_run in legacy_runs]
+                if legacy_run_ids:
+                    migrated_run_ids.update(
+                        document["run_id"]
+                        for document in await runs_collection.find(
+                            {"run_id": {"$in": legacy_run_ids}},
+                            {"run_id": 1, "_id": False},
+                        ).to_list(length=None)
+                    )
+            for legacy_run in legacy_runs:
+                if legacy_run["run_id"] in migrated_run_ids:
+                    continue
+                legacy_run_day = datetime.fromtimestamp(legacy_run["created_at"], tz=timezone.utc).date()
+                legacy_runs_by_day.setdefault(legacy_run_day, []).append(legacy_run)
+                legacy_runs_by_id[legacy_run["run_id"]] = legacy_run
+            await asyncio.sleep(0)  # yield control between batches
+        return legacy_runs_by_day, legacy_runs_by_id
+
+    async def _get_metrics_parent_runs(
+        self, runs_collection: AsyncMongoCollectionType, parent_run_ids: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Get the stored runs that started the given runs, and the runs that started those, up to the whole run."""
+        parent_runs: List[Dict[str, Any]] = []
+        seen_run_ids: Set[str] = set()
+        while parent_run_ids:
+            seen_run_ids.update(parent_run_ids)
+            parent_runs.extend(
+                await runs_collection.find(
+                    {"run_id": {"$in": parent_run_ids}},
+                    {
+                        "_id": False,
+                        "run_id": 1,
+                        "run_type": 1,
+                        "agent_id": 1,
+                        "team_id": 1,
+                        "workflow_id": 1,
+                        "parent_run_id": 1,
+                    },
+                ).to_list(length=None)
+            )
+            parent_run_ids = sorted(
+                {run["parent_run_id"] for run in parent_runs if run.get("parent_run_id")} - seen_run_ids
+            )
+        return parent_runs
+
+    async def _write_aggregate_metrics_rows(
+        self,
+        aggregate_metrics_collection: AsyncMongoCollectionType,
+        aggregate_metrics_rows: List[Dict[str, Any]],
+        rows_changed: bool,
+        read_version: Optional[int],
+    ) -> None:
+        """Write a period's rows of the aggregate metrics collection, from build_aggregate_metrics_rows: the user rows,
+        then the everyone row, which is completed only while it still has the version read before the period's rows."""
+        period, period_date = (
+            aggregate_metrics_rows[0]["aggregation_period"],
+            aggregate_metrics_rows[0]["date"].isoformat(),
+        )
+        # Server-side cursor, so a period of many users is read a batch at a time and never holds the event loop
+        cursor = aggregate_metrics_collection.find(
+            {"aggregation_period": period, "date": period_date}, {"_id": False}
+        ).batch_size(METRICS_BATCH_SIZE)
+        stored_rows: List[Dict[str, Any]] = []
+        while True:
+            batch = await cursor.to_list(length=METRICS_BATCH_SIZE)
+            if not batch:
+                break
+            stored_rows.extend(deserialize_metrics_row(document) for document in batch)
+        everyone_row, changed_rows, stale_user_ids = aggregate_metrics_rows_to_write(
+            aggregate_metrics_rows, stored_rows, rows_changed
+        )
+        if stale_user_ids:
+            await aggregate_metrics_collection.delete_many(
+                {
+                    "aggregation_period": period,
+                    "date": period_date,
+                    "user_id": {"$in": stale_user_ids},
+                }
+            )
+        # Written a batch at a time, so building the writes of a period of many users never holds the event loop
+        for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+            await abulk_upsert_aggregate_metrics_rows(
+                aggregate_metrics_collection, changed_rows[start : start + METRICS_BATCH_SIZE]
+            )
+        if everyone_row is not None:
+            await aupsert_aggregate_metrics_row(aggregate_metrics_collection, everyone_row, read_version)
+
+    async def _calculate_date_metrics(
+        self,
+        collection: AsyncMongoCollectionType,
+        aggregate_metrics_collection: AsyncMongoCollectionType,
+        sessions_collection: AsyncMongoCollectionType,
+        runs_collection: Optional[AsyncMongoCollectionType],
+        date_to_process: date,
+        legacy_runs: List[Dict[str, Any]],
+        legacy_runs_by_id: Dict[str, Dict[str, Any]],
+        refreshes_collection: AsyncMongoCollectionType,
+        worker_id: str,
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """Rebuild one day's component and aggregate metrics rows. False when the refresh was taken over or stopped."""
+        start_timestamp = int(
+            datetime.combine(date_to_process, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        )
+        end_timestamp = int(
+            datetime.combine(date_to_process + timedelta(days=1), datetime.min.time())
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        date_key = date_to_process.isoformat()
+        # Read before the day's runs, so a run written while they are read moves it
+        stored_aggregate_metrics_row = await aggregate_metrics_collection.find_one(
+            {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"_id": False, "version": 1}
+        )
+        read_version = stored_aggregate_metrics_row["version"] if stored_aggregate_metrics_row is not None else None
+
+        sessions = await sessions_collection.find(
+            {"created_at": {"$gte": start_timestamp, "$lt": end_timestamp}},
+            {
+                "_id": False,
+                "session_id": 1,
+                "session_type": 1,
+                "user_id": 1,
+                "agent_id": 1,
+                "team_id": 1,
+                "workflow_id": 1,
+                "metadata": 1,
+                "session_data.compaction_metrics": 1,
+            },
+        ).to_list(length=None)
+        for session in sessions:
+            # A manual compaction's usage, which no run carries, is kept in the session's data
+            session["compaction_metrics"] = (session.get("session_data") or {}).get("compaction_metrics")
+
+        runs: List[Dict[str, Any]] = []
+        stored_run_ids: Set[str] = set()
+        if runs_collection is not None:
+            # Read a batch at a time, so a day of many runs is never read in one request
+            runs_cursor = runs_collection.find(
+                {
+                    "created_at": {"$gte": start_timestamp, "$lt": end_timestamp},
+                    # A run copied into a forked session repeats a run counted in the session it was made in
+                    "run_data.forked_from_session_id": None,
+                },
+                build_component_metrics_runs_projection(),
+            ).batch_size(METRICS_BATCH_SIZE)
+            while True:
+                batch = await runs_cursor.to_list(length=METRICS_BATCH_SIZE)
+                if not batch:
+                    break
+                # Checked between batches too, so a stop never waits for the whole of a large day
+                if should_stop is not None and should_stop():
+                    return False
+                runs.extend(batch)
+                await asyncio.sleep(0)  # yield control between batches
+        # A legacy run migrated to the runs collection since the legacy runs were read is among the day's runs, and
+        # is counted from there
+        day_run_ids = {run["run_id"] for run in runs}
+        runs.extend(run for run in legacy_runs if run["run_id"] not in day_run_ids)
+        nested_run_ids = metrics_nested_run_ids(runs)
+
+        # A run started by a run of another day, such as a member run after midnight, names that run's
+        # agent, team or workflow as its parent, read from the legacy runs of the rebuild or the runs collection
+        day_run_ids = {run["run_id"] for run in runs if run.get("run_id")}
+        parent_run_ids = sorted({run["parent_run_id"] for run in runs if run.get("parent_run_id")} - day_run_ids)
+        parent_runs = [legacy_runs_by_id[run_id] for run_id in parent_run_ids if run_id in legacy_runs_by_id]
+        parent_run_ids = [run_id for run_id in parent_run_ids if run_id not in legacy_runs_by_id]
+
+        if runs_collection is not None:
+            # A nested run also stored as a run of its own is counted from that document, whatever day it is on
+            run_ids = sorted(nested_run_ids)
+            if run_ids:
+                stored_run_ids.update(
+                    document["run_id"]
+                    for document in await runs_collection.find(
+                        {"run_id": {"$in": run_ids}},
+                        # Only run_id, so the run_id index answers the query without reading the documents
+                        {"run_id": 1, "_id": False},
+                    ).to_list(length=None)
+                )
+
+            # A remote member's run after midnight is named by its team's run of the day before
+            team_session_ids = sorted(metrics_remote_member_team_session_ids(runs))
+            if team_session_ids:
+                # Server-side cursor, so many team runs are read a batch at a time and never hold the event loop
+                team_runs_cursor = runs_collection.find(
+                    {
+                        "created_at": {"$gte": start_timestamp - 86400, "$lt": start_timestamp},
+                        "run_data.forked_from_session_id": None,
+                        "session_id": {"$in": team_session_ids},
+                    },
+                    build_component_metrics_runs_projection(),
+                ).batch_size(METRICS_BATCH_SIZE)
+                while True:
+                    team_runs = await team_runs_cursor.to_list(length=METRICS_BATCH_SIZE)
+                    if not team_runs:
+                        break
+                    parent_runs.extend(team_runs)
+                    parent_run_ids.extend(run["parent_run_id"] for run in team_runs if run.get("parent_run_id"))
+
+            parent_runs.extend(await self._get_metrics_parent_runs(runs_collection, parent_run_ids))
+        # A nested run also stored as a legacy run of its own is counted from that run, whatever day it is on
+        stored_run_ids.update(run_id for run_id in nested_run_ids if run_id in legacy_runs_by_id)
+
+        # Server-side cursor, so a day of many rows is read a batch at a time and never holds the event loop
+        rows_cursor = collection.find({"aggregation_period": "daily", "date": date_key}).batch_size(METRICS_BATCH_SIZE)
+        stored_rows: List[Dict[str, Any]] = []
+        while True:
+            batch = await rows_cursor.to_list(length=METRICS_BATCH_SIZE)
+            if not batch:
+                break
+            stored_rows.extend(deserialize_metrics_row(document) for document in batch)
+
+        def build_day_rows() -> Tuple[List[Dict[str, Any]], List[Tuple[str, str, str, str, str]], List[Dict[str, Any]]]:
+            records = calculate_date_component_metrics(date_to_process, sessions, runs, stored_run_ids, parent_runs)
+            changed_rows, stale_keys = component_metrics_rows_to_write(records, stored_rows)
+            aggregate_metrics_rows = build_aggregate_metrics_rows(
+                records, "daily", date_to_process, metrics_day_completed(date_to_process)
+            )
+            return changed_rows, stale_keys, aggregate_metrics_rows
+
+        # Added up in a thread, so a day of many runs never holds the event loop
+        changed_rows, stale_keys, aggregate_metrics_rows = await asyncio.to_thread(build_day_rows)
+
+        # Checked before the day's rows are written, so a process whose lock went stale never overwrites the rows of
+        # the process that took the refresh over
+        if not await self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+            return False
+        rows_changed = bool(changed_rows or stale_keys)
+        expected_version = read_version
+        # Rows written in more than one request move the everyone row's version first, so a request that fails later
+        # never leaves rows changed under the version read before them
+        if rows_changed and read_version is not None:
+            await aggregate_metrics_collection.update_one(
+                {"aggregation_period": "daily", "date": date_key, "user_id": ""}, {"$inc": {"version": 1}}
+            )
+            expected_version = read_version + 1
+        stored_ids = {
+            (
+                row["user_id"],
+                row["component_type"],
+                row["component_id"],
+                row["parent_component_id"],
+                row["root_component_id"],
+            ): row["_id"]
+            for row in stored_rows
+        }
+        stale_ids = [stored_ids[stale_key] for stale_key in stale_keys]
+        if stale_ids:
+            await collection.delete_many({"_id": {"$in": stale_ids}})
+        # Written a batch at a time, so building the writes of a day of many rows never holds the event loop
+        for start in range(0, len(changed_rows), METRICS_BATCH_SIZE):
+            await abulk_upsert_component_metrics(collection, changed_rows[start : start + METRICS_BATCH_SIZE])
+
+        # Written last, and completed only while its version is still the one the rows were written under, so a reopen
+        # written since keeps the day open
+        await self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection,
+            aggregate_metrics_rows,
+            rows_changed=rows_changed,
+            read_version=expected_version,
+        )
+        if rows_changed:
+            # Reopened with the day, so a calculation that stops before its months leaves the month for the next
+            await areopen_metrics_month(aggregate_metrics_collection, date_to_process.replace(day=1))
+        return True
+
+    async def _calculate_month_metrics(
+        self,
+        collection: AsyncMongoCollectionType,
+        aggregate_metrics_collection: AsyncMongoCollectionType,
+        month_start: date,
+        refreshes_collection: AsyncMongoCollectionType,
+        worker_id: str,
+    ) -> bool:
+        """Rebuild the month rows of the aggregate metrics collection from the component metrics rows of the month's
+        days. False when another process took the refresh over, and nothing was written."""
+        stored_aggregate_metrics_row = await aggregate_metrics_collection.find_one(
+            {"aggregation_period": "monthly", "date": month_start.isoformat(), "user_id": ""},
+            {"_id": False, "version": 1},
+        )
+        read_version = stored_aggregate_metrics_row["version"] if stored_aggregate_metrics_row is not None else None
+        # Server-side cursor, so a month of many rows is added up a batch at a time instead of held whole
+        cursor = collection.find(
+            {
+                "aggregation_period": "daily",
+                "date": {"$gte": month_start.isoformat(), "$lte": metrics_month_end(month_start).isoformat()},
+            },
+            {"_id": False},
+        ).batch_size(METRICS_BATCH_SIZE)
+        per_owner: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+        while True:
+            batch = await cursor.to_list(length=METRICS_BATCH_SIZE)
+            if not batch:
+                break
+            await asyncio.to_thread(
+                add_metrics_month_totals, per_owner, [deserialize_metrics_row(document) for document in batch]
+            )
+
+        # Checked before the month's rows are written, so a process whose lock went stale never overwrites the rows of
+        # the process that took the refresh over
+        if not await self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+            return False
+        # Added up per owner and component over the month, so a user of several days is one user of the month
+        await self._write_aggregate_metrics_rows(
+            aggregate_metrics_collection,
+            await asyncio.to_thread(build_aggregate_metrics_month_rows, month_start, per_owner),
+            rows_changed=False,
+            read_version=read_version,
+        )
+        return True
+
+    async def calculate_metrics(self, rebuild_from: Optional[date] = None) -> Optional[list[dict]]:
+        """Calculate metrics for every day that changed since the last calculation.
+
+        One process calculates at a time, whichever process or replica it runs in: the others return at once,
+        having read nothing.
+
+        Args:
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today, as after a release that
+                changed how metrics are counted.
+
+        Returns:
+            Optional[list[dict]]: The metrics of the days calculated, or of today when nothing changed, as get_metrics
+                returns them. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            calculated_dates = await self.calculate_metrics_dates(rebuild_from=rebuild_from)
+            if calculated_dates is None:
+                return None
+            if not calculated_dates:
+                # A refresh that changed no day answers with today's metrics
+                calculated_dates = [datetime.now(timezone.utc).date()]
+            metrics, _ = await self._get_metrics_rows(calculated_dates[0], calculated_dates[-1], None)
+            return [metric for metric in metrics if metric["date"] in calculated_dates]
 
         except Exception as e:
             log_error(f"Error calculating metrics: {str(e)}")
             raise e
 
+    async def calculate_metrics_dates(
+        self, should_stop: Optional[Callable[[], bool]] = None, rebuild_from: Optional[date] = None
+    ) -> Optional[List[date]]:
+        """Calculate metrics for every day that changed since the last calculation, as calculate_metrics does,
+        without reading back the metrics of those days.
+
+        Args:
+            should_stop (Optional[Callable[[], bool]]): Checked before each day and month, and between a day's
+                batches. Once it returns True, the calculation releases the refresh and stops; the next one continues
+                from the first day still open.
+            rebuild_from (Optional[date]): Also rebuild every day from this date to today.
+
+        Returns:
+            Optional[List[date]]: The days calculated, oldest first. None when another process is calculating them.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        collection = await self._get_collection(table_type="component_metrics", create_collection_if_not_found=True)
+        aggregate_metrics_collection = await self._get_collection(
+            table_type="aggregate_metrics", create_collection_if_not_found=True
+        )
+        refreshes_collection = await self._get_collection(
+            table_type="metrics_refreshes", create_collection_if_not_found=True
+        )
+        sessions_collection = await self._get_collection(table_type="sessions")
+        if (
+            collection is None
+            or aggregate_metrics_collection is None
+            or refreshes_collection is None
+            or sessions_collection is None
+        ):
+            log_debug("No session data found. Won't calculate metrics.")
+            return []
+        runs_collection = await self._get_collection(table_type="runs")
+
+        if rebuild_from is not None:
+            # Reopened as a write reopens a day, before the claim, so a calculation another process is running
+            # leaves them to the next one
+            try:
+                await areopen_metrics_days_from(aggregate_metrics_collection, rebuild_from)
+                # Yesterday and today are picked by the fingerprint, so it is marked for the next one too
+                await refreshes_collection.update_one(
+                    {"id": METRICS_REFRESH_ID}, {"$set": {"fingerprint": ["rebuild", uuid4().hex]}}
+                )
+            except Exception as e:
+                # Failed before the claim, so the refresh status shows it
+                await self._release_metrics_refresh(
+                    refreshes_collection,
+                    None,
+                    error=database_error_message(e),
+                )
+                raise
+
+        worker_id = str(uuid4())
+        # Claimed before anything is read, so a process that finds another calculating reads nothing
+        refresh_row = await self._claim_metrics_refresh(refreshes_collection, worker_id)
+        if refresh_row is None:
+            return None
+
+        try:
+            dates_to_process, fingerprint = await self._get_metrics_dates_to_calculate(
+                aggregate_metrics_collection, sessions_collection, runs_collection, refresh_row, rebuild_from
+            )
+
+            legacy_runs_by_day: Dict[date, List[Dict[str, Any]]] = {}
+            legacy_runs_by_id: Dict[str, Dict[str, Any]] = {}
+            # Read once for every day until the v3.0.0 migration is stamped: no index finds one day's legacy runs
+            if dates_to_process and packaging_version.parse(
+                await self.get_latest_schema_version(self.session_table_name) or "2.0.0"
+            ) < packaging_version.parse("3.0.0"):
+                start_timestamp = int(
+                    datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+                )
+                end_timestamp = int(
+                    datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                    .replace(tzinfo=timezone.utc)
+                    .timestamp()
+                )
+                legacy_runs_by_day, legacy_runs_by_id = await self._get_metrics_legacy_runs(
+                    sessions_collection, runs_collection, start_timestamp, end_timestamp
+                )
+                if not await self._heartbeat_metrics_refresh(refreshes_collection, worker_id):
+                    return None
+                # A legacy run is dated on its own day, which may hold no session or run of the collections
+                today = datetime.now(timezone.utc).date()
+                dates_to_process = sorted(
+                    set(dates_to_process)
+                    | {
+                        day
+                        for day in legacy_runs_by_day
+                        if day <= today
+                        and (refresh_row["finished_at"] is None or (rebuild_from is not None and day >= rebuild_from))
+                    }
+                )
+
+            calculated_dates: List[date] = []
+            for date_to_process in dates_to_process:
+                if should_stop is not None and should_stop():
+                    await self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                if not await self._calculate_date_metrics(
+                    collection,
+                    aggregate_metrics_collection,
+                    sessions_collection,
+                    runs_collection,
+                    date_to_process,
+                    legacy_runs_by_day.get(date_to_process, []),
+                    legacy_runs_by_id,
+                    refreshes_collection,
+                    worker_id,
+                    should_stop,
+                ):
+                    if should_stop is not None and should_stop():
+                        await self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                calculated_dates.append(date_to_process)
+
+            # A month row is read only once completed, so a month is built only once its last day can be completed
+            month_starts = sorted(
+                month_start
+                for month_start in set(get_months_to_calculate_metrics_for(calculated_dates))
+                | set(await self._get_open_metrics_months(aggregate_metrics_collection))
+                if metrics_day_completed(metrics_month_end(month_start))
+            )
+            for month_start in month_starts:
+                if should_stop is not None and should_stop():
+                    await self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+                    return None
+                if not await self._calculate_month_metrics(
+                    collection, aggregate_metrics_collection, month_start, refreshes_collection, worker_id
+                ):
+                    return None
+
+        except Exception as e:
+            await self._release_metrics_refresh(refreshes_collection, worker_id, error=database_error_message(e))
+            raise
+        except asyncio.CancelledError:
+            # Cancelled, as on shutdown: the refresh is released so the next process need not wait for its lock
+            # to go stale
+            await self._release_metrics_refresh(refreshes_collection, worker_id, stopped=True)
+            raise
+
+        await self._release_metrics_refresh(
+            refreshes_collection, worker_id, fingerprint=fingerprint, claimed_fingerprint=refresh_row["fingerprint"]
+        )
+
+        if not calculated_dates:
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
+            return []
+
+        return calculated_dates
+
+    def stop_metrics_refresh_on_read(self) -> None:
+        """Stop calculating metrics before a read, for a database whose metrics are calculated in the background."""
+        self._metrics_refreshed_at = float("inf")
+
+    async def _get_metrics_by_owner(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day from the component metrics, in the shape of the metrics table."""
+        collection = await self._get_collection(table_type="component_metrics")
+        if collection is None:
+            return [], None
+
+        query: Dict[str, Any] = {"aggregation_period": "daily"}
+        date_filter: Dict[str, Any] = {}
+        if starting_date:
+            date_filter["$gte"] = starting_date.isoformat()
+        if ending_date:
+            date_filter["$lte"] = ending_date.isoformat()
+        if date_filter:
+            query["date"] = date_filter
+        if user_id is not None:
+            query["user_id"] = user_id
+        rows = [
+            deserialize_metrics_row(document)
+            for document in await collection.find(query, build_metrics_by_owner_projection()).to_list(length=None)
+        ]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_record = await collection.find_one(
+            {"user_id": user_id} if user_id is not None else {}, {"updated_at": 1}, sort=[("updated_at", -1)]
+        )
+        latest_updated_at = latest_record.get("updated_at") if latest_record else None
+
+        return build_metrics_by_owner_from_rows(rows), latest_updated_at
+
+    async def _get_aggregate_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the day rows of the aggregate metrics collection in the shape of the metrics table: the everyone rows for
+        ``""``, one user's rows for a name, and every user's rows for ``None``."""
+        aggregate_metrics_collection = await self._get_collection(table_type="aggregate_metrics")
+        if aggregate_metrics_collection is None:
+            return [], None
+
+        query: Dict[str, Any] = {"aggregation_period": "daily"}
+        date_filter: Dict[str, Any] = {}
+        if starting_date:
+            date_filter["$gte"] = starting_date.isoformat()
+        if ending_date:
+            date_filter["$lte"] = ending_date.isoformat()
+        if date_filter:
+            query["date"] = date_filter
+        query["user_id"] = {"$ne": ""} if user_id is None else user_id
+        # A day without sessions or runs keeps an everyone row of zeros, where agno_metrics kept no row. A day whose
+        # only run is a regenerated one has its tokens but no count
+        query["$or"] = [
+            *[{column: {"$gt": 0}} for column in AGGREGATE_METRICS_COUNT_COLUMNS if column != "users_count"],
+            {"total_tokens": {"$gt": 0}},
+        ]
+        # Only what build_metrics_from_aggregate_metrics reads, so the maps of timings are never decoded
+        projection = {"_id": False, **{column: 1 for column in AGGREGATE_METRICS_ROWS_FIELDS}}
+        rows = [
+            deserialize_metrics_row(document)
+            for document in await aggregate_metrics_collection.find(query, projection)
+            .sort([("date", 1), ("user_id", 1)])
+            .to_list(length=None)
+        ]
+        if not rows:
+            return [], None
+
+        # Get the latest updated_at, scoped to the same user filter
+        latest_record = await aggregate_metrics_collection.find_one(
+            {"aggregation_period": "daily", "user_id": query["user_id"]}, {"updated_at": 1}, sort=[("updated_at", -1)]
+        )
+        latest_updated_at = latest_record.get("updated_at") if latest_record else None
+        return build_metrics_from_aggregate_metrics(rows), latest_updated_at
+
+    async def _get_metrics_rows(
+        self, starting_date: Optional[date], ending_date: Optional[date], user_id: Optional[str]
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of each user and day, as get_metrics returns them once the first calculate_metrics has
+        finished: a user's from that user's rows, the runs with no user from their component metrics rows."""
+        if user_id == "":
+            return await self._get_metrics_by_owner(starting_date, ending_date, user_id)
+        metrics, latest_updated_at = await self._get_aggregate_metrics_rows(starting_date, ending_date, user_id)
+        if user_id is not None:
+            return metrics, latest_updated_at
+
+        unowned_metrics, unowned_updated_at = await self._get_metrics_by_owner(starting_date, ending_date, "")
+        latest_updated_at = max(
+            (updated_at for updated_at in [latest_updated_at, unowned_updated_at] if updated_at is not None),
+            default=None,
+        )
+        return sorted(metrics + unowned_metrics, key=lambda x: (x["date"], x["user_id"] or "")), latest_updated_at
+
+    async def _metrics_calculated(self, refreshes_collection: Optional[AsyncMongoCollectionType]) -> bool:
+        """Whether the first calculate_metrics has finished, so reads take the metrics collections over
+        agno_metrics."""
+        refresh_row = (
+            (await self._get_metrics_refresh_row(refreshes_collection))[0] if refreshes_collection is not None else None
+        )
+        return refresh_row is not None and refresh_row["finished_at"] is not None
+
+    async def _refresh_metrics_before_read(self) -> None:
+        """Calculate metrics before a read, at most once per minute per process, once a first calculate_metrics has
+        finished and unless metrics calculation is turned off. Another process calculating them holds the metrics
+        refresh, so the read goes on at once."""
+        if time.time() - self._metrics_refreshed_at < 60:
+            return
+        # Stamp first so failed runs are throttled too instead of retried on every read
+        self._metrics_refreshed_at = time.time()
+        try:
+            # A first build reads every run, so a read never waits for one: until it has finished, reads serve the
+            # deprecated metrics collection
+            if not metrics_calculation_enabled() or not await self._metrics_calculated(
+                await self._get_collection(table_type="metrics_refreshes")
+            ):
+                return
+            await self.calculate_metrics_dates()
+        except Exception as e:
+            log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
     async def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
-        try:
-            collection = await self._get_collection(table_type="metrics")
-            if collection is None:
-                return [], None
+        """Get all metrics matching the given date range.
 
-            query = {}
+        Metrics are read from the aggregate metrics and component metrics once the first calculate_metrics has finished,
+        and from the deprecated metrics collection until then. They are refreshed first, at most once per minute per
+        process, unless stop_metrics_refresh_on_read was called.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user to filter by. When None, all per-user buckets are
+                returned, including the unowned one.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            await self._refresh_metrics_before_read()
+            if await self._metrics_calculated(await self._get_collection(table_type="metrics_refreshes")):
+                return await self._get_metrics_rows(starting_date, ending_date, user_id)
+
+            # Read without _get_collection, which would create the deprecated collection and its indexes
+            collection = self.database[self.metrics_table_name]
+
+            query: Dict[str, Any] = {}
             if starting_date:
                 query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
@@ -1894,27 +3003,279 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["date"]["$lte"] = ending_date.isoformat()
                 else:
                     query["date"] = {"$lte": ending_date.isoformat()}
+            if user_id is not None:
+                query["user_id"] = user_id
 
             records = await collection.find(query).to_list(length=None)
+            # Records written before ownership existed hold a whole day, and only an
+            # unscoped read sees them: an owner filter excludes them already
+            if user_id is None:
+                records = drop_legacy_metrics(records)
             if not records:
                 return [], None
 
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            return records, latest_updated_at
+            # Map the empty-string user_id sentinel back to None, and drop MongoDB's _id field
+            cleaned: List[dict] = []
+            for record in records:
+                row = dict(record)
+                row.pop("_id", None)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+
+            if not self._deprecated_metrics_logged:
+                self._deprecated_metrics_logged = True
+                log_warning(
+                    f"{self.metrics_table_name} is no longer updated and is served until a first build; "
+                    "call calculate_metrics() once to build the new metrics tables."
+                )
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
 
+    async def get_metrics_by_date(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get the metrics of every user, one row per day, matching the given date range.
+
+        Read from the everyone rows of the aggregate metrics once the first calculate_metrics has finished, and from the
+        deprecated metrics collection until then. They are refreshed first, as get_metrics does.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            await self._refresh_metrics_before_read()
+            if await self._metrics_calculated(await self._get_collection(table_type="metrics_refreshes")):
+                return await self._get_aggregate_metrics_rows(starting_date, ending_date, "")
+            return await super().get_metrics_by_date(starting_date, ending_date)
+
+        except Exception as e:
+            log_error(f"Error getting metrics: {str(e)}")
+            raise e
+
+    async def get_metrics_refresh_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of the most recent calculate_metrics, from the metrics refreshes collection.
+
+        Returns:
+            Optional[Dict[str, Any]]: The status ('running', 'completed' or 'failed'), when it started and finished,
+                and its error. None before the first calculation.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            refreshes_collection = await self._get_collection(table_type="metrics_refreshes")
+            if refreshes_collection is None:
+                return None
+            return metrics_refresh_status(*await self._get_metrics_refresh_row(refreshes_collection))
+
+        except Exception as e:
+            log_error(f"Error getting metrics refresh status: {str(e)}")
+            raise e
+
+    async def _get_component_metrics_totals_by_date(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str],
+        fields: List[str],
+        use_month_rows: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Total the component metrics of the given date range, every day from one period.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (List[str]): The columns to total.
+            use_month_rows (bool): Total a calendar month inside the date range from its month aggregate metrics row, as
+                one date.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each date, and when they were last updated.
+        """
+        aggregate_metrics_collection = await self._get_collection(table_type="aggregate_metrics")
+        # Every owner is read from the everyone rows and a user from the user's rows; the runs with no user have no
+        # aggregate metrics row of their own, so they are read from their component rows
+        collection = (
+            await self._get_collection(table_type="component_metrics")
+            if user_id == ""
+            else aggregate_metrics_collection
+        )
+        if aggregate_metrics_collection is None or collection is None:
+            return [], None
+
+        # The component metrics collection keeps day rows only, so the runs with no user are read day by day
+        full_months = metrics_full_months(starting_date, ending_date) if use_month_rows and user_id != "" else []
+        month_starts: List[date] = []
+        if full_months:
+            # Only a completed month's row stands for its days; an open one, reopened by a day rebuilt since or
+            # not yet built, is read from its days
+            month_starts = [
+                deserialize_metrics_row(document)["date"]
+                for document in await aggregate_metrics_collection.find(
+                    {
+                        "aggregation_period": "monthly",
+                        "user_id": "",
+                        "completed": True,
+                        # The full months follow each other, so a range finds them however long the window is
+                        "date": {"$gte": full_months[0].isoformat(), "$lte": full_months[-1].isoformat()},
+                    },
+                    {"_id": False, "date": 1},
+                ).to_list(length=None)
+            ]
+        rows_filter = build_metrics_rows_filter(starting_date, ending_date, user_id or "", month_starts)
+        if rows_filter is None:
+            return [], None
+        # One find, so each row is read as one version of it. Without a replica set there is no snapshot across
+        # documents: a day being rebuilt can be read half rebuilt
+        rows = [
+            deserialize_metrics_row(document)
+            for document in await collection.find(rows_filter, build_metrics_rows_projection(fields)).to_list(
+                length=None
+            )
+        ]
+        return total_metrics_rows(rows, starting_date, ending_date, fields, month_starts)
+
+    async def get_component_metrics(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Get the component metrics totals of each day in the given date range.
+
+        For every owner, each day is read from its everyone row; for one owner, from its rows. A read never calculates
+        them: calculate_metrics does.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[int]]: The totals of each day, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            metrics, latest_updated_at = await self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields
+            )
+            return [list_metrics_totals_models(day_totals) for day_totals in metrics], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting component metrics: {str(e)}")
+            raise e
+
+    async def get_metrics_totals(
+        self,
+        starting_date: date,
+        ending_date: date,
+        user_id: Optional[str] = None,
+        fields: Optional[List[str]] = None,
+    ) -> Tuple[Dict[str, Any], Optional[int]]:
+        """Get the component metrics totals of the whole given date range.
+
+        A calendar month inside the date range that has month rows is read from them, and every other day as
+        get_component_metrics reads it.
+
+        Args:
+            starting_date (date): The first day to total.
+            ending_date (date): The last day to total.
+            user_id (Optional[str]): Total only this owner's rows. ``None`` totals every owner, ``""`` the runs with
+                no user.
+            fields (Optional[List[str]]): The columns to total. ``None`` totals all.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[int]]: The totals of the date range, and when they were last updated.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            fields = resolve_metrics_fields(fields)
+            totals, latest_updated_at = await self._get_component_metrics_totals_by_date(
+                starting_date, ending_date, user_id, fields, use_month_rows=True
+            )
+            return list_metrics_totals_models(merge_metrics_totals(totals, fields)), latest_updated_at
+
+        except Exception as e:
+            log_error(f"Error getting metrics totals: {str(e)}")
+            raise e
+
+    async def get_metrics_versions(self, starting_date: date, ending_date: date) -> Optional[Dict[str, int]]:
+        """Get the version of every everyone row of a day or a month of the aggregate metrics in the given date range.
+
+        Metrics are refreshed first, as get_metrics refreshes them.
+
+        Args:
+            starting_date (date): The first day of the date range.
+            ending_date (date): The last day of the date range.
+
+        Returns:
+            Optional[Dict[str, int]]: The version of each everyone row, keyed by its aggregation period and date. The
+                same again only while no calculation wrote a row of the date range. ``None`` until the first
+                calculate_metrics has finished, or without an aggregate metrics collection: a read would find no rows to
+                total.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            await self._refresh_metrics_before_read()
+            collection = await self._get_collection(table_type="aggregate_metrics")
+            if collection is None or not await self._metrics_calculated(
+                await self._get_collection(table_type="metrics_refreshes")
+            ):
+                return None
+
+            documents = await collection.find(
+                {"user_id": "", "date": {"$gte": starting_date.isoformat(), "$lte": ending_date.isoformat()}},
+                {"_id": False, "aggregation_period": 1, "date": 1, "version": 1},
+            ).to_list(length=None)
+            return metrics_versions([SimpleNamespace(**deserialize_metrics_row(document)) for document in documents])
+
+        except Exception as e:
+            log_error(f"Error getting metrics versions: {str(e)}")
+            raise e
+
     # -- Knowledge methods --
 
-    async def delete_knowledge_content(self, id: str):
+    def _knowledge_user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Match rows owned by ``user_id`` plus unowned (shared) rows. ``None`` applies no owner filter."""
+        if user_id is None:
+            return None
+        return {"$or": [{"user_id": user_id}, {"user_id": None}, {"user_id": {"$exists": False}}]}
+
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user to verify ownership. If provided, only delete if the row
+                belongs to this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1924,7 +3285,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return
 
-            await collection.delete_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            await collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
 
@@ -1932,11 +3296,12 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user to filter by. Unowned rows are shared and always returned.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1949,7 +3314,11 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]}
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -1966,6 +3335,7 @@ class AsyncMongoDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1975,6 +3345,7 @@ class AsyncMongoDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user to filter by. Unowned rows are shared and always returned.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1992,6 +3363,10 @@ class AsyncMongoDb(AsyncBaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 query["linked_to"] = linked_to
+
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]} if query else scope
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -2035,6 +3410,12 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="knowledge", create_collection_if_not_found=True)
             if collection is None:
                 return None
+
+            # A scoped write must not overwrite a doc it does not own
+            if knowledge_row.user_id is not None and knowledge_row.id:
+                stored = await collection.find_one({"id": knowledge_row.id}, {"user_id": 1})
+                if stored is not None and stored.get("user_id") != knowledge_row.user_id:
+                    raise ValueError(f"Knowledge content {knowledge_row.id} not found")
 
             update_doc = knowledge_row.model_dump()
             await collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
@@ -2087,14 +3468,17 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database."""
         try:
             collection = await self._get_collection(table_type="evals")
             if collection is None:
                 return
 
-            result = await collection.delete_many({"run_id": {"$in": eval_run_ids}})
+            query: Dict[str, Any] = {"run_id": {"$in": eval_run_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2120,13 +3504,14 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2141,7 +3526,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            eval_run_raw = await collection.find_one({"run_id": eval_run_id})
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            eval_run_raw = await collection.find_one(query)
 
             if not eval_run_raw:
                 return None
@@ -2168,6 +3556,7 @@ class AsyncMongoDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2180,9 +3569,10 @@ class AsyncMongoDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
-            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2206,6 +3596,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["workflow_id"] = workflow_id
             if model_id is not None:
                 query["model_id"] = model_id
+            if user_id is not None:
+                query["user_id"] = user_id
             if eval_type is not None and len(eval_type) > 0:
                 query["eval_type"] = {"$in": eval_type}
             if filter_type is not None:
@@ -2250,14 +3642,15 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
-            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2272,8 +3665,13 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             result = await collection.find_one_and_update(
-                {"run_id": eval_run_id}, {"$set": {"name": name, "updated_at": int(time.time())}}
+                query,
+                {"$set": {"name": name, "updated_at": int(time.time())}},
+                return_document=ReturnDocument.AFTER,
             )
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
@@ -2285,6 +3683,24 @@ class AsyncMongoDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
+            raise e
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            collection = await self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
+            await collection.update_one({"run_id": eval_run_id}, {"$set": {"user_id": user_id}})
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # --- Traces ---
@@ -2867,14 +4283,18 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Scheduler methods --
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # -- Schedule methods --
+    # ``claim_due_schedule`` and ``release_schedule`` take no user_id: the poller fires across all users.
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": schedule_id})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -2884,13 +4304,16 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"name": name})
+            # Names are unique per owner: ``None`` addresses the unowned bucket
+            # ({"user_id": None} matches null and missing), never another owner's schedule.
+            query: Dict[str, Any] = {"name": name, "user_id": user_id}
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -2905,25 +4328,35 @@ class AsyncMongoDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
 
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if user_id is not None:
+                query["user_id"] = user_id
 
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
-            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            # id is a unique tiebreaker so skip/limit pages do not overlap or skip
+            # rows when many schedules share a created_at second.
+            cursor = collection.find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit)
             schedules = await cursor.to_list(length=None)
             for schedule in schedules:
                 schedule.pop("_id", None)
             return schedules, total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2939,22 +4372,41 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error creating schedule: {e}")
             raise e
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, *, preserve_updated_at: bool = False, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            kwargs["updated_at"] = int(time.time())
-            result = await collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            if not preserve_updated_at:
+                kwargs["updated_at"] = int(time.time())
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.update_one(query, {"$set": kwargs})
             if result.matched_count == 0:
                 return None
-            return await self.get_schedule(schedule_id)
+            return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             schedules_collection = await self._get_collection(table_type="schedules")
             if schedules_collection is None:
@@ -2962,13 +4414,92 @@ class AsyncMongoDb(AsyncBaseDb):
 
             runs_collection = await self._get_collection(table_type="schedule_runs")
             if runs_collection is not None:
-                await runs_collection.delete_many({"schedule_id": schedule_id})
+                # Mirror the user_id guard on the cascade delete
+                runs_query: Dict[str, Any] = {"schedule_id": schedule_id}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                await runs_collection.delete_many(runs_query)
 
-            result = await schedules_collection.delete_one({"id": schedule_id})
+            delete_query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                delete_query["user_id"] = user_id
+            result = await schedules_collection.delete_one(delete_query)
             return result.deleted_count > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            result = await collection.update_many(
+                {
+                    "enabled": True,
+                    "$or": [
+                        {"target_type": target_type, "target_id": target_id},
+                        {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
+                    ],
+                },
+                [
+                    {
+                        "$set": {
+                            "enabled": False,
+                            "disabled_reason": {"$literal": reason},
+                            # An archive cascade is not a user edit, so a Company routine keeps its last-edit time.
+                            "updated_at": {
+                                "$cond": [{"$eq": ["$managed_by", "company"]}, "$updated_at", int(time.time())]
+                            },
+                        }
+                    }
+                ],
+            )
+            return int(result.modified_count or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+            result = await collection.update_one(
+                {"id": schedule_id},
+                {"$set": {"updated_at": int(time.time()), **provenance}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
@@ -3001,21 +4532,51 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+        preserve_updated_at: bool = False,
+    ) -> bool:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
-            if next_run_at is not None:
-                updates["next_run_at"] = next_run_at
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None}
+            if not preserve_updated_at:
+                updates["updated_at"] = int(time.time())
+            updates["next_run_at"] = {
+                "$cond": [
+                    {"$eq": ["$cron_expr", ""]},
+                    None,
+                    next_run_at if next_run_at is not None else "$next_run_at",
+                ]
+            }
 
-            result = await collection.update_one({"id": schedule_id}, {"$set": updates})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if worker_id is not None:
+                query["locked_by"] = worker_id
+            if locked_at is not None:
+                query["locked_at"] = locked_at
+            result = await collection.update_one(query, [{"$set": updates}])
             return result.matched_count > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
             return False
+
+    async def delete_schedule_runs(self, schedule_id: str, *, before: int) -> int:
+        """Expire only completed history for the selected schedule."""
+        collection = await self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return 0
+        result = await collection.delete_many(
+            {"schedule_id": schedule_id, "completed_at": {"$lt": before, "$ne": None}}
+        )
+        return result.deleted_count
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -3044,13 +4605,16 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"id": run_id})
+            query: Dict[str, Any] = {"id": run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
@@ -3060,18 +4624,40 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error getting schedule run: {e}")
             return None
 
+    async def get_latest_schedule_runs(self, schedule_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Fetch the latest run for every requested schedule in one aggregation."""
+        if not schedule_ids:
+            return {}
+        collection = await self._get_collection(table_type="schedule_runs")
+        if collection is None:
+            return {}
+        pipeline: List[Dict[str, Any]] = [
+            {"$match": {"schedule_id": {"$in": schedule_ids}}},
+            {"$sort": {"schedule_id": 1, "triggered_at": -1, "created_at": -1, "id": -1}},
+            {"$group": {"_id": "$schedule_id", "run": {"$first": "$$ROOT"}}},
+        ]
+        latest = {}
+        for group in await self._aggregate_to_list(collection, pipeline):
+            run = group["run"]
+            run.pop("_id", None)
+            latest[group["_id"]] = run
+        return latest
+
     async def get_schedule_runs(
         self,
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return [], 0
 
-            query = {"schedule_id": schedule_id}
+            query: Dict[str, Any] = {"schedule_id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
             cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)

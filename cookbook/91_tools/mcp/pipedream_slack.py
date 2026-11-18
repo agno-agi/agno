@@ -3,8 +3,8 @@ Pipedream Slack MCP
 
 This example shows how to use Pipedream MCP servers (in this case the Slack one) with Agno Agents.
 
-1. Connect your Pipedream and Slack accounts: https://mcp.pipedream.com/app/slack
-2. Get your Pipedream MCP server url: https://mcp.pipedream.com/app/slack
+1. Connect your Pipedream and Slack accounts: https://pipedream.com/apps/slack
+2. Get your Pipedream MCP server url: https://pipedream.com/apps/slack
 3. Set the MCP_SERVER_URL environment variable to the MCP server url you got above
 4. Install dependencies: uv pip install agno mcp
 

@@ -25,13 +25,13 @@ db = PostgresDb(db_url=db_url)
 hackernews_agent = Agent(
     id="hackernews-agent",
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     id="web-agent",
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Search the web for the latest news and trends",
 )
 

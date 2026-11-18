@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agno.tools.file_generation import DOCX_AVAILABLE, PDF_AVAILABLE, FileGenerationTools
+from agno.tools.file import DOCX_AVAILABLE, PDF_AVAILABLE, FileGenerationTools
 
 
 def _get_single_file(result):

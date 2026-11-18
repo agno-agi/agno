@@ -3,12 +3,13 @@
 import inspect
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Generic, Optional, Type, TypeVar, Union
 
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.tools.component import ComponentTool
 
 from agno.factory.utils import (
     FactoryError,
@@ -24,6 +25,18 @@ class BaseFactory(Generic[T]):
 
     A factory is a registered callable that AgentOS invokes on each request
     with a :class:`RequestContext`, returning a freshly built component.
+
+    With ``QueueConfig(durable=True)``, background runs ride the job queue and
+    the factory is invoked again on whichever worker claims the run, possibly
+    later and on another replica. The ticket stores the context's
+    ``user_id``, ``session_id``, raw ``factory_input`` and trusted claims and
+    scopes; the HTTP request itself cannot be stored, so on the worker
+    ``ctx.request`` is a :class:`QueuedRequest` that raises on any attribute
+    read and fails the run. Build the component from the context's data
+    fields only, pass anything else through ``factory_input`` or claims set by
+    middleware, and expect more than one call per run. Claims are the ones
+    verified when the run was accepted; they are not re-verified on retries or
+    continuations.
 
     Type parameter T is the component type produced by the factory.
 
@@ -59,6 +72,28 @@ class BaseFactory(Generic[T]):
         self.name = name
         self.description = description
         self.input_schema = input_schema
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this factory as a tool with its own model-facing name,
+        description, title, and behaviour annotations, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[factory.as_tool(name=..., description=...)])``.
+        Every override is optional; the factory ``id`` remains the run/scope handle,
+        and the component is built per request as on every other surface.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def validate_input(self, raw_input: Any) -> Any:
         """Validate and parse raw factory_input against input_schema.

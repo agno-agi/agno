@@ -38,6 +38,10 @@ def test_init_requires_api_key():
             AntigravityTools()
 
 
+def test_default_agent_is_current_antigravity_preview():
+    assert AntigravityTools(api_key="dummy").agent == "antigravity-preview-09-2026"
+
+
 def test_init_registers_expected_tools():
     tools = AntigravityTools(api_key="dummy")
     tool_names = {f.name for f in tools.functions.values()}
@@ -387,6 +391,33 @@ def test_agent_directory_register_false_parses_without_network():
     targets = {s["target"] for s in tools.default_sources}
     assert "/about.txt" in targets
     assert "/.agents/skills/haiku/SKILL.md" in targets
+
+
+def test_agent_directory_reads_non_ascii_files_as_utf8(cp1252_default_encoding):
+    captured: List[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append({"body": json.loads(request.content.decode())})
+        return httpx.Response(200, json={"name": "my-bot"})
+
+    with tempfile.TemporaryDirectory() as d:
+        agent_dir = Path(d)
+        (agent_dir / "agent.yaml").write_text(
+            "id: my-bot\nbase_agent: antigravity-preview-05-2026\ndescription: café bot\n", encoding="utf-8"
+        )
+        (agent_dir / "AGENTS.md").write_text("café instructions", encoding="utf-8")
+        (agent_dir / "workspace").mkdir()
+        (agent_dir / "workspace" / "about.txt").write_text("café content", encoding="utf-8")
+
+        with _patch_sync_client(httpx.MockTransport(handler)):
+            AntigravityTools(api_key="dummy", agent_directory=d)
+
+    body = captured[0]["body"]
+    assert body["description"] == "café bot"
+    assert body["instructions"] == "café instructions"
+    assert body["base_environment"]["sources"] == [
+        {"type": "inline", "content": "café content", "target": "/about.txt"}
+    ]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")

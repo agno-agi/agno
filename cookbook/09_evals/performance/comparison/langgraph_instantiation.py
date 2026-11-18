@@ -34,7 +34,7 @@ tools = [get_weather]
 # Create Benchmark Function
 # ---------------------------------------------------------------------------
 def instantiate_agent():
-    return create_react_agent(model=ChatOpenAI(model="gpt-4o"), tools=tools)
+    return create_react_agent(model=ChatOpenAI(model="gpt-5.6-luna"), tools=tools)
 
 
 # ---------------------------------------------------------------------------

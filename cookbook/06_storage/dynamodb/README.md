@@ -12,7 +12,7 @@ uv pip install boto3
 
 ```python
 from agno.agent import Agent
-from agno.db.dynamodb import DynamoDb
+from agno.db import DynamoDb
 
 db = DynamoDb(
     region_name="us-east-1"

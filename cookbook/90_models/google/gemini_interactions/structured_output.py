@@ -28,7 +28,7 @@ class MovieReview(BaseModel):
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3.5-flash"),
+    model=GeminiInteractions(id="gemini-3.7-flash"),
     output_schema=MovieReview,
     markdown=True,
 )

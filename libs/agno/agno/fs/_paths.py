@@ -8,7 +8,6 @@ appended content and ``check_lines`` inputs so exact-line dedupe cannot drift.
 import re
 import unicodedata
 from typing import List, Sequence, Tuple
-from urllib.parse import quote
 
 from agno.fs.errors import InvalidPathError
 
@@ -96,6 +95,13 @@ def parse_namespace_template(name: str) -> Tuple[str, ...]:
 NAMESPACE_SAFE = "abcdefghijklmnopqrstuvwxyz0123456789.-_/@+"
 
 
+def _quote_namespace_value(value: str) -> str:
+    """Percent-encode a namespace value without changing its identity."""
+    # urllib.parse.quote always preserves ASCII letters, even with safe="".
+    # Encode UTF-8 bytes explicitly so uppercase identity characters stay distinct.
+    return "".join(chr(byte) if chr(byte) in NAMESPACE_SAFE else f"%{byte:02x}" for byte in value.encode("utf-8"))
+
+
 def sanitize_namespace_segment(value: str) -> str:
     """Lowercase a namespace and percent-encode it to URL-safe ASCII.
 
@@ -114,18 +120,16 @@ def sanitize_namespace_segment(value: str) -> str:
     a namespace, and case-insensitive filesystems cannot alias two of them.
     """
     lowered = unicodedata.normalize("NFC", value).lower()
-    # .lower() again because quote() emits uppercase hex (%C3 -> %c3), so the same
-    # input always yields the same namespace.
-    return quote(lowered, safe=NAMESPACE_SAFE).lower()
+    return _quote_namespace_value(lowered)
 
 
 def normalize_namespace(name: str) -> str:
     """Validate and canonicalize a namespace name, which may embed placeholders.
 
-    Lowercased and restricted to URL-safe ASCII (see
+    Literal parts are lowercased and restricted to URL-safe ASCII (see
     ``sanitize_namespace_segment``), then held to the §D6 path grammar. Templated
     names are validated with each placeholder standing in for one segment
-    character and returned with the placeholders intact.
+    character; bound values preserve identity casing.
     """
     if not isinstance(name, str):
         raise _invalid_path(name, "namespace must be a string")
@@ -136,13 +140,42 @@ def normalize_namespace(name: str) -> str:
     stand_in = value
     for placeholder in set(placeholders):
         stand_in = stand_in.replace("{" + placeholder + "}", "x")
-    # Lowercase the literal parts; placeholders are sanitized when they resolve.
-    sanitize_namespace_segment(normalize_path(stand_in))
-    return value.lower()
+    # Lowercase and encode literal parts now, while preserving placeholders for
+    # per-run resolution. Encoding the whole resolved namespace later would
+    # lowercase identity values and escape the literals' percent escapes again.
+    normalize_path(stand_in)
+    parts: List[str] = []
+    cursor = 0
+    for match in _PLACEHOLDER_RE.finditer(value):
+        parts.append(sanitize_namespace_segment(value[cursor : match.start()]))
+        parts.append(match.group(0))
+        cursor = match.end()
+    parts.append(sanitize_namespace_segment(value[cursor:]))
+    return "".join(parts)
+
+
+def validate_normalized_namespace(name: str) -> str:
+    """Validate a namespace already emitted by ``normalize_namespace``/``resolve``."""
+    if not isinstance(name, str):
+        raise _invalid_path(name, "namespace must be a string")
+    placeholders = parse_namespace_template(name)
+    stand_in = name
+    for placeholder in set(placeholders):
+        stand_in = stand_in.replace("{" + placeholder + "}", "x")
+    normalize_path(stand_in)
+    if any(ch not in NAMESPACE_SAFE + "%{}" for ch in name):
+        raise _invalid_path(name, "normalized namespace contains a non-canonical character")
+    if re.search(r"%(?![0-9a-f]{2})", name):
+        raise _invalid_path(name, "normalized namespace contains an invalid percent escape")
+    for escape in re.findall(r"%([0-9a-f]{2})", name):
+        decoded = chr(int(escape, 16))
+        if decoded in NAMESPACE_SAFE:
+            raise _invalid_path(name, "normalized namespace percent-encodes a character that must remain literal")
+    return name
 
 
 def normalize_template_value(placeholder: str, value: object) -> str:
-    """Validate one interpolated template value: exactly one path segment, no braces."""
+    """Validate and case-preservingly encode one template value."""
     if not isinstance(value, str) or not value:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a non-empty string")
     normalized = unicodedata.normalize("NFC", value)
@@ -156,10 +189,7 @@ def normalize_template_value(placeholder: str, value: object) -> str:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment") from None
     if as_path != normalized or "/" in as_path:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment")
-    # Returned raw on purpose. The resolved name is re-normalized as a whole
-    # namespace, which is where lowercasing and percent-encoding happen; encoding
-    # here as well would escape the escapes ("ü" -> %c3%bc -> %25c3%25bc).
-    return normalized
+    return _quote_namespace_value(normalized)
 
 
 def normalize_directory(directory: str) -> str:

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
+from agno.run.agent import RunOutput
 
 
 @dataclass
@@ -123,6 +124,7 @@ class OpenRouterResponses(OpenResponses):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including fallback models configuration.
@@ -136,6 +138,7 @@ class OpenRouterResponses(OpenResponses):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # Add fallback models to extra_body if specified
@@ -159,6 +162,4 @@ class OpenRouterResponses(OpenResponses):
         OpenAI's reasoning API format. We check for known reasoning model patterns.
         """
         # Check for OpenAI reasoning models hosted on OpenRouter
-        if self.id.startswith("openai/o3") or self.id.startswith("openai/o4"):
-            return True
-        return False
+        return self.id.startswith(("openai/o3", "openai/o4", "openai/gpt-5", "openai/gpt-6"))

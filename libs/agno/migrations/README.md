@@ -9,13 +9,55 @@ This is a guide on how to handle migrations for your Agno database.
 
 Before attempting this, make sure you have read the [Agno v2 Migration Guide](https://docs.agno.com/how-to/v2-migration) and are familiar with the changes in the new version.
 
-- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2.py`
-- For migrating your Vector Database, use our migration script: `libs/agno/scripts/v1_to_v2/migrate_to_v2_vector_db.py`
+- For migrating your "Storage" and "Memory" databases, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_to_v2.py`
+- For migrating your Vector Database, use our migration script: `libs/agno/migrations/v1_to_v2/migrate_vectordbs_to_v2.py`
   
 Notice:
 - The script won’t cleanup the old tables, in case you still need them.
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 - Metrics are automatically converted from v1 to v2 format.
+
+## How to migrate from Agno v2 to v3
+
+Before attempting this, make sure you have read the [Agno v3 Migration Guide](https://docs.agno.com/other/v3-migration) and are familiar with the changes in the new version.
+
+- For migrating your database tables, use the [migration manager](#how-to-use-the-migration-manager): `MigrationManager(db).up()` applies the `v3.0.0` migration.
+- For migrating your Vector Database to v3 per-user isolation, use the script for your backend (see the [v2 to v3 Vector DB guide](v2_to_v3/README.md)):
+  - pgvector, SingleStore: `libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py`
+  - Milvus, LanceDB, ClickHouse, SurrealDB: `libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py`
+  - Redis, Couchbase, Cassandra: `libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py`
+
+## Filesystem table (`agno_fs`) in v3.1
+
+v3.1 keys the filesystem table by `(namespace, user_id, path)`. `user_id` is the user
+partition: `""` for the shared partition (runs with no user), a user's id for their own.
+
+The table is not part of the migration manager, because it belongs to `DbFileSystem`
+(its own schema, and it can be built from a bare `db_url`). A table created by an
+earlier release is refused with `SchemaOutdatedError` until it is upgraded, so the
+key change is a deliberate step and never runs on its own. Upgrade it once, with the
+application stopped, using the script for your database:
+
+```bash
+# PostgreSQL
+python libs/agno/migrations/migrate_filesystem_postgres.py
+
+# SQLite
+python libs/agno/migrations/migrate_filesystem_sqlite.py
+```
+
+Edit the connection in the script to match the application's, or call it from code:
+
+```python
+from agno.fs.db import DbFileSystem
+
+DbFileSystem(db=my_postgres_db).upgrade_schema()
+```
+
+On PostgreSQL the upgrade is an `ALTER TABLE` (column plus key). SQLite cannot change
+a key in place, so the table is rebuilt and swapped in one transaction. Existing rows
+keep their namespace and land in the shared partition, so a custom
+`users/{user_id}/...` template still finds its files. The upgrade is idempotent.
 
 ## How to use the migration manager
 

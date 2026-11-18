@@ -61,13 +61,7 @@ class _MockHFFunction:
 
 
 class _MockHFToolCall:
-    """
-    Minimal mock for huggingface ChatCompletionStreamOutputDeltaToolCall.
-
-    HuggingFace's parse_tool_calls receives List[ChatCompletionStreamOutputDeltaToolCall]
-    where each element is *itself* iterable/subscriptable — the code does tool_call[0]
-    at line ~385, so each item in tool_calls_data must be a list wrapping the real object.
-    """
+    """Minimal mock for huggingface ChatCompletionStreamOutputDeltaToolCall."""
 
     def __init__(
         self,
@@ -89,9 +83,8 @@ def _hf_chunk(
     type: Optional[str] = None,
     name: Optional[str] = None,
     arguments: Optional[str] = None,
-) -> List[_MockHFToolCall]:
-    """Wrap a mock HF tool call in the list that parse_tool_calls expects as one element."""
-    return [_MockHFToolCall(index=index, id=id, type=type, name=name, arguments=arguments)]
+) -> _MockHFToolCall:
+    return _MockHFToolCall(index=index, id=id, type=type, name=name, arguments=arguments)
 
 
 def _cerebras_chunk(
@@ -200,7 +193,7 @@ PROVIDERS = [
     "huggingface",
     "cerebras",
     "watsonx",
-    # "litellm",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
+    "litellm",
 ]
 
 

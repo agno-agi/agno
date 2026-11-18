@@ -160,7 +160,7 @@ def create_content_workflow() -> Workflow:
         name="Content Research",
         agent=Agent(
             name="Research Specialist",
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.6-luna"),
             instructions=[
                 "You are an expert research specialist for content creation.",
                 "Conduct thorough research on the requested topic.",
@@ -182,7 +182,7 @@ def create_content_workflow() -> Workflow:
         name="Strategic Content Creation",
         agent=Agent(
             name="Content Strategist",
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.6-luna"),
             instructions=[
                 "You are a strategic content writer who creates high-quality, unique content.",
                 "Use the research and strategic analysis to create compelling content.",

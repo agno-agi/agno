@@ -12,7 +12,7 @@ from agno.models.google import Gemini
 
 # Create agent with both Google Search and URL context enabled
 agent = Agent(
-    model=Gemini(id="gemini-2.5-flash", search=True, url_context=True),
+    model=Gemini(id="gemini-3.7-flash", search=True, url_context=True),
     markdown=True,
 )
 

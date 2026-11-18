@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+import agno.utils.log
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -151,8 +152,11 @@ class Message(BaseModel):
             reconstructed_images = []
             for i, img_data in enumerate(data["images"]):
                 if isinstance(img_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in img_data and isinstance(img_data["content"], str):
+                    # Check for media_reference FIRST
+                    if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_images.append(Image(**img_data))
+                    elif "content" in img_data and isinstance(img_data["content"], str):
                         reconstructed_images.append(
                             Image.from_base64(
                                 img_data["content"],
@@ -162,7 +166,6 @@ class Message(BaseModel):
                             )
                         )
                     else:
-                        # Regular image (filepath/url)
                         reconstructed_images.append(Image(**img_data))
                 else:
                     reconstructed_images.append(img_data)
@@ -173,8 +176,10 @@ class Message(BaseModel):
             reconstructed_audio = []
             for i, aud_data in enumerate(data["audio"]):
                 if isinstance(aud_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in aud_data and isinstance(aud_data["content"], str):
+                    if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_audio.append(Audio(**aud_data))
+                    elif "content" in aud_data and isinstance(aud_data["content"], str):
                         reconstructed_audio.append(
                             Audio.from_base64(
                                 aud_data["content"],
@@ -197,8 +202,10 @@ class Message(BaseModel):
             reconstructed_videos = []
             for i, vid_data in enumerate(data["videos"]):
                 if isinstance(vid_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in vid_data and isinstance(vid_data["content"], str):
+                    if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_videos.append(Video(**vid_data))
+                    elif "content" in vid_data and isinstance(vid_data["content"], str):
                         reconstructed_videos.append(
                             Video.from_base64(
                                 vid_data["content"],
@@ -218,8 +225,10 @@ class Message(BaseModel):
             reconstructed_files = []
             for i, file_data in enumerate(data["files"]):
                 if isinstance(file_data, dict):
-                    # If content is base64, decode it back to bytes
-                    if "content" in file_data and isinstance(file_data["content"], str):
+                    if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
+                        # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                        reconstructed_files.append(File(**file_data))
+                    elif "content" in file_data and isinstance(file_data["content"], str):
                         reconstructed_files.append(
                             File.from_base64(
                                 file_data["content"],
@@ -239,7 +248,10 @@ class Message(BaseModel):
         if "audio_output" in data and data["audio_output"]:
             aud_data = data["audio_output"]
             if isinstance(aud_data, dict):
-                if "content" in aud_data and isinstance(aud_data["content"], str):
+                if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["audio_output"] = Audio(**aud_data)
+                elif "content" in aud_data and isinstance(aud_data["content"], str):
                     data["audio_output"] = Audio.from_base64(
                         aud_data["content"],
                         id=aud_data.get("id"),
@@ -255,7 +267,10 @@ class Message(BaseModel):
         if "image_output" in data and data["image_output"]:
             img_data = data["image_output"]
             if isinstance(img_data, dict):
-                if "content" in img_data and isinstance(img_data["content"], str):
+                if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["image_output"] = Image(**img_data)
+                elif "content" in img_data and isinstance(img_data["content"], str):
                     data["image_output"] = Image.from_base64(
                         img_data["content"],
                         id=img_data.get("id"),
@@ -268,7 +283,10 @@ class Message(BaseModel):
         if "video_output" in data and data["video_output"]:
             vid_data = data["video_output"]
             if isinstance(vid_data, dict):
-                if "content" in vid_data and isinstance(vid_data["content"], str):
+                if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
+                    # Reference before base64: a row carrying both keeps the pointer, url and filepath included.
+                    data["video_output"] = Video(**vid_data)
+                elif "content" in vid_data and isinstance(vid_data["content"], str):
                     data["video_output"] = Video.from_base64(
                         vid_data["content"],
                         id=vid_data.get("id"),
@@ -356,6 +374,13 @@ class Message(BaseModel):
                 Defaults to debug.
             use_compressed_content (bool): Whether to use compressed content.
         """
+        # Everything below builds strings for the sink to discard when debug is
+        # off (the default level logs via log_debug, which checks the same
+        # flag), including a terminal-size syscall. Read the flag off the
+        # module so runtime toggles are honored.
+        if level is None and not agno.utils.log.debug_on:
+            return
+
         _logger = log_debug
         if level == "info":
             _logger = log_info

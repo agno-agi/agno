@@ -18,13 +18,13 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 image_analyzer = Agent(
     name="Image Analyzer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Analyze the provided image and extract key details, objects, and context.",
 )
 
 news_researcher = Agent(
     name="News Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Search for latest news and information related to the analyzed image content.",
 )

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -14,10 +15,10 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics
 from agno.models.base import Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -30,6 +31,14 @@ from agno.utils.gemini import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
+_FUNCTION_RESPONSE_MEDIA_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/plain",
+}
+
 try:
     from google import genai
     from google.genai import Client as GeminiClient
@@ -39,12 +48,14 @@ try:
         DynamicRetrievalConfig,
         FileSearch,
         FunctionCallingConfigMode,
+        FunctionResponsePart,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -83,7 +94,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-3.5-flash"
+    id: str = "gemini-3.7-flash"
     name: str = "Gemini"
     provider: str = "Google"
 
@@ -201,6 +212,15 @@ class Gemini(Model):
         if self.client_params:
             client_params.update(self.client_params)
 
+        if not vertexai and not getenv("GOOGLE_GENAI_API_VERSION"):
+            http_options = client_params.get("http_options")
+            if http_options is None or isinstance(http_options, dict):
+                options = dict(http_options or {})
+                options["api_version"] = options.get("api_version") or "v1beta"
+                client_params["http_options"] = options
+            elif isinstance(http_options, HttpOptions) and http_options.api_version is None:
+                client_params["http_options"] = http_options.model_copy(update={"api_version": "v1beta"})
+
         client_params = inject_agno_client_header(client_params)
 
         self.client = genai.Client(**client_params)
@@ -288,17 +308,21 @@ class Gemini(Model):
         # User provides their own generation config
         if self.generation_config is not None:
             if isinstance(self.generation_config, GenerateContentConfig):
-                config = self.generation_config.model_dump()
+                config = self.generation_config.model_dump(exclude_none=True)
             else:
-                config = self.generation_config
+                # Copy so the caller's dict isn't modified by the updates below
+                config = dict(self.generation_config)
         else:
             config = {}
 
         if self.generative_model_kwargs:
             config.update(self.generative_model_kwargs)
 
-        config.update(
-            {
+        # Only fields that are set override the config: unset fields default to None
+        # and would otherwise erase values the user passed in generation_config.
+        model_config = {
+            k: v
+            for k, v in {
                 "safety_settings": self.safety_settings,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -312,8 +336,10 @@ class Gemini(Model):
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
                 "cached_content": self.cached_content,
-            }
-        )
+            }.items()
+            if v is not None
+        }
+        config.update(model_config)
 
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
@@ -782,6 +808,9 @@ class Gemini(Model):
         system_message = None
 
         for message in messages:
+            is_tool_result = (
+                message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None
+            )
             role = message.role
             if role in ["system", "developer"]:
                 system_message = message.content
@@ -823,9 +852,15 @@ class Gemini(Model):
             # Individual tool result message (canonical format)
             elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
                 tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                media_parts, fallback_media_parts = self._format_tool_result_media(message)
                 message_parts.append(
-                    Part.from_function_response(name=message.tool_name, response={"result": tc_content})
+                    Part.from_function_response(
+                        name=message.tool_name,
+                        response={"result": tc_content},
+                        parts=media_parts or None,
+                    )
                 )
+                message_parts.extend(fallback_media_parts)
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -834,7 +869,7 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts = [part]
 
-            if role == "user" and message.tool_calls is None:
+            if role == "user" and message.tool_calls is None and not is_tool_result:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -917,6 +952,84 @@ class Gemini(Model):
                 merged.append(msg)
 
         return merged, system_message
+
+    def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
+        if not self._supports_multimodal_function_responses():
+            return None
+
+        if (
+            part.inline_data is not None
+            and part.inline_data.data is not None
+            and part.inline_data.mime_type is not None
+            and part.inline_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_bytes(
+                data=part.inline_data.data,
+                mime_type=part.inline_data.mime_type,
+            )
+        if (
+            self.vertexai
+            and part.file_data is not None
+            and part.file_data.file_uri is not None
+            and part.file_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_uri(
+                file_uri=part.file_data.file_uri,
+                mime_type=part.file_data.mime_type,
+            )
+        return None
+
+    def _supports_multimodal_function_responses(self) -> bool:
+        model_version = re.search(r"(?:^|/)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id)
+        return model_version is not None and int(model_version.group(1)) >= 3
+
+    def _format_tool_result_media(self, message: Message) -> tuple[List[FunctionResponsePart], List[Part]]:
+        media_parts: List[FunctionResponsePart] = []
+        fallback_media_parts: List[Part] = []
+
+        def add_media_part(part: Part) -> None:
+            response_part = self._to_function_response_part(part)
+            if response_part is not None:
+                media_parts.append(response_part)
+            else:
+                fallback_media_parts.append(part)
+
+        if message.images is not None:
+            for image in message.images:
+                if image.content is not None and isinstance(image.content, GeminiFile):
+                    if image.content.uri and image.content.mime_type:  # type: ignore[attr-defined]
+                        add_media_part(
+                            Part.from_uri(
+                                file_uri=image.content.uri,  # type: ignore[attr-defined]
+                                mime_type=image.content.mime_type,  # type: ignore[attr-defined]
+                            )
+                        )
+                else:
+                    image_content = format_image_for_message(image)
+                    if image_content:
+                        add_media_part(Part.from_bytes(**image_content))
+
+        if message.videos is not None:
+            for video in message.videos:
+                video_part = self._format_video_for_message(video)
+                if video_part is not None:
+                    add_media_part(video_part)
+
+        if message.audio is not None:
+            for audio in message.audio:
+                audio_part = self._format_audio_for_message(audio)
+                if isinstance(audio_part, Part):
+                    add_media_part(audio_part)
+                elif isinstance(audio_part, GeminiFile) and audio_part.uri and audio_part.mime_type:
+                    add_media_part(Part.from_uri(file_uri=audio_part.uri, mime_type=audio_part.mime_type))
+
+        if message.files is not None:
+            for file in message.files:
+                file_part = self._format_file_for_message(file)
+                if file_part is not None:
+                    add_media_part(file_part)
+
+        return media_parts, fallback_media_parts
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
         mime_type = get_mime_type(audio, "audio/mp3")
@@ -2014,7 +2127,7 @@ class Gemini(Model):
 
         Example:
             ```python
-            model = Gemini(id="gemini-2.5-flash")
+            model = Gemini(id="gemini-3.7-flash")
             model.delete_document("fileSearchStores/store-123/documents/doc-456")
             ```
         """

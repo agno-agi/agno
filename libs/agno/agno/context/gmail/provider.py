@@ -21,6 +21,9 @@ message tools; writes get compose plus lookup tools.
 2. OAuth (interactive, for personal Gmail):
    - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
    - Opens browser on first use, caches token to ``gmail_token.json``
+   - On headless servers pass ``auth=AuthConfig(interactive=False)`` (or set
+     ``GOOGLE_OAUTH_NONINTERACTIVE=1``): expired credentials then raise a clear
+     error instead of blocking on a browser that never opens
 """
 
 from __future__ import annotations
@@ -77,7 +80,12 @@ You manage Gmail — searching, reading, and composing emails.
 
 
 class GmailContextProvider(ContextProvider):
-    """Gmail context for agents via service account or OAuth."""
+    """Gmail context for agents via service account or OAuth.
+
+    ``write_tools`` swaps the write sub-agent's toolset (default: a
+    write-scoped ``GmailTools``). ``mode=ContextMode.tools`` is a
+    read-only surface and deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -94,8 +102,10 @@ class GmailContextProvider(ContextProvider):
         name: str = "Gmail",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = False,
         stream_sub_agent_events: bool = True,
@@ -105,6 +115,7 @@ class GmailContextProvider(ContextProvider):
             name=name,
             mode=mode,
             model=model,
+            query_timeout=query_timeout,
             read=read,
             write=write,
             stream_sub_agent_events=stream_sub_agent_events,
@@ -112,6 +123,14 @@ class GmailContextProvider(ContextProvider):
 
         # Store auth config for toolkit creation
         self._auth = auth
+        self.write_tools = write_tools
+        if write_tools is not None and not write:
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"{type(self).__name__}: write_tools was provided but write=False, so the update tool is not "
+                "exposed and the injected toolset is never used. Pass write=True to enable it."
+            )
 
         # Resolve auth at init — fail fast if misconfigured
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -207,12 +226,13 @@ class GmailContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools = self.write_tools if self.write_tools is not None else [self._ensure_write_toolkit()]
             self._write_agent = Agent(
                 id=f"{self.id}_write",
                 name=f"{self.name} (write)",
                 model=self.model,
                 instructions=self._write_instructions,
-                tools=[self._ensure_write_toolkit()],
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent
