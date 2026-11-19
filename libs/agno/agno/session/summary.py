@@ -92,6 +92,7 @@ class SessionSummaryManager:
 
     # Maximum number of messages to include in the summary conversation. None means no limit.
     conversation_limit: Optional[int] = None
+    skip_member_messages: bool = True
 
     def __post_init__(self) -> None:
         if self.id is None:
@@ -177,11 +178,19 @@ class SessionSummaryManager:
 
         response_format = self.get_response_format(self.model)
 
+        messages_kwargs: Dict[str, Any] = {
+            "last_n_runs": self.last_n_runs,
+            "limit": self.conversation_limit,
+        }
+
+        from agno.session.team import TeamSession
+        from agno.session.workflow import WorkflowSession
+
+        if isinstance(session, (TeamSession, WorkflowSession)):
+            messages_kwargs["skip_member_messages"] = self.skip_member_messages
+
         system_message = self.get_system_message(
-            conversation=session.get_messages(  # type: ignore
-                last_n_runs=self.last_n_runs,
-                limit=self.conversation_limit,
-            ),
+            conversation=session.get_messages(**messages_kwargs),  # type: ignore[arg-type]
             response_format=response_format,
         )
 
