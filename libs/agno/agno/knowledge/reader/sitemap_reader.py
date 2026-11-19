@@ -193,9 +193,10 @@ class SitemapReader(Reader):
             is_index, locs = parsed
             pending: List[str] = list(locs) if is_index and self.follow_index else []
             page_locs: List[str] = [] if is_index else list(locs)
+            eligible_page_keys: set = set()
             incomplete = False
             visited = {canonical_page_url(candidate)}
-            while pending and len(page_locs) < self.max_pages:
+            while pending and len(eligible_page_keys) < self.max_pages:
                 child = pending.pop(0)
                 child_key = canonical_page_url(child)
                 if child_key in visited:
@@ -215,6 +216,13 @@ class SitemapReader(Reader):
                     pending.extend(child_locs)
                 else:
                     page_locs.extend(child_locs)
+                    # Only pages that survive the final host filter and deduplication
+                    # consume the budget; raw entries can prematurely skip later shards.
+                    for loc in child_locs:
+                        if is_host_allowed(loc, allowed_hosts):
+                            eligible_page_keys.add(canonical_page_url(loc))
+                            if len(eligible_page_keys) >= self.max_pages:
+                                break
 
             if pending:
                 # Shards were never opened because the cap was reached first
