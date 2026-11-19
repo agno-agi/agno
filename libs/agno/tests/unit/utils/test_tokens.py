@@ -444,3 +444,51 @@ async def test_model_acount_tokens_with_schema():
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
+
+
+# ---------------------------------------------------------------------------
+# Image dimensions read from disk
+# ---------------------------------------------------------------------------
+# _get_image_dimensions reads only a leading slice of a file on disk. That slice has
+# to be long enough to reach the dimensions in every supported container: a baseline
+# colour JPEG stores them in its SOF marker at offset 158, past a 100-byte read, so a
+# short read silently fell back to the default dimensions and every on-disk JPEG was
+# tokenised as though it were 1024x1024.
+
+
+@pytest.mark.parametrize("fmt,ext", [("PNG", "png"), ("GIF", "gif"), ("JPEG", "jpg"), ("WEBP", "webp")])
+def test_get_image_dimensions_from_filepath(fmt, ext, tmp_path):
+    from agno.media import Image
+    from agno.utils.tokens import _get_image_dimensions
+
+    pil_image = pytest.importorskip("PIL.Image")
+
+    width, height = 300, 150
+    path = tmp_path / f"sample.{ext}"
+    pil_image.new("RGB", (width, height), (10, 20, 30)).save(str(path), format=fmt)
+
+    assert _get_image_dimensions(Image(filepath=str(path))) == (width, height)
+
+
+def test_parse_image_dimensions_truncated_header_returns_defaults():
+    """A truncated header must fall back to the defaults, not raise."""
+    from agno.utils.tokens import (
+        DEFAULT_IMAGE_HEIGHT,
+        DEFAULT_IMAGE_WIDTH,
+        _parse_image_dimensions_from_bytes,
+    )
+
+    pil_image = pytest.importorskip("PIL.Image")
+
+    import io
+
+    buffer = io.BytesIO()
+    pil_image.new("RGB", (300, 150), (10, 20, 30)).save(buffer, format="JPEG")
+
+    # A colour JPEG's dimensions live past this cutoff.
+    assert _parse_image_dimensions_from_bytes(buffer.getvalue()[:100], "jpeg") == (
+        DEFAULT_IMAGE_WIDTH,
+        DEFAULT_IMAGE_HEIGHT,
+    )
+    # Full bytes resolve correctly, confirming the cutoff is what hid the dimensions.
+    assert _parse_image_dimensions_from_bytes(buffer.getvalue(), "jpeg") == (300, 150)
