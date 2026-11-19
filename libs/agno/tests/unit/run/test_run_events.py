@@ -523,3 +523,43 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_custom_event_direct_instantiation_is_serializable():
+    """CustomEvent built straight from the base class must serialize (issue #9910)."""
+    from agno.run.agent import CustomEvent as AgentCustomEvent
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+
+    for event_cls, expected_event in (
+        (AgentCustomEvent, "CustomEvent"),
+        (TeamCustomEvent, "CustomEvent"),
+        (WorkflowCustomEvent, "CustomEvent"),
+    ):
+        event = event_cls(stage="research", payload={"progress": 1})
+
+        # Declared dataclass fields carry their defaults instead of being missing
+        assert isinstance(event.created_at, int)
+        assert event.event == expected_event
+
+        event_dict = event.to_dict()
+        assert event_dict["created_at"] == event.created_at
+        assert event_dict["event"] == expected_event
+
+        # Arbitrary attributes are still stored on the instance
+        assert event.stage == "research"
+        assert event.payload == {"progress": 1}
+
+        # And the event survives the SSE serialization path
+        assert json.loads(event.to_json(indent=None))["created_at"] == event.created_at
+
+
+def test_custom_event_keyword_overrides_declared_field():
+    """Keyword arguments naming a declared field win over its dataclass default."""
+    from agno.run.agent import CustomEvent
+
+    event = CustomEvent(created_at=1234567890, run_id="run-123", stage="research")
+
+    assert event.created_at == 1234567890
+    assert event.run_id == "run-123"
+    assert event.to_dict()["run_id"] == "run-123"
