@@ -5,7 +5,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from agno.media import Audio, File, Image, Video
+from agno.media import (
+    Audio,
+    BaseMedia,
+    File,
+    Image,
+    Video,
+    normalize_filename,
+    normalize_mime_type,
+)
 from agno.utils.log import log_info, log_warning
 
 # Ensure .webp is recognized on all platforms
@@ -522,6 +530,22 @@ def reconstruct_response_audio(audio: Optional[dict]) -> Optional[Audio]:
     if not audio:
         return None
     return reconstruct_audio_from_dict(audio)
+
+
+def reconstruct_media(data: Any, media_type: str) -> Optional[Union[Image, Audio, Video, File, BaseMedia]]:
+    """Reconstruct a media object (Image, Audio, Video, File) based on media_type."""
+    if not data or not media_type:
+        return None
+    mt = media_type.lower().strip()
+    if mt in ("image", "images"):
+        return reconstruct_image_from_dict(data)
+    elif mt in ("audio", "audios"):
+        return reconstruct_audio_from_dict(data)
+    elif mt in ("video", "videos"):
+        return reconstruct_video_from_dict(data)
+    elif mt in ("file", "files", "document", "documents"):
+        return reconstruct_file_from_dict(data)
+    return None
 
 
 def __getattr__(name: str) -> Any:
