@@ -4,7 +4,9 @@ from unittest.mock import patch
 import pytest
 
 from agno.agent.agent import Agent
+from agno.agent.remote import RemoteAgent
 from agno.models.openai import OpenAIChat
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.team import get_member_id
 
@@ -134,6 +136,14 @@ def test_get_member_id():
     # Team with snake_case id -> id is preserved as-is, not converted to kebab-case
     inner_team = Team(name="Billing Team", id="billing_team", members=[member])
     assert get_member_id(inner_team) == "billing_team"
+
+    # RemoteAgent with snake_case id -> id is preserved as-is, not converted to kebab-case
+    remote_agent = RemoteAgent(base_url="http://example.invalid", agent_id="billing_agent")
+    assert get_member_id(remote_agent) == "billing_agent"
+
+    # RemoteTeam with snake_case id -> id is preserved as-is, not converted to kebab-case
+    remote_team = RemoteTeam(base_url="http://example.invalid", team_id="billing_team")
+    assert get_member_id(remote_team) == "billing_team"
 
 
 def test_find_member_by_id_matches_persisted_agent_id():
