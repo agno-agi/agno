@@ -32,7 +32,14 @@ def get_tasks_router(
 
     async def _call(
         method: Literal[
-            "create_task", "get_task", "list_tasks", "update_task", "delete_task", "restore_task", "transition_task"
+            "create_task",
+            "get_task",
+            "list_tasks",
+            "update_task",
+            "delete_task",
+            "restore_task",
+            "transition_task",
+            "permanently_delete_task",
         ],
         *args: Any,
         **kwargs: Any,
@@ -59,7 +66,7 @@ def get_tasks_router(
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
             conflict = (
-                method in {"transition_task", "restore_task", "delete_task"}
+                method in {"transition_task", "restore_task", "delete_task", "permanently_delete_task"}
                 or str(exc) == "Accepted task scope requires a return to Backlog"
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
@@ -256,10 +263,44 @@ def get_tasks_router(
         return await task_response(request, task)
 
     @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, _: bool = Depends(auth_dependency)) -> None:
-        await _existing(task_id)
-        if not await _call("delete_task", task_id, user_id=None):
+    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> None:
+        from agno.company.files import _adelete_folders
+        from agno.job_queue.session import HOLDING_STATUSES
+
+        existing = await _existing(task_id, include_deleted=True)
+        queue = getattr(request.app.state, "queue_worker", None)
+
+        async def refuse_live_run() -> None:
+            # The ticket decides, not the Task's status: an archived Task's status can be stale.
+            if not existing.get("job_id") or queue is None:
+                return
+            try:
+                # A failed lookup must not read as "no ticket" and let the delete leave an executing run.
+                try:
+                    job = await queue.store.get_job(existing["job_id"], strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(existing["job_id"])
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
+            if job is not None and job["status"] in HOLDING_STATUSES:
+                detail = f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel, then delete the Task"
+                raise HTTPException(status_code=409, detail=detail)
+
+        await refuse_live_run()
+        archived = existing.get("deleted_at") is None and await _call("delete_task", task_id, user_id=None)
+        try:
+            # A queued run can start before the archive lands; once archived, no later run starts.
+            await refuse_live_run()
+        except HTTPException:
+            if archived:
+                await _call("restore_task", task_id, user_id=None)
+            raise
+        await _adelete_folders(db, [f"company/tasks/{task_id}"])
+        if await _call("permanently_delete_task", task_id):
+            return
+        if await _call("get_task", task_id, user_id=None, include_deleted=True) is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=409, detail="Task was restored during delete; repeat DELETE")
 
     @router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
     async def archive_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

@@ -215,7 +215,7 @@ async def test_http_refuses_all_active_work_then_cascades_and_restores(db, paren
     path = "/company/" + parent_type + "s/" + parent["id"]
     app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.delete(path)
+        response = await client.post(path + "/archive")
         assert response.status_code == 409, response.text
         assert response.json()["detail"]["tasks"] == sorted(
             [{"id": t["id"], "title": t["title"]} for t in active], key=lambda t: t["id"]
@@ -224,7 +224,7 @@ async def test_http_refuses_all_active_work_then_cascades_and_restores(db, paren
         assert (await call(m.get_task, backlog["id"]))["deleted_at"] is None
         for task in active:
             await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
         for include_deleted in [False, True]:
             response = await client.get("/company/tasks", params={"include_deleted": include_deleted})
             assert response.json()["data"] == []
@@ -386,7 +386,7 @@ async def test_acceptance_racing_archive_never_hides_active_work(db, parent_type
         try:
             archived, accepted = await asyncio.wait_for(
                 asyncio.gather(
-                    client.delete("/company/" + parent_type + "s/" + parent["id"]),
+                    client.post("/company/" + parent_type + "s/" + parent["id"] + "/archive"),
                     client.post(path + "/transitions", json=payload),
                 ),
                 timeout=30,
@@ -397,7 +397,7 @@ async def test_acceptance_racing_archive_never_hides_active_work(db, parent_type
         assert winner_locked.is_set() and loser_at_lock.is_set()
         saved = await call(m.get_task, task["id"], include_deleted=True)
         if winner == "archive":
-            assert archived.status_code == 204, archived.text
+            assert archived.status_code == 200, archived.text
             assert accepted.status_code in [404, 409], accepted.text
             assert "missing from the registry" not in accepted.text
             assert saved["deleted_at"] is not None and saved["status"] == "backlog"
@@ -721,3 +721,177 @@ async def test_argless_storage_value_error_remains_validation_error(db, monkeypa
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/company/" + resource, json=payload)
         assert response.status_code == 422, response.text
+
+
+async def delete_scenario(db, parent_type):
+    """A Product with an active Project holding one Backlog Task; returns the manager, records and the parent path."""
+    m = manager(db)
+    product = await call(m.create, name="SDK")
+    project = await call(m.create_project, product_id=product["id"], name="Release")
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    task = await call(m.create_task, product_id=product["id"], title="Backlog", project_id=project["id"])
+    parent = product if parent_type == "product" else project
+    return m, product, project, task, "/company/" + parent_type + "s/" + parent["id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_type", ["product", "project"])
+async def test_permanent_delete_refuses_archived_open_task_then_removes_every_child(db, parent_type):
+    m, product, project, backlog, path = await delete_scenario(db, parent_type)
+    running = await call(m.create_task, product_id=product["id"], title="Running", project_id=project["id"])
+    await call(
+        m.transition_task,
+        task_id=running["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    await call(m.transition_task, task_id=running["id"], target="in_progress", reason="Start")
+    await call(m.delete_task, running["id"])
+    archived = await call(m.create_task, product_id=product["id"], title="Archived", project_id=project["id"])
+    await call(m.delete_task, archived["id"])
+    removed = [running, backlog, archived]
+    if parent_type == "product":
+        old = await call(m.create_project, product_id=product["id"], name="Old")
+        await call(m.delete_project, old["id"])
+        source = await call(m.create_source, product_id=product["id"], type="website", reference="https://example.com")
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        # An archived Task can still be mid-run, so it blocks the parent and nothing is removed.
+        response = await client.delete(path)
+        assert response.status_code == 409, response.text
+        saved = await call(m.get_task, running["id"], include_deleted=True)
+        detail = {
+            "message": "Cannot delete with active Tasks",
+            "tasks": [
+                {"id": running["id"], "title": "Running", "status": "in_progress", "deleted_at": saved["deleted_at"]}
+            ],
+        }
+        if parent_type == "product":
+            detail["routines"] = []
+        assert response.json() == {"detail": detail}
+        assert (await client.get(path)).status_code == 200
+        assert (await call(m.get_task, backlog["id"]))["deleted_at"] is None
+        await call(m.restore_task, running["id"])
+        await call(m.transition_task, task_id=running["id"], target="cancelled", reason="Stop")
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+        for task in removed:
+            assert (
+                await client.get("/company/tasks/" + task["id"], params={"include_deleted": True})
+            ).status_code == 404
+        if parent_type == "product":
+            for gone in (project, old):
+                response = await client.get("/company/projects/" + gone["id"], params={"include_deleted": True})
+                assert response.status_code == 404
+            assert await call(m.get_source, source["id"], include_deleted=True) is None
+        else:
+            assert (await client.get("/company/products/" + product["id"])).status_code == 200
+        # A second delete finds nothing, as a second archive does.
+        assert (await client.delete(path)).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_type", ["product", "project"])
+async def test_failed_cleanup_leaves_an_archived_record_that_a_repeat_delete_finishes(db, monkeypatch, parent_type):
+    import agno.company.files as files
+
+    m, _, _, task, path = await delete_scenario(db, parent_type)
+    original = files._adelete_folders
+
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("File storage unavailable")
+
+    monkeypatch.setattr(files, "_adelete_folders", unavailable)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.delete(path)).status_code == 500
+        kept = await client.get(path, params={"include_deleted": True})
+        assert kept.status_code == 200 and kept.json()["deleted_at"] is not None
+        monkeypatch.setattr(files, "_adelete_folders", original)
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+        assert (await client.get("/company/tasks/" + task["id"], params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_type", ["product", "project"])
+async def test_record_restored_during_delete_is_kept_and_reported(db, monkeypatch, parent_type):
+    import agno.company.files as files
+
+    m, product, project, _, path = await delete_scenario(db, parent_type)
+    original = files._adelete_folders
+    restore, parent = (m.restore, product) if parent_type == "product" else (m.restore_project, project)
+
+    async def restore_first(*args, **kwargs):
+        await call(restore, parent["id"])
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(files, "_adelete_folders", restore_first)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete(path)
+        assert response.status_code == 409, response.text
+        label = parent_type.capitalize()
+        assert response.json()["detail"] == label + " was restored during delete; repeat DELETE"
+        assert (await client.get(path)).status_code == 200
+        monkeypatch.setattr(files, "_adelete_folders", original)
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_manager_permanent_delete_removes_only_archived_records(db):
+    m, product, project, task, _ = await delete_scenario(db, "product")
+    for method in (m.permanently_delete, m.permanently_delete_project, m.permanently_delete_task):
+        assert await call(method, "missing") is False
+    before = [
+        await call(m.get, product["id"]),
+        await call(m.get_project, project["id"]),
+        await call(m.get_task, task["id"]),
+    ]
+    assert await call(m.permanently_delete, product["id"]) is False
+    assert await call(m.permanently_delete_project, project["id"]) is False
+    assert await call(m.permanently_delete_task, task["id"]) is False
+    after = [
+        await call(m.get, product["id"]),
+        await call(m.get_project, project["id"]),
+        await call(m.get_task, task["id"]),
+    ]
+    assert after == before
+    await call(m.delete_task, task["id"])
+    assert await call(m.permanently_delete_task, task["id"]) is True
+    assert await call(m.get_task, task["id"], include_deleted=True) is None
+    child = await call(m.create_task, product_id=product["id"], title="Child", project_id=project["id"])
+    await call(m.delete_project, project["id"])
+    assert await call(m.permanently_delete_project, project["id"]) is True
+    assert await call(m.get_project, project["id"], include_deleted=True) is None
+    assert await call(m.get_task, child["id"], include_deleted=True) is None
+    await call(m.delete, product["id"])
+    assert await call(m.permanently_delete, product["id"]) is True
+    assert await call(m.get, product["id"], include_deleted=True) is None
+
+
+@pytest.mark.asyncio
+async def test_product_delete_without_a_schedules_table(db):
+    # A deployment that never ran the scheduler or created a Routine has no schedules table.
+    _, product, _, task, path = await delete_scenario(db, "product")
+    assert not await call(db.table_exists, db.schedules_table_name)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+        assert (await client.get("/company/tasks/" + task["id"], params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_product_delete_with_only_a_company_database(db):
+    # Routines are stored in the AgentOS database; without one, a Product has no Routines.
+    _, _, _, task, path = await delete_scenario(db, "product")
+    app = AgentOS(company=CompanyConfig(db=db), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+        assert (await client.get("/company/tasks/" + task["id"], params={"include_deleted": True})).status_code == 404

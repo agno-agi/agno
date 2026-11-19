@@ -979,3 +979,24 @@ async def test_product_metadata_edits_keep_linked_routines(heartbeat):
     assert cleared["metadata"]["routine_ids"] == ["routine-1"]
     renamed = await call("update", product["id"], name="Docs site")
     assert renamed["metadata"]["routine_ids"] == ["routine-1"]
+
+
+@pytest.mark.asyncio
+async def test_product_delete_removes_its_summary_state(heartbeat, monkeypatch):
+    from httpx import ASGITransport, AsyncClient
+
+    from agno.company.summary import _summary_state_filesystem
+    from agno.os import AgentOS, CompanyConfig
+
+    db, _, call = heartbeat
+    monkeypatch.setattr("agno.company.summary.adeliver_summary", AsyncMock())
+    product = await call(
+        "create", name="Reports", metadata={"summary": {"interface": "slack", "destination": "reports"}}
+    )
+    await call("summarize", product_id=product["id"], run_id="first", interfaces=[], narrative="Report")
+    state = _summary_state_filesystem(db, product["id"])
+    assert await state.alist()
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.delete("/company/products/" + product["id"])).status_code == 204
+    assert await state.alist() == []

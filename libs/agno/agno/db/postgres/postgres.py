@@ -10619,6 +10619,18 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             return restore_product(sess, products, projects, tasks, product_id, user_id)
 
+    def permanently_delete_product(self, product_id: str) -> bool:
+        from agno.db.sql.company import delete_product_rows
+
+        products = self._get_table(table_type="products")
+        if products is None:
+            return False
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        sources = self._get_table(table_type="sources")
+        with self.Session() as sess, sess.begin():
+            return delete_product_rows(sess, products, projects, tasks, sources, product_id)
+
     # --- Projects ---
 
     def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
@@ -10753,6 +10765,17 @@ class PostgresDb(BaseDb):
         tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
             return restore_project(sess, products, projects, tasks, project_id, user_id)
+
+    def permanently_delete_project(self, project_id: str) -> bool:
+        from agno.db.sql.company import delete_project_rows
+
+        table = self._get_table(table_type="projects")
+        if table is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        tasks = self._get_table(table_type="tasks", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return delete_project_rows(sess, products, table, tasks, project_id)
 
     def transition_project(
         self,
@@ -11034,6 +11057,28 @@ class PostgresDb(BaseDb):
                 return None
             result = sess.execute(stmt.values(**task_restore_fields(dict(existing))).returning(table)).fetchone()
             return dict(result._mapping) if result else None
+
+    def get_descendant_tasks(
+        self, *, product_id: Optional[str] = None, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        from agno.db.sql.company import descendant_tasks
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return []
+        condition = table.c.product_id == product_id if project_id is None else table.c.project_id == project_id
+        with self.Session() as sess:
+            return descendant_tasks(sess, table, condition)
+
+    def permanently_delete_task(self, task_id: str) -> bool:
+        from agno.db.sql.company import delete_task_rows
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return False
+        products = self._get_table(table_type="products", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return delete_task_rows(sess, products, table, task_id)
 
     def start_task_run(
         self,

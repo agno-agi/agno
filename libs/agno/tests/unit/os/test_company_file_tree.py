@@ -917,3 +917,40 @@ def test_no_page_reaches_super_agent_unless_it_reads_one(system):
     # A Task of that Product is given the status page, as data inside its input.
     loaded = {page["file"]: page["content"] for page in task_pages(system, ids)}
     assert loaded[f"products/{ids['product']}/status.md"] == text
+
+
+def test_permanent_delete_removes_the_files_of_what_it_deletes(system):
+    ids = records(system)
+    files = tree(system.os)
+    manager = CompanyManager(system.db, system.os.registry)
+    project_id = manager.get_task(ids["task"])["project_id"]
+    second = manager.create_task(product_id=ids["product"], title="Second", project_id=project_id)["id"]
+    for task_id in (ids["task"], second, ids["stray"]):
+        call(files, "write_company_file", path=f"tasks/{task_id}/given.md", content="Material")
+    for product_id in (ids["product"], ids["other"]):
+        call(
+            files,
+            "write_company_file",
+            path=f"products/{product_id}/research.md",
+            content="Research",
+            expected_version=0,
+        )
+
+    def stored(namespace):
+        return [meta.path for meta in FileSystem(system.db, namespace=namespace, user_scoped=False).list()]
+
+    admin = headers(["agent_os:admin"])
+    assert system.client.delete(f"/company/tasks/{second}", headers=admin).status_code == 204
+    assert stored(f"company/tasks/{second}") == []
+    assert stored(f"company/tasks/{ids['task']}") == ["given.md"]
+    # Deleting a Project removes its Tasks' folders; the other Product's are untouched.
+    stray_project = manager.get_task(ids["stray"])["project_id"]
+    assert system.client.delete(f"/company/projects/{stray_project}", headers=admin).status_code == 204
+    assert stored(f"company/tasks/{ids['stray']}") == []
+    assert stored(f"company/tasks/{ids['task']}") == ["given.md"]
+    # Deleting a Product removes its pages and its Tasks' folders.
+    assert "research.md" in stored(f"company/products/{ids['product']}/wiki")
+    assert system.client.delete(f"/company/products/{ids['product']}", headers=admin).status_code == 204
+    assert stored(f"company/products/{ids['product']}/wiki") == []
+    assert stored(f"company/tasks/{ids['task']}") == []
+    assert "research.md" in stored(f"company/products/{ids['other']}/wiki")
