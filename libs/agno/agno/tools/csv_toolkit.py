@@ -116,6 +116,30 @@ class CsvTools(Toolkit):
             logger.exception("Error getting columns")
             return f"Error getting columns: {e}"
 
+    @staticmethod
+    def _lock_down_connection(con: Any) -> None:
+        """Sandbox a DuckDB connection before running caller-controlled SQL.
+
+        The allowlisted CSV is already materialized into a table before this is
+        called, so the query itself needs neither filesystem nor network access.
+        Disabling external access blocks DuckDB's file-I/O primitives
+        (``read_text``, ``read_blob``, ``read_csv``, ``COPY ... TO``, ``ATTACH``,
+        ``INSTALL``/``LOAD`` extensions, ...) that would otherwise let a query
+        read or write local files outside the configured ``csvs`` allowlist.
+
+        ``enable_external_access`` cannot be re-enabled while the database is
+        running, so a query cannot turn it back on.
+        """
+        # Essential protection — must succeed; if it raises, the caller's outer
+        # try/except returns an error and the untrusted SQL is never executed.
+        con.execute("SET enable_external_access=false")
+        try:
+            # Defense in depth: freeze configuration so the query cannot use SET
+            # to weaken the sandbox. Not supported on very old DuckDB builds.
+            con.execute("SET lock_configuration=true")
+        except Exception as e:
+            log_debug(f"Could not lock DuckDB configuration: {e}")
+
     def query_csv_file(self, csv_name: str, sql_query: str) -> str:
         """Use this function to run a SQL query on csv file `csv_name` without the extension.
         The Table name is the name of the csv file without the extension.
@@ -123,6 +147,13 @@ class CsvTools(Toolkit):
         Always wrap column names with double quotes if they contain spaces or special characters
         Remember to escape the quotes in th e JSON string (use \")
         Use single quotes for string values
+
+        For safety this runs against the selected CSV only: DuckDB external
+        filesystem/network access is disabled before the query executes, so
+        file-I/O primitives (read_text, COPY ... TO, ATTACH, ...) cannot reach
+        paths outside the configured ``csvs`` allowlist. If you pass your own
+        ``duckdb_connection``, external access is disabled on it for the query;
+        use a dedicated connection if it also serves other external-access work.
 
         Args:
             csv_name (str): The name of the csv file to query
@@ -157,6 +188,12 @@ class CsvTools(Toolkit):
                 f'CREATE TABLE "{table_name}" AS SELECT * FROM read_csv(?, ignore_errors=false, auto_detect=true)',
                 [str(file_path)],
             )
+
+            # -*- Lock the connection down before running caller-controlled SQL.
+            # The allowlisted CSV is now materialized into the table above, so the
+            # query needs no filesystem/network access. This prevents DuckDB file-I/O
+            # primitives (read_text/COPY/ATTACH/...) from reaching paths outside `csvs`.
+            self._lock_down_connection(con)
 
             # -*- Format the SQL Query
             # Remove backticks
