@@ -277,3 +277,83 @@ async def test_async_run_keeps_media_a_failed_sticky_tool_produced():
     run = await _media_agent([("tool", "draw_chart", "call-1"), ("error",)]).arun("chart it", session_id="m2")
 
     assert [i.url for i in run.images or []] == ["https://example.com/chart.png"]
+
+
+class _AlwaysNeedsGuidanceModel(_ScriptedModel):
+    """Asks for a retry with guidance on every call, so the real retry loop gives up with guidance left behind."""
+
+    def _fail(self):
+        from agno.exceptions import RetryableModelProviderError
+
+        raise RetryableModelProviderError(original_error="bad output", retry_guidance_message="be precise")
+
+    def invoke(self, *a, **k):
+        self._fail()
+
+    async def ainvoke(self, *a, **k):
+        self._fail()
+
+    def invoke_stream(self, *a, **k) -> Iterator[ModelResponse]:
+        self._fail()
+        yield  # pragma: no cover
+
+    async def ainvoke_stream(self, *a, **k) -> AsyncIterator[ModelResponse]:
+        self._fail()
+        yield  # pragma: no cover
+
+
+class _RecordingModel(_ScriptedModel):
+    """Answers once and records the message contents it was sent."""
+
+    def __init__(self, model_id: str):
+        super().__init__(model_id, [("content", "answer")])
+        self.seen: List[List[Any]] = []
+
+    def _record(self, k):
+        self.seen.append([m.content for m in k.get("messages") or [] if m.role != "system"])
+        return self._next()
+
+    def invoke(self, *a, **k):
+        return self._record(k)
+
+    async def ainvoke(self, *a, **k):
+        return self._record(k)
+
+    def invoke_stream(self, *a, **k) -> Iterator[ModelResponse]:
+        yield self._record(k)
+
+    async def ainvoke_stream(self, *a, **k) -> AsyncIterator[ModelResponse]:
+        yield self._record(k)
+
+
+def _guidance_handoff_agent():
+    primary = _RecordingModel("primary")
+    fallback = _AlwaysNeedsGuidanceModel("fallback", [])
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return primary, Agent(model=primary, fallback_config=config, db=InMemoryDb(), telemetry=False)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_primary_does_not_see_the_failed_sticky_models_guidance(stream):
+    primary, agent = _guidance_handoff_agent()
+    if stream:
+        for _ in agent.run("go", session_id="h1", stream=True):
+            pass
+    else:
+        agent.run("go", session_id="h1")
+
+    assert primary.seen == [["go"]]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_async_primary_does_not_see_the_failed_sticky_models_guidance(stream):
+    primary, agent = _guidance_handoff_agent()
+    if stream:
+        async for _ in agent.arun("go", session_id="h2", stream=True):
+            pass
+    else:
+        await agent.arun("go", session_id="h2")
+
+    assert primary.seen == [["go"]]

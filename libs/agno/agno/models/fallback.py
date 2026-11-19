@@ -25,8 +25,9 @@ from agno.utils.merge_dict import merge_dictionaries
 # Stream event type returned by response_stream / aresponse_stream
 StreamEvent = Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]
 
-# A model call failing with one of these may hand over to another model. Anything else (a
-# cancelled run, a tool error) ends the run with the messages produced so far.
+# A model call failing with one of these may hand over to another model, which continues from its
+# completed turns without its retry guidance. Anything else (a cancelled run, a tool error) ends
+# the run with the messages produced so far.
 _SWITCHABLE_ERRORS = (ModelProviderError, ModelAuthenticationError)
 
 
@@ -266,6 +267,7 @@ class _FallbackAttempt:
         self.original_len = len(self.original_messages) if self.original_messages is not None else 0
         self.seed_len = len(self.messages) if self.messages is not None else 0
         self.written: List[Message] = []
+        self.handed_over = False
         after_tool_results = self.kwargs.get("after_tool_results")
         if after_tool_results is not None:
             # Returns whatever the callback returns, so an async callback's coroutine is still awaited
@@ -277,7 +279,7 @@ class _FallbackAttempt:
 
     def sync(self) -> None:
         """Replace what the last sync wrote with what the fallback has added so far."""
-        if self.original_messages is None or self.messages is None:
+        if self.original_messages is None or self.messages is None or self.handed_over:
             return
         added = self.messages[self.seed_len :]
         if len(added) == len(self.written) and all(a is b for a, b in zip(added, self.written)):
@@ -286,6 +288,17 @@ class _FallbackAttempt:
         # loop closes after the run moved on, must not drop messages the caller appended since.
         self.original_messages[self.original_len : self.original_len + len(self.written)] = added
         self.written = added
+
+    def hand_over(self) -> None:
+        """Before another model takes over: keep the completed turns, drop this model's retry guidance."""
+        self.sync()
+        self.handed_over = True
+        if self.original_messages is None:
+            return
+        kept = [m for m in self.written if not getattr(m, "temporary", False)]
+        if len(kept) != len(self.written):
+            self.original_messages[self.original_len : self.original_len + len(self.written)] = kept
+            self.written = kept
 
 
 # What Model.response() collects from tool results onto the ModelResponse it builds
@@ -594,6 +607,9 @@ def _call_fallback(fallback: Model, method_name: str, kwargs: dict) -> ModelResp
     attempt = _FallbackAttempt(kwargs)
     try:
         return getattr(fallback, method_name)(**attempt.kwargs)
+    except _SWITCHABLE_ERRORS:
+        attempt.hand_over()
+        raise
     finally:
         attempt.sync()
 
@@ -603,6 +619,9 @@ async def _acall_fallback(fallback: Model, method_name: str, kwargs: dict) -> Mo
     attempt = _FallbackAttempt(kwargs)
     try:
         return await getattr(fallback, method_name)(**attempt.kwargs)
+    except _SWITCHABLE_ERRORS:
+        attempt.hand_over()
+        raise
     finally:
         attempt.sync()
 
@@ -615,6 +634,9 @@ def _stream_fallback(fallback: Model, kwargs: dict) -> Iterator[StreamEvent]:
             # Synced before each event: a consumer that stops reading does not close the stream at once
             attempt.sync()
             yield event
+    except _SWITCHABLE_ERRORS:
+        attempt.hand_over()
+        raise
     finally:
         attempt.sync()
 
@@ -627,6 +649,9 @@ async def _astream_fallback(fallback: Model, kwargs: dict) -> AsyncIterator[Stre
             # Synced before each event: an abandoned async generator is only closed later, by the event loop
             attempt.sync()
             yield event
+    except _SWITCHABLE_ERRORS:
+        attempt.hand_over()
+        raise
     finally:
         attempt.sync()
 

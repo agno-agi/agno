@@ -1901,3 +1901,86 @@ class TestCompletedToolExecutions:
         assert [v.url for v in result.videos] == ["https://example.com/a.mp4"]
         assert [f.url for f in result.files] == ["https://example.com/a.pdf"]
         assert result.updated_session_state == {"cart": ["order"], "step": 2}
+
+
+class TestHandoverDropsGuidance:
+    """The next model continues from a failed model's turns, but not from its retry guidance."""
+
+    def _sticky_fails_after_tool_turn_with_guidance(self, messages):
+        _tool_turn(messages)
+        _retry_with_guidance(messages)
+
+    def test_primary_gets_turns_without_guidance(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen = {}
+
+        def _sticky(messages, **kwargs):
+            self._sticky_fails_after_tool_turn_with_guidance(messages)
+            raise _server_error()
+
+        def _primary(messages, **kwargs):
+            seen["contents"] = [m.content for m in messages]
+            return ModelResponse(content="done")
+
+        with patch.object(primary, "response", side_effect=_primary):
+            with patch.object(fallback, "response", side_effect=_sticky):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen["contents"] == ["go", "tool-turn", "tool-result"]
+
+    def test_stream_primary_gets_turns_without_guidance(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen = {}
+
+        def _sticky(messages, **kwargs):
+            self._sticky_fails_after_tool_turn_with_guidance(messages)
+            yield ModelResponse(content="partial")
+            raise _server_error()
+
+        def _primary(messages, **kwargs):
+            seen["contents"] = [m.content for m in messages]
+            yield ModelResponse(content="done")
+
+        with patch.object(primary, "response_stream", side_effect=_primary):
+            with patch.object(fallback, "response_stream", side_effect=_sticky):
+                list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert seen["contents"] == ["go", "tool-turn", "tool-result"]
+
+    @pytest.mark.asyncio
+    async def test_async_stream_primary_gets_turns_without_guidance(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen = {}
+
+        async def _sticky(messages, **kwargs):
+            self._sticky_fails_after_tool_turn_with_guidance(messages)
+            yield ModelResponse(content="partial")
+            raise _server_error()
+
+        async def _primary(messages, **kwargs):
+            seen["contents"] = [m.content for m in messages]
+            yield ModelResponse(content="done")
+
+        with patch.object(primary, "aresponse_stream", side_effect=_primary):
+            with patch.object(fallback, "aresponse_stream", side_effect=_sticky):
+                [e async for e in acall_model_stream_with_fallback(primary, config, messages=messages)]
+
+        assert seen["contents"] == ["go", "tool-turn", "tool-result"]
+
+    def test_cancelled_run_keeps_messages_exactly(self):
+        """No model takes over after a cancellation, so the list stays as the model left it."""
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _sticky(messages, **kwargs):
+            self._sticky_fails_after_tool_turn_with_guidance(messages)
+            raise RunCancelledException("cancelled")
+
+        with patch.object(fallback, "response", side_effect=_sticky):
+            with pytest.raises(RunCancelledException):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result", "guidance"]
