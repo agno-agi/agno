@@ -15,6 +15,8 @@ from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.skills import LocalSkills, Skills
+from agno.skills.loaders.base import SkillLoader
+from agno.skills.skill import Skill
 from agno.team._messages import get_system_message
 from agno.team._tools import _determine_tools_for_model
 from agno.team.team import Team
@@ -52,6 +54,21 @@ def _make_model():
 
 def _make_skills():
     return Skills(loaders=[LocalSkills(SAMPLE_SKILLS_DIR)])
+
+
+def _make_minimal_skills():
+    class _MinimalSkillLoader(SkillLoader):
+        def load(self):
+            return [
+                Skill(
+                    name="minimal-skill",
+                    description="Only SKILL.md content",
+                    instructions="Use instructions only",
+                    source_path=".",
+                )
+            ]
+
+    return Skills(loaders=[_MinimalSkillLoader()])
 
 
 def _get_skill_tools(tools):
@@ -99,6 +116,25 @@ def test_skills_tools_absent_when_skills_none():
 
     skill_tools = _get_skill_tools(tools)
     assert len(skill_tools) == 0
+
+
+def test_skills_only_instruction_tool_when_no_optional_assets():
+    """Only get_skill_instructions is registered when no scripts/references exist."""
+    team = Team(name="test-team", members=[], skills=_make_minimal_skills())
+
+    tools = _determine_tools_for_model(
+        team=team,
+        model=_make_model(),
+        run_response=_make_run_response(),
+        run_context=_make_run_context(),
+        team_run_context={},
+        session=_make_session(),
+        async_mode=False,
+    )
+
+    skill_tools = _get_skill_tools(tools)
+    assert len(skill_tools) == 1
+    assert skill_tools[0].name == "get_skill_instructions"
 
 
 # ---------------------------------------------------------------------------
