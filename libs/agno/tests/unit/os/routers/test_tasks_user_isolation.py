@@ -98,7 +98,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     path = "/company/tasks/" + a
     assert c.patch(path, json={"brief": "Updated"}, headers=headers("bob")).status_code == 200
     assert c.get(path, headers=read).json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
@@ -121,7 +121,7 @@ def test_isolation_on_shares_reads_edits_and_deletion(make_client):
     assert edited.json()["title"] == "Collaborative work"
     assert edited.json()["user_id"] == "alice"
     # Archive and restore need the scope, not ownership; the creator stays recorded.
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
     assert c.get("/company/tasks?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
@@ -135,7 +135,7 @@ def test_admin_bypass_and_creator_attribution(make_client):
     path = "/company/tasks/" + a
     assert c.get(path, headers=admin).status_code == 200
     assert c.patch(path, json={"title": "renamed"}, headers=admin).status_code == 200
-    assert c.delete(path, headers=admin).status_code == 204
+    assert c.post(path + "/archive", headers=admin).status_code == 200
     assert c.post(path + "/restore", headers=admin).status_code == 200
     parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
     project = c.post("/company/projects", json={"name": "Admin project", "product_id": parent}, headers=admin).json()
@@ -146,6 +146,17 @@ def test_admin_bypass_and_creator_attribution(make_client):
     )
     assert response.status_code == 201
     assert response.json()["user_id"] == "admin"
+
+
+def test_permanent_delete_requires_admin(make_client):
+    c = make_client(True)
+    path = "/company/tasks/" + create(c, "alice")
+    # The delete scope still archives and restores, but only an admin removes the record.
+    assert c.delete(path, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    assert c.delete(path, headers=admin).status_code == 204
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
 @pytest.mark.parametrize("isolation", [False, True])

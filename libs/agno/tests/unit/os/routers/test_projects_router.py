@@ -50,7 +50,7 @@ def test_lifecycle(client):
     assert all(x["reason"] == "Reviewed" for x in response.json()["transitions"])
     assert transition(client, path, "cancelled").status_code == 409
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None

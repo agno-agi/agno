@@ -36,6 +36,8 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             "delete_project",
             "restore_project",
             "transition_project",
+            "permanently_delete_project",
+            "get_descendant_tasks",
         ],
         *args: Any,
         **kwargs: Any,
@@ -63,7 +65,12 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
-            conflict = method in {"transition_project", "delete_project", "restore_project"}
+            conflict = method in {
+                "transition_project",
+                "delete_project",
+                "restore_project",
+                "permanently_delete_project",
+            }
             raise HTTPException(status_code=409 if conflict else 422, detail=exc.args[0] if exc.args else str(exc))
 
     async def _existing(project_id: str, include_deleted: bool = False) -> Dict[str, Any]:
@@ -129,17 +136,32 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
 
     @router.delete("/projects/{project_id}", status_code=204)
     async def delete_project(project_id: str, _: bool = Depends(auth_dependency)) -> Response:
-        await _existing(project_id)
+        from agno.company.files import _adelete_folders
+        from agno.db.schemas.tasks import OPEN_TASK_STATUSES
+
+        record = await _existing(project_id, include_deleted=True)
+        # Checked before anything changes: removed files cannot be brought back.
+        tasks = await _call("get_descendant_tasks", project_id=project_id)
+        open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
+        if open_tasks:
+            detail = {"message": "Cannot delete with active Tasks", "tasks": open_tasks}
+            return JSONResponse(status_code=409, content={"detail": detail})
         try:
-            archived = await _call("delete_project", project_id, user_id=None)
+            # Archive first, so if a step below fails, a repeat DELETE finishes the archived Project.
+            if record.get("deleted_at") is None:
+                await _call("delete_project", project_id, user_id=None)
+            await _adelete_folders(db, [f"company/tasks/{task['id']}" for task in tasks])
+            deleted = await _call("permanently_delete_project", project_id)
         except HTTPException as exc:
             if exc.status_code == 409 and isinstance(exc.detail, dict):
                 # Keep the Task list structured through AgentOS's string error handler.
                 return JSONResponse(status_code=409, content={"detail": exc.detail})
             raise
-        if not archived:
+        if deleted:
+            return Response(status_code=204)
+        if await _call("get_project", project_id, user_id=None, include_deleted=True) is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        return Response(status_code=204)
+        raise HTTPException(status_code=409, detail="Project was restored during delete; repeat DELETE")
 
     @router.post("/projects/{project_id}/archive", response_model=ProjectResponse)
     async def archive_project(

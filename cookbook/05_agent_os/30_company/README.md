@@ -20,10 +20,11 @@ overrides the OS database. Omitting Company leaves its routes and scopes absent.
 
 The routes are `GET` and `POST /company/products`, `GET`, `PATCH` and
 `DELETE /company/products/{id}`, `POST /company/products/{id}/archive` and
-`POST /company/products/{id}/restore`. Archive archives like `DELETE` and
-returns the archived Product.
+`POST /company/products/{id}/restore`. Archive returns the archived Product;
+`DELETE` removes the Product permanently (see Permanent delete below).
 Lists return `{data, meta}` with `limit` and `page`; reads accept
-`include_deleted=true`. Archive and restore require `products:delete`, like deletion.
+`include_deleted=true`. Archive and restore require `products:delete`;
+`DELETE` requires `agent_os:admin`.
 Read and create/update require `products:read` and `products:write` respectively.
 
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
@@ -143,7 +144,7 @@ requires an earlier run attempt.
 A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
-CRUD, paging, soft delete and restore conventions as Products, plus
+CRUD, paging, archive, restore and permanent delete conventions as Products, plus
 `POST /{id}/transitions`. Task Ready requests include `executor_type` and
 `executor_id`; the API applies the scheduler's caller run-permission check.
 Acceptance also validates the executor against the registry, then the published
@@ -159,7 +160,7 @@ requires the caller's executor run permission; accepted Tasks keep their brief,
 Project, evidence and executor until returned to Backlog, because an accepted
 Task runs under its accepter's permissions. The title stays editable at any
 stage (Company tools run by Routines and executors edit Backlog Tasks only).
-Archive, delete and restore need the delete scope, not ownership.
+Archive and restore need the delete scope, not ownership; `DELETE` needs `agent_os:admin`.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -599,6 +600,56 @@ when the parent's own read includes archived records. Managers and HTTP use
 `BaseDb.get_product_counts(ids)` or `get_project_counts(ids)` and their async
 twins, issuing one grouped query for the entire returned page. A warmed list
 page uses three SQL statements in total, regardless of the number of cards.
+
+## Permanent delete
+
+`DELETE /company/products/{id}`, `DELETE /company/projects/{id}` and
+`DELETE /company/tasks/{id}` remove the record permanently and return 204. They
+need `agent_os:admin`; archive and restore keep the resource's delete scope.
+Active and archived records can be deleted. A record that is already gone returns
+404, including on a repeated `DELETE`. `POST /{id}/archive` is the reversible
+alternative.
+
+Deleting a Product removes its Projects, Tasks and Sources, its wiki pages, its
+summary state, the files of each of its Tasks, and its Routines with their run
+history. Deleting a Project removes its Tasks and their files. Deleting a Task
+removes its files. Sessions, agent, team and workflow run history, and the company
+decision log are kept.
+
+A Product or Project delete returns 409 and removes nothing while any Task inside
+is Ready, In progress or In review, archived Tasks included: a Task archived on its
+own can still be mid-run. The body is `{"detail": {"message", "tasks"}}`, with
+`id`, `title`, `status` and `deleted_at` for each Task. A Product's body also has
+`routines`, the `{id, name}` of each Routine with an executing run; a paused
+Routine run does not block. To unblock a Task, restore it, let its run finish or
+cancel it, move it to Done or Cancelled, then delete again. An archived Task inside
+an archived Project or Product can be restored only after that parent is restored.
+Restoring an open Task is refused if its Project was completed or cancelled
+meanwhile; the Task then stays archived.
+Python callers using `CompanyManager.transition_task` can move a Task out of In
+progress while its run is executing; the route's run check does not apply to them.
+
+A single Task delete returns 409 only while its run is running or paused; the
+message names `POST /company/runs/{run_id}/cancel`. The Task's status otherwise
+does not matter, so deleting a Task in review discards its result. If the run
+cannot be verified the delete returns 503; retry it. Without a queue worker the
+run check is skipped.
+
+A delete archives the record first, then removes Routines and files, then the
+rows. If a step fails, the record stays archived and repeating `DELETE` finishes
+it. Restoring it instead brings back its rows only: Routines and files already
+removed stay removed. If the record is restored while the delete runs, the delete
+returns 409 and asks for the `DELETE` to be repeated.
+
+A Product declared in code is created again on the next startup unless its
+declaration is removed. A Task or Project that an older release left active under
+an archived parent is removed only by deleting its Product. After a delete, the
+same Source item or Routine Project can be proposed again as new work.
+
+`CompanyManager.permanently_delete`, `permanently_delete_project` and
+`permanently_delete_task`, and their async twins, remove the rows of an archived
+record only and return `False` for a missing or active one. They do not remove
+Routines or files. `delete()`, `delete_project()` and `delete_task()` still archive.
 
 ## Heartbeat
 

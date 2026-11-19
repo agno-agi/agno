@@ -48,10 +48,10 @@ def test_lifecycle(client):
     assert updated.json()["updated_at"] is not None
     assert client.patch(path, json={}).json() == updated.json()
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert client.patch(path, json={"name": "Hidden"}).status_code == 404
-    assert client.delete(path).status_code == 404
+    assert client.post(path + "/archive").status_code == 404
     deleted = client.get(path, params={"include_deleted": True}).json()
     assert isinstance(deleted["deleted_at"], int)
     assert client.get("/company/products").json()["meta"]["total_count"] == 0
