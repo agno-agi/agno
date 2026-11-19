@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from agno.agent import Agent
+from agno.compression.manager import CompressionManager
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
@@ -213,6 +214,27 @@ def test_member_response_is_replaced_by_an_envelope(db):
     assert tool_message.content.startswith('<result id="res_')
     assert 'tool="delegate_task_to_member"' in tool_message.content
     assert BIG not in tool_message.content
+
+
+def test_team_compression_leaves_the_member_result_envelope_opaque(db, monkeypatch):
+    """A Team can compress ordinary tool results without rewriting delegation pointers."""
+    compression_manager = CompressionManager(compress_tool_results=True, compress_tool_results_limit=1)
+    compression_calls = []
+
+    def record_compression(tool_result, run_metrics=None):
+        compression_calls.append(tool_result)
+        return "this must not replace an offloaded envelope"
+
+    monkeypatch.setattr(compression_manager, "_compress_tool_result", record_compression)
+    team = _team(db, compress_tool_results=True, compression_manager=compression_manager)
+    output = team.run("go", session_id=_sid())
+    tool_message = _tool_messages(output)[0]
+
+    assert tool_message.content.startswith('<result id="res_')
+    assert tool_message.compressed_content is None
+    assert compression_calls == []
+    result_id = _result_id(tool_message.content)
+    assert team._result_store.read(result_id, 1, 1).text.startswith("finding 1: ")
 
 
 def test_the_stored_payload_is_the_whole_member_response(db):
