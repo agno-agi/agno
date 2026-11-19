@@ -291,7 +291,11 @@ class TestCallModelWithFallback:
         with patch.object(primary, "response", side_effect=ModelProviderError("fail", status_code=500)):
             with patch.object(fallback, "response", return_value=ModelResponse(content="ok")) as fb_response:
                 call_model_with_fallback(primary, config, **kwargs)
-                fb_response.assert_called_once_with(**kwargs)
+                fb_response.assert_called_once()
+                passed = dict(fb_response.call_args.kwargs)
+                # The tool-batch hook is wrapped to track completed tools, so only its presence is checked
+                assert callable(passed.pop("after_tool_results"))
+                assert passed == kwargs
 
 
 # =============================================================================
@@ -1799,3 +1803,67 @@ class TestTemporaryGuidanceSync:
         attempt.sync()
 
         assert [m.content for m in messages] == ["go", "tool-turn", "tool-result", "next"]
+
+
+# =============================================================================
+# Tools a failed model ran are reported on the response that ends the run
+# =============================================================================
+
+
+class TestCompletedToolExecutions:
+    def _response_running(self, name, after_tool_results, fail=False):
+        from agno.models.response import ToolExecution
+
+        response = ModelResponse(tool_executions=[ToolExecution(tool_name=name)])
+        after_tool_results(response)
+        if fail:
+            raise _server_error()
+        return response
+
+    def test_successful_models_own_tools_are_not_duplicated(self):
+        primary, fallback, config = _sticky_setup()
+
+        def _response(after_tool_results, **kwargs):
+            return self._response_running("lookup", after_tool_results)
+
+        with patch.object(fallback, "response", side_effect=_response):
+            result = call_model_with_fallback(primary, config, messages=[])
+
+        assert [t.tool_name for t in result.tool_executions] == ["lookup"]
+
+    def test_failed_sticky_tools_come_first(self):
+        primary, fallback, config = _sticky_setup()
+
+        def _sticky(after_tool_results, **kwargs):
+            return self._response_running("place_order", after_tool_results, fail=True)
+
+        def _primary(after_tool_results, **kwargs):
+            return self._response_running("send_receipt", after_tool_results)
+
+        with patch.object(primary, "response", side_effect=_primary):
+            with patch.object(fallback, "response", side_effect=_sticky):
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert [t.tool_name for t in result.tool_executions] == ["place_order", "send_receipt"]
+
+    @pytest.mark.asyncio
+    async def test_async_caller_hook_still_awaited(self):
+        """Wrapping the async hook keeps calling the caller's checkpoint callback."""
+        primary, fallback, config = _sticky_setup()
+        checkpoints = []
+
+        async def _checkpoint(model_response):
+            checkpoints.append(model_response)
+
+        async def _aresponse(after_tool_results, **kwargs):
+            from agno.models.response import ToolExecution
+
+            response = ModelResponse(tool_executions=[ToolExecution(tool_name="lookup")])
+            await after_tool_results(response)
+            return response
+
+        with patch.object(fallback, "aresponse", side_effect=_aresponse):
+            result = await acall_model_with_fallback(primary, config, messages=[], after_tool_results=_checkpoint)
+
+        assert len(checkpoints) == 1
+        assert [t.tool_name for t in result.tool_executions] == ["lookup"]

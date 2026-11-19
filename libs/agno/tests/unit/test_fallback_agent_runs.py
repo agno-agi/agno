@@ -212,3 +212,39 @@ async def test_async_stream_sticky_retry_with_guidance_stores_the_answer():
         pass
 
     assert _stored_contents(agent, "g2") == ["go", "answer"]
+
+
+def _ordering_agent() -> Agent:
+    primary = _OrderingModel("primary", [])
+    fallback = _ScriptedModel("fallback", [("tool", "place_order", "call-1"), ("error",)])
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return Agent(model=primary, fallback_config=config, tools=[place_order], db=InMemoryDb(), telemetry=False)
+
+
+def test_run_tools_include_the_failed_sticky_models_tools():
+    ORDERS.clear()
+    run = _ordering_agent().run("buy it", session_id="t1")
+
+    assert [t.tool_name for t in run.tools or []] == ["place_order"]
+
+
+@pytest.mark.asyncio
+async def test_async_run_tools_include_the_failed_sticky_models_tools():
+    ORDERS.clear()
+    run = await _ordering_agent().arun("buy it", session_id="t2")
+
+    assert [t.tool_name for t in run.tools or []] == ["place_order"]
+
+
+def test_run_tools_include_the_failed_primarys_tools():
+    """The primary runs a tool, then fails; the fallback that finishes the run reports that tool too."""
+    ORDERS.clear()
+    primary = _ScriptedModel("primary", [("tool", "place_order", "call-1"), ("error",)])
+    fallback = _OrderingModel("fallback", [])
+    agent = Agent(model=primary, fallback_models=[fallback], tools=[place_order], db=InMemoryDb(), telemetry=False)
+
+    run = agent.run("buy it", session_id="t3")
+
+    assert ORDERS == ["order"]
+    assert [t.tool_name for t in run.tools or []] == ["place_order"]

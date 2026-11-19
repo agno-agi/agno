@@ -287,6 +287,52 @@ class _FallbackAttempt:
         self.written = added
 
 
+class _CompletedTools:
+    """Tool executions from model calls that failed after running tools, for the response that ends the run.
+
+    A model accumulates tool executions on the ModelResponse it builds inside ``response()``, which
+    is lost when that call raises. The tool-batch hook is the one place it is visible, so every
+    in-flight response is recorded there; any that is not the returned one belonged to a failed call.
+    """
+
+    def __init__(self) -> None:
+        self.responses: List[ModelResponse] = []
+
+    def _record(self, model_response: ModelResponse) -> None:
+        if not any(r is model_response for r in self.responses):
+            self.responses.append(model_response)
+
+    def watch(self, kwargs: dict) -> dict:
+        watched = dict(kwargs)
+        after_tool_results = kwargs.get("after_tool_results")
+
+        def _watched(model_response: ModelResponse) -> Any:
+            self._record(model_response)
+            return after_tool_results(model_response) if after_tool_results is not None else None
+
+        watched["after_tool_results"] = _watched
+        return watched
+
+    def awatch(self, kwargs: dict) -> dict:
+        """Async variant of :meth:`watch`: the async model loop awaits the hook."""
+        watched = dict(kwargs)
+        after_tool_results = kwargs.get("after_tool_results")
+
+        async def _watched(model_response: ModelResponse) -> None:
+            self._record(model_response)
+            if after_tool_results is not None:
+                await after_tool_results(model_response)
+
+        watched["after_tool_results"] = _watched
+        return watched
+
+    def apply(self, result: ModelResponse) -> ModelResponse:
+        earlier = [te for r in self.responses if r is not result for te in (r.tool_executions or [])]
+        if earlier:
+            result.tool_executions = earlier + (result.tool_executions or [])
+        return result
+
+
 def call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
@@ -295,8 +341,21 @@ def call_model_with_fallback(
 ) -> ModelResponse:
     """Call the primary model, falling back on failure.
 
-    Each model (including primary) uses its own retry logic before moving to the next.
+    Each model (including primary) uses its own retry logic before moving to the next. The
+    returned response also reports tools that a model which failed mid-run had already run.
     """
+    completed = _CompletedTools()
+    return completed.apply(
+        _call_model_with_fallback(model, fallback_config, recover_from_overflow, **completed.watch(kwargs))
+    )
+
+
+def _call_model_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], bool]] = None,
+    **kwargs: Any,
+) -> ModelResponse:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
@@ -341,6 +400,18 @@ async def acall_model_with_fallback(
     **kwargs: Any,
 ) -> ModelResponse:
     """Async variant of call_model_with_fallback."""
+    completed = _CompletedTools()
+    return completed.apply(
+        await _acall_model_with_fallback(model, fallback_config, recover_from_overflow, **completed.awatch(kwargs))
+    )
+
+
+async def _acall_model_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
+    **kwargs: Any,
+) -> ModelResponse:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
