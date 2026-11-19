@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "aimlapi": ("agno.models.aimlapi", "AIMLAPI", "AIMLAPI", "aimlapi"),
     "anthropic": ("agno.models.anthropic", "Claude", "Claude", "anthropic"),
+    "avian": ("agno.models.avian", "Avian", "Avian", "avian"),
     "aws-bedrock": ("agno.models.aws", "AwsBedrock", "AwsBedrock", "awsbedrock"),
     "aws-claude": ("agno.models.aws", "Claude", "AwsBedrockAnthropicClaude", "awsbedrock"),
     "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
