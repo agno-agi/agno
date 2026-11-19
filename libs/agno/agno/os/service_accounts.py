@@ -315,6 +315,25 @@ class ServiceAccountVerifier:
         self._limiter.record_failure(key)
         return ServiceAccountVerification(status=VerificationStatus.INVALID)
 
+    async def aget_by_name(self, name: str) -> Optional[ServiceAccount]:
+        """Look a service account up by name, as verify() reads by token; raises when the database cannot answer."""
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                row = await self.db.get_service_account_by_name(name)
+            else:
+                row = await run_in_threadpool(self.db.get_service_account_by_name, name)
+        except NotImplementedError:
+            log_warning("The configured database does not support service accounts")
+            raise
+        except Exception as e:
+            log_error(f"Service account lookup failed: {e}")
+            raise
+        account = ServiceAccount.from_dict(row) if row is not None else None
+        # A usable account is marked used, as verify() marks one a token authenticates
+        if account is not None and not (account.is_revoked() or account.is_expired()):
+            await self._maybe_touch_last_used(account)
+        return account
+
     async def _maybe_touch_last_used(self, account: ServiceAccount) -> None:
         # Throttle on the monotonic clock (immune to wall-clock steps that could otherwise
         # suppress writes indefinitely); persist the wall-clock time as the actual value.

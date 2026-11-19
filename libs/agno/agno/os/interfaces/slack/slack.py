@@ -66,6 +66,9 @@ class Slack(BaseInterface):
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
         default_role: Optional[str] = None,
+        authorize_senders: bool = False,
+        allowed_apps: Optional[Dict[str, str]] = None,
+        service_account: Optional[Union[bool, str]] = None,
     ):
         """
         Initialize the Slack interface.
@@ -95,6 +98,9 @@ class Slack(BaseInterface):
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
             default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
+            authorize_senders: Run each sender as their AgentOS directory user, created on first message
+            allowed_apps: Slack app ID (e.g., "A0123ABC") of each other app allowed to talk, to its service account name
+            service_account: Bot's own service account name, or True for slack-<lowercase app ID>; every run needs it
         """
         self.agent = agent
         self.team = team
@@ -120,6 +126,9 @@ class Slack(BaseInterface):
         self.approvers = approvers
         self.users = users
         self.default_role = default_role
+        self.authorize_senders = authorize_senders
+        self.allowed_apps = allowed_apps
+        self.service_account = service_account
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -159,6 +168,9 @@ class Slack(BaseInterface):
             approvers=self.approvers,
             users=self.users,
             default_role=self.default_role,
+            authorize_senders=self.authorize_senders,
+            allowed_apps=self.allowed_apps,
+            service_account=self.service_account,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

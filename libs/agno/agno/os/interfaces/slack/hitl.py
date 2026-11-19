@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agents._hitl import db_call
+from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
     build_admin_approval_status_card,
@@ -36,7 +37,15 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped, can_act
+from agno.os.interfaces.slack.security import (
+    admin_of_app_run,
+    arecord_slack_decision,
+    authorize_run,
+    authorize_service_account,
+    authorize_unmapped,
+    can_act,
+    started_by_app,
+)
 from agno.os.interfaces.slack.types import ParsedDecision, RowActionContext, SubmitContext
 from agno.run.approval import aresolve_approval
 from agno.run.base import RunStatus
@@ -44,6 +53,8 @@ from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error, log_info
 
 _NOT_ALLOWED_MESSAGE = "Only the person who started this run or an approver can decide."
+_NOT_OWNER_MESSAGE = "Only the person who started this run can decide."
+_APP_RUN_MESSAGE = "Only an admin can decide a run another app started."
 _ALREADY_SUBMITTED_MESSAGE = "Already submitted."
 _REMOTE_MESSAGE = "This run is paused on a remote AgentOS. Approve it there."
 
@@ -108,8 +119,11 @@ async def _decider_context(
     awaiting_ts: Optional[str],
     card_blocks: List[Dict[str, Any]],
     team_id: Optional[str] = None,
+    record_allowed: bool = True,
 ) -> Optional[EventContext]:
     """The paused event context of run_id when user may decide on it; posts the ephemeral and returns None otherwise."""
+    from agno.os.auth import _authorization_enforced
+
     # Remote entities keep their runs on the remote AgentOS
     if not hasattr(ctx.entity, "aget_run_output"):
         await post_ephemeral(client, channel, user, _REMOTE_MESSAGE, thread_ts)
@@ -137,16 +151,55 @@ async def _decider_context(
             ctx, run_output, owner=owner, client=client, channel=channel, team_id=team_id
         )
 
+    admin = None
     if not await can_act(ctx, user, event_context, client):
-        await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE, thread_ts)
-        return None
-
-    # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
-    if ctx.users is not None and ctx.users.get(event_context.owner) is not None:
-        if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
+        # Under authorize_senders approvers= does not apply, so only the run's own user decides,
+        # or an admin when another app started it, since an app cannot click
+        app_run = await started_by_app(ctx, event_context, client)
+        admin = await admin_of_app_run(ctx, user, event_context, client) if app_run else None
+        if admin is None:
+            # Only under authorize_senders with authorization enforced is the clicker told an admin decides;
+            # outside it approvers= decide an app's run too, so the general message applies
+            if app_run and ctx.senders_authorized and _authorization_enforced(ctx.app):
+                message = _APP_RUN_MESSAGE
+            else:
+                message = _NOT_OWNER_MESSAGE if ctx.senders_authorized else _NOT_ALLOWED_MESSAGE
+            await post_ephemeral(client, channel, user, message, thread_ts)
             return None
-    elif not await authorize_unmapped(ctx, event_context, client, user, thread_ts):
+
+    # The owner's authority is checked again on every decision: a mapped owner, or the authorize_senders run's user
+    if event_context.user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
+        # Another app's run is its service account's, so that account still decides it, whoever clicks
+        if not await authorize_service_account(
+            ctx,
+            event_context,
+            event_context.user_id,
+            client,
+            user,
+            thread_ts,
+            action="continue",
+            record_allowed=record_allowed and admin is None,
+        ):
+            return None
+    elif ctx.senders_authorized or (ctx.users is not None and ctx.users.get(event_context.owner) is not None):
+        if not await authorize_run(
+            ctx,
+            event_context,
+            event_context.user_id,
+            client,
+            user,
+            thread_ts,
+            action="continue",
+            record_allowed=record_allowed and admin is None,
+        ):
+            return None
+    elif not await authorize_unmapped(
+        ctx, event_context, client, user, thread_ts, action="continue", record_allowed=record_allowed and admin is None
+    ):
         return None
+    if admin is not None and record_allowed:
+        # Recorded once the run's own authority allows the continue, as authorize_run records the owner's
+        await arecord_slack_decision(ctx, admin, allowed=True, action="continue", run_id=event_context.run_id)
     return event_context
 
 
@@ -170,6 +223,8 @@ async def _decidable_row(
         card_ts=row.card_ts,
         awaiting_ts=row.awaiting_ts,
         card_blocks=(payload.get("message") or {}).get("blocks") or [],
+        # A row click is checked like the submit, but only the submit continues the run, so only it is recorded
+        record_allowed=False,
     )
     if event_context is None:
         return None

@@ -69,6 +69,54 @@ class RunAuthorization:
         }
 
 
+@dataclass
+class InterfaceAuthorization(RunAuthorization):
+    """Attenuate a run's authority to what the serving interface's own service account allows.
+
+    caller is the authority of who asked (a person's roles, or an app's service account), and interface is the
+    serving bot's own service account. A dataclass, like the authority it wraps, so dataclasses.replace (as when
+    Manager tools turn on enforce_tools) keeps both authorities.
+    """
+
+    caller: Optional[RunAuthorization] = None
+    interface: Optional[RunAuthorization] = None
+
+    @classmethod
+    def wrap(cls, caller: RunAuthorization, interface: RunAuthorization) -> "InterfaceAuthorization":
+        return cls(
+            caller.provider,
+            caller.context,
+            service_account=caller.service_account,
+            enforce_tools=caller.enforce_tools,
+            scheduled=caller.scheduled,
+            caller=caller,
+            interface=interface,
+        )
+
+    def require(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
+        if self.caller is not None:
+            self.caller.require(resource, action, resource_id)
+        if self.interface is not None:
+            self.interface.require(resource, action, resource_id)
+
+    async def arequire(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
+        if self.caller is not None:
+            await self.caller.arequire(resource, action, resource_id)
+        if self.interface is not None:
+            await self.interface.arequire(resource, action, resource_id)
+
+    def snapshot(self) -> Dict[str, Any]:
+        snapshot = self.caller.snapshot() if self.caller is not None else super().snapshot()
+        # enforce_tools is this wrapper's own, which a replace may have changed
+        snapshot["enforce_tools"] = self.enforce_tools
+        if self.interface is not None:
+            snapshot["interface"] = self.interface.snapshot()
+        if self.caller is None:
+            # The caller had no check of its own, so a restored run is decided by the interface's account alone
+            snapshot["caller_unchecked"] = True
+        return snapshot
+
+
 _AUTHORITY: ContextVar[Optional[Callable[[], Optional[RunAuthorization]]]] = ContextVar(
     "agno_run_authorization", default=None
 )

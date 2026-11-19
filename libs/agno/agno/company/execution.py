@@ -801,6 +801,11 @@ class _ExecutorAuthorization(RunAuthorization):
         }
         if self.acceptance is not None:
             snapshot["company_acceptance"] = self.acceptance.snapshot()
+        # The serving interface's own service account still caps the run after it is restored
+        original = self.original.snapshot() if self.original is not None else {}
+        for key in ("interface", "caller_unchecked"):
+            if original.get(key) is not None:
+                snapshot[key] = original[key]
         return snapshot
 
 

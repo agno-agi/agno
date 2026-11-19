@@ -1,7 +1,7 @@
 import html
 from dataclasses import dataclass, field, replace
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 try:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -51,6 +51,9 @@ class SlackContext:
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
     default_role: Optional[str] = None
+    authorize_senders: bool = False
+    allowed_apps: Optional[Dict[str, str]] = None
+    service_account: Optional[Union[bool, str]] = None
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -71,6 +74,11 @@ class SlackContext:
     @property
     def resource(self) -> str:
         return f"{self.entity_type}s"
+
+    @property
+    def senders_authorized(self) -> bool:
+        """Whether each sender runs as their own directory user: authorize_senders on an agent, team or workflow."""
+        return self.authorize_senders and self.company is None
 
 
 def build_context(
@@ -96,6 +104,9 @@ def build_context(
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
     default_role: Optional[str] = None,
+    authorize_senders: bool = False,
+    allowed_apps: Optional[Dict[str, str]] = None,
+    service_account: Optional[Union[bool, str]] = None,
 ) -> SlackContext:
     """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
 
@@ -138,6 +149,9 @@ def build_context(
         approvers=approvers,
         users=users,
         default_role=default_role,
+        authorize_senders=authorize_senders,
+        allowed_apps=allowed_apps,
+        service_account=service_account,
     )
 
 
@@ -164,6 +178,8 @@ class EventContext:
     authority: Any = None
     streaming_message_ts: List[str] = field(default_factory=list)
     stopped: bool = False
+    # Whether the message spoke to the bot: a mention of it or a direct message
+    addressed: bool = True
 
 
 def new_event_context(body: Dict[str, Any], ctx: SlackContext) -> EventContext:
@@ -199,6 +215,11 @@ async def resolve_context(
     bot_name = await ctx.bot_names.resolve(client, bot_user_id) if bot_user_id else None
     # Slack escapes &, < and > in message text; identity comes from event["user"], never from the text
     event_context.text = html.unescape(strip_bot_mention(event_context.text, bot_user_id, bot_name))
+    # Answering every message, the bot also sees ones not meant for it, such as an app's notification
+    if not ctx.reply_to_mentions_only:
+        event_context.addressed = event.get("channel_type") == "im" or bool(
+            bot_user_id and f"<@{bot_user_id}>" in (event.get("text") or "")
+        )
     event_context.session_id = await resolve_session_id(
         ctx.entity, ctx.entity_id, event_context.channel, event_context.thread_ts, ctx.lookup_cache
     )
@@ -244,7 +265,7 @@ async def event_context_from_run(
     # "{entity_id}:{channel}:{thread_ts}", or the legacy "{entity_id}:{thread_ts}"
     prefix = f"{ctx.entity_id}:"
     session_channel, _, thread_ts = session_id.removeprefix(prefix).rpartition(":")
-    if not owner and user_id and ctx.users is not None:
+    if not owner and user_id and ctx.users is not None and not ctx.senders_authorized:
         owner = next((slack_id for slack_id, principal in ctx.users.items() if principal == user_id), None)
     if not owner and "@" in user_id:
         try:
