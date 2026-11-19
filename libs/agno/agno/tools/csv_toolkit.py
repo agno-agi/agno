@@ -154,7 +154,8 @@ class CsvTools(Toolkit):
             # Bind the file path as a parameter so it can't break out of the SQL statement
             table_name = csv_name.replace('"', '""')
             con.execute(
-                f'CREATE TABLE "{table_name}" AS SELECT * FROM read_csv(?, ignore_errors=false, auto_detect=true)',
+                f'CREATE OR REPLACE TABLE "{table_name}" AS '
+                "SELECT * FROM read_csv(?, ignore_errors=false, auto_detect=true)",
                 [str(file_path)],
             )
 
