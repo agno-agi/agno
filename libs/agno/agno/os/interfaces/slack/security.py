@@ -185,7 +185,12 @@ def linking_enabled(ctx: "SlackContext", app: Any = None) -> bool:
     Needs Super Agent, AGNO_OS_SERVICE_TOKEN, and AgentOS authorization with JWT verification, which
     verifies the user tokens the platform issues. users= still applies to the members it maps.
     """
-    if getattr(ctx, "company", None) is None or getattr(ctx, "links", None) is None:
+    if getattr(ctx, "links", None) is None:
+        return False
+    # Only the interface serving its AgentOS's own manager team; a company set by hand on another
+    # agent or team does not turn linking on
+    agent_os = getattr(getattr(ctx, "company", None), "agent_os", None)
+    if agent_os is None or ctx.entity is None or ctx.entity is not agent_os.manager:
         return False
     from agno.os.auth import _authorization_enforced
     from agno.os.utils import resolve_ws_jwt_config

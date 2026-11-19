@@ -57,6 +57,7 @@ def _ctx(link: MemberLink = None, app=None, **overrides):
     """A Super Agent Slack context with account linking, whose platform answers link."""
     ctx = make_ctx(**overrides).bind(app if app is not None else _app())
     ctx.company = AsyncMock()
+    ctx.company.agent_os = Mock(manager=ctx.entity)
     ctx.links = Mock(spec=PlatformLinks)
     ctx.links.resolve_slack_member = AsyncMock(return_value=link or _linked())
     return ctx
@@ -154,6 +155,20 @@ def test_linking_needs_super_agent_a_service_token_and_jwt_verification():
     no_token = _ctx()
     no_token.links = None
     assert not linking_enabled(no_token)
+
+
+def test_linking_needs_the_agentos_own_manager_team():
+    from agno.os.interfaces.slack.company import CompanyBridge
+
+    # A company set by hand on an interface serving anything other than the AgentOS's manager
+    ctx = _ctx()
+    agent_os = Mock(manager=ctx.entity)
+    ctx.company = CompanyBridge(agent_os, deliver=False)
+    assert linking_enabled(ctx)
+    agent_os.manager = Mock()
+    assert not linking_enabled(ctx)
+    agent_os.manager = None
+    assert not linking_enabled(ctx)
 
 
 def test_linking_without_jwt_verification_warns_once():
