@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator  # pydantic resolves the annotation at
 
 import pytest
 
+from agno.agent.agent import Agent
 from agno.tools.function import Function
 
 
@@ -30,6 +31,11 @@ def _tool(value: int, label: str = "x") -> str:
 
 async def _streaming_tool(value: int) -> AsyncIterator[str]:
     """Yield the argument twice."""
+    yield str(value)
+    yield str(value)
+
+
+async def _streaming_tool_with_agent(agent: Agent, value: int) -> AsyncIterator[str]:
     yield str(value)
     yield str(value)
 
@@ -65,14 +71,17 @@ def test_wrapped_tool_drops_the_caller_namespace_and_still_validates():
 
 
 @pytest.mark.asyncio
-async def test_async_generator_tool_drops_the_caller_namespace_too():
+@pytest.mark.parametrize("injected_agent", [False, True])
+async def test_async_generator_tool_drops_the_caller_namespace_too(injected_agent):
     sentinel = _Sentinel()
     sentinel_ref = weakref.ref(sentinel)
 
-    wrapped = _wrap_from_a_frame_holding(sentinel, _streaming_tool)
+    tool = _streaming_tool_with_agent if injected_agent else _streaming_tool
+    wrapped = _wrap_from_a_frame_holding(sentinel, tool)
     del sentinel
     gc.collect()
 
     assert [holder.ns_resolver for holder in _validator_holders(wrapped)] == [None]
     assert sentinel_ref() is None
-    assert [item async for item in wrapped("4")] == ["4", "4"]
+    args = (Agent(name="host"), "4") if injected_agent else ("4",)
+    assert [item async for item in wrapped(*args)] == ["4", "4"]
