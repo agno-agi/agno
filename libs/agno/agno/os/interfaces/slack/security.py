@@ -1,5 +1,5 @@
 from os import getenv
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from agno.os.interfaces.slack.helpers import post_ephemeral
 from agno.utils.log import log_warning
@@ -42,11 +42,24 @@ async def can_act(ctx: "SlackContext", user: str, event_context: "EventContext",
     return False
 
 
-async def resolve_principal_authorization(app: Any, principal_id: str, resource: str, resource_id: str) -> Any:
-    """A mapped Slack user's authority, None with authorization off. Raises PermissionError if disabled or denied."""
-    from agno.os.auth import _authorization_enforced, resolve_authorization_provider
+def principal_authorization(app: Any, principal_id: str, roles: Optional[List[str]] = None) -> Any:
+    """An authority that checks principal_id's roles, or the given roles when set."""
+    from agno.os.auth import resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
     from agno.run.authorization import RunAuthorization
+
+    return RunAuthorization(
+        resolve_authorization_provider(app),
+        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}, roles=roles),
+        enforce_tools=False,
+    )
+
+
+async def resolve_principal_authorization(
+    app: Any, principal_id: str, resource: str, resource_id: str, roles: Optional[List[str]] = None
+) -> Any:
+    """A principal's authority, with roles when given; None with authorization off. Raises if disabled or denied."""
+    from agno.os.auth import _authorization_enforced
 
     state = getattr(app, "state", None)
     user_store = getattr(state, "user_store", None)
@@ -67,13 +80,38 @@ async def resolve_principal_authorization(app: Any, principal_id: str, resource:
     if not _authorization_enforced(app):
         return None
     # Roles are resolved fresh on every check, so a revoked grant applies to the next message
-    authority = RunAuthorization(
-        resolve_authorization_provider(app),
-        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}),
-        enforce_tools=False,
-    )
+    authority = principal_authorization(app, principal_id, roles)
     await authority.arequire(resource, "run", resource_id)
     return authority
+
+
+def no_roles_authorization(app: Any, owner: str) -> Any:
+    """An authority with no roles for a Slack user not in users=, None with authorization off."""
+    from agno.os.auth import _authorization_enforced
+
+    if not _authorization_enforced(app):
+        return None
+    return principal_authorization(app, f"slack:{owner}")
+
+
+async def authorize_unmapped(
+    ctx: "SlackContext",
+    event_context: "EventContext",
+    client: Any,
+    user: str,
+    thread_ts: Optional[str] = None,
+) -> bool:
+    """Authority of a run whose owner is not in users=: the default role's; else no roles on Super Agent, else none."""
+    # The member acts and is recorded as themselves; the default role only supplies the permissions
+    if ctx.default_role is not None:
+        return await authorize_run(
+            ctx, event_context, event_context.user_id, client, user, thread_ts, roles=[ctx.default_role]
+        )
+    # Without a default role only Super Agent (ctx.company is set) is checked, with no roles; others run unchecked
+    if ctx.company is None:
+        return True
+    event_context.authority = no_roles_authorization(ctx.app, event_context.owner)
+    return True
 
 
 async def authorize_run(
@@ -83,14 +121,15 @@ async def authorize_run(
     client: Any,
     user: str,
     thread_ts: Optional[str] = None,
+    roles: Optional[List[str]] = None,
 ) -> bool:
-    """Set the run's platform authority for a mapped principal; a refused principal gets the "Not run" ephemeral."""
+    """Set the run's platform authority for a principal; a refused principal gets the "Not run" ephemeral."""
     try:
         if ctx.company is not None:
-            event_context.authority = await ctx.company.authorize(ctx.app, principal, ctx.entity_id)
+            event_context.authority = await ctx.company.authorize(ctx.app, principal, ctx.entity_id, roles)
         else:
             event_context.authority = await resolve_principal_authorization(
-                ctx.app, principal, ctx.resource, ctx.entity_id
+                ctx.app, principal, ctx.resource, ctx.entity_id, roles
             )
     except PermissionError as e:
         await post_ephemeral(client, event_context.channel, user, f"Not run: {e}", thread_ts)

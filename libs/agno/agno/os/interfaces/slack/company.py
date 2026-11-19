@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
@@ -51,13 +51,13 @@ class CompanyBridge:
     def db(self) -> Any:
         return getattr(self.agent_os, "_company_db", None)
 
-    async def authorize(self, app: Any, principal: str, entity_id: str) -> Any:
-        """The platform authority of a mapped principal to run Super Agent.
+    async def authorize(self, app: Any, principal: str, entity_id: str, roles: Optional[List[str]] = None) -> Any:
+        """The platform authority of a principal to run Super Agent, with roles when given.
 
         None when no authorization applies (neither AgentOS authorization nor an RBAC middleware).
         Raises PermissionError when the principal is disabled or not allowed to run the entity.
         """
-        return await resolve_principal_authorization(app, principal, "teams", entity_id)
+        return await resolve_principal_authorization(app, principal, "teams", entity_id, roles)
 
 
 class TaskDelivery:
@@ -169,7 +169,10 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                authority = await self.company.authorize(app, user_id, self.ctx.entity_id)
+                # A run user equal to a mapped principal counts as mapped; anyone else started with the default role
+                mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
+                roles = [self.ctx.default_role] if self.ctx.default_role and not mapped else None
+                authority = await self.company.authorize(app, user_id, self.ctx.entity_id, roles)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
             except PermissionError as exc:
@@ -242,7 +245,8 @@ class TaskDelivery:
             sender = (message.get("user") or "", message.get("bot_id") or "")
             self.ctx.lookup_cache.set(key, sender)
         user, bot_id = sender
-        if self.ctx.users is not None:
+        # A member users= leaves out is derived as without users= when a default role is set
+        if self.ctx.users is not None and (self.ctx.default_role is None or (user or bot_id) in self.ctx.users):
             return self.ctx.users.get(user or bot_id)
         if self.ctx.resolve_user_identity:
             sender_id = user or bot_id

@@ -50,6 +50,7 @@ class SlackContext:
     unfurl_media: bool = True
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
+    default_role: Optional[str] = None
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -94,6 +95,7 @@ def build_context(
     unfurl_media: bool = True,
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
+    default_role: Optional[str] = None,
 ) -> SlackContext:
     """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
 
@@ -135,6 +137,7 @@ def build_context(
         unfurl_media=unfurl_media,
         approvers=approvers,
         users=users,
+        default_role=default_role,
     )
 
 
