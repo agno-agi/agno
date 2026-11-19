@@ -147,6 +147,9 @@ class Message(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
+        """Reconstruct a message without modifying the input dictionary."""
+        data = data.copy()
+
         # Handle image reconstruction properly
         if "images" in data and data["images"]:
             reconstructed_images = []
