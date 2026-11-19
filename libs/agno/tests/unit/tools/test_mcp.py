@@ -1123,10 +1123,106 @@ async def test_connect_public_does_not_raise_when_mcp_server_unreachable():
 
     with patch("agno.tools.mcp.mcp._build_fastmcp_client", return_value=failing_context):
         # Must not raise — connect() catches and logs.
-        await tools.connect()
+        result = await tools.connect()
 
+    assert result is False
+    assert tools.initialized is False
     assert tools._initialized is False
     assert tools.session is None
+    assert tools._session_context is None
+
+
+@pytest.mark.asyncio
+async def test_connect_returns_true_when_the_handshake_succeeds():
+    """connect() reports success so callers can branch without probing state."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+
+    # A plain (non-fastmcp) session is awaited during initialize().
+    session = AsyncMock()
+    session.list_tools.return_value = MagicMock(tools=[])
+    client_context = _SucceedingAenterContext(session)
+
+    with (
+        patch("agno.tools.mcp.mcp._build_fastmcp_client", return_value=client_context),
+        patch.object(MCPTools, "build_tools", new=AsyncMock()),
+    ):
+        result = await tools.connect()
+
+    assert result is True
+    assert tools.initialized is True
+    assert tools._initialized is True
+
+    await tools.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_returns_false_and_cleans_up_when_initialize_fails():
+    """initialize() swallows tool-discovery errors, so connect() must report False and close the session."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    client_context = _SucceedingAenterContext(AsyncMock())
+
+    with (
+        patch("agno.tools.mcp.mcp._build_fastmcp_client", return_value=client_context),
+        patch.object(MCPTools, "build_tools", new=AsyncMock(side_effect=RuntimeError("list_tools failed"))),
+    ):
+        result = await tools.connect()
+
+    assert result is False
+    assert tools.initialized is False
+    assert client_context.aexit_called is True
+    assert tools.session is None
+    assert tools._session_context is None
+    assert tools._active_contexts == []
+
+
+@pytest.mark.asyncio
+async def test_connect_returns_true_when_already_initialized():
+    """An already-initialized toolkit short-circuits to True without reconnecting."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    tools._initialized = True
+    tools.session = MagicMock()
+
+    with patch.object(MCPTools, "_connect", new=AsyncMock()) as connect_mock:
+        result = await tools.connect()
+
+    assert result is True
+    connect_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_connect_cleans_up_and_re_raises_on_cancelled_error():
+    """Cancellation is not an Exception, so connect() must clean up and re-raise.
+
+    Leaving the session context behind on cancellation would strand the HTTP client.
+    """
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    tools._session_context = _SucceedingAenterContext(MagicMock())
+    tools._active_contexts.append(tools._session_context)
+    tools.session = MagicMock()
+
+    async def _cancel(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    with patch.object(MCPTools, "_connect", new=_cancel):
+        with pytest.raises(asyncio.CancelledError):
+            await tools.connect()
+
+    assert tools._session_context is None
+    assert tools.session is None
+    assert tools._active_contexts == []
+    assert tools._initialized is False
 
 
 @pytest.mark.asyncio

@@ -256,17 +256,61 @@ export SLACK_APPROVER_ID="U..."
 
 - **`approvers=`**: Slack member IDs (not emails) that may approve, deny, or stop
   any run. Without it, only the person who started the run can.
-- **`users=`**: maps Slack member IDs to AgentOS principals. Each message runs as
-  the mapped principal, with the roles AgentOS authorization gives it, and the
-  run's `user_id` is that principal. An unmapped user is told their account is
-  not linked, and a disabled principal is refused. Slack requests carry no
-  AgentOS token, so grants come from managed roles
-  (`Authorization.define_role` and `assign`) or a provider that decides by
-  principal; JWT scopes alone grant a mapped user nothing. Without
-  `authorization=True`, the map sets each run's `user_id` and refuses only
-  disabled users. A `JWTMiddleware` you add yourself, on a `base_app` or after
-  `get_app()`, must list `/slack/events` and `/slack/interactions` in its
-  `excluded_route_paths`.
+- **`users=`**: maps Slack member IDs to AgentOS principals. Each message runs
+  as the mapped principal, with the roles AgentOS authorization gives it, and
+  the run's `user_id` is that principal. Unless a `default_role=` applies
+  under authorization, an unmapped user is told their account is not linked, and
+  a disabled principal is refused. Slack requests carry no AgentOS token, so
+  grants come from managed roles (`Authorization.define_role` and `assign`) or a
+  provider that decides by principal; JWT scopes alone grant a mapped user
+  nothing. Without `authorization=True`, the map sets each run's `user_id` and
+  refuses only disabled users. A `JWTMiddleware` you add yourself, on a
+  `base_app` or after `get_app()`, must list `/slack/events` and
+  `/slack/interactions` in its `excluded_route_paths`.
+- **`default_role=`**: the managed role a user not in `users=` gets, under
+  authorization. They still act as themselves: the run's `user_id` and principal
+  stay theirs (the Slack member ID, or their email with
+  `resolve_user_identity=True`), and their sessions, memory and the Company work
+  they do, such as creating, accepting and starting Tasks, are recorded under
+  them; only the permissions come from the role, and the user directory's
+  disabled switch applies to each member. It needs managed roles
+  (`Authorization.define_role`): a custom `authorization_provider` sees the
+  member as the principal and gets the role name in
+  `AuthorizationContext.roles`. Use it where you cannot list members ahead of
+  time, such as a deployment template, and define the role with what Slack
+  members may do. With `resolve_user_identity=True`, a member whose Slack email
+  is an AgentOS user's principal acts as that user, with the role's permissions:
+  their sessions, Company work and disabled switch are that user's. Use it only
+  where Slack emails can be trusted as AgentOS identities. With `users=`, the members it lists keep their
+  own principal and everyone else gets these roles, so `users=` only needs the
+  members who need different access. Without it and without `users=`, under
+  authorization, Super Agent runs such a user with no roles: they can chat, and
+  every action that needs a permission is refused. An agent, team or workflow
+  other than Super Agent runs them unchecked.
+
+```python
+# trust_token_scopes keeps os.agno.com sign-ins working once a role is defined
+authz = Authorization(trust_token_scopes=True)
+authz.define_role(
+    "slack-member",
+    [
+        "teams:run",
+        "agents:read",
+        "agents:run",
+        "workflows:run",
+        "company:read",
+        "products:read",
+        "projects:read",
+        "projects:write",
+        "tasks:read",
+        "tasks:write",
+        "wiki:read",
+        "sources:read",
+    ],
+)
+
+Slack(team=agent_os.manager, default_role="slack-member")
+```
 
 ## Workspace Search Action
 
@@ -384,10 +428,19 @@ app = agent_os.get_app()
   when the run's user wrote the Slack message that started it (read back from
   Slack). Anyone who asks in a thread gets their own Task's result there.
 
-With `AgentOS(authorization=...)` or a `JWTMiddleware(authorization=True)` you
-add yourself, pass `users=`; `get_app()` refuses to serve Super Agent under
-authorization without it, and a middleware added after `get_app()` refuses each
-message instead. Each message then runs with the mapped principal's roles.
+Slack serves Super Agent under `AgentOS(authorization=...)` or a
+`JWTMiddleware(authorization=True)` with or without `users=`. Its tools always
+check permissions there:
+
+- a member in `users=` runs with the mapped principal's roles;
+- a member not in `users=` runs with the `default_role=` roles, or, when
+  it is unset and `users=` is not set, with no roles: Super Agent answers, and
+  running agents, Company work and building components are refused;
+- with `users=` set and no `default_role=`, a member not in it is refused.
+
+A `JWTMiddleware` you add yourself must list `/slack/*` in
+`excluded_route_paths`, because Slack signs its requests and sends no token; the
+list replaces the defaults, so keep `/health` and `/docs` in it.
 
 ## Limits
 
@@ -395,8 +448,10 @@ message instead. Each message then runs with the mapped principal's roles.
   running turns that Stop uses are kept in process. Run each Slack app on a
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
-  signature, not the AgentOS key. Without AgentOS `authorization=`, every member
-  of the workspace can use the agent through Slack.
+  signature, not the AgentOS key. Without `users=`, every member of the
+  workspace can message the agent through Slack. Under AgentOS
+  `authorization=`, Super Agent's tools still check the member's permissions,
+  from `default_role=` or none.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
   is posted only into a thread holding a real Slack message by that user, but
   the user id itself is not checked. For shared workspaces, turn on
@@ -458,7 +513,7 @@ Stop and the card's Deny ends the run; that stop path was checked with a signed
 | Streaming returns `internal_error` | Agent view is off, `assistant:write` is missing, or the app was not reinstalled |
 | No suggested prompts | `app_home_opened` is not subscribed, the Messages tab is off, the app is in the assistant view (a `not_agent_app` warning in the log), or the Slack client needs a reload |
 | Stop does nothing | `agent_session_stopped` is not subscribed |
-| "Your Slack account is not linked" | `users=` is set and the sender is not in it |
+| "Your Slack account is not linked" | `users=` is set, the sender is not in it, and no `default_role=` applies (it needs authorization) |
 | Workspace search reports no action token | The run did not start from a Slack message, or the app lacks the `search:read.*` scopes |
 | HITL buttons do nothing | Interactivity is off or its request URL is wrong |
 | Webhook returns 403 | The app's signing secret does not match the interface |

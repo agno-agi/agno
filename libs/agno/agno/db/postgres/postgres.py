@@ -670,6 +670,8 @@ class PostgresDb(BaseDb):
             if sqlstate in ("42P07", "23505") and self.table_exists(table_name):
                 log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
             else:
+                # Unregister the failed Table so a retry isn't rejected as "already defined".
+                self._invalidate_table_cache(table_name)
                 log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
