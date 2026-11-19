@@ -20,6 +20,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.utils.log import log_debug, log_warning
+from agno.utils.merge_dict import merge_dictionaries
 
 # Stream event type returned by response_stream / aresponse_stream
 StreamEvent = Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]
@@ -287,12 +288,17 @@ class _FallbackAttempt:
         self.written = added
 
 
-class _CompletedTools:
-    """Tool executions from model calls that failed after running tools, for the response that ends the run.
+# What Model.response() collects from tool results onto the ModelResponse it builds
+_TOOL_RESULT_LISTS = ("tool_executions", "images", "audios", "videos", "files")
 
-    A model accumulates tool executions on the ModelResponse it builds inside ``response()``, which
-    is lost when that call raises. The tool-batch hook is the one place it is visible, so every
-    in-flight response is recorded there; any that is not the returned one belonged to a failed call.
+
+class _CompletedTools:
+    """Tool results from model calls that failed after running tools, for the response that ends the run.
+
+    A model collects tool executions, tool-produced media and session-state updates on the
+    ModelResponse it builds inside ``response()``, which is lost when that call raises. The
+    tool-batch hook is the one place it is visible, so every in-flight response is recorded there;
+    any that is not the returned one belonged to a failed call.
     """
 
     def __init__(self) -> None:
@@ -327,9 +333,19 @@ class _CompletedTools:
         return watched
 
     def apply(self, result: ModelResponse) -> ModelResponse:
-        earlier = [te for r in self.responses if r is not result for te in (r.tool_executions or [])]
-        if earlier:
-            result.tool_executions = earlier + (result.tool_executions or [])
+        failed = [r for r in self.responses if r is not result]
+        if not failed:
+            return result
+        for name in _TOOL_RESULT_LISTS:
+            earlier = [item for r in failed for item in (getattr(r, name) or [])]
+            if earlier:
+                setattr(result, name, earlier + (getattr(result, name) or []))
+        states = [r.updated_session_state for r in failed + [result] if r.updated_session_state is not None]
+        if states:
+            merged: Dict[str, Any] = {}
+            for state in states:
+                merge_dictionaries(merged, state)
+            result.updated_session_state = merged
         return result
 
 

@@ -8,11 +8,13 @@ import pytest
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.exceptions import ModelProviderError
+from agno.media import Image
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run import RunContext
 from agno.run.cancel import cancel_run
+from agno.tools.function import ToolResult
 
 
 class _ScriptedModel(Model):
@@ -248,3 +250,30 @@ def test_run_tools_include_the_failed_primarys_tools():
 
     assert ORDERS == ["order"]
     assert [t.tool_name for t in run.tools or []] == ["place_order"]
+
+
+def draw_chart() -> ToolResult:
+    """Draw the chart."""
+    return ToolResult(content="chart drawn", images=[Image(url="https://example.com/chart.png")])
+
+
+def _media_agent(fallback_script) -> Agent:
+    primary = _ScriptedModel("primary", [("content", "here is your chart")])
+    fallback = _ScriptedModel("fallback", fallback_script)
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return Agent(model=primary, fallback_config=config, tools=[draw_chart], db=InMemoryDb(), telemetry=False)
+
+
+def test_run_keeps_media_a_failed_sticky_tool_produced():
+    run = _media_agent([("tool", "draw_chart", "call-1"), ("error",)]).run("chart it", session_id="m1")
+
+    assert [t.tool_name for t in run.tools or []] == ["draw_chart"]
+    assert [i.url for i in run.images or []] == ["https://example.com/chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_async_run_keeps_media_a_failed_sticky_tool_produced():
+    run = await _media_agent([("tool", "draw_chart", "call-1"), ("error",)]).arun("chart it", session_id="m2")
+
+    assert [i.url for i in run.images or []] == ["https://example.com/chart.png"]

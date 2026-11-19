@@ -1867,3 +1867,37 @@ class TestCompletedToolExecutions:
 
         assert len(checkpoints) == 1
         assert [t.tool_name for t in result.tool_executions] == ["lookup"]
+
+    def test_failed_models_tool_media_and_session_state_carry_over(self):
+        from agno.media import Audio, File, Image, Video
+
+        primary, fallback, config = _sticky_setup()
+
+        def _sticky(after_tool_results, **kwargs):
+            response = ModelResponse(
+                images=[Image(url="https://example.com/a.png")],
+                audios=[Audio(url="https://example.com/a.mp3")],
+                videos=[Video(url="https://example.com/a.mp4")],
+                files=[File(url="https://example.com/a.pdf")],
+                updated_session_state={"cart": ["order"], "step": 1},
+            )
+            after_tool_results(response)
+            raise _server_error()
+
+        def _primary(after_tool_results, **kwargs):
+            response = ModelResponse(
+                images=[Image(url="https://example.com/b.png")],
+                updated_session_state={"step": 2},
+            )
+            after_tool_results(response)
+            return response
+
+        with patch.object(primary, "response", side_effect=_primary):
+            with patch.object(fallback, "response", side_effect=_sticky):
+                result = call_model_with_fallback(primary, config, messages=[])
+
+        assert [i.url for i in result.images] == ["https://example.com/a.png", "https://example.com/b.png"]
+        assert [a.url for a in result.audios] == ["https://example.com/a.mp3"]
+        assert [v.url for v in result.videos] == ["https://example.com/a.mp4"]
+        assert [f.url for f in result.files] == ["https://example.com/a.pdf"]
+        assert result.updated_session_state == {"cart": ["order"], "step": 2}
