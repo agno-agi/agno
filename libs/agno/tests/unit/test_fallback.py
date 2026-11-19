@@ -1696,3 +1696,106 @@ class TestStreamedTurnsReachCaller:
             next(stream)
             assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
             stream.close()
+
+
+# =============================================================================
+# Retry guidance added and stripped mid-stream
+# =============================================================================
+
+
+def _retry_with_guidance(messages):
+    """What Model does on a retry with guidance: append a temporary hint, later strip it in place."""
+    guidance = Message(role="user", content="guidance", temporary=True)
+    messages.append(guidance)
+    return guidance
+
+
+def _strip_temporary(messages):
+    messages[:] = [m for m in messages if not m.temporary]
+
+
+class TestTemporaryGuidanceSync:
+    """Guidance is added as a temporary message and some providers (Gemini) strip it in place later."""
+
+    def test_stream_guidance_removed_before_answer(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _stream(messages, **kwargs):
+            _retry_with_guidance(messages)
+            yield ModelResponse(content="delta")
+            _strip_temporary(messages)
+            messages.append(Message(role="assistant", content="answer"))
+            yield ModelResponse(content="end")
+
+        with patch.object(fallback, "response_stream", side_effect=_stream):
+            list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert [m.content for m in messages] == ["go", "answer"]
+
+    @pytest.mark.asyncio
+    async def test_async_stream_guidance_removed_before_answer(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        async def _stream(messages, **kwargs):
+            _retry_with_guidance(messages)
+            yield ModelResponse(content="delta")
+            _strip_temporary(messages)
+            messages.append(Message(role="assistant", content="answer"))
+            yield ModelResponse(content="end")
+
+        with patch.object(fallback, "aresponse_stream", side_effect=_stream):
+            [e async for e in acall_model_stream_with_fallback(primary, config, messages=messages)]
+
+        assert [m.content for m in messages] == ["go", "answer"]
+
+    def test_guidance_left_in_place_is_kept_as_on_the_primary(self):
+        """A provider that does not strip its guidance leaves it in history on the primary too."""
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _stream(messages, **kwargs):
+            _retry_with_guidance(messages)
+            yield ModelResponse(content="delta")
+            messages.append(Message(role="assistant", content="answer"))
+            yield ModelResponse(content="end")
+
+        with patch.object(fallback, "response_stream", side_effect=_stream):
+            list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert [m.content for m in messages] == ["go", "guidance", "answer"]
+
+    def test_callers_own_temporary_messages_are_kept(self):
+        """Guidance the primary left in the caller's list stays there and is not shown to the fallback."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        primary_guidance = Message(role="user", content="primary guidance", temporary=True)
+        messages = [Message(role="user", content="go"), primary_guidance]
+
+        def _stream(messages, **kwargs):
+            _retry_with_guidance(messages)
+            yield ModelResponse(content="delta")
+            _strip_temporary(messages)
+            messages.append(Message(role="assistant", content="answer"))
+            yield ModelResponse(content="end")
+
+        with patch.object(primary, "response_stream", side_effect=_server_error()):
+            with patch.object(fallback, "response_stream", side_effect=_stream):
+                list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert [m.content for m in messages] == ["go", "primary guidance", "answer"]
+
+    def test_late_sync_keeps_messages_the_caller_appended_since(self):
+        """An abandoned stream is closed by the event loop later; that final sync must not drop newer messages."""
+        from agno.models.fallback import _FallbackAttempt
+
+        messages = [Message(role="user", content="go")]
+        attempt = _FallbackAttempt({"messages": messages})
+        _tool_turn(attempt.kwargs["messages"])
+        attempt.sync()
+        messages.append(Message(role="user", content="next"))
+        attempt.sync()
+
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result", "next"]

@@ -249,6 +249,10 @@ class _FallbackAttempt:
     fallback appends reaches the caller's list before each tool-batch checkpoint and each streamed
     event, and stays there if the call fails, so the next model continues from those turns
     instead of running their tools again.
+
+    The fallback's own list is not append-only: retry guidance is added as a temporary message
+    and some providers strip it in place later. So each sync rebuilds the caller's tail from
+    everything the fallback has added so far, exactly as if it had run on the caller's list.
     """
 
     def __init__(self, kwargs: dict) -> None:
@@ -258,7 +262,9 @@ class _FallbackAttempt:
         if self.original_messages is not None:
             self.messages = [m for m in self.original_messages if not getattr(m, "temporary", False)]
             self.kwargs["messages"] = self.messages
-        self.synced = len(self.messages) if self.messages is not None else 0
+        self.original_len = len(self.original_messages) if self.original_messages is not None else 0
+        self.seed_len = len(self.messages) if self.messages is not None else 0
+        self.written: List[Message] = []
         after_tool_results = self.kwargs.get("after_tool_results")
         if after_tool_results is not None:
             # Returns whatever the callback returns, so an async callback's coroutine is still awaited
@@ -269,10 +275,16 @@ class _FallbackAttempt:
             self.kwargs["after_tool_results"] = _synced_after_tool_results
 
     def sync(self) -> None:
-        """Append what the fallback added since the last sync onto the caller's list."""
-        if self.original_messages is not None and self.messages is not None:
-            self.original_messages.extend(self.messages[self.synced :])
-            self.synced = len(self.messages)
+        """Replace what the last sync wrote with what the fallback has added so far."""
+        if self.original_messages is None or self.messages is None:
+            return
+        added = self.messages[self.seed_len :]
+        if len(added) == len(self.written) and all(a is b for a, b in zip(added, self.written)):
+            return
+        # Only the span written before is replaced: a late sync, from an abandoned stream the event
+        # loop closes after the run moved on, must not drop messages the caller appended since.
+        self.original_messages[self.original_len : self.original_len + len(self.written)] = added
+        self.written = added
 
 
 def call_model_with_fallback(

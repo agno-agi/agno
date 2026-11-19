@@ -157,3 +157,58 @@ async def test_async_primary_does_not_rerun_tools_the_failed_sticky_ran():
     await agent.arun("buy it", session_id="s4")
 
     assert ORDERS == ["order"]
+
+
+class _GuidanceStrippingModel(_ScriptedModel):
+    """Fails once with retry guidance, then streams an answer and strips the guidance, as Gemini does."""
+
+    def __init__(self, model_id: str):
+        super().__init__(model_id, [("content", "answer")])
+        self._failed = False
+
+    def _stream(self, messages, retry_with_guidance):
+        from agno.exceptions import RetryableModelProviderError
+
+        if not self._failed:
+            self._failed = True
+            raise RetryableModelProviderError(original_error="bad output", retry_guidance_message="be precise")
+        yield self._next()
+        if retry_with_guidance:
+            self._remove_temporary_messages(messages)
+
+    def invoke_stream(self, *a, messages=None, retry_with_guidance=False, **k) -> Iterator[ModelResponse]:
+        yield from self._stream(messages, retry_with_guidance)
+
+    async def ainvoke_stream(self, *a, messages=None, retry_with_guidance=False, **k) -> AsyncIterator[ModelResponse]:
+        for response in self._stream(messages, retry_with_guidance):
+            yield response
+
+
+def _guidance_agent() -> Agent:
+    primary = _ScriptedModel("primary", [("content", "primary should not run")])
+    fallback = _GuidanceStrippingModel("fallback")
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return Agent(model=primary, fallback_config=config, db=InMemoryDb(), telemetry=False)
+
+
+def _stored_contents(agent: Agent, session_id: str) -> List[str]:
+    run = agent.get_session(session_id=session_id).runs[-1]
+    return [m.content for m in run.messages or [] if m.role != "system"]
+
+
+def test_stream_sticky_retry_with_guidance_stores_the_answer():
+    agent = _guidance_agent()
+    for _ in agent.run("go", session_id="g1", stream=True):
+        pass
+
+    assert _stored_contents(agent, "g1") == ["go", "answer"]
+
+
+@pytest.mark.asyncio
+async def test_async_stream_sticky_retry_with_guidance_stores_the_answer():
+    agent = _guidance_agent()
+    async for _ in agent.arun("go", session_id="g2", stream=True):
+        pass
+
+    assert _stored_contents(agent, "g2") == ["go", "answer"]
