@@ -1062,31 +1062,6 @@ class TestStickyFallback:
         primary_response.assert_called_once()
         assert config.get_sticky_fallback(primary) is None
 
-    def test_failed_sticky_leaves_messages_untouched(self):
-        """A sticky model that fails mid-run must not leave partial messages for the primary."""
-        primary = _make_model("primary")
-        fallback = _make_model("fallback")
-        config = FallbackConfig(on_error=[fallback], sticky=True)
-        config.set_sticky_fallback(primary, fallback)
-        messages = [Message(role="user", content="hi")]
-        seen_by_primary = {}
-
-        def _sticky_response(messages, **kwargs):
-            messages.append(Message(role="assistant", content="partial"))
-            raise _server_error()
-
-        def _primary_response(messages, **kwargs):
-            seen_by_primary["contents"] = [m.content for m in messages]
-            messages.append(Message(role="assistant", content="primary-reply"))
-            return ModelResponse(content="primary-reply")
-
-        with patch.object(primary, "response", side_effect=_primary_response):
-            with patch.object(fallback, "response", side_effect=_sticky_response):
-                call_model_with_fallback(primary, config, messages=messages)
-
-        assert seen_by_primary["contents"] == ["hi"]
-        assert [m.content for m in messages] == ["hi", "primary-reply"]
-
     def test_sticky_response_synced_to_messages(self):
         primary = _make_model("primary")
         fallback = _make_model("fallback")
@@ -1350,8 +1325,8 @@ class TestFallbackCheckpointSync:
 
         assert seen == [3]
 
-    def test_failed_attempt_rolls_back_checkpointed_messages(self):
-        """A sticky model that fails after a tool batch must not leave that batch for the primary."""
+    def test_next_model_continues_from_checkpointed_turns(self):
+        """A sticky model that fails after a tool batch hands that batch to the primary, which does not rerun it."""
         primary, fallback, config, messages, seen = self._setup(sticky=True)
         seen_by_primary = {}
 
@@ -1373,7 +1348,7 @@ class TestFallbackCheckpointSync:
                 )
 
         assert seen == [3]
-        assert seen_by_primary["contents"] == ["hi"]
+        assert seen_by_primary["contents"] == ["hi", "calling tool", "tool result"]
 
     @pytest.mark.asyncio
     async def test_async_sticky_checkpoint_sees_tool_batch(self):
@@ -1589,3 +1564,135 @@ class TestStickyFailureHandling:
                 [e async for e in acall_model_stream_with_fallback(primary, config, messages=[])]
 
         assert config.get_sticky_fallback(primary) is fallback
+
+
+# =============================================================================
+# A failed model's completed turns carry over to the next model
+# =============================================================================
+
+
+class TestCompletedTurnsCarryOver:
+    """Tools a failed model already ran are visible to the next model, so they are not run again."""
+
+    def test_primary_continues_from_failed_sticky_turns(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen_by_primary = {}
+
+        def _sticky_response(messages, **kwargs):
+            _tool_turn(messages)
+            raise _server_error()
+
+        def _primary_response(messages, **kwargs):
+            seen_by_primary["contents"] = [m.content for m in messages]
+            messages.append(Message(role="assistant", content="done"))
+            return ModelResponse(content="done")
+
+        with patch.object(primary, "response", side_effect=_primary_response):
+            with patch.object(fallback, "response", side_effect=_sticky_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_primary["contents"] == ["go", "tool-turn", "tool-result"]
+        assert [m.content for m in messages] == ["go", "tool-turn", "tool-result", "done"]
+
+    @pytest.mark.asyncio
+    async def test_async_primary_continues_from_failed_sticky_turns(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen_by_primary = {}
+
+        async def _sticky_response(messages, **kwargs):
+            _tool_turn(messages)
+            raise _server_error()
+
+        async def _primary_response(messages, **kwargs):
+            seen_by_primary["contents"] = [m.content for m in messages]
+            return ModelResponse(content="done")
+
+        with patch.object(primary, "aresponse", side_effect=_primary_response):
+            with patch.object(fallback, "aresponse", side_effect=_sticky_response):
+                await acall_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_primary["contents"] == ["go", "tool-turn", "tool-result"]
+
+    def test_stream_primary_continues_from_failed_sticky_turns(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+        seen_by_primary = {}
+
+        def _sticky_stream(messages, **kwargs):
+            _tool_turn(messages)
+            yield ModelResponse(content="partial")
+            raise _server_error()
+
+        def _primary_stream(messages, **kwargs):
+            seen_by_primary["contents"] = [m.content for m in messages]
+            yield ModelResponse(content="done")
+
+        with patch.object(primary, "response_stream", side_effect=_primary_stream):
+            with patch.object(fallback, "response_stream", side_effect=_sticky_stream):
+                list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert seen_by_primary["contents"] == ["go", "tool-turn", "tool-result"]
+
+    def test_next_fallback_continues_from_failed_fallback_turns(self):
+        primary = _make_model("primary")
+        first = _make_model("first")
+        second = _make_model("second")
+        config = FallbackConfig(on_error=[first, second])
+        messages = [Message(role="user", content="go")]
+        seen_by_second = {}
+
+        def _first_response(messages, **kwargs):
+            _tool_turn(messages)
+            raise _server_error()
+
+        def _second_response(messages, **kwargs):
+            seen_by_second["contents"] = [m.content for m in messages]
+            return ModelResponse(content="done")
+
+        with patch.object(primary, "response", side_effect=_server_error()):
+            with patch.object(first, "response", side_effect=_first_response):
+                with patch.object(second, "response", side_effect=_second_response):
+                    call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_second["contents"] == ["go", "tool-turn", "tool-result"]
+
+
+class TestStreamedTurnsReachCaller:
+    """A stream the consumer stops reading is not closed right away, so turns must already be in place."""
+
+    @pytest.mark.asyncio
+    async def test_async_stream_abandoned_after_tool_turn_keeps_it(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        async def _stream(messages, **kwargs):
+            _tool_turn(messages)
+            yield ModelResponse(content="after tool")
+            yield ModelResponse(content="never read")
+
+        with patch.object(fallback, "aresponse_stream", side_effect=_stream):
+            stream = acall_model_stream_with_fallback(primary, config, messages=messages)
+            with pytest.raises(RunCancelledException):
+                async for _ in stream:
+                    # The agent raises on cancellation from inside its loop over the stream
+                    raise RunCancelledException("cancelled")
+            # Checked before the abandoned generator is finalized, as the stored run is
+            assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+            await stream.aclose()
+
+    def test_stream_abandoned_after_tool_turn_keeps_it(self):
+        primary, fallback, config = _sticky_setup()
+        messages = [Message(role="user", content="go")]
+
+        def _stream(messages, **kwargs):
+            _tool_turn(messages)
+            yield ModelResponse(content="after tool")
+            yield ModelResponse(content="never read")
+
+        with patch.object(fallback, "response_stream", side_effect=_stream):
+            stream = call_model_stream_with_fallback(primary, config, messages=messages)
+            next(stream)
+            assert [m.content for m in messages] == ["go", "tool-turn", "tool-result"]
+            stream.close()

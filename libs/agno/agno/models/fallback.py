@@ -242,35 +242,22 @@ def get_fallback_models(fallback_config: Optional[FallbackConfig], error: Except
 # ---------------------------------------------------------------------------
 
 
-def _clean_kwargs_for_fallback(kwargs: dict) -> dict:
-    """Return a copy of kwargs with a fresh messages list.
-
-    The primary model's retry-with-guidance logic may have appended
-    provider-specific guidance messages to kwargs["messages"]. Fallback
-    models should not see those, so we strip any temporary messages.
-    """
-    cleaned = dict(kwargs)
-    if "messages" in cleaned:
-        cleaned["messages"] = [m for m in cleaned["messages"] if not getattr(m, "temporary", False)]
-    return cleaned
-
-
 class _FallbackAttempt:
-    """One fallback call on its own copy of the messages, mirrored into the caller's list.
+    """One fallback call on a copy of the caller's messages, mirrored back as it goes.
 
-    The copy keeps a failed attempt from polluting what the next attempt sees. The caller's
-    list is still brought up to date before every tool-batch callback, because the
-    checkpoint it writes reads that list.
+    The copy drops temporary messages: retry guidance written for another model. Everything the
+    fallback appends reaches the caller's list before each tool-batch checkpoint and each streamed
+    event, and stays there if the call fails, so the next model continues from those turns
+    instead of running their tools again.
     """
 
-    def __init__(self, kwargs: dict, original_messages: Optional[List[Message]]) -> None:
+    def __init__(self, kwargs: dict) -> None:
         self.kwargs = dict(kwargs)
+        self.original_messages: Optional[List[Message]] = kwargs.get("messages")
         self.messages: Optional[List[Message]] = None
-        if "messages" in self.kwargs:
-            self.messages = list(self.kwargs["messages"])
+        if self.original_messages is not None:
+            self.messages = [m for m in self.original_messages if not getattr(m, "temporary", False)]
             self.kwargs["messages"] = self.messages
-        self.original_messages = original_messages
-        self.original_len = len(original_messages) if original_messages is not None else 0
         self.synced = len(self.messages) if self.messages is not None else 0
         after_tool_results = self.kwargs.get("after_tool_results")
         if after_tool_results is not None:
@@ -287,18 +274,6 @@ class _FallbackAttempt:
             self.original_messages.extend(self.messages[self.synced :])
             self.synced = len(self.messages)
 
-    def finish(self, error: BaseException) -> None:
-        """Settle the caller's list after a failed call.
-
-        Rolled back when another model will take over, so it starts clean. Otherwise the run
-        ends here, and the caller keeps every completed turn, as it would on the primary.
-        """
-        if isinstance(error, _SWITCHABLE_ERRORS):
-            if self.original_messages is not None:
-                del self.original_messages[self.original_len :]
-        else:
-            self.sync()
-
 
 def call_model_with_fallback(
     model: Model,
@@ -313,7 +288,7 @@ def call_model_with_fallback(
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            return _call_fallback(sticky, "response", _clean_kwargs_for_fallback(kwargs), kwargs.get("messages"))
+            return _call_fallback(sticky, "response", kwargs)
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
@@ -341,10 +316,9 @@ def call_model_with_fallback(
             fallbacks,
             primary_error,
             "response",
-            _clean_kwargs_for_fallback(kwargs),
+            kwargs,
             model,
             fallback_config,
-            original_messages=kwargs.get("messages"),
         )
 
 
@@ -358,9 +332,7 @@ async def acall_model_with_fallback(
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            return await _acall_fallback(
-                sticky, "aresponse", _clean_kwargs_for_fallback(kwargs), kwargs.get("messages")
-            )
+            return await _acall_fallback(sticky, "aresponse", kwargs)
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
@@ -385,10 +357,9 @@ async def acall_model_with_fallback(
             fallbacks,
             primary_error,
             "aresponse",
-            _clean_kwargs_for_fallback(kwargs),
+            kwargs,
             model,
             fallback_config,
-            original_messages=kwargs.get("messages"),
         )
 
 
@@ -412,7 +383,7 @@ def call_model_stream_with_fallback(
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            yield from _stream_fallback(sticky, _clean_kwargs_for_fallback(kwargs), kwargs.get("messages"))
+            yield from _stream_fallback(sticky, kwargs)
             return
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
@@ -441,10 +412,9 @@ def call_model_stream_with_fallback(
         yield from _try_fallback_models_stream(
             fallbacks,
             primary_error,
-            _clean_kwargs_for_fallback(kwargs),
+            kwargs,
             model,
             fallback_config,
-            original_messages=kwargs.get("messages"),
         )
 
 
@@ -458,7 +428,7 @@ async def acall_model_stream_with_fallback(
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            async for event in _astream_fallback(sticky, _clean_kwargs_for_fallback(kwargs), kwargs.get("messages")):
+            async for event in _astream_fallback(sticky, kwargs):
                 yield event
             return
         except _SWITCHABLE_ERRORS as sticky_error:
@@ -490,10 +460,9 @@ async def acall_model_stream_with_fallback(
         async for event in _atry_fallback_models_stream(
             fallbacks,
             primary_error,
-            _clean_kwargs_for_fallback(kwargs),
+            kwargs,
             model,
             fallback_config,
-            original_messages=kwargs.get("messages"),
         ):
             yield event
 
@@ -521,59 +490,46 @@ def _on_fallback_succeeded(
             pass  # Don't let callback errors break fallback flow
 
 
-def _call_fallback(
-    fallback: Model, method_name: str, kwargs: dict, original_messages: Optional[List[Message]]
-) -> ModelResponse:
-    """Call one fallback in a :class:`_FallbackAttempt`, keeping its messages only on success."""
-    attempt = _FallbackAttempt(kwargs, original_messages)
+def _call_fallback(fallback: Model, method_name: str, kwargs: dict) -> ModelResponse:
+    """Call one fallback in a :class:`_FallbackAttempt`."""
+    attempt = _FallbackAttempt(kwargs)
     try:
-        result = getattr(fallback, method_name)(**attempt.kwargs)
-    except BaseException as e:
-        attempt.finish(e)
-        raise
-    attempt.sync()
-    return result
+        return getattr(fallback, method_name)(**attempt.kwargs)
+    finally:
+        attempt.sync()
 
 
-async def _acall_fallback(
-    fallback: Model, method_name: str, kwargs: dict, original_messages: Optional[List[Message]]
-) -> ModelResponse:
+async def _acall_fallback(fallback: Model, method_name: str, kwargs: dict) -> ModelResponse:
     """Async variant of :func:`_call_fallback`."""
-    attempt = _FallbackAttempt(kwargs, original_messages)
+    attempt = _FallbackAttempt(kwargs)
     try:
-        result = await getattr(fallback, method_name)(**attempt.kwargs)
-    except BaseException as e:
-        attempt.finish(e)
-        raise
-    attempt.sync()
-    return result
+        return await getattr(fallback, method_name)(**attempt.kwargs)
+    finally:
+        attempt.sync()
 
 
-def _stream_fallback(
-    fallback: Model, kwargs: dict, original_messages: Optional[List[Message]]
-) -> Iterator[StreamEvent]:
+def _stream_fallback(fallback: Model, kwargs: dict) -> Iterator[StreamEvent]:
     """Stream variant of :func:`_call_fallback`."""
-    attempt = _FallbackAttempt(kwargs, original_messages)
+    attempt = _FallbackAttempt(kwargs)
     try:
-        yield from fallback.response_stream(**attempt.kwargs)
-    except BaseException as e:
-        attempt.finish(e)
-        raise
-    attempt.sync()
+        for event in fallback.response_stream(**attempt.kwargs):
+            # Synced before each event: a consumer that stops reading does not close the stream at once
+            attempt.sync()
+            yield event
+    finally:
+        attempt.sync()
 
 
-async def _astream_fallback(
-    fallback: Model, kwargs: dict, original_messages: Optional[List[Message]]
-) -> AsyncIterator[StreamEvent]:
+async def _astream_fallback(fallback: Model, kwargs: dict) -> AsyncIterator[StreamEvent]:
     """Async stream variant of :func:`_call_fallback`."""
-    attempt = _FallbackAttempt(kwargs, original_messages)
+    attempt = _FallbackAttempt(kwargs)
     try:
         async for event in fallback.aresponse_stream(**attempt.kwargs):
+            # Synced before each event: an abandoned async generator is only closed later, by the event loop
+            attempt.sync()
             yield event
-    except BaseException as e:
-        attempt.finish(e)
-        raise
-    attempt.sync()
+    finally:
+        attempt.sync()
 
 
 def _try_fallback_models(
@@ -583,17 +539,15 @@ def _try_fallback_models(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
-    original_messages: Optional[List[Message]] = None,
 ) -> ModelResponse:
     """Try each fallback model in order. Raises the primary error if all fail.
 
-    Messages the successful fallback appends are synced back into original_messages
-    so the fallback's response is persisted in session history.
+    Each fallback continues from the turns earlier models completed, so their tools are not run again.
     """
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = _call_fallback(fallback, method_name, kwargs, original_messages)
+            result = _call_fallback(fallback, method_name, kwargs)
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return result
         except ModelProviderError as e:
@@ -609,17 +563,15 @@ async def _atry_fallback_models(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
-    original_messages: Optional[List[Message]] = None,
 ) -> ModelResponse:
     """Async: try each fallback model in order. Raises the primary error if all fail.
 
-    Messages the successful fallback appends are synced back into original_messages
-    so the fallback's response is persisted in session history.
+    Each fallback continues from the turns earlier models completed, so their tools are not run again.
     """
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = await _acall_fallback(fallback, method_name, kwargs, original_messages)
+            result = await _acall_fallback(fallback, method_name, kwargs)
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return result
         except ModelProviderError as e:
@@ -634,17 +586,15 @@ def _try_fallback_models_stream(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
-    original_messages: Optional[List[Message]] = None,
 ) -> Iterator[StreamEvent]:
     """Try each fallback model stream in order. Raises the primary error if all fail.
 
-    Messages the successful fallback appends are synced back into original_messages
-    so the fallback's response is persisted in session history.
+    Each fallback continues from the turns earlier models completed, so their tools are not run again.
     """
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            yield from _stream_fallback(fallback, kwargs, original_messages)
+            yield from _stream_fallback(fallback, kwargs)
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return
         except ModelProviderError as e:
@@ -659,17 +609,15 @@ async def _atry_fallback_models_stream(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
-    original_messages: Optional[List[Message]] = None,
 ) -> AsyncIterator[StreamEvent]:
     """Async: try each fallback model stream in order. Raises the primary error if all fail.
 
-    Messages the successful fallback appends are synced back into original_messages
-    so the fallback's response is persisted in session history.
+    Each fallback continues from the turns earlier models completed, so their tools are not run again.
     """
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            async for event in _astream_fallback(fallback, kwargs, original_messages):
+            async for event in _astream_fallback(fallback, kwargs):
                 yield event
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return
