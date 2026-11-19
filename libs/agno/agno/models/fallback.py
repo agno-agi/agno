@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import weakref
+from copy import copy
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from time import monotonic
@@ -306,20 +307,59 @@ _TOOL_RESULT_LISTS = ("tool_executions", "images", "audios", "videos", "files")
 
 
 class _CompletedTools:
-    """Tool results from model calls that failed after running tools, for the response that ends the run.
+    """What earlier model calls in this run completed, for the calls and checkpoints that follow.
 
     A model collects tool executions, tool-produced media and session-state updates on the
-    ModelResponse it builds inside ``response()``, which is lost when that call raises. The
-    tool-batch hook is the one place it is visible, so every in-flight response is recorded there;
-    any that is not the returned one belonged to a failed call.
+    ModelResponse it builds inside ``response()``, and counts its tool calls from zero. When a
+    model fails mid-run and another takes over, both are lost: the response never comes back and
+    the next model starts a fresh count. The tool-batch hook is the one place that response is
+    visible, so every in-flight response is recorded there. Any recorded response that is not the
+    current one belonged to an earlier, failed call.
     """
 
     def __init__(self) -> None:
         self.responses: List[ModelResponse] = []
+        # Streams report completed tools as events instead of on the in-flight response
+        self.streamed_tools: List[Any] = []
+
+    def observe(self, event: StreamEvent) -> StreamEvent:
+        """Note a streamed tool completion, so the next call's tool budget accounts for it."""
+        if (
+            isinstance(event, ModelResponse)
+            and event.event == ModelResponseEvent.tool_call_completed.value
+            and event.tool_executions
+        ):
+            self.streamed_tools.extend(event.tool_executions)
+        return event
 
     def _record(self, model_response: ModelResponse) -> None:
         if not any(r is model_response for r in self.responses):
             self.responses.append(model_response)
+
+    def _earlier(self, current: ModelResponse) -> List[ModelResponse]:
+        return [r for r in self.responses if r is not current]
+
+    @staticmethod
+    def _merge(target: ModelResponse, earlier: List[ModelResponse], current: ModelResponse) -> None:
+        for name in _TOOL_RESULT_LISTS:
+            items = [item for r in earlier for item in (getattr(r, name) or [])]
+            if items:
+                setattr(target, name, items + (getattr(current, name) or []))
+        states = [r.updated_session_state for r in earlier + [current] if r.updated_session_state is not None]
+        if states:
+            merged: Dict[str, Any] = {}
+            for state in states:
+                merge_dictionaries(merged, state)
+            target.updated_session_state = merged
+
+    def _checkpoint_view(self, current: ModelResponse) -> ModelResponse:
+        """The in-flight response as the checkpoint should see it: with earlier calls' tool results."""
+        earlier = self._earlier(current)
+        if not earlier:
+            return current
+        view = copy(current)
+        self._merge(view, earlier, current)
+        return view
 
     def watch(self, kwargs: dict) -> dict:
         watched = dict(kwargs)
@@ -327,7 +367,9 @@ class _CompletedTools:
 
         def _watched(model_response: ModelResponse) -> Any:
             self._record(model_response)
-            return after_tool_results(model_response) if after_tool_results is not None else None
+            if after_tool_results is not None:
+                return after_tool_results(self._checkpoint_view(model_response))
+            return None
 
         watched["after_tool_results"] = _watched
         return watched
@@ -340,25 +382,37 @@ class _CompletedTools:
         async def _watched(model_response: ModelResponse) -> None:
             self._record(model_response)
             if after_tool_results is not None:
-                await after_tool_results(model_response)
+                await after_tool_results(self._checkpoint_view(model_response))
 
         watched["after_tool_results"] = _watched
         return watched
 
+    def for_call(self, kwargs: dict) -> dict:
+        """kwargs for the next model call, with the tool calls earlier calls spent taken off the limit."""
+        limit = kwargs.get("tool_call_limit")
+        if limit is None or not (self.responses or self.streamed_tools):
+            return kwargs
+        exempt: frozenset = frozenset()
+        if kwargs.get("result_store") is not None:
+            from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
+            exempt = frozenset(NEVER_OFFLOADED_TOOLS)
+        executions: List[Any] = []
+        for te in [te for r in self.responses for te in (r.tool_executions or [])] + self.streamed_tools:
+            if not any(seen is te for seen in executions):
+                executions.append(te)
+        # Counted as Model._limit_charge_for counts them: offload read-back tools are free
+        spent = sum(1 for te in executions if te.tool_name not in exempt)
+        if spent == 0:
+            return kwargs
+        remaining = dict(kwargs)
+        remaining["tool_call_limit"] = max(0, limit - spent)
+        return remaining
+
     def apply(self, result: ModelResponse) -> ModelResponse:
-        failed = [r for r in self.responses if r is not result]
-        if not failed:
-            return result
-        for name in _TOOL_RESULT_LISTS:
-            earlier = [item for r in failed for item in (getattr(r, name) or [])]
-            if earlier:
-                setattr(result, name, earlier + (getattr(result, name) or []))
-        states = [r.updated_session_state for r in failed + [result] if r.updated_session_state is not None]
-        if states:
-            merged: Dict[str, Any] = {}
-            for state in states:
-                merge_dictionaries(merged, state)
-            result.updated_session_state = merged
+        earlier = self._earlier(result)
+        if earlier:
+            self._merge(result, earlier, result)
         return result
 
 
@@ -375,24 +429,25 @@ def call_model_with_fallback(
     """
     completed = _CompletedTools()
     return completed.apply(
-        _call_model_with_fallback(model, fallback_config, recover_from_overflow, **completed.watch(kwargs))
+        _call_model_with_fallback(model, fallback_config, recover_from_overflow, completed, **completed.watch(kwargs))
     )
 
 
 def _call_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
-    recover_from_overflow: Optional[Callable[[], bool]] = None,
+    recover_from_overflow: Optional[Callable[[], bool]],
+    completed: _CompletedTools,
     **kwargs: Any,
 ) -> ModelResponse:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            return _call_fallback(sticky, "response", kwargs)
+            return _call_fallback(sticky, "response", completed.for_call(kwargs))
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
-        return model.response(**kwargs)
+        return model.response(**completed.for_call(kwargs))
     except ModelProviderError as primary_error:
         # Shrinking the request and retrying the same model is cheaper than switching to a
         # larger one, and is the only response that works when no larger model is configured.
@@ -403,7 +458,7 @@ def _call_model_with_fallback(
             and _recovered_from_overflow(recover_from_overflow)
         ):
             try:
-                return model.response(**kwargs)
+                return model.response(**completed.for_call(kwargs))
             except ModelProviderError as retry_error:
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
@@ -419,6 +474,7 @@ def _call_model_with_fallback(
             kwargs,
             model,
             fallback_config,
+            completed,
         )
 
 
@@ -431,24 +487,27 @@ async def acall_model_with_fallback(
     """Async variant of call_model_with_fallback."""
     completed = _CompletedTools()
     return completed.apply(
-        await _acall_model_with_fallback(model, fallback_config, recover_from_overflow, **completed.awatch(kwargs))
+        await _acall_model_with_fallback(
+            model, fallback_config, recover_from_overflow, completed, **completed.awatch(kwargs)
+        )
     )
 
 
 async def _acall_model_with_fallback(
     model: Model,
     fallback_config: Optional[FallbackConfig],
-    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]] = None,
+    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]],
+    completed: _CompletedTools,
     **kwargs: Any,
 ) -> ModelResponse:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            return await _acall_fallback(sticky, "aresponse", kwargs)
+            return await _acall_fallback(sticky, "aresponse", completed.for_call(kwargs))
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
     try:
-        return await model.aresponse(**kwargs)
+        return await model.aresponse(**completed.for_call(kwargs))
     except ModelProviderError as primary_error:
         if (
             recover_from_overflow is not None
@@ -456,7 +515,7 @@ async def _acall_model_with_fallback(
             and await _arecovered_from_overflow(recover_from_overflow)
         ):
             try:
-                return await model.aresponse(**kwargs)
+                return await model.aresponse(**completed.for_call(kwargs))
             except ModelProviderError as retry_error:
                 primary_error = retry_error
         fallbacks = get_fallback_models(fallback_config, primary_error)
@@ -472,6 +531,7 @@ async def _acall_model_with_fallback(
             kwargs,
             model,
             fallback_config,
+            completed,
         )
 
 
@@ -492,17 +552,31 @@ def call_model_stream_with_fallback(
     exactly as the non-streaming path does. A rejection for length arrives before the first
     chunk, so nothing has been yielded yet and the retry is safe to start from scratch.
     """
+    completed = _CompletedTools()
+    for event in _call_model_stream_with_fallback(
+        model, fallback_config, recover_from_overflow, completed, **completed.watch(kwargs)
+    ):
+        yield completed.observe(event)
+
+
+def _call_model_stream_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], bool]],
+    completed: _CompletedTools,
+    **kwargs: Any,
+) -> Iterator[StreamEvent]:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            yield from _stream_fallback(sticky, kwargs)
+            yield from _stream_fallback(sticky, completed.for_call(kwargs))
             return
         except _SWITCHABLE_ERRORS as sticky_error:
             _on_sticky_failed(fallback_config, model, sticky, sticky_error)
             # Discard anything the sticky model streamed before it failed
             yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
     try:
-        yield from model.response_stream(**kwargs)
+        yield from model.response_stream(**completed.for_call(kwargs))
     except ModelProviderError as primary_error:
         if (
             recover_from_overflow is not None
@@ -510,7 +584,7 @@ def call_model_stream_with_fallback(
             and _recovered_from_overflow(recover_from_overflow)
         ):
             try:
-                yield from model.response_stream(**kwargs)
+                yield from model.response_stream(**completed.for_call(kwargs))
                 return
             except ModelProviderError as retry_error:
                 primary_error = retry_error
@@ -527,6 +601,7 @@ def call_model_stream_with_fallback(
             kwargs,
             model,
             fallback_config,
+            completed,
         )
 
 
@@ -537,10 +612,24 @@ async def acall_model_stream_with_fallback(
     **kwargs: Any,
 ) -> AsyncIterator[StreamEvent]:
     """Async variant of call_model_stream_with_fallback."""
+    completed = _CompletedTools()
+    async for event in _acall_model_stream_with_fallback(
+        model, fallback_config, recover_from_overflow, completed, **completed.awatch(kwargs)
+    ):
+        yield completed.observe(event)
+
+
+async def _acall_model_stream_with_fallback(
+    model: Model,
+    fallback_config: Optional[FallbackConfig],
+    recover_from_overflow: Optional[Callable[[], Union[bool, Awaitable[bool]]]],
+    completed: _CompletedTools,
+    **kwargs: Any,
+) -> AsyncIterator[StreamEvent]:
     if fallback_config is not None and (sticky := fallback_config.get_sticky_fallback(model)) is not None:
         try:
             log_debug(f"Using sticky fallback model '{sticky.id}' in place of '{model.id}'")
-            async for event in _astream_fallback(sticky, kwargs):
+            async for event in _astream_fallback(sticky, completed.for_call(kwargs)):
                 yield event
             return
         except _SWITCHABLE_ERRORS as sticky_error:
@@ -548,7 +637,7 @@ async def acall_model_stream_with_fallback(
             # Discard anything the sticky model streamed before it failed
             yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
     try:
-        async for event in model.aresponse_stream(**kwargs):
+        async for event in model.aresponse_stream(**completed.for_call(kwargs)):
             yield event
     except ModelProviderError as primary_error:
         if (
@@ -557,7 +646,7 @@ async def acall_model_stream_with_fallback(
             and await _arecovered_from_overflow(recover_from_overflow)
         ):
             try:
-                async for event in model.aresponse_stream(**kwargs):
+                async for event in model.aresponse_stream(**completed.for_call(kwargs)):
                     yield event
                 return
             except ModelProviderError as retry_error:
@@ -575,6 +664,7 @@ async def acall_model_stream_with_fallback(
             kwargs,
             model,
             fallback_config,
+            completed,
         ):
             yield event
 
@@ -656,6 +746,10 @@ async def _astream_fallback(fallback: Model, kwargs: dict) -> AsyncIterator[Stre
         attempt.sync()
 
 
+def _next_call_kwargs(completed: Optional[_CompletedTools], kwargs: dict) -> dict:
+    return completed.for_call(kwargs) if completed is not None else kwargs
+
+
 def _try_fallback_models(
     fallback_models: List[Model],
     primary_error: Exception,
@@ -663,6 +757,7 @@ def _try_fallback_models(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
+    completed: Optional[_CompletedTools] = None,
 ) -> ModelResponse:
     """Try each fallback model in order. Raises the primary error if all fail.
 
@@ -671,7 +766,7 @@ def _try_fallback_models(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = _call_fallback(fallback, method_name, kwargs)
+            result = _call_fallback(fallback, method_name, _next_call_kwargs(completed, kwargs))
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return result
         except ModelProviderError as e:
@@ -687,6 +782,7 @@ async def _atry_fallback_models(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
+    completed: Optional[_CompletedTools] = None,
 ) -> ModelResponse:
     """Async: try each fallback model in order. Raises the primary error if all fail.
 
@@ -695,7 +791,7 @@ async def _atry_fallback_models(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            result = await _acall_fallback(fallback, method_name, kwargs)
+            result = await _acall_fallback(fallback, method_name, _next_call_kwargs(completed, kwargs))
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return result
         except ModelProviderError as e:
@@ -710,6 +806,7 @@ def _try_fallback_models_stream(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
+    completed: Optional[_CompletedTools] = None,
 ) -> Iterator[StreamEvent]:
     """Try each fallback model stream in order. Raises the primary error if all fail.
 
@@ -718,7 +815,7 @@ def _try_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            yield from _stream_fallback(fallback, kwargs)
+            yield from _stream_fallback(fallback, _next_call_kwargs(completed, kwargs))
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return
         except ModelProviderError as e:
@@ -733,6 +830,7 @@ async def _atry_fallback_models_stream(
     kwargs: dict,
     primary_model: Model,
     fallback_config: Optional[FallbackConfig] = None,
+    completed: Optional[_CompletedTools] = None,
 ) -> AsyncIterator[StreamEvent]:
     """Async: try each fallback model stream in order. Raises the primary error if all fail.
 
@@ -741,7 +839,7 @@ async def _atry_fallback_models_stream(
     for i, fallback in enumerate(fallback_models):
         try:
             log_warning(f"Trying fallback model {i + 1}/{len(fallback_models)}: {fallback.id}")
-            async for event in _astream_fallback(fallback, kwargs):
+            async for event in _astream_fallback(fallback, _next_call_kwargs(completed, kwargs)):
                 yield event
             _on_fallback_succeeded(fallback_config, primary_model, fallback, primary_error)
             return

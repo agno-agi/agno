@@ -1984,3 +1984,44 @@ class TestHandoverDropsGuidance:
                 call_model_with_fallback(primary, config, messages=messages)
 
         assert [m.content for m in messages] == ["go", "tool-turn", "tool-result", "guidance"]
+
+
+class TestRemainingToolBudget:
+    def _spent(self, *names):
+        from agno.models.fallback import _CompletedTools
+        from agno.models.response import ToolExecution
+
+        completed = _CompletedTools()
+        completed._record(ModelResponse(tool_executions=[ToolExecution(tool_name=n) for n in names]))
+        return completed
+
+    def test_limit_reduced_by_tools_earlier_calls_ran(self):
+        completed = self._spent("a")
+        assert completed.for_call({"tool_call_limit": 3})["tool_call_limit"] == 2
+
+    def test_limit_floors_at_zero(self):
+        completed = self._spent("a", "b")
+        assert completed.for_call({"tool_call_limit": 1})["tool_call_limit"] == 0
+
+    def test_no_limit_is_left_alone(self):
+        completed = self._spent("a")
+        kwargs = {"tool_call_limit": None}
+        assert completed.for_call(kwargs) is kwargs
+
+    def test_offload_read_back_tools_are_free(self):
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
+        read_back = next(iter(NEVER_OFFLOADED_TOOLS))
+        completed = self._spent("a", read_back)
+        assert completed.for_call({"tool_call_limit": 3, "result_store": object()})["tool_call_limit"] == 2
+        assert completed.for_call({"tool_call_limit": 3})["tool_call_limit"] == 1
+
+    def test_streamed_and_recorded_executions_are_counted_once(self):
+        from agno.models.fallback import _CompletedTools
+        from agno.models.response import ToolExecution
+
+        te = ToolExecution(tool_name="a")
+        completed = _CompletedTools()
+        completed._record(ModelResponse(tool_executions=[te]))
+        completed.observe(ModelResponse(event=ModelResponseEvent.tool_call_completed.value, tool_executions=[te]))
+        assert completed.for_call({"tool_call_limit": 3})["tool_call_limit"] == 2

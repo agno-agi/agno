@@ -357,3 +357,97 @@ async def test_async_primary_does_not_see_the_failed_sticky_models_guidance(stre
         await agent.arun("go", session_id="h2")
 
     assert primary.seen == [["go"]]
+
+
+CALLS: List[str] = []
+
+
+def first() -> str:
+    """First tool."""
+    CALLS.append("first")
+    return "first done"
+
+
+def second() -> str:
+    """Second tool."""
+    CALLS.append("second")
+    return "second done"
+
+
+def _budget_agent(**agent_kwargs) -> Agent:
+    primary = _ScriptedModel("primary", [("tool", "second", "call-2"), ("content", "done")])
+    fallback = _ScriptedModel("fallback", [("tool", "first", "call-1"), ("error",)])
+    config = FallbackConfig(on_error=[fallback], sticky=True)
+    config.set_sticky_fallback(primary, fallback)
+    return Agent(
+        model=primary, fallback_config=config, tools=[first, second], db=InMemoryDb(), telemetry=False, **agent_kwargs
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_tool_call_limit_spans_the_handoff(stream):
+    CALLS.clear()
+    agent = _budget_agent(tool_call_limit=1)
+    if stream:
+        for _ in agent.run("go", session_id="b1", stream=True):
+            pass
+    else:
+        agent.run("go", session_id="b1")
+
+    assert CALLS == ["first"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_async_tool_call_limit_spans_the_handoff(stream):
+    CALLS.clear()
+    agent = _budget_agent(tool_call_limit=1)
+    if stream:
+        async for _ in agent.arun("go", session_id="b2", stream=True):
+            pass
+    else:
+        await agent.arun("go", session_id="b2")
+
+    assert CALLS == ["first"]
+
+
+def _checkpointed_tools(agent: Agent, monkeypatch) -> List[List[str]]:
+    from agno.agent import _run
+
+    seen: List[List[str]] = []
+    original = _run.checkpoint_run
+
+    def _spy(agent_, run_response, *a, **k):
+        seen.append([t.tool_name for t in run_response.tools or []])
+        return original(agent_, run_response, *a, **k)
+
+    monkeypatch.setattr(_run, "checkpoint_run", _spy)
+    return seen
+
+
+def test_checkpoint_after_handoff_keeps_earlier_tools(monkeypatch):
+    CALLS.clear()
+    agent = _budget_agent(checkpoint="tool-batch")
+    seen = _checkpointed_tools(agent, monkeypatch)
+    agent.run("go", session_id="c1")
+
+    assert seen == [["first"], ["first", "second"]]
+
+
+@pytest.mark.asyncio
+async def test_async_checkpoint_after_handoff_keeps_earlier_tools(monkeypatch):
+    from agno.agent import _run
+
+    CALLS.clear()
+    agent = _budget_agent(checkpoint="tool-batch")
+    seen: List[List[str]] = []
+    original = _run.acheckpoint_run
+
+    async def _spy(agent_, run_response, *a, **k):
+        seen.append([t.tool_name for t in run_response.tools or []])
+        return await original(agent_, run_response, *a, **k)
+
+    monkeypatch.setattr(_run, "acheckpoint_run", _spy)
+    await agent.arun("go", session_id="c2")
+
+    assert seen == [["first"], ["first", "second"]]
