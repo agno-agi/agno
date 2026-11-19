@@ -20,6 +20,7 @@ class DiscordTools(Toolkit):
         enable_list_channels: bool = True,
         enable_delete_message: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
@@ -45,12 +46,12 @@ class DiscordTools(Toolkit):
         if enable_delete_message or all:
             tools.append(self.delete_message)
 
-        super().__init__(name="discord", tools=tools, **kwargs)
+        super().__init__(name="discord", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a request to Discord API."""
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data)
+        response = requests.request(method, url, headers=self.headers, json=data, timeout=self.timeout)
         response.raise_for_status()
         return response.json() if response.text else {}
 

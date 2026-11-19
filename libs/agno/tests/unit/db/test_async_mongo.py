@@ -1,10 +1,13 @@
 import asyncio
+import json
+from datetime import date
 from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 from pymongo import AsyncMongoClient
 
 from agno.db.base import SessionType
+from agno.db.migrations.manager import MigrationManager
 from agno.db.mongo import AsyncMongoDb
 
 
@@ -85,6 +88,7 @@ def test_init_with_all_collections():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_initialization_flags_cleared_on_event_loop_change():
     """Test that _initialized flags are cleared when event loop changes.
 
@@ -131,6 +135,7 @@ async def test_initialization_flags_cleared_on_event_loop_change():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_indexes_awaited_properly():
     """Test that index creation is properly awaited.
 
@@ -165,6 +170,7 @@ async def test_indexes_awaited_properly():
 
 
 @pytest.mark.asyncio
+@patch.object(AsyncMongoDb, "table_exists", new=AsyncMock(return_value=True))
 async def test_collection_cache_reset_on_event_loop_change():
     """Test that all collection caches are reset on event loop change"""
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_cache_reset")
@@ -211,6 +217,23 @@ async def test_get_collection_without_table_name():
 
     with pytest.raises(ValueError, match="Session collection was not provided"):
         await db._get_collection("sessions", create_collection_if_not_found=True)
+
+
+@pytest.mark.asyncio
+async def test_created_sessions_collection_stores_latest_schema_version():
+    """A sessions collection the store creates stores the latest schema version, so metrics never read its legacy runs."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    with (
+        patch.object(db, "table_exists", AsyncMock(return_value=False)),
+        patch.object(db, "upsert_schema_version", AsyncMock()) as upsert_schema_version,
+        patch("agno.db.mongo.async_mongo.create_collection_indexes_async", AsyncMock()),
+    ):
+        await db._get_collection("sessions", create_collection_if_not_found=True)
+
+    upsert_schema_version.assert_awaited_once_with(
+        table_name=db.session_table_name, version=MigrationManager(db).latest_schema_version.public
+    )
 
 
 def test_db_client_property():
@@ -384,3 +407,57 @@ async def test_text_filters_match_literal_text():
     sessions_query, memories_query = [c.args[0] for c in mock_collection.count_documents.call_args_list]
     assert sessions_query["session_data.session_name"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
     assert memories_query["memory"] == {"$regex": r"v1\.2\(draft", "$options": "i"}
+
+
+@pytest.mark.asyncio
+async def test_get_metrics_returns_a_day_with_only_a_regenerated_run():
+    """A day whose only run is a regenerated one has its tokens but no count, and get_metrics still reads it."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    cursor = Mock()
+    cursor.sort.return_value = cursor
+    cursor.to_list = AsyncMock(return_value=[])
+    mock_collection = Mock()
+    mock_collection.find.return_value = cursor
+
+    with patch.object(db, "_get_collection", AsyncMock(return_value=mock_collection)):
+        await db._get_aggregate_metrics_rows(date(2026, 10, 1), date(2026, 10, 1), "")
+
+    assert {"total_tokens": {"$gt": 0}} in mock_collection.find.call_args.args[0]["$or"]
+
+
+@pytest.mark.asyncio
+async def test_metrics_legacy_runs_count_runs_stored_as_json_string():
+    """Legacy runs stored as a JSON string, as before v2.1.1, count like legacy runs stored as an array."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    sessions_collection = Mock()
+    created_at = 1790000000
+    sessions_cursor = Mock()
+    # As the projection reads them: an array keeps its runs' fields, a JSON string comes back without runs
+    sessions_cursor.batch_size.return_value = sessions_cursor
+    sessions_cursor.to_list = AsyncMock(
+        side_effect=[
+            [
+                {
+                    "_id": 1,
+                    "session_id": "s1",
+                    "user_id": "u1",
+                    "created_at": created_at,
+                    "runs": [{"run_id": "r1", "agent_id": "a1", "created_at": created_at}],
+                },
+                {"_id": 2, "session_id": "s2", "user_id": "u1", "created_at": created_at},
+            ],
+            [],
+        ]
+    )
+
+    # Only the session that came back without runs is read again, with its runs whole
+    async def json_sessions():
+        yield {"_id": 2, "runs": json.dumps([{"run_id": "r2", "agent_id": "a1", "created_at": created_at}])}
+
+    sessions_collection.find.side_effect = [sessions_cursor, json_sessions()]
+
+    _, legacy_runs_by_id = await db._get_metrics_legacy_runs(sessions_collection, None, created_at, created_at + 1)
+
+    assert sorted(legacy_runs_by_id) == ["r1", "r2"]
+    assert legacy_runs_by_id["r2"]["session_id"] == "s2"
+    assert sessions_collection.find.call_args.args[0] == {"_id": {"$in": [2]}, "runs": {"$type": "string"}}

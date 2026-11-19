@@ -15,6 +15,7 @@ from agno.team.remote import RemoteTeam
 class AGUI(BaseInterface):
     type = "agui"
 
+    agent: Optional[Union[Agent, RemoteAgent]]
     router: APIRouter
 
     def __init__(

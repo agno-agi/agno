@@ -227,7 +227,6 @@ async def map_stream_events_to_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         agent_id: Optional agent identifier to include in events
-        user_id: Optional user identifier to include in events
 
     Yields:
         RunOutputEvent: Agno-compatible run output events
@@ -433,7 +432,6 @@ async def map_stream_events_to_team_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         team_id: Optional team identifier to include in events
-        user_id: Optional user identifier to include in events
     Yields:
         TeamRunOutputEvent: Agno-compatible team run output events
     """
@@ -637,7 +635,6 @@ async def map_stream_events_to_workflow_run_events(
     Args:
         stream: AsyncIterator of A2A StreamEvents
         workflow_id: Optional workflow identifier to include in events
-        user_id: Optional user identifier to include in events
     Yields:
         WorkflowRunOutputEvent: Agno-compatible workflow run output events
     """

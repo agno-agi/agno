@@ -398,8 +398,7 @@ class HuggingFace(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
-        for tool_call in tool_calls_data:
-            _tool_call = tool_call[0]
+        for _tool_call in tool_calls_data:
             _index = _tool_call.index
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
@@ -479,7 +478,7 @@ class HuggingFace(Model):
             if response_delta_message.content is not None:
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
-                model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
+                model_response.tool_calls = response_delta_message.tool_calls  # type: ignore
         if response_delta.usage is not None:
             model_response.response_usage = self._get_metrics(response_delta)
 

@@ -29,3 +29,13 @@
 **Result:** Content rendered with a populated Citations panel (21 sources).
 
 ---
+
+### generate_images.py
+
+**Status:** PASS
+
+**Description:** Switched from `DalleTools` to `OpenAITools` with only image generation enabled, and saves returned image bytes under `tmp/`. Two fixes that `main` also needed: `reasoning_effort="none"` on `OpenAIChat(id="gpt-5.6-luna")`, which otherwise returns 400 "Function tools with reasoning_effort are not supported ... in /v1/chat/completions", and `db=InMemoryDb()`, without which `get_last_run_output()` finds no stored run. Ran against the live OpenAI API.
+
+**Result:** The agent called `generate_image` and the script saved the returned PNG under `tmp/`.
+
+---
