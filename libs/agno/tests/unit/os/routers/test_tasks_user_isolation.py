@@ -159,6 +159,7 @@ def test_scopes_apply_to_every_route(make_client, isolation):
         ("patch", path, {"name": "No"}, ["tasks:read"]),
         ("delete", path, None, ["tasks:write"]),
         ("post", path + "/restore", None, ["tasks:write"]),
+        ("post", path + "/archive", None, ["tasks:write"]),
         ("post", path + "/transitions", {"target": "cancelled", "reason": "Stop"}, ["tasks:read"]),
     ]:
         assert c.request(method, url, json=body, headers=headers("bob", scopes)).status_code == 403

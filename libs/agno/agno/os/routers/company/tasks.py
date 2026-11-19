@@ -261,6 +261,13 @@ def get_tasks_router(
         if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
 
+    @router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
+    async def archive_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
+        await _existing(task_id)
+        if not await _call("delete_task", task_id, user_id=None):
+            raise HTTPException(status_code=404, detail="Task not found")
+        return await task_response(request, await _existing(task_id, include_deleted=True))
+
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
     async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         existing = await _existing(task_id, include_deleted=True)

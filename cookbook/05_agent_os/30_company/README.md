@@ -19,9 +19,11 @@ For HTTP access, configure `AgentOS(db=db, company=CompanyConfig())` using
 overrides the OS database. Omitting Company leaves its routes and scopes absent.
 
 The routes are `GET` and `POST /company/products`, `GET`, `PATCH` and
-`DELETE /company/products/{id}`, and `POST /company/products/{id}/restore`.
+`DELETE /company/products/{id}`, `POST /company/products/{id}/archive` and
+`POST /company/products/{id}/restore`. Archive archives like `DELETE` and
+returns the archived Product.
 Lists return `{data, meta}` with `limit` and `page`; reads accept
-`include_deleted=true`. Restore requires `products:delete`, like deletion.
+`include_deleted=true`. Archive and restore require `products:delete`, like deletion.
 Read and create/update require `products:read` and `products:write` respectively.
 
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
@@ -157,7 +159,7 @@ requires the caller's executor run permission; accepted Tasks keep their brief,
 Project, evidence and executor until returned to Backlog, because an accepted
 Task runs under its accepter's permissions. The title stays editable at any
 stage (Company tools run by Routines and executors edit Backlog Tasks only).
-Delete and restore need the delete scope, not ownership.
+Archive, delete and restore need the delete scope, not ownership.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.

@@ -118,6 +118,22 @@ def get_products_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             raise HTTPException(status_code=404, detail="Product not found")
         return Response(status_code=204)
 
+    @router.post("/products/{product_id}/archive", response_model=ProductResponse)
+    async def archive_product(
+        product_id: str, _: bool = Depends(auth_dependency)
+    ) -> Union[Dict[str, Any], JSONResponse]:
+        await _existing(product_id)
+        try:
+            archived = await _call("delete", product_id, user_id=None)
+        except HTTPException as exc:
+            if exc.status_code == 409 and isinstance(exc.detail, dict):
+                # Keep the Task list structured through AgentOS's string error handler.
+                return JSONResponse(status_code=409, content={"detail": exc.detail})
+            raise
+        if not archived:
+            raise HTTPException(status_code=404, detail="Product not found")
+        return await _existing(product_id, include_deleted=True)
+
     @router.post("/products/{product_id}/restore", response_model=ProductResponse)
     async def restore_product(product_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         existing = await _existing(product_id, include_deleted=True)

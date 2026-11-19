@@ -141,6 +141,22 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             raise HTTPException(status_code=404, detail="Project not found")
         return Response(status_code=204)
 
+    @router.post("/projects/{project_id}/archive", response_model=ProjectResponse)
+    async def archive_project(
+        project_id: str, _: bool = Depends(auth_dependency)
+    ) -> Union[Dict[str, Any], JSONResponse]:
+        await _existing(project_id)
+        try:
+            archived = await _call("delete_project", project_id, user_id=None)
+        except HTTPException as exc:
+            if exc.status_code == 409 and isinstance(exc.detail, dict):
+                # Keep the Task list structured through AgentOS's string error handler.
+                return JSONResponse(status_code=409, content={"detail": exc.detail})
+            raise
+        if not archived:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return await _existing(project_id, include_deleted=True)
+
     @router.post("/projects/{project_id}/restore", response_model=ProjectResponse)
     async def restore_project(project_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         existing = await _existing(project_id, include_deleted=True)
