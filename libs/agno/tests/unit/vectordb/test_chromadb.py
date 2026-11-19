@@ -1533,3 +1533,53 @@ async def test_async_upsert_runs_batch_on_worker_thread(chroma_db, sample_docume
             "_batch_operation ran on the asyncio main thread; the synchronous ChromaDB "
             "batch must be offloaded so the event loop stays responsive during async_upsert"
         )
+
+
+def _db_with_failing_lookup(mock_embedder, error: Exception) -> ChromaDb:
+    """A ChromaDb whose collection exists but whose read fails. No Chroma server needed."""
+    db = ChromaDb(collection="test_lookup_failure", path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
+    collection = MagicMock()
+    collection.get.side_effect = error
+    client = MagicMock()
+    client.get_collection.return_value = collection
+    db._client = client
+    return db
+
+
+def test_content_hash_exists_propagates_a_failed_lookup(mock_embedder):
+    # A failed lookup is not an absence. Answering False makes an infrastructure error
+    # indistinguishable from content that was never written.
+    db = _db_with_failing_lookup(mock_embedder, Exception("connection refused"))
+
+    with pytest.raises(Exception, match="connection refused"):
+        db.content_hash_exists("abc123")
+
+
+def test_upsert_does_not_write_when_the_existence_check_fails(mock_embedder):
+    # upsert() clears the previous chunks only when content_hash_exists says True, so a
+    # lookup failure read as False skips the delete and leaves the collection holding the
+    # old chunks and the new ones for the same content_hash.
+    db = _db_with_failing_lookup(mock_embedder, Exception("connection refused"))
+    db._delete_by_content_hash = MagicMock()
+    db._upsert = MagicMock()
+
+    with pytest.raises(Exception, match="connection refused"):
+        db.upsert("abc123", [Document(content="new chunk")])
+
+    db._delete_by_content_hash.assert_not_called()
+    db._upsert.assert_not_called()
+
+
+def test_content_hash_exists_keeps_the_chromadb_050_typeerror_shim(mock_embedder):
+    # The 0.5.0 workaround tests the message, so it is the one branch that has earned its
+    # False. Narrowing the outer handler must not take it with it.
+    db = _db_with_failing_lookup(mock_embedder, TypeError("object of type 'int' has no len()"))
+
+    assert db.content_hash_exists("abc123") is False
+
+
+def test_content_hash_exists_propagates_an_unrelated_typeerror(mock_embedder):
+    db = _db_with_failing_lookup(mock_embedder, TypeError("unrelated type failure"))
+
+    with pytest.raises(TypeError, match="unrelated type failure"):
+        db.content_hash_exists("abc123")
