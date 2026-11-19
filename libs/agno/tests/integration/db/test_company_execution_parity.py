@@ -4100,3 +4100,43 @@ async def test_finished_task_delete_needs_a_readable_ticket_and_keeps_the_sessio
     assert (await client.delete(path)).status_code == 204
     assert (await client.get(path, params={"include_deleted": True})).status_code == 404
     assert await _call(db, "get_session", saved["session_id"], SessionType.AGENT) is not None
+
+
+@pytest.mark.asyncio
+async def test_run_started_before_the_archive_refuses_task_delete(system, monkeypatch):
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+
+    client, db, worker, _, _ = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    loop = asyncio.get_running_loop()
+    started = []
+
+    async def start_run():
+        run_id = (await client.post(path + "/runs")).json()["run_id"]
+        claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+        assert claimed["id"] == run_id
+        started.append(run_id)
+
+    # The run starts after DELETE's first ticket check, which found no run, and before its archive.
+    cls = AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager
+    original = cls.delete_task
+    if cls is AsyncCompanyManager:
+
+        async def delete_task(self, *args, **kwargs):
+            await start_run()
+            return await original(self, *args, **kwargs)
+
+    else:
+
+        def delete_task(self, *args, **kwargs):
+            asyncio.run_coroutine_threadsafe(start_run(), loop).result(timeout=30)
+            return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, "delete_task", delete_task)
+    response = await client.delete(path)
+    assert response.status_code == 409, response.text
+    detail = f"Cancel the run with POST /company/runs/{started[0]}/cancel, then delete the Task"
+    assert response.json()["detail"] == detail
+    saved = (await client.get(path)).json()
+    assert saved["deleted_at"] is None and saved["status"] == "in_progress"

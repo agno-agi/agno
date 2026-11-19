@@ -998,5 +998,7 @@ async def test_product_delete_removes_its_summary_state(heartbeat, monkeypatch):
     assert await state.alist()
     app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        assert (await client.delete("/company/products/" + product["id"])).status_code == 204
+        path = "/company/products/" + product["id"]
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
     assert await state.alist() == []

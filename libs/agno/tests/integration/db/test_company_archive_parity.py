@@ -723,15 +723,15 @@ async def test_argless_storage_value_error_remains_validation_error(db, monkeypa
         assert response.status_code == 422, response.text
 
 
-async def delete_scenario(db, parent_type):
-    """A Product with an active Project holding one Backlog Task; returns the manager, records and the parent path."""
+async def delete_scenario(db, record_type):
+    """A Product with an active Project holding one Backlog Task; returns the manager, records and the record's path."""
     m = manager(db)
     product = await call(m.create, name="SDK")
     project = await call(m.create_project, product_id=product["id"], name="Release")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     task = await call(m.create_task, product_id=product["id"], title="Backlog", project_id=project["id"])
-    parent = product if parent_type == "product" else project
-    return m, product, project, task, "/company/" + parent_type + "s/" + parent["id"]
+    record = {"product": product, "project": project, "task": task}[record_type]
+    return m, product, project, task, "/company/" + record_type + "s/" + record["id"]
 
 
 @pytest.mark.asyncio
@@ -793,7 +793,7 @@ async def test_permanent_delete_refuses_archived_open_task_then_removes_every_ch
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parent_type", ["product", "project"])
+@pytest.mark.parametrize("parent_type", ["product", "project", "task"])
 async def test_failed_cleanup_leaves_an_archived_record_that_a_repeat_delete_finishes(db, monkeypatch, parent_type):
     import agno.company.files as files
 
@@ -817,13 +817,17 @@ async def test_failed_cleanup_leaves_an_archived_record_that_a_repeat_delete_fin
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parent_type", ["product", "project"])
+@pytest.mark.parametrize("parent_type", ["product", "project", "task"])
 async def test_record_restored_during_delete_is_kept_and_reported(db, monkeypatch, parent_type):
     import agno.company.files as files
 
-    m, product, project, _, path = await delete_scenario(db, parent_type)
+    m, product, project, task, path = await delete_scenario(db, parent_type)
     original = files._adelete_folders
-    restore, parent = (m.restore, product) if parent_type == "product" else (m.restore_project, project)
+    restore, parent = {
+        "product": (m.restore, product),
+        "project": (m.restore_project, project),
+        "task": (m.restore_task, task),
+    }[parent_type]
 
     async def restore_first(*args, **kwargs):
         await call(restore, parent["id"])
@@ -840,6 +844,18 @@ async def test_record_restored_during_delete_is_kept_and_reported(db, monkeypatc
         monkeypatch.setattr(files, "_adelete_folders", original)
         assert (await client.delete(path)).status_code == 204
         assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record_type", ["product", "project", "task"])
+async def test_archived_record_delete_then_repeat_returns_404(db, record_type):
+    _, _, _, _, path = await delete_scenario(db, record_type)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.post(path + "/archive")).status_code == 200
+        assert (await client.delete(path)).status_code == 204
+        assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+        assert (await client.delete(path)).status_code == 404
 
 
 @pytest.mark.asyncio

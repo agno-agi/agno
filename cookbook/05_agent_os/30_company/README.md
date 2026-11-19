@@ -624,6 +624,10 @@ own can still be mid-run. The body is `{"detail": {"message", "tasks"}}`, with
 Routine run does not block. To unblock a Task, restore it, let its run finish or
 cancel it, move it to Done or Cancelled, then delete again. An archived Task inside
 an archived Project or Product can be restored only after that parent is restored.
+Restoring an open Task is refused if its Project was completed or cancelled
+meanwhile; the Task then stays archived.
+Python callers using `CompanyManager.transition_task` can move a Task out of In
+progress while its run is executing; the route's run check does not apply to them.
 
 A single Task delete returns 409 only while its run is running or paused; the
 message names `POST /company/runs/{run_id}/cancel`. The Task's status otherwise

@@ -270,27 +270,28 @@ def get_tasks_router(
         existing = await _existing(task_id, include_deleted=True)
         queue = getattr(request.app.state, "queue_worker", None)
 
-        async def refuse_live_run() -> None:
+        async def refuse_live_run(task: Dict[str, Any]) -> None:
             # The ticket decides, not the Task's status: an archived Task's status can be stale.
-            if not existing.get("job_id") or queue is None:
+            if not task.get("job_id") or queue is None:
                 return
             try:
                 # A failed lookup must not read as "no ticket" and let the delete leave an executing run.
                 try:
-                    job = await queue.store.get_job(existing["job_id"], strict=True)
+                    job = await queue.store.get_job(task["job_id"], strict=True)
                 except TypeError:
-                    job = await queue.store.get_job(existing["job_id"])
+                    job = await queue.store.get_job(task["job_id"])
             except Exception:
                 raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
             if job is not None and job["status"] in HOLDING_STATUSES:
-                detail = f"Cancel the run with POST /company/runs/{existing['job_id']}/cancel, then delete the Task"
+                detail = f"Cancel the run with POST /company/runs/{task['job_id']}/cancel, then delete the Task"
                 raise HTTPException(status_code=409, detail=detail)
 
-        await refuse_live_run()
+        await refuse_live_run(existing)
         archived = existing.get("deleted_at") is None and await _call("delete_task", task_id, user_id=None)
         try:
-            # A queued run can start before the archive lands; once archived, no later run starts.
-            await refuse_live_run()
+            # A run can start before the archive lands; once archived, no later run starts.
+            # Read the Task again: a run started in between has a new job_id.
+            await refuse_live_run(await _existing(task_id, include_deleted=True))
         except HTTPException:
             if archived:
                 await _call("restore_task", task_id, user_id=None)

@@ -941,16 +941,23 @@ def test_permanent_delete_removes_the_files_of_what_it_deletes(system):
 
     admin = headers(["agent_os:admin"])
     assert system.client.delete(f"/company/tasks/{second}", headers=admin).status_code == 204
+    assert system.client.get(f"/company/tasks/{second}?include_deleted=true", headers=admin).status_code == 404
     assert stored(f"company/tasks/{second}") == []
     assert stored(f"company/tasks/{ids['task']}") == ["given.md"]
     # Deleting a Project removes its Tasks' folders; the other Product's are untouched.
     stray_project = manager.get_task(ids["stray"])["project_id"]
     assert system.client.delete(f"/company/projects/{stray_project}", headers=admin).status_code == 204
+    assert (
+        system.client.get(f"/company/projects/{stray_project}?include_deleted=true", headers=admin).status_code == 404
+    )
     assert stored(f"company/tasks/{ids['stray']}") == []
     assert stored(f"company/tasks/{ids['task']}") == ["given.md"]
     # Deleting a Product removes its pages and its Tasks' folders.
     assert "research.md" in stored(f"company/products/{ids['product']}/wiki")
     assert system.client.delete(f"/company/products/{ids['product']}", headers=admin).status_code == 204
+    assert (
+        system.client.get(f"/company/products/{ids['product']}?include_deleted=true", headers=admin).status_code == 404
+    )
     assert stored(f"company/products/{ids['product']}/wiki") == []
     assert stored(f"company/tasks/{ids['task']}") == []
     assert "research.md" in stored(f"company/products/{ids['other']}/wiki")
