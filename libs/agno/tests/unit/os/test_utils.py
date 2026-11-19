@@ -1,7 +1,7 @@
 """Unit tests for OS utility functions."""
 
 import io
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import pytest
@@ -77,6 +77,28 @@ def test_preserves_non_utc_timezone():
 
     # Should preserve the original timezone
     assert result == dt
+
+
+def test_adds_utc_to_offsetless_iso_string():
+    """Test that an ISO 8601 string without an offset is read as UTC, like every other branch."""
+    result = to_utc_datetime("2024-01-01T12:00:00")
+
+    assert result is not None
+    assert result.tzinfo == timezone.utc
+    assert result.hour == 12
+
+
+def test_iso_date_string_matches_date_object():
+    """Test that one instant spelled as a string and as a date produce the same value."""
+    assert to_utc_datetime("2024-01-01") == to_utc_datetime(date(2024, 1, 1))
+
+
+def test_preserves_non_utc_offset_in_iso_string():
+    """Test that an explicit offset on an ISO string is kept rather than flattened to UTC."""
+    result = to_utc_datetime("2024-01-01T12:00:00+05:30")
+
+    assert result is not None
+    assert result.utcoffset() == timedelta(hours=5, minutes=30)
 
 
 def test_handles_zero_timestamp():
