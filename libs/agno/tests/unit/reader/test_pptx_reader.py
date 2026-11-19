@@ -279,6 +279,51 @@ def test_pptx_reader_grouped_shapes(tmp_path):
     assert documents[0].content == "Slide 1:\nTop level text\nGrouped text\nNested group text"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("grouped", [False, True], ids=["slide", "group"])
+async def test_pptx_reader_extracts_table_text(tmp_path, use_async, grouped):
+    path = tmp_path / "table.pptx"
+    presentation = PptxPresentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    _add_textbox(slide.shapes, "Sales", 0)
+    table_shape = slide.shapes.add_table(2, 2, Emu(0), Emu(914400), Emu(1828800), Emu(914400))
+    table = table_shape.table
+    table.cell(0, 0).text = "Product"
+    table.cell(0, 1).text = "Revenue"
+    table.cell(1, 0).text = "Agno"
+    table.cell(1, 1).text = "100"
+    if grouped:
+        slide.shapes.add_group_shape([table_shape])
+    presentation.save(str(path))
+
+    reader = PPTXReader(chunk=False)
+    documents = await reader.async_read(path) if use_async else reader.read(path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Slide 1:\nSales\nProduct\tRevenue\nAgno\t100"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_pptx_reader_merged_table_cells(tmp_path, use_async):
+    path = tmp_path / "merged-table.pptx"
+    presentation = PptxPresentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    table = slide.shapes.add_table(3, 2, Emu(0), Emu(0), Emu(1828800), Emu(1371600)).table
+    table.cell(0, 0).merge(table.cell(0, 1))
+    table.cell(0, 0).text = "Quarterly report"
+    table.cell(1, 0).text = "Agno"
+    table.cell(1, 1).text = "100"
+    presentation.save(str(path))
+
+    reader = PPTXReader(chunk=False)
+    documents = await reader.async_read(path) if use_async else reader.read(path)
+
+    assert len(documents) == 1
+    assert documents[0].content == "Slide 1:\nQuarterly report\nAgno\t100"
+
+
 def test_pptx_reader_chunk_size_propagation():
     """Test that chunk_size is propagated to default chunking strategy"""
     from agno.knowledge.chunking.document import DocumentChunking
