@@ -106,3 +106,30 @@ def test_query_csv_file_path_injection_is_neutralized(tmp_path):
 
     # The path is bound as a parameter, so the injected statement never runs
     assert connection.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 1
+
+
+def test_duplicate_file_names_are_rejected(tmp_path):
+    """Files are addressed by stem, so two of them cannot share a name."""
+    first = tmp_path / "2024" / "sales.csv"
+    second = tmp_path / "2025" / "sales.csv"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("year,amount\n2024,10\n", encoding="utf-8")
+    second.write_text("year,amount\n2025,99\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Duplicate csv file name"):
+        CsvTools(csvs=[first, second])
+
+
+def test_distinct_file_names_are_accepted(tmp_path):
+    """The check only rejects names that collide."""
+    first = tmp_path / "sales.csv"
+    second = tmp_path / "returns.csv"
+    first.write_text("amount\n1\n", encoding="utf-8")
+    second.write_text("amount\n2\n", encoding="utf-8")
+
+    tools = CsvTools(csvs=[first, second])
+
+    assert tools.list_csv_files() == '["sales", "returns"]'
+    assert "1" in tools.read_csv_file("sales")
+    assert "2" in tools.read_csv_file("returns")
