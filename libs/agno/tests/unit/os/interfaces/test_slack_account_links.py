@@ -14,7 +14,6 @@ from agno.os.interfaces.slack.hitl import _OTHER_ACCOUNT_MESSAGE, _decider_conte
 from agno.os.interfaces.slack.ids import ACTION_LINK_ACCOUNT
 from agno.os.interfaces.slack.links import MemberLink, PlatformLinks, PlatformUnavailable
 from agno.os.interfaces.slack.security import (
-    _EMAIL_HIDDEN,
     _LINKING_UNAVAILABLE,
     _OWNER_NOT_LINKED,
     authorize_linked,
@@ -244,20 +243,18 @@ async def test_a_refusal_linking_cannot_fix_gets_the_reason_without_a_button():
 
 
 @pytest.mark.asyncio
-async def test_a_member_whose_slack_email_is_hidden_is_told_why_instead_of_a_link_that_would_fail():
-    ctx = _ctx(_not_linked())
+async def test_a_member_the_platform_cannot_link_is_told_why_without_a_button():
+    reason = "Slack does not share your email with this app, so your Agno account can't be linked."
+    ctx = _ctx(MemberLink(status="not_linked", reason=reason))
     client = _client()
     client.users_info.return_value = {"ok": True, "user": {"id": "U123", "profile": {"display_name": "Test User"}}}
-    with (
-        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
-        patch("agno.os.interfaces.slack.security.log_warning") as warn,
-    ):
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), client, ctx)
-        await handle_message(make_event_body(ts="1700000000.000200", event_id="Ev2"), client, ctx)
     assert not run_event.called
+    # Without the scope no email is sent, and the platform decides whether a link can work
+    assert ctx.links.resolve_slack_member.call_args.kwargs["member_email"] is None
     kwargs = client.chat_postEphemeral.call_args.kwargs
-    assert kwargs["text"] == f"Not run: {_EMAIL_HIDDEN}" and kwargs.get("blocks") is None
-    warn.assert_called_once()
+    assert kwargs["text"] == f"Not run: {reason}" and kwargs.get("blocks") is None
 
 
 @pytest.mark.asyncio
