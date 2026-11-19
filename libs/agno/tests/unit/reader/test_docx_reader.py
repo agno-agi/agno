@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from docx import Document as RealDocument
 
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.docx_reader import DocxReader
@@ -11,14 +12,10 @@ from agno.knowledge.reader.docx_reader import DocxReader
 
 @pytest.fixture
 def mock_docx():
-    """Mock a DOCX document with some paragraphs"""
-    mock_para1 = Mock()
-    mock_para1.text = "First paragraph"
-    mock_para2 = Mock()
-    mock_para2.text = "Second paragraph"
-
-    mock_doc = Mock()
-    mock_doc.paragraphs = [mock_para1, mock_para2]
+    """Provide a DOCX document with real paragraph and XML interfaces."""
+    mock_doc = RealDocument()
+    mock_doc.add_paragraph("First paragraph")
+    mock_doc.add_paragraph("Second paragraph")
     return mock_doc
 
 
@@ -53,10 +50,8 @@ async def test_docx_reader_async_read_file(mock_docx):
 
 def test_docx_reader_with_chunking():
     """Test reading a DOCX file with chunking enabled"""
-    mock_doc = Mock()
-    mock_para = Mock()
-    mock_para.text = "Test content"
-    mock_doc.paragraphs = [mock_para]
+    mock_doc = RealDocument()
+    mock_doc.add_paragraph("Test content")
 
     chunked_docs = [
         Document(name="test", id="test_1", content="Chunk 1"),
@@ -132,10 +127,8 @@ async def test_async_docx_processing(mock_docx):
 @pytest.mark.asyncio
 async def test_docx_reader_async_with_chunking():
     """Test async reading with chunking enabled"""
-    mock_doc = Mock()
-    mock_para = Mock()
-    mock_para.text = "Test content"
-    mock_doc.paragraphs = [mock_para]
+    mock_doc = RealDocument()
+    mock_doc.add_paragraph("Test content")
 
     # Create a chunked document
     chunked_docs = [
@@ -192,3 +185,28 @@ def test_docx_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_docx_reader_reads_tables():
+    """Test reading a real DOCX file with tables and paragraphs"""
+    doc = RealDocument()
+    doc.add_paragraph("Before table")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Product"
+    table.cell(0, 1).text = "Revenue"
+    table.cell(1, 0).text = "Agno"
+    table.cell(1, 1).text = "100"
+    doc.add_paragraph("After table")
+
+    source = BytesIO()
+    doc.save(source)
+    source.seek(0)
+
+    reader = DocxReader(chunk=False)
+    documents = reader.read(source)
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "Before table" in content
+    assert "Product | Revenue" in content
+    assert "Agno | 100" in content
+    assert "After table" in content
