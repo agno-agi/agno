@@ -405,7 +405,7 @@ def get_model_from_id(model_id: str):
     elif model_id.startswith("google:"):
         return Gemini(id=model_id.split("google:")[1])
     else:
-        return OpenAIChat(id="gpt-4o")
+        return OpenAIChat()
 
 
 def get_model_with_provider(model_name: str):

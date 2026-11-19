@@ -441,3 +441,20 @@ class TestAsyncGetUserMemories:
         mm = MemoryManager()
         result = await mm.aget_user_memories()
         assert result == []
+
+
+class TestDefaultModelFallback:
+    """The fallback model must be the provider's current default.
+
+    The previous hardcoded ids are being retired by the provider:
+    ``gpt-4o`` Jan 14, 2027 — so ``MemoryManager().get_model()`` must follow
+    ``OpenAIChat``'s own default instead of pinning a retired id (#11756).
+    """
+
+    def test_get_model_falls_back_to_the_provider_default(self):
+        from agno.models.openai import OpenAIChat
+
+        mm = MemoryManager()
+        model = mm.get_model()
+        assert isinstance(model, OpenAIChat)
+        assert model.id == OpenAIChat().id

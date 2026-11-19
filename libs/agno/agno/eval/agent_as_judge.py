@@ -238,7 +238,7 @@ class AgentAsJudgeEval(BaseEval):
             try:
                 from agno.models.openai import OpenAIChat
 
-                model = OpenAIChat(id="gpt-5-mini")
+                model = OpenAIChat()
             except (ModuleNotFoundError, ImportError) as e:
                 logger.exception(e)
                 raise EvalError(

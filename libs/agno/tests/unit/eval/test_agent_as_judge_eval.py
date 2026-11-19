@@ -601,3 +601,19 @@ async def test_arun_logs_distinct_run_id_per_execution():
     assert len(runs) == 2
     assert first.run_id != second.run_id
     assert {run.run_id for run in runs} == {first.run_id, second.run_id}
+
+
+def test_default_evaluator_uses_the_provider_default_model():
+    """The default judge model must be the provider's current default.
+
+    The previous hardcoded ``gpt-5-mini`` is being retired by the provider
+    (Dec 11, 2026), so a judge built without ``model=`` must follow
+    ``OpenAIChat``'s own default instead of pinning a retired id (#11756).
+    """
+    from agno.models.openai import OpenAIChat
+
+    eval = AgentAsJudgeEval(criteria="Response must be accurate", scoring_strategy="numeric")
+    agent = eval.get_evaluator_agent()
+
+    assert isinstance(agent.model, OpenAIChat)
+    assert agent.model.id == OpenAIChat().id
