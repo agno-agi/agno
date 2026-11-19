@@ -1,4 +1,6 @@
-"""Tests for RecursiveChunking at the end of a document."""
+"""Tests for RecursiveChunking preserving document content."""
+
+import pytest
 
 from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.document.base import Document
@@ -25,3 +27,19 @@ def test_last_chunk_ends_the_document_and_repeats_no_earlier_chunk():
     assert content.endswith(chunks[-1].content)
     for position, chunk in enumerate(chunks):
         assert not any(chunk.content in earlier.content for earlier in chunks[:position])
+
+
+@pytest.mark.parametrize("separator", ["\n", "."])
+@pytest.mark.parametrize("overlap", [50, 100])
+def test_short_natural_chunk_does_not_skip_content(separator, overlap):
+    """A short heading must not cause the progress guard to skip the following text."""
+    words = [f"word{index:03d}" for index in range(300)]
+    content = f"Intro{separator}" + " ".join(words)
+    strategy = RecursiveChunking(chunk_size=1000, overlap=overlap)
+
+    chunks = strategy.chunk(Document(content=content))
+
+    assert all(any(word in chunk.content for chunk in chunks) for word in words)
+    assert all(0 < len(chunk.content) <= strategy.chunk_size for chunk in chunks)
+    assert chunks[0].content.startswith("Intro")
+    assert content.endswith(chunks[-1].content)
