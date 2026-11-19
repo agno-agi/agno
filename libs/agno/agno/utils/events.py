@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Union
 
-from agno.media import Audio, Image
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
@@ -604,8 +604,16 @@ def create_team_tool_call_started_event(
 
 
 def create_tool_call_completed_event(
-    from_run_response: RunOutput, tool: ToolExecution, content: Optional[Any] = None
+    from_run_response: RunOutput,
+    tool: ToolExecution,
+    content: Optional[Any] = None,
+    images: Optional[List[Image]] = None,
+    videos: Optional[List[Video]] = None,
+    audio: Optional[List[Audio]] = None,
+    files: Optional[List[File]] = None,
 ) -> ToolCallCompletedEvent:
+    # The media is what this tool call produced. The run's media accumulates across
+    # tool calls, so passing it here would store every earlier image in every event.
     return ToolCallCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
@@ -613,15 +621,21 @@ def create_tool_call_completed_event(
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
-        images=from_run_response.images,
-        videos=from_run_response.videos,
-        audio=from_run_response.audio,
-        files=from_run_response.files,
+        images=images,
+        videos=videos,
+        audio=audio,
+        files=files,
     )
 
 
 def create_team_tool_call_completed_event(
-    from_run_response: TeamRunOutput, tool: ToolExecution, content: Optional[Any] = None
+    from_run_response: TeamRunOutput,
+    tool: ToolExecution,
+    content: Optional[Any] = None,
+    images: Optional[List[Image]] = None,
+    videos: Optional[List[Video]] = None,
+    audio: Optional[List[Audio]] = None,
+    files: Optional[List[File]] = None,
 ) -> TeamToolCallCompletedEvent:
     return TeamToolCallCompletedEvent(
         session_id=from_run_response.session_id,
@@ -630,10 +644,10 @@ def create_team_tool_call_completed_event(
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
-        images=from_run_response.images,
-        videos=from_run_response.videos,
-        audio=from_run_response.audio,
-        files=from_run_response.files,
+        images=images,
+        videos=videos,
+        audio=audio,
+        files=files,
     )
 
 
