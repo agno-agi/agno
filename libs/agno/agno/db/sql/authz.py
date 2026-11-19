@@ -85,6 +85,17 @@ def get_policies(engine: Engine, table: Any, roles: List[str]) -> List[Tuple[str
     return out
 
 
+def get_policies_for_resources(engine: Engine, table: Any, resources: List[str]) -> List[Tuple[str, str, str, str]]:
+    """All (role, resource, action, effect) rows on ``resources``, whichever role holds them."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+
 def get_role_policies(engine: Engine, table: Any, role: str) -> List[Tuple[str, str, str]]:
     """One role's (resource, action, effect) rows."""
     with engine.connect() as conn:
@@ -594,6 +605,18 @@ async def aget_policies(engine: "AsyncEngine", table: Any, roles: List[str]) -> 
             )
             out.extend((r[0], r[1], r[2], r[3]) for r in rows)
     return out
+
+
+async def aget_policies_for_resources(
+    engine: "AsyncEngine", table: Any, resources: List[str]
+) -> List[Tuple[str, str, str, str]]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(table.c.role, table.c.resource, table.c.action, table.c.effect).where(
+                table.c.resource.in_(resources)
+            )
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
 
 
 async def aget_role_policies(engine: "AsyncEngine", table: Any, role: str) -> List[Tuple[str, str, str]]:

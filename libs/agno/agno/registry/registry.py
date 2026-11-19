@@ -151,6 +151,8 @@ class Registry:
     # Served framework components may be runnable without being building blocks.
     # IDs keep that boundary intact when a caller supplies a per-run copy.
     _excluded_component_ids: Set[str] = field(default_factory=lambda: set(RESERVED_MANAGER_IDS), init=False, repr=False)
+    # Mini Agent, set by the AgentOS that built it. It executes Company Routines and Tasks and is in no list above.
+    _mini_agent: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for component in [*self.agents, *self.teams, *self.workflows]:
@@ -449,6 +451,10 @@ class Registry:
             # the fallback for a flat slot owned by a direct registration of an
             # object a Toolkit also holds -- provenance follows the object.
             source_toolkit = source_owner if source_owner is not None else toolkit_by_identity.get(id(source))
+            # The per-run copy records this toolkit's current name: the saved
+            # one can be stale, and a stale MCP default name holds the old
+            # command's arguments.
+            func.bound_toolkit = source_toolkit
             if not resolved_as_recorded:
                 source_toolkit = None
             if source_toolkit is not None:

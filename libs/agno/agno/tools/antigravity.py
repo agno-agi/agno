@@ -13,6 +13,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_AGENT = "antigravity-preview-09-2026"
 INLINE_SOURCE_MAX_BYTES = 75 * 1024  # API limit for inline source content per file
 
 DEFAULT_INSTRUCTIONS = dedent(
@@ -46,7 +47,7 @@ class AntigravityTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         base_url: str = DEFAULT_BASE_URL,
-        agent: str = "antigravity-preview-05-2026",
+        agent: str = DEFAULT_AGENT,
         default_sources: Optional[List[Dict[str, Any]]] = None,
         persistent: bool = True,
         timeout: int = 600,
@@ -78,7 +79,7 @@ class AntigravityTools(Toolkit):
 
         if agent_directory:
             # Validate conflicting args before touching the filesystem.
-            if agent != "antigravity-preview-05-2026":
+            if agent != DEFAULT_AGENT:
                 raise ValueError("agent_directory conflicts with explicit `agent=` argument")
             if default_sources:
                 raise ValueError("agent_directory conflicts with explicit `default_sources=` argument")

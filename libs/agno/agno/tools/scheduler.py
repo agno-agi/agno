@@ -40,7 +40,7 @@ def _manager_member_refusal(endpoint: str) -> Optional[str]:
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
-        return "Manager specialists are internal. Schedule OS Manager instead."
+        return "Manager specialists are internal. Schedule Super Agent instead."
     return None
 
 

@@ -2286,6 +2286,35 @@ def test_manual_compact_with_no_finished_run_stays_in_the_session_metrics():
     )
 
 
+def test_manual_compact_in_a_forked_session_skips_the_runs_it_copied():
+    """A run copied into a forked session is counted in the session it was made in, so the fold's usage is kept in
+    the session's compaction metrics instead of on the copy."""
+    from agno.agent import Agent
+    from agno.db.base import SessionType
+
+    db = _db()
+    agent = Agent(
+        model=_RecordingModel.build(),
+        db=db,
+        session_id="s",
+        add_history_to_context=True,
+        compaction=Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=_MeteredSummarizer()),
+    )
+    for i in range(4):
+        agent.run(f"question number {i}")
+    copied = db.get_session(session_id="s", session_type=SessionType.AGENT).runs
+    for index, run in enumerate(copied):
+        run.forked_from_session_id = "source"
+        db.upsert_run(run=run, session_id="s", run_index=index)
+
+    result = agent.compact(session_id="s")
+
+    stored = db.get_session(session_id="s", session_type=SessionType.AGENT)
+    assert result.compacted
+    assert [run.metrics.total_tokens for run in stored.runs] == [run.metrics.total_tokens for run in copied]
+    assert stored.session_data["compaction_metrics"]["total_tokens"] == 740
+
+
 def test_a_declined_manual_compact_reports_no_usage():
     """No summarizer call was made, so there is nothing to report."""
     from agno.agent import Agent

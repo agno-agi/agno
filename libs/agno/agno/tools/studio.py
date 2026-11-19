@@ -87,6 +87,13 @@ from agno.tools.studio_schema import WorkflowStepSpec, error_result, ok_result
 from agno.tools.toolkit import Toolkit
 from agno.utils.live_sequence import LiveSequence
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.models.json_schema_model import UnsupportedJsonSchemaError, json_schema_to_model
+from agno.utils.models.schema_utils import (
+    is_object_schema,
+    json_schema_error,
+    json_schema_response_format,
+    unwrap_json_schema_response_format,
+)
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
@@ -103,6 +110,32 @@ Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
 
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
+
+
+def _clean_id(value: Any) -> Any:
+    """An id as it was meant: without surrounding whitespace or invisible format characters.
+
+    Models sometimes send an id with a trailing space or a stray direction mark. Nothing else is
+    changed, so an id that still does not resolve is reported as sent.
+    """
+    import unicodedata
+
+    if not isinstance(value, str):
+        return value
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Cf").strip()
+
+
+def _not_found(identifier: str, noun: str = "Component") -> str:
+    """Not-found message naming the id, and the stray characters when it has any."""
+    import re
+
+    message = f"{noun} not found: {identifier}"
+    clean = re.match(r"[A-Za-z0-9_.-]+", identifier)
+    stray = identifier[clean.end() :] if clean is not None else ""
+    # A display name may hold spaces and words. Anything else after the id is noise from the caller.
+    if re.search(r"[^A-Za-z0-9 _.-]", stray):
+        message += f" (the id sent has {stray!r} after {clean.group(0)!r}; send it exactly as listed)"  # type: ignore[union-attr]
+    return message
 
 
 def _refuse_external_agent(component: Any, label: str) -> None:
@@ -1614,11 +1647,44 @@ class StudioTools(Toolkit):
             # catch an adapter that lacks the component catalog answers with a
             # raw traceback instead of the capability envelope.
             return None, None, self._error_from_exception(exc, "Failed to read component")
-        if row is None:
-            return None, None, error_result("component_not_found", f"Component not found: {identifier}")
-        if not self._visible_to(row, actor):
-            return None, None, error_result("component_not_found", f"Component not found: {identifier}")
+        if row is None or not self._visible_to(row, actor):
+            return (
+                None,
+                None,
+                error_result("component_not_found", _not_found(identifier) + self._meant(identifier, actor)),
+            )
         return row, resolved_id, None
+
+    def _meant_id(self, identifier: str, actor: Optional[str]) -> Optional[str]:
+        """The id that stray text follows, when it names a component the caller can see.
+
+        A model sometimes sends an id followed by a stray word ("tone-checker trouble"). A component the
+        caller cannot see is never returned.
+        """
+        import re
+
+        leading = re.match(r"[A-Za-z0-9_.-]+", identifier)
+        if leading is None or leading.group(0) == identifier:
+            return None
+        candidate = leading.group(0)
+        code_defined = any(
+            getattr(component, "id", None) == candidate
+            for components in (self._iter_agents(), self._iter_teams(), self._iter_workflows())
+            for component in components
+        )
+        if not code_defined:
+            try:
+                row = self.db.get_component(candidate) if self.db is not None else None
+            except NotImplementedError:
+                row = None
+            if row is None or not self._visible_to(row, actor):
+                return None
+        return candidate
+
+    def _meant(self, identifier: str, actor: Optional[str]) -> str:
+        """The hint a not-found error ends with when stray text follows a real id. Writes are not guessed."""
+        candidate = self._meant_id(identifier, actor)
+        return f" Did you mean {candidate!r}? Send exactly that id." if candidate is not None else ""
 
     @classmethod
     def _step_config_to_spec(cls, step: Dict[str, Any]) -> Dict[str, Any]:
@@ -1752,11 +1818,17 @@ class StudioTools(Toolkit):
                 view["learning"] = True
             schema = config.get("output_schema")
             # A registry-referenced schema is stored as its class name (a
-            # string); an inline JSON schema stays a dict and has no name.
+            # string). An inline one is shown as plain JSON Schema only when
+            # rewrapping reproduces the stored format, so passing the view back
+            # to an edit never drops its name.
             if isinstance(schema, str) and schema:
                 view["output_schema_name"] = schema
-            elif isinstance(schema, dict) and schema.get("name"):
-                view["output_schema_name"] = schema.get("name")
+            elif isinstance(schema, dict):
+                inline = unwrap_json_schema_response_format(schema)
+                if inline is not None and json_schema_response_format(inline.schema) == schema:
+                    view["output_schema"] = inline.schema
+                else:
+                    view["output_schema"] = schema
             reasoning_model = config.get("reasoning_model")
             if isinstance(reasoning_model, dict) and reasoning_model.get("id"):
                 view["reasoning_model_id"] = reasoning_model.get("id")
@@ -2006,7 +2078,8 @@ class StudioTools(Toolkit):
         edited is what you read. Call before every edit.
 
         Args:
-            component_id (str): Exact id, or an exact display name.
+            component_id (str): Exact id, or an exact display name. An id followed
+                by stray text reads the component the id names, with a warning.
             version (Optional[int]): Exact stored version; omit for the latest.
 
         Returns:
@@ -2016,6 +2089,24 @@ class StudioTools(Toolkit):
             steps, context flags). 'tools' lists exactly what is stored: a
             single function stays a single function, never its whole toolkit.
         """
+        component_id = _clean_id(component_id)
+        result = self._read_component(component_id, version, _agno_run_context)
+        meant = self._meant_id(component_id, _actor_id(_agno_run_context))
+        if meant is not None and '"component_not_found"' in result:
+            # A read is safe to resolve: the caller may already read this component, and the result
+            # carries the real id for whatever it does next.
+            retried = json.loads(self._read_component(meant, version, _agno_run_context))
+            if retried.get("ok"):
+                retried.setdefault("warnings", []).append(
+                    f"Read {meant!r}. The id sent was {component_id!r}; send {meant!r} from here on."
+                )
+                return json.dumps(retried)
+        return result
+
+    def _read_component(
+        self, component_id: str, version: Optional[int], _agno_run_context: Optional[RunContext]
+    ) -> str:
+        """Read one component by exact id or exact display name."""
         version = _version_or_latest(version)
         actor = _actor_id(_agno_run_context)
         code_tiers = (
@@ -2114,6 +2205,7 @@ class StudioTools(Toolkit):
             label, created_at, is_current}. Versions are immutable and never
             renumbered; deleted drafts leave a gap.
         """
+        component_id = _clean_id(component_id)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
             return err
@@ -2166,6 +2258,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -2235,6 +2328,17 @@ class StudioTools(Toolkit):
                 if err is not None:
                     return err
                 component.output_schema = schema
+            replaced_keys.add("output_schema")
+        if output_schema is not None:
+            if output_schema_name:
+                return error_result("invalid_request", "pass output_schema or output_schema_name, not both")
+            if not output_schema:
+                component.output_schema = None
+            else:
+                inline, schema_err = _inline_output_schema(output_schema)
+                if schema_err is not None:
+                    return schema_err
+                component.output_schema = inline
             replaced_keys.add("output_schema")
         if reasoning_model_id is not None:
             if reasoning_model_id == "":
@@ -2352,6 +2456,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -2385,6 +2490,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (bool): Show the agent the current date and time. Default True.
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; not with output_schema_name.
             reasoning_model_id (Optional[str]): Exact model id used for reasoning.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 agent to that shared learning machine.
@@ -2436,6 +2542,7 @@ class StudioTools(Toolkit):
                 tool_call_limit=tool_call_limit,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
@@ -2472,6 +2579,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2503,6 +2611,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (bool): Show the current date and time. Default True.
             knowledge_name (Optional[str]): Exact name from list_knowledge.
             output_schema_name (Optional[str]): Exact name from list_schemas.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; not with output_schema_name.
             learning_name (Optional[str]): Exact name from list_learning; wires the
                 team to that shared learning machine.
             enable_learning (Optional[bool]): Give the team the default learning
@@ -2576,6 +2685,7 @@ class StudioTools(Toolkit):
                 additional_context=additional_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
                 metadata=metadata,
@@ -2971,6 +3081,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -3005,6 +3116,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (Optional[bool]): Date and time in context.
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; {} detaches.
             reasoning_model_id (Optional[str]): Reasoning model id; "" detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             enable_learning (Optional[bool]): True gives the default learning machine
@@ -3022,6 +3134,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        agent_id = _clean_id(agent_id)
         warnings: List[str] = []
 
         def mutate(agent, replaced_keys):
@@ -3046,6 +3159,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 reasoning_model_id=reasoning_model_id,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
@@ -3075,6 +3189,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -3102,6 +3217,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context (Optional[bool]): Date and time in context.
             knowledge_name (Optional[str]): Exact name from list_knowledge; "" detaches.
             output_schema_name (Optional[str]): Exact name from list_schemas; "" detaches.
+            output_schema (Optional[Dict]): Inline JSON Schema, object root; {} detaches.
             learning_name (Optional[str]): Exact name from list_learning; "" detaches.
             enable_learning (Optional[bool]): True gives the default learning machine
                 unless one is already wired (kept, with a warning); False turns
@@ -3117,6 +3233,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
 
+        team_id = _clean_id(team_id)
         warnings: List[str] = []
 
         def mutate(team, replaced_keys):
@@ -3172,6 +3289,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
                 knowledge_name=knowledge_name,
                 output_schema_name=output_schema_name,
+                output_schema=output_schema,
                 learning_name=learning_name,
                 enable_learning=enable_learning,
                 metadata=metadata,
@@ -3210,6 +3328,8 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id, component_type, version|draft_version, stage}.
         """
+
+        workflow_id = _clean_id(workflow_id)
 
         def mutate(workflow, replaced_keys):
             if name is not None:
@@ -3290,6 +3410,7 @@ class StudioTools(Toolkit):
         # `version` names the draft to publish, so 0 reads as omitted. The
         # expected_current_version guard beside it does NOT: 0 is its "nothing is
         # live yet" spelling and stays a guard.
+        component_id = _clean_id(component_id)
         coerced_version = _version_or_latest(version)
         # This one moves the live pointer, so a caller whose argument was
         # reinterpreted hears about it on the envelope, not only in a debug log.
@@ -3310,7 +3431,7 @@ class StudioTools(Toolkit):
         try:
             configs = self.db.list_configs(component_id, include_config=False)
             if not configs:
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             target = version
             already_published = False
             if target is None:
@@ -3416,6 +3537,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id, version}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3461,7 +3583,7 @@ class StudioTools(Toolkit):
         except NotImplementedError:
             return None
         if row is None:
-            return error_result("component_not_found", f"Component not found: {component_id}")
+            return error_result("component_not_found", _not_found(component_id))
         return None
 
     def _redact_dependents(self, component_id: str, actor: Optional[str], verb: str) -> str:
@@ -3502,6 +3624,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id, version}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3557,6 +3680,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3570,7 +3694,7 @@ class StudioTools(Toolkit):
                     # An archived row is withdrawn from every other user, so it is
                     # never visible across owners: the refusal is the plain 404.
                     if not self._visible_to(archived_row, actor):
-                        return error_result("component_not_found", f"Component not found: {component_id}")
+                        return error_result("component_not_found", _not_found(component_id))
                     return ok_result("already_archived", id=component_id)
                 try:
                     resolved = None
@@ -3587,7 +3711,7 @@ class StudioTools(Toolkit):
                         "invalid_request",
                         f"Archive requires the exact id: '{component_id}' resolves to '{resolved}'.",
                     )
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             denied = self._check_component_access(component_id, _actor_id(_agno_run_context), "archive")
             if denied is not None:
                 return self._denied_error(denied)
@@ -3621,7 +3745,7 @@ class StudioTools(Toolkit):
                 cascade_stats=cascade_stats,
             )
             if not archived:
-                return error_result("component_not_found", f"Component not found: {component_id}")
+                return error_result("component_not_found", _not_found(component_id))
             warnings: List[str] = []
             disabled = cascade_stats.get("schedules_disabled", 0)
             if disabled:
@@ -3652,6 +3776,7 @@ class StudioTools(Toolkit):
         Returns:
             str: StudioResult JSON; data is {id}.
         """
+        component_id = _clean_id(component_id)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3670,7 +3795,7 @@ class StudioTools(Toolkit):
                 return self._denied_error(denied)
             if self.db.get_component(component_id, user_id=actor) is not None:
                 return error_result("invalid_request", f"Component is not archived: {component_id}")
-            return error_result("component_not_found", f"Component not found: {component_id}")
+            return error_result("component_not_found", _not_found(component_id))
         except Exception as e:
             return self._error_from_exception(e, "Failed to restore component")
 
@@ -3696,6 +3821,7 @@ class StudioTools(Toolkit):
             valid: true} on success; validation_failed carries the exact
             problem otherwise.
         """
+        component_id = _clean_id(component_id)
         version = _version_or_latest(version)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
@@ -3825,7 +3951,7 @@ class StudioTools(Toolkit):
         require_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not self._pin_allowed(resolved_id, version, row, actor):
-            return error_result("component_not_found", f"Component not found: {identifier}")
+            return error_result("component_not_found", _not_found(identifier))
         # The preview dispatches the component directly rather than through the
         # runner's run tools, so it carries the same dispatch lineage and
         # refusals itself -- otherwise a pinned version would be the one door
@@ -3849,6 +3975,10 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        try:
+            self._runner_tools._refuse_sandboxed_agent_in_task_run(component)
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         sub_run_id = self._runner_tools._registered_sub_run_id(run_context)
         try:
             response = component.run(
@@ -3904,7 +4034,7 @@ class StudioTools(Toolkit):
         await arequire_permission(f"{component_type}s", "run", resolved_id, run_context)
         actor = _actor_id(run_context)
         if not await asyncio.to_thread(self._pin_allowed, resolved_id, version, row, actor):
-            return error_result("component_not_found", f"Component not found: {identifier}")
+            return error_result("component_not_found", _not_found(identifier))
         # The preview dispatches the component directly rather than through the
         # runner's run tools, so it carries the same dispatch lineage and
         # refusals itself -- otherwise a pinned version would be the one door
@@ -3930,6 +4060,10 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        try:
+            self._runner_tools._refuse_sandboxed_agent_in_task_run(component)
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         sub_run_id = await self._runner_tools._aregistered_sub_run_id(run_context)
         try:
             response = await component.arun(
@@ -4105,6 +4239,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -4131,6 +4266,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
             enable_learning=enable_learning,
@@ -4157,6 +4293,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: bool = True,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -4181,6 +4318,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             learning_name=learning_name,
             enable_learning=enable_learning,
             metadata=metadata,
@@ -4229,6 +4367,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         reasoning_model_id: Optional[str] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
@@ -4256,6 +4395,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             reasoning_model_id=reasoning_model_id,
             learning_name=learning_name,
             enable_learning=enable_learning,
@@ -4283,6 +4423,7 @@ class StudioTools(Toolkit):
         add_datetime_to_context: Optional[bool] = None,
         knowledge_name: Optional[str] = None,
         output_schema_name: Optional[str] = None,
+        output_schema: Optional[dict] = None,
         learning_name: Optional[str] = None,
         enable_learning: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -4308,6 +4449,7 @@ class StudioTools(Toolkit):
             add_datetime_to_context=add_datetime_to_context,
             knowledge_name=knowledge_name,
             output_schema_name=output_schema_name,
+            output_schema=output_schema,
             learning_name=learning_name,
             enable_learning=enable_learning,
             metadata=metadata,
@@ -4499,6 +4641,7 @@ class StudioTools(Toolkit):
             str: StudioResult JSON; data carries {id, name, cron, target_type,
             target_id, endpoint, timezone, enabled, next_run_at, runs_as}.
         """
+        target_id = _clean_id(target_id)
         from agno.db.schemas.scheduler import build_run_endpoint
 
         actor = _actor_id(_agno_run_context)
@@ -5736,6 +5879,41 @@ def _component_type(component: Component) -> Any:
 # declaration it never touched -- and quietly lift the dispatch refusal that
 # declaration causes -- so edits carry them forward verbatim.
 _UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
+
+
+def _inline_output_schema(output_schema: Dict[str, Any]) -> tuple:
+    """(canonical output_schema dict, error) for an inline JSON Schema; an
+    already-wrapped response format is unwrapped and rewrapped canonically."""
+    wrapped = unwrap_json_schema_response_format(output_schema)
+    if wrapped is not None:
+        nested = output_schema.get("json_schema")
+        if "strict" in (nested if isinstance(nested, dict) else output_schema):
+            # A loaded schema runs strict or not per the model's strict_output, so a stored flag would do nothing
+            return None, error_result(
+                "invalid_request",
+                "output_schema cannot set strict; strict mode is the model's strict_output setting",
+            )
+    schema = wrapped.schema if wrapped is not None else output_schema
+    if not is_object_schema(schema):
+        return None, error_result(
+            "invalid_request",
+            f"output_schema must be a JSON Schema whose root type is object (got type {schema.get('type')!r})",
+        )
+    try:
+        schema_error = json_schema_error(schema)
+    except ImportError:
+        # jsonschema ships with the os extra; without it only the object root is checked
+        schema_error = None
+    if schema_error is not None:
+        return None, error_result("invalid_request", f"output_schema is not a valid JSON Schema: {schema_error}")
+    try:
+        # Stored agents load the schema as a Pydantic model; refuse one that cannot become one
+        json_schema_to_model(schema, name=wrapped.name if wrapped is not None else None)
+    except UnsupportedJsonSchemaError as e:
+        return None, error_result("invalid_request", f"output_schema is not supported: {e}")
+    if wrapped is None:
+        return json_schema_response_format(schema), None
+    return json_schema_response_format(schema, name=wrapped.name), None
 
 
 def _shared_machine_disclosures(learning_name: str, machine: Any, component: Any) -> List[str]:

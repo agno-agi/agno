@@ -246,7 +246,10 @@ class FileTools(Toolkit):
             contents = file_path.read_text(encoding=encoding)
             if len(contents) > self.max_file_length:
                 return "Error reading file: file too long. Use read_file_chunk instead"
-            if len(contents.split(self.line_separator)) > self.max_file_lines:
+            lines = contents.split(self.line_separator)
+            # A trailing separator terminates the last line rather than adding a line.
+            line_count = len(lines) - 1 if lines and lines[-1] == "" else len(lines)
+            if line_count > self.max_file_lines:
                 return "Error reading file: file too long. Use read_file_chunk instead"
 
             return str(contents)
