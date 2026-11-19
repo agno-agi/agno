@@ -25,7 +25,7 @@ from agno.models.google import GeminiInteractions
 
 agent_reuse = Agent(
     model=GeminiInteractions(
-        agent="antigravity-preview-05-2026",
+        agent="antigravity-preview-09-2026",
         environment="env_xxxxxxxx",
     ),
     markdown=True,
@@ -39,7 +39,7 @@ agent_reuse = Agent(
 
 agent_custom = Agent(
     model=GeminiInteractions(
-        agent="antigravity-preview-05-2026",
+        agent="antigravity-preview-09-2026",
         environment={
             "type": "remote",
             "sources": [
