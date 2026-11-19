@@ -111,6 +111,9 @@ def build_run_metadata(
         metadata["action_token"] = ctx["action_token"]
     if ctx.get("message_ts"):
         metadata["slack_message_ts"] = ctx["message_ts"]
+    # A linked account's run is marked as acted for through Slack, so it is not taken for the account's own
+    if ctx.get("act"):
+        metadata["act"] = ctx["act"]
     return metadata or None
 
 

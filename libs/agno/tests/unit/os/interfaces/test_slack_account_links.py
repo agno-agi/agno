@@ -14,6 +14,7 @@ from agno.os.interfaces.slack.hitl import _OTHER_ACCOUNT_MESSAGE, _decider_conte
 from agno.os.interfaces.slack.ids import ACTION_LINK_ACCOUNT
 from agno.os.interfaces.slack.links import MemberLink, PlatformLinks, PlatformUnavailable
 from agno.os.interfaces.slack.security import (
+    _EMAIL_HIDDEN,
     _LINKING_UNAVAILABLE,
     _OWNER_NOT_LINKED,
     authorize_linked,
@@ -28,8 +29,9 @@ JWT_KEY = "slack-account-links-jwt-verification-key-32-chars"
 EMAIL = "kaus@agno.com"
 
 
-def _token(sub: str = EMAIL, scopes=("teams:run", "tasks:read"), key: str = JWT_KEY, ttl: int = 900) -> str:
-    return jwt.encode({"sub": sub, "scopes": list(scopes), "exp": int(time.time()) + ttl}, key, algorithm="HS256")
+def _token(sub: str = EMAIL, scopes=("teams:run", "tasks:read"), key: str = JWT_KEY, ttl: int = 900, **claims) -> str:
+    payload = {"sub": sub, "scopes": list(scopes), "exp": int(time.time()) + ttl, **claims}
+    return jwt.encode(payload, key, algorithm="HS256")
 
 
 def _linked(token: str = "") -> MemberLink:
@@ -211,6 +213,63 @@ async def test_a_member_whose_account_lost_access_is_told_why():
         await handle_message(make_event_body(), client, ctx)
     assert not run_event.called
     assert "Not a member." in client.chat_postEphemeral.call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_linking_cannot_fix_gets_the_reason_without_a_button():
+    link = MemberLink(status="no_access", reason="This AgentOS's organization needs an active subscription.")
+    ctx = _ctx(link)
+    client = _client()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(), client, ctx)
+    assert not run_event.called
+    kwargs = client.chat_postEphemeral.call_args.kwargs
+    assert kwargs["text"] == "Not run: This AgentOS's organization needs an active subscription."
+    assert kwargs.get("blocks") is None
+
+
+@pytest.mark.asyncio
+async def test_a_member_whose_slack_email_is_hidden_is_told_why_instead_of_a_link_that_would_fail():
+    ctx = _ctx(_not_linked())
+    client = _client()
+    client.users_info.return_value = {"ok": True, "user": {"id": "U123", "profile": {"display_name": "Test User"}}}
+    with (
+        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
+        patch("agno.os.interfaces.slack.security.log_warning") as warn,
+    ):
+        await handle_message(make_event_body(), client, ctx)
+        await handle_message(make_event_body(ts="1700000000.000200", event_id="Ev2"), client, ctx)
+    assert not run_event.called
+    kwargs = client.chat_postEphemeral.call_args.kwargs
+    assert kwargs["text"] == f"Not run: {_EMAIL_HIDDEN}" and kwargs.get("blocks") is None
+    warn.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_linked_run_records_that_it_is_acted_for_through_slack():
+    from agno.os.authz.run_context import restore_authorization
+    from agno.os.interfaces.slack.executor import _run_kwargs
+
+    act = {"sub": "os:os-1", "via": "slack", "external_tenant": "T123", "external_id": "U123"}
+    ctx = _ctx(_linked(_token(act=act)))
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(), _client(), ctx)
+    event_context = run_event.call_args.args[0]
+    assert _run_kwargs(event_context, ctx, ([], [], [], []))["metadata"]["act"] == act
+    # A queued Task restores the authority with the act claim, so its run is marked too
+    restored = restore_authorization(ctx.app, event_context.authority.snapshot())
+    assert restored.context.claims["act"] == act
+
+
+@pytest.mark.asyncio
+async def test_a_run_without_an_act_claim_is_not_marked():
+    from agno.os.interfaces.slack.executor import _run_kwargs
+
+    ctx = _ctx()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(), _client(), ctx)
+    metadata = _run_kwargs(run_event.call_args.args[0], ctx, ([], [], [], []))["metadata"] or {}
+    assert "act" not in metadata
 
 
 @pytest.mark.parametrize(

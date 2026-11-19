@@ -456,7 +456,8 @@ Setup:
 2. Generate an OS service token there and set it as `AGNO_OS_SERVICE_TOKEN`.
    Revoke it there to stop linking at once.
 3. Serve with `AgentOS(authorization=True)`. Add `users:read` and
-   `users:read.email` to the Slack app.
+   `users:read.email` to the Slack app. Without `users:read.email` no member
+   can link: they are told to ask for the scope, and a warning is logged once.
 
 How it works:
 
@@ -464,13 +465,17 @@ How it works:
   linked member with access gets a 15-minute token for this AgentOS. The SDK
   verifies it with `JWT_VERIFICATION_KEY` and runs the message as that account's
   email, with the token's scopes. Tasks started from Slack keep those scopes.
+- The token says this AgentOS acts for the account through Slack (an `act`
+  claim). The run's metadata keeps it as `act`, so a Slack run is not taken for
+  one the account started itself.
 - A member who is not linked gets a private **Link your Agno account** button.
   It opens os.agno.com, where they sign in and confirm. Their next message runs.
   The account must be an active member of the organization that owns this
-  AgentOS, and, when Slack shares the member's email, have that same email.
-- A linked account that lost access (removed from the organization, no
-  `os:read`, JWT turned off, or no plan for a remote AgentOS) gets the reason and
-  the button again. Nothing runs.
+  AgentOS and have the member's Slack email.
+- A linked account that lost access (inactive, removed from the organization,
+  or no `os:read`) gets the reason and the button again. When linking can't help
+  (JWT turned off, or no plan for a remote AgentOS), every member gets only the
+  reason. Nothing runs.
 - Approving, denying, and stopping re-check the run owner's account. Another
   Slack account linked to the same Agno account may act on the run. Only the
   member gets a link button; anyone else is told the owner is not linked.

@@ -1,9 +1,10 @@
+from dataclasses import replace
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agno.os.interfaces.slack.helpers import post_ephemeral
 from agno.os.interfaces.slack.links import MemberLink, PlatformUnavailable
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.os.interfaces.slack.context import EventContext, SlackContext
@@ -12,6 +13,10 @@ _LINK_TEXT = "Link your Agno account to use {name} from Slack. You act here with
 _NO_ACCESS_TEXT = "Your linked Agno account cannot use {name}: {reason} Link an account with access to continue."
 _LINKING_UNAVAILABLE = "Not run: Agno accounts cannot be checked right now. Try again shortly."
 _OWNER_NOT_LINKED = "Not run: the run's owner no longer has a linked Agno account with access."
+_EMAIL_HIDDEN = (
+    "Slack does not share your email with this app, so your Agno account can't be linked. "
+    "Ask whoever manages the Slack app to add the users:read.email scope."
+)
 
 
 def resolve_token(token: Optional[str] = None) -> str:
@@ -263,13 +268,21 @@ async def linked_authorization(
         raise PlatformUnavailable("AGNO_OS_SERVICE_TOKEN is not set")
     team_id, team_name = await _workspace(ctx, client)
     email, name = await ctx.lookup_cache.user_identity(client, member)
+    member_email = email if "@" in email else None
     link = await ctx.links.resolve_slack_member(
         team_id,
         member,
         team_name=team_name,
         member_name=name,
-        member_email=email if "@" in email else None,
+        member_email=member_email,
     )
+    # The platform links an account only to the Agno account with the member's Slack email, so without it the
+    # link would be refused
+    if link.link_url and member_email is None:
+        if "users_read_email" not in ctx.failing:
+            log_warning("Slack account linking needs the users:read.email scope; members can't link without it")
+        ctx.failing.add("users_read_email")
+        link = replace(link, link_url=None, reason=_EMAIL_HIDDEN)
     if link.status != "linked" or not link.token:
         return link, None
     try:
@@ -301,14 +314,28 @@ async def authorize_linked(
         return False
     if authority is None:
         # Only the member gets the button: whoever confirms a link session links that Slack account to themselves
-        if user == event_context.owner and link.link_url:
+        if user != event_context.owner:
+            await post_ephemeral(client, event_context.channel, user, _OWNER_NOT_LINKED, thread_ts)
+        elif link.link_url:
             await post_link_prompt(ctx, client, event_context.channel, user, link, thread_ts)
         else:
-            await post_ephemeral(client, event_context.channel, user, _OWNER_NOT_LINKED, thread_ts)
+            # Linking can't help (the AgentOS's plan or settings, or a hidden Slack email), so only the reason
+            reason = link.reason or f"your Agno account cannot use {ctx.entity_name}."
+            await post_ephemeral(client, event_context.channel, user, f"Not run: {reason}", thread_ts)
         return False
     event_context.authority = authority
     event_context.user_id = authority.context.principal_id
+    act = delegation(authority)
+    if act is not None:
+        log_debug(f"Slack member {event_context.owner} acts as {event_context.user_id} through {act.get('sub')}")
     return True
+
+
+def delegation(authority: Any) -> Optional[Dict[str, Any]]:
+    """The token's act claim: who acts for the account (this AgentOS, through Slack), when the platform set one."""
+    claims = getattr(getattr(authority, "context", None), "claims", None) or {}
+    act = claims.get("act")
+    return act if isinstance(act, dict) else None
 
 
 async def post_link_prompt(
