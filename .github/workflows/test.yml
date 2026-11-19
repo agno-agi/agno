@@ -212,8 +212,8 @@ jobs:
           source .venv/bin/activate
           # psycopg, so the catalog's Postgres suites resolve their driver and
           # run against the service above instead of importorskip-ing away.
-          uv pip install pytest-split "psycopg[binary]" --quiet
-          python -m pytest --splits 9 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          uv pip install pytest-split pytest-randomly==5.0.0 "psycopg[binary]" --quiet
+          python -m pytest --splits 9 --group ${{ matrix.group }} --randomly-seed=${{ github.run_id }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
 
   queue-store-parity:
     runs-on: ubuntu-latest
