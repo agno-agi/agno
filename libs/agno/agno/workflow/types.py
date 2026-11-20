@@ -490,7 +490,7 @@ class StepInput:
             previous_step_content_str = json.dumps(
                 self.previous_step_content, indent=2, default=str, ensure_ascii=False
             )
-        elif self.previous_step_content:
+        elif self.previous_step_content is not None:
             previous_step_content_str = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
