@@ -7,8 +7,12 @@ Tests cover:
 - Roundtrip serialization (no data loss)
 """
 
+import json
+from datetime import datetime
+
 import pytest
 
+from agno.db.utils import json_serializer
 from agno.media import File
 from agno.workflow.types import StepInput
 
@@ -69,36 +73,33 @@ class TestStepInputFileSerialization:
 
 
 class TestStepInputPreviousStepContentSerialization:
-    @pytest.mark.parametrize(
-        "content, expected",
-        [
-            ("", ""),
-            (0, "0"),
-            (False, "False"),
-            (0.0, "0.0"),
-            ([], "[]"),
-            ({}, "{}"),
-            ("result", "result"),
-            (42, "42"),
-        ],
-    )
-    def test_to_dict_preserves_falsy_previous_step_content(self, content, expected):
-        """Falsy content is a meaningful step result and must not become None.
+    @pytest.mark.parametrize("content", ["", 0, False, 0.0, [], ["x", 1], "result", 42])
+    def test_roundtrip_preserves_previous_step_content(self, content):
+        """Falsy content is a meaningful step result and must keep its value and type."""
+        restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
+        assert restored.previous_step_content == content
+        assert type(restored.previous_step_content) is type(content)
 
-        An empty string is explicitly used as the "empty result" marker in
-        workflow conditions, and CEL context building already treats these
-        values with ``is not None``. to_dict() must do the same so a
-        to_dict -> from_dict roundtrip does not lose them.
-        """
-        step_input = StepInput(input="run", previous_step_content=content)
-        assert step_input.to_dict()["previous_step_content"] == expected
+    @pytest.mark.parametrize("content", ["", 0, False, 0.0, []])
+    def test_roundtrip_keeps_falsy_previous_step_content_falsy(self, content):
+        restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
+        assert not restored.previous_step_content
 
     def test_to_dict_keeps_none_previous_step_content(self):
         step_input = StepInput(input="run", previous_step_content=None)
         assert step_input.to_dict()["previous_step_content"] is None
 
-    def test_roundtrip_preserves_falsy_previous_step_content(self):
-        for content in ("", 0, False, [], {}):
-            original = StepInput(input="run", previous_step_content=content)
-            restored = StepInput.from_dict(original.to_dict())
-            assert restored.previous_step_content == str(content), content
+    @pytest.mark.parametrize("content", [False, 0, 0.0])
+    def test_json_roundtrip_preserves_falsy_types(self, content):
+        """Values must keep their type through a real JSON encode/decode, as when stored in a DB."""
+        encoded = json_serializer(StepInput(input="run", previous_step_content=content).to_dict())
+        restored = StepInput.from_dict(json.loads(encoded))
+        assert restored.previous_step_content == content
+        assert type(restored.previous_step_content) is type(content)
+        assert not restored.previous_step_content
+
+    def test_list_with_datetime_still_encodes(self):
+        """Lists are passed through as is, so non-JSON elements must still encode via the DB serializer."""
+        step_input = StepInput(input="run", previous_step_content=[datetime(2026, 1, 1)])
+        decoded = json.loads(json_serializer(step_input.to_dict()))
+        assert decoded["previous_step_content"] == ["2026-01-01T00:00:00"]
