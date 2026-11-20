@@ -236,6 +236,54 @@ class CompanyFiles:
         return cls._paged({"folder": location.tree_path, "files": files}, len(metas), page)
 
     @staticmethod
+    def _entries(location: _Location, metas: List[Any]) -> Dict[str, Any]:
+        """The folders, then the files, directly inside a folder. ``metas`` is every file under it, sorted.
+
+        A folder's size and file count are the totals of the files under it, at any depth, and its time is
+        the latest of theirs.
+        """
+        prefix = location.path + "/" if location.path else ""
+        folders: Dict[str, Dict[str, Any]] = {}
+        files: List[Dict[str, Any]] = []
+        for meta in metas:
+            if not meta.path.startswith(prefix):
+                # A file with the folder's own name. A file has nothing inside it.
+                continue
+            name, inside, _ = meta.path[len(prefix) :].partition("/")
+            if not inside:
+                files.append(
+                    {
+                        "type": "file",
+                        "path": location.tree_path_of(meta.path),
+                        "size_bytes": meta.size_bytes,
+                        "version": meta.version,
+                        "updated_at": meta.updated_at,
+                    }
+                )
+                continue
+            folder = folders.setdefault(
+                name,
+                {
+                    "type": "folder",
+                    "path": location.tree_path_of(prefix + name),
+                    "size_bytes": 0,
+                    "file_count": 0,
+                    "updated_at": None,
+                },
+            )
+            folder["size_bytes"] += meta.size_bytes
+            folder["file_count"] += 1
+            if meta.updated_at is not None:
+                folder["updated_at"] = max(folder["updated_at"] or meta.updated_at, meta.updated_at)
+        return {"folder": location.tree_path, "entries": [*folders.values(), *files]}
+
+    def _require_file_folder(self, location: _Location) -> None:
+        """Only a folder that holds files has entries: wiki/, notes/, one Product's or one Task's."""
+        self._require_area(location)
+        if not location.area or (location.area in _KEYED and location.record_id is None):
+            raise ValueError(f"'{location.tree_path}' holds no files of its own. {_GRAMMAR}")
+
+    @staticmethod
     def _found(
         query: str, location: _Location, matches: List[Dict[str, Any]], limit: int, totals: Dict[str, int]
     ) -> Dict[str, Any]:
@@ -312,6 +360,12 @@ class CompanyFiles:
             return self._task_folders(rows, total, page)
         metas = self._filesystem(location).list(location.store_path)
         return self._listing(location, metas, page)
+
+    def entries(self, folder: str) -> Dict[str, Any]:
+        """List what is directly inside one folder: its folders first, then its files. Not paged."""
+        location = _locate(folder, folder=True)
+        self._require_file_folder(location)
+        return self._entries(location, self._filesystem(location).list(location.store_path))
 
     def search(self, query: str, folder: str = "", limit: int = 10) -> Dict[str, Any]:
         """Search file content, case-insensitive, in one folder or in the whole tree."""
@@ -416,6 +470,12 @@ class CompanyFiles:
             return self._task_folders(rows, total, page)
         metas = await (await self._afilesystem(location)).alist(location.store_path)
         return self._listing(location, metas, page)
+
+    async def aentries(self, folder: str) -> Dict[str, Any]:
+        """List what is directly inside one folder: its folders first, then its files. Not paged."""
+        location = _locate(folder, folder=True)
+        self._require_file_folder(location)
+        return self._entries(location, await (await self._afilesystem(location)).alist(location.store_path))
 
     async def asearch(self, query: str, folder: str = "", limit: int = 10) -> Dict[str, Any]:
         """Search file content, case-insensitive, in one folder or in the whole tree."""

@@ -1,6 +1,6 @@
 """Read-only routes over the Company file tree: a Task's files and the shared notes."""
 
-from typing import Any, Awaitable, Dict, List
+from typing import Any, Awaitable, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -10,7 +10,7 @@ from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.fs.errors import InvalidPathError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
-from agno.os.routers.company.schema import CompanyFileReadResponse, WikiPageResponse
+from agno.os.routers.company.schema import CompanyFileEntryResponse, CompanyFileReadResponse
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
@@ -62,11 +62,30 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
         return {
             "path": entry["path"][len(folder) + 1 :],
             "size_bytes": entry["size_bytes"],
-            "version": entry["version"],
+            "version": entry.get("version"),
             "updated_at": entry["updated_at"],
         }
 
-    async def listing(folder: str, limit: int, page: int) -> PaginatedResponse:
+    def paged(rows: List[Dict[str, Any]], total: int, limit: int, page: int) -> PaginatedResponse:
+        return PaginatedResponse(
+            data=rows,
+            meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
+        )
+
+    async def listing(folder: str, inside: Optional[str], limit: int, page: int) -> PaginatedResponse:
+        if inside is not None:
+            # One folder: the folders and files directly inside it. "" and "." are the top folder.
+            result = await tree(folder, files.aentries(f"{folder}/{inside}" if inside not in ("", ".") else folder))
+            entries = result["entries"][(page - 1) * limit : page * limit]
+            return paged(
+                [
+                    {**named(folder, entry), "type": entry["type"], "file_count": entry.get("file_count")}
+                    for entry in entries
+                ],
+                len(result["entries"]),
+                limit,
+                page,
+            )
         # The tree lists LIST_ENTRIES files a page and limit is at most that, so one page here spans up to two.
         start = (page - 1) * limit
         tree_page, skip = start // LIST_ENTRIES + 1, start % LIST_ENTRIES
@@ -77,11 +96,7 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
             if len(rows) >= skip + limit or "next_page" not in result:
                 break
             tree_page += 1
-        total = result["total"]
-        return PaginatedResponse(
-            data=[named(folder, row) for row in rows[skip : skip + limit]],
-            meta=PaginationInfo(page=page, limit=limit, total_count=total, total_pages=(total + limit - 1) // limit),
-        )
+        return paged([named(folder, row) for row in rows[skip : skip + limit]], result["total"], limit, page)
 
     async def reading(folder: str, path: str, offset: int) -> Dict[str, Any]:
         result = await tree(folder, files.aread(f"{folder}/{path}", offset))
@@ -93,26 +108,39 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
             "next_offset": result.get("next_offset"),
         }
 
-    @router.get("/tasks/{task_id}/files", response_model=PaginatedResponse[WikiPageResponse])
+    # Without `folder`, a listing is every file under the top folder, with full paths. With it, a listing is
+    # what is directly inside that one folder, folders first, so a caller can open a tree one folder at a time.
+    inside_folder = Query(
+        None,
+        alias="folder",
+        description=(
+            "List only what is directly inside this folder: its folders first, then its files. "
+            "An empty value is the top folder. Omit it to list every file with its full path."
+        ),
+    )
+
+    @router.get("/tasks/{task_id}/files", response_model=PaginatedResponse[CompanyFileEntryResponse])
     async def list_task_files(
         task_id: str,
+        folder: Optional[str] = inside_folder,
         limit: int = Query(20, ge=1, le=LIST_ENTRIES),
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):
-        return await listing(await task_folder(task_id), limit, page)
+        return await listing(await task_folder(task_id), folder, limit, page)
 
     @router.get("/tasks/{task_id}/files/{path:path}", response_model=CompanyFileReadResponse)
     async def read_task_file(task_id: str, path: str, offset: int = Query(0, ge=0), _: bool = Depends(auth)):
         return await reading(await task_folder(task_id), path, offset)
 
-    @router.get("/notes", response_model=PaginatedResponse[WikiPageResponse])
+    @router.get("/notes", response_model=PaginatedResponse[CompanyFileEntryResponse])
     async def list_notes(
+        folder: Optional[str] = inside_folder,
         limit: int = Query(20, ge=1, le=LIST_ENTRIES),
         page: int = Query(1, ge=1),
         _: bool = Depends(auth),
     ):
-        return await listing(notes_folder(), limit, page)
+        return await listing(notes_folder(), folder, limit, page)
 
     @router.get("/notes/{path:path}", response_model=CompanyFileReadResponse)
     async def read_note(path: str, offset: int = Query(0, ge=0), _: bool = Depends(auth)):
