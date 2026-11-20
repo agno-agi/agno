@@ -3219,6 +3219,7 @@ class Model(ABC):
             media_message = Message(
                 role="user",
                 content="The tool call above generated the attached media.",
+                tool_media=True,
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,

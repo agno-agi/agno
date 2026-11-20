@@ -33,6 +33,12 @@ def is_injected_compaction_message(message: Message) -> bool:
     return message.content.startswith(SUMMARY_PREFIX)
 
 
+def starts_turn(message: Message) -> bool:
+    """A user message that opens a turn. The follow-up message agno adds after a tool that
+    returned media is user-role too, but it belongs to the turn the tool ran in."""
+    return message.role == "user" and not message.tool_media
+
+
 def is_offload_envelope(message: Message) -> bool:
     """A stored-result envelope from offload_tool_results. Never folded away: the
     result_id must survive verbatim so the model can read the payload back."""
@@ -78,6 +84,10 @@ def _is_durable_anchor(message: Message, *, allow_tool_batch_heads: bool = True)
     them are deleted too and cannot anchor.
     """
     if message.temporary or not message.add_to_agent_memory:
+        return False
+    # Kept without the tool call it follows, the media message would refer to a call the
+    # summary replaced.
+    if message.tool_media:
         return False
     if is_injected_compaction_message(message):
         return False

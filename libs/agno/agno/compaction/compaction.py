@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
-from agno.compaction._cut import choose_boundary, is_offload_envelope
+from agno.compaction._cut import choose_boundary, is_offload_envelope, starts_turn
 from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens, is_async_callable
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
@@ -285,7 +285,7 @@ class Compaction:
         turn no smaller budget can shrink it further, and naming the setting sends the reader
         to a knob that cannot help.
         """
-        turns = sum(1 for m in kept if m.role == "user")
+        turns = sum(1 for m in kept if starts_turn(m))
         if turns <= 1:
             return ""
         return f" or {self._tail_setting}"
@@ -313,8 +313,8 @@ class Compaction:
         keep_runs = self.uncompacted_runs or 0
         if keep_runs <= 0:
             return len(messages)
-        # A user message opens a run.
-        user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
+        # A user message opens a run - except the one agno adds for a tool's media.
+        user_indexes = [i for i, m in enumerate(messages) if starts_turn(m)]
         if len(user_indexes) <= keep_runs:
             # The tail already covers everything, so there is no history in front of it to
             # fold. Returning 0 here would name a boundary at the start of the list, which
@@ -420,7 +420,7 @@ class Compaction:
         it was just asked. On overflow recovery it is worse: the list being folded is the current
         run's own, so its question and tool results would be dropped from the stored run too.
         """
-        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
+        newest = max((i for i, m in enumerate(messages) if starts_turn(m)), default=None)
         if cut is not None and newest is not None and cut > newest:
             return choose_boundary(messages, keep_from_index=newest, min_index=min_index)
         return cut
@@ -479,7 +479,7 @@ class Compaction:
         """
         if self.compact_at_tokens is None:
             return
-        newest = max((i for i, m in enumerate(messages) if m.role == "user"), default=None)
+        newest = max((i for i, m in enumerate(messages) if starts_turn(m)), default=None)
         if newest is None:
             return
         # Compared with the overhead's share alone: a tighter limit from enforce_min_fold_ratio is

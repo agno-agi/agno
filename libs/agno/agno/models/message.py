@@ -110,6 +110,9 @@ class Message(BaseModel):
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
+    # True for the user-role message agno adds after a tool that returned media. It carries the
+    # tool's output, not a question, so it does not open a turn.
+    tool_media: bool = False
     # Metrics for the message. Defaults to empty MessageMetrics; populated on assistant messages.
     metrics: MessageMetrics = Field(default_factory=MessageMetrics)
     # The references added to the message for RAG
@@ -313,6 +316,7 @@ class Message(BaseModel):
             "content": self.content,
             "reasoning_content": self.reasoning_content,
             "from_history": self.from_history,
+            "tool_media": self.tool_media or None,
             "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
             "role": self.role,

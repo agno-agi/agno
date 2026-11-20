@@ -3832,3 +3832,121 @@ def test_a_later_folds_before_is_what_was_sent_not_the_whole_session():
     assert len(records) >= 2
     later = records[-1]
     assert later.tokens_before < whole_session * 0.75  # was the whole session, folded turns included
+
+
+# --- tool media ----------------------------------------------------------
+
+
+def _run_with_tool_media(question_id: str = "q2", result_words: int = 10):
+    """Two answered runs, then a run whose tool returned an image: the question, the tool batch and
+    the user-role message agno adds to carry the image to the model."""
+    from agno.media import Image
+
+    messages = [Message(role="system", content="sys", id="sys")]
+    messages += _runs_of(2, answer_words=1_500)
+    messages += [
+        Message(role="user", content="describe the chart", id=question_id),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "call_chart", "function": {"name": "chart", "arguments": "{}"}}],
+            id="head",
+        ),
+        Message(role="tool", tool_call_id="call_chart", tool_name="chart", content="row " * result_words, id="result"),
+        Message(
+            role="user",
+            content="The tool call above generated the attached media.",
+            images=[Image(url="https://example.com/chart.png")],
+            tool_media=True,
+            id="media",
+        ),
+    ]
+    return messages
+
+
+def test_the_tool_media_message_does_not_open_a_run():
+    """The follow-up message for a tool's media is user-role, but the run it belongs to was opened by
+    the question before it: a one-run tail starts at that question, not between it and its tool."""
+    messages = _run_with_tool_media()
+
+    boundary = Compaction(uncompacted_runs=1).boundary_for(messages, min_index=1)
+
+    assert messages[boundary].id == "q2"
+
+
+def test_overflow_recovery_keeps_the_question_when_a_tool_returned_media(caplog):
+    """A rejected request is folded and retried. The retry must still carry the run's question, even
+    when a tool of that run returned images before the request was sent. The tool result outweighs
+    the history, so recovery shrinks the tail to a single run - the one the question opened."""
+    from agno.agent import Agent
+    from agno.agent._messages import _recompact_after_overflow
+    from agno.session.agent import AgentSession
+
+    class _RunMessages:
+        def __init__(self, messages):
+            self.messages = messages
+
+    run_messages = _RunMessages(_run_with_tool_media(result_words=8_000))
+    agent = Agent(
+        compaction=Compaction(
+            uncompacted_runs=5,
+            store_compacted_messages=False,
+            model=_StubModel(),
+            on_context_overflow=True,
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="agno"):
+        assert _recompact_after_overflow(agent, AgentSession(session_id="s1", runs=[]), run_messages, None)
+
+    assert any("keeping 1 run(s) instead of 5" in r.message for r in caplog.records)
+    kept = [m.id for m in run_messages.messages]
+    assert kept[-4:] == ["q2", "head", "result", "media"]
+    assert "u0" not in kept
+
+
+def test_the_tool_media_flag_survives_storage():
+    message = Message(role="user", content="media", tool_media=True)
+
+    assert Message.from_dict(message.to_dict()).tool_media is True
+    assert "tool_media" not in Message(role="user", content="q").to_dict()
+
+
+def test_a_tool_returning_images_adds_a_flagged_media_message():
+    from agno.media import Image
+    from agno.models.openai import OpenAIChat
+
+    messages = [Message(role="user", content="q")]
+    results = [Message(role="tool", content="done", images=[Image(url="https://example.com/a.png")])]
+
+    OpenAIChat(id="gpt-4o")._handle_function_call_media(messages=messages, function_call_results=results)
+
+    assert messages[-1].role == "user" and messages[-1].tool_media is True
+
+
+def test_a_cut_never_keeps_a_tool_media_message_without_its_tool_call():
+    """A token tail that would start at an older run's media message starts at the tool call it
+    follows instead: kept alone, the message would point at a call the summary replaced."""
+    from agno.compaction._cut import choose_boundary
+    from agno.compaction._tokens import estimate_tokens
+
+    messages = [
+        Message(role="user", content="draw it", id="u0"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "call_0", "function": {"name": "draw", "arguments": "{}"}}],
+            id="head0",
+        ),
+        Message(role="tool", tool_call_id="call_0", tool_name="draw", content="row " * 500, id="result0"),
+        Message(role="user", content="The tool call above generated the attached media.", tool_media=True, id="media0"),
+        Message(role="assistant", content="detail " * 500, id="a0"),
+        Message(role="user", content="and now?", id="u1"),
+        Message(role="assistant", content="done", id="a1"),
+    ]
+    # Exactly the tail from the media message on.
+    budget = estimate_tokens(messages[3:])
+
+    boundary = choose_boundary(messages, keep_tokens=budget)
+
+    assert messages[boundary].id == "head0"
