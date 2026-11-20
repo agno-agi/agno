@@ -62,6 +62,21 @@ def test_lifecycle(client):
     assert restored.json()["created_at"] == product["created_at"]
 
 
+def test_archive_lifecycle(client):
+    product = client.post("/company/products", json={"name": "SDK"}).json()
+    path = "/company/products/" + product["id"]
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == product["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
 def test_pagination_and_duplicate_display_names(client):
     ids = {client.post("/company/products", json={"name": "SDK"}).json()["id"] for _ in range(3)}
     pages = [client.get("/company/products", params={"page": page, "limit": 2}).json() for page in (1, 2)]
@@ -95,6 +110,7 @@ def test_invalid_pagination(client, query):
         ("patch", "/company/products/missing", {"name": "SDK"}),
         ("delete", "/company/products/missing", None),
         ("post", "/company/products/missing/restore", None),
+        ("post", "/company/products/missing/archive", None),
     ],
 )
 def test_missing(client, method, path, body):
@@ -124,7 +140,7 @@ def test_database_resolution_once_and_override(tmp_path):
             for path, methods in client.app.openapi()["paths"].items()
             if path.startswith("/company/products") and "/wiki" not in path
         }
-        assert sum(len(methods) for methods in paths.values()) == 6
+        assert sum(len(methods) for methods in paths.values()) == 7
         assert client.get("/company/products").status_code == 200
     default.close()
     override.close()
@@ -169,6 +185,7 @@ def test_import_without_company_changes_no_routes_tables_or_scopes(tmp_path):
     assert get_default_scope_mappings() == mappings
     assert not any("products:" in scope for scopes in mappings.values() for scope in scopes)
     assert get_default_scope_mappings(company=True)["POST /company/products/*/restore"] == ["products:delete"]
+    assert get_default_scope_mappings(company=True)["POST /company/products/*/archive"] == ["products:delete"]
 
 
 @pytest.mark.parametrize("db", [None, InMemoryDb()])
@@ -181,6 +198,7 @@ def test_unavailable_database_all_routes(db):
         ("patch", "/company/products/missing", {"name": "SDK"}),
         ("delete", "/company/products/missing", None),
         ("post", "/company/products/missing/restore", None),
+        ("post", "/company/products/missing/archive", None),
     ]:
         assert client.request(method, path, json=body).status_code == 503
 

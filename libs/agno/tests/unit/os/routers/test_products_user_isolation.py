@@ -129,6 +129,7 @@ def test_scopes_apply_to_every_route(make_client, isolation):
         ("patch", path, {"name": "No"}, ["products:read"]),
         ("delete", path, None, ["products:write"]),
         ("post", path + "/restore", None, ["products:write"]),
+        ("post", path + "/archive", None, ["products:write"]),
     ]:
         assert c.request(method, url, json=body, headers=headers("alice", scopes)).status_code == 403
     assert c.get("/company/products").status_code == 401

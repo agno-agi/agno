@@ -120,6 +120,50 @@ def test_lifecycle(client):
     assert client.post(path + "/restore").json()["status"] == "done"
 
 
+def test_archive_lifecycle(client):
+    record = create(client)
+    path = "/company/tasks/" + record["id"]
+    assert client.post("/company/tasks/missing/archive").status_code == 404
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == record["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
+@pytest.mark.parametrize("parent", ["product", "project"])
+def test_archive_parent_with_active_task_refused(client, parent):
+    task = create(client)
+    assert transition(client, "/company/tasks/" + task["id"], "ready").status_code == 200
+    response = client.post(f"/company/{parent}s/{task[parent + '_id']}/archive")
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "Cannot archive with active Tasks",
+        "tasks": [{"id": task["id"], "title": "Ship"}],
+    }
+    assert client.get("/company/products/" + task["product_id"]).status_code == 200
+    assert client.get("/company/projects/" + task["project_id"]).status_code == 200
+    assert client.get("/company/tasks/" + task["id"]).json()["status"] == "ready"
+
+
+def test_archive_product_cascades_and_restores(client):
+    task = create(client)
+    project_path = "/company/projects/" + task["project_id"]
+    task_path = "/company/tasks/" + task["id"]
+    product_path = "/company/products/" + task["product_id"]
+    assert client.post(product_path + "/archive").status_code == 200
+    assert client.get(project_path).status_code == 404
+    assert client.get(task_path).status_code == 404
+    assert client.post(product_path + "/restore").status_code == 200
+    assert client.get(project_path).status_code == 200
+    assert client.get(task_path).json()["status"] == "backlog"
+
+
 @pytest.mark.parametrize("states", [[], ["ready"], ["ready", "in_progress"], ["ready", "in_progress", "in_review"]])
 def test_cancel_from_every_nonterminal_state(client, states):
     path = "/company/tasks/" + create(client)["id"]
@@ -236,6 +280,7 @@ def test_unsupported_database(db):
         ("patch", "/company/tasks/missing", {"title": "Work"}),
         ("delete", "/company/tasks/missing", None),
         ("post", "/company/tasks/missing/restore", None),
+        ("post", "/company/tasks/missing/archive", None),
         ("post", "/company/tasks/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
     ]:
         response = c.request(method, path, json=body)

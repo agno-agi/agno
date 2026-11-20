@@ -59,6 +59,22 @@ def test_lifecycle(client):
     assert client.post(path + "/restore").json()["status"] == "done"
 
 
+def test_archive_lifecycle(client):
+    record = create(client)
+    path = "/company/projects/" + record["id"]
+    assert client.post("/company/projects/missing/archive").status_code == 404
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == record["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
 @pytest.mark.parametrize("states", [[], ["active"]])
 def test_cancel_from_every_nonterminal_state(client, states):
     path = "/company/projects/" + create(client)["id"]
@@ -112,6 +128,7 @@ def test_unsupported_database(db):
         ("patch", "/company/projects/missing", {"name": "Work"}),
         ("delete", "/company/projects/missing", None),
         ("post", "/company/projects/missing/restore", None),
+        ("post", "/company/projects/missing/archive", None),
         ("post", "/company/projects/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
     ]:
         assert c.request(method, path, json=body).status_code == 503
