@@ -31,6 +31,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
     "cometapi": ("agno.models.cometapi", "CometAPI", "CometAPI", "openai"),
     "cloudflare": ("agno.models.cloudflare", "Cloudflare", "Cloudflare", "cloudflare"),
+    "crusoe": ("agno.models.crusoe", "Crusoe", "Crusoe", "crusoe"),
     "dashscope": ("agno.models.dashscope", "DashScope", "Qwen", "dashscope"),
     "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
     "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
