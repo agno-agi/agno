@@ -48,7 +48,9 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, **kwargs: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 
@@ -144,7 +146,7 @@ class TestBackgroundLifecycle:
 
         saved_sessions: list[AgentSession] = []
 
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(agent, session=None):
@@ -191,7 +193,7 @@ class TestBackgroundLifecycle:
 
         persisted_statuses: list[RunStatus] = []
 
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(agent, session=None):
@@ -239,7 +241,7 @@ class TestBackgroundLifecycle:
 
         final_statuses: list[RunStatus] = []
 
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(agent, session=None):
@@ -296,7 +298,7 @@ class TestBackgroundConcurrencyLimit:
             release_first = asyncio.Event()
             running_order: list[str] = []
 
-            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
                 return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
             async def fake_asave_session(agent, session=None):
@@ -365,7 +367,7 @@ class TestBackgroundConcurrencyLimit:
             persisted_by_run: dict[str, list[RunStatus]] = {}
             persisted_stage: dict[str, object] = {}
 
-            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
                 return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
             async def fake_asave_session(agent, session=None):
@@ -447,7 +449,7 @@ class TestBackgroundStreamConcurrencyLimit:
             concurrency._semaphores.clear()
 
     def _patch_stream_deps(self, monkeypatch, stream_started, release_stream):
-        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id or "test-session", user_id=None, runs=[])
 
         async def fake_asave_session(agent, session=None):
@@ -591,7 +593,7 @@ class TestConcurrentSessionPersistence:
             # (like deserialization), saves replace the stored runs wholesale.
             store: dict = {"runs": []}
 
-            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None, store_run=True):
                 return AgentSession(
                     session_id=session_id or "shared", user_id=user_id, runs=copy.deepcopy(store["runs"])
                 )

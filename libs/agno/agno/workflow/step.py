@@ -1377,6 +1377,7 @@ class Step:
                             store_executor_outputs=store_executor_outputs,
                             workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
+                            store_run=run_context.store_run if run_context is not None else True,
                         )
 
                         # Merge session_state changes back
@@ -1760,6 +1761,7 @@ class Step:
                             workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
+                            store_run=run_context.store_run if run_context is not None else True,
                         ):
                             if isinstance(event, StepOutput):
                                 final_response = event
@@ -2100,6 +2102,7 @@ class Step:
                             store_executor_outputs=store_executor_outputs,
                             workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
+                            store_run=run_context.store_run if run_context is not None else True,
                         )
 
                         # Merge session_state changes back
@@ -2489,6 +2492,7 @@ class Step:
                             workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
+                            store_run=run_context.store_run if run_context is not None else True,
                         ):
                             if isinstance(event, StepOutput):
                                 final_response = event
@@ -2947,6 +2951,7 @@ class Step:
         store_executor_outputs: bool = True,
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> StepOutput:
         """Execute a nested workflow as a step (non-streaming)"""
         from agno.workflow.workflow import Workflow
@@ -2973,6 +2978,7 @@ class Step:
                 store_executor_outputs=store_executor_outputs,
                 workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
+                store_run=store_run,
             )
         finally:
             _nested_workflow_depth.set(current_depth)
@@ -2987,6 +2993,7 @@ class Step:
         store_executor_outputs: bool = True,
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> StepOutput:
         """Inner implementation of sync non-streaming nested workflow execution"""
         from agno.workflow.workflow import Workflow
@@ -3017,6 +3024,7 @@ class Step:
             stream=False,
             background_tasks=background_tasks,
             run_id=nested_run_id,
+            store_run=store_run,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -3068,6 +3076,7 @@ class Step:
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with streaming"""
         from agno.workflow.workflow import Workflow
@@ -3095,6 +3104,7 @@ class Step:
                 workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
+                store_run=store_run,
             )
         finally:
             _nested_workflow_depth.set(current_depth)
@@ -3110,6 +3120,7 @@ class Step:
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Inner implementation of sync streaming nested workflow execution"""
         from agno.run.workflow import WorkflowCompletedEvent
@@ -3144,6 +3155,7 @@ class Step:
             stream_events=stream_events,
             background_tasks=background_tasks,
             run_id=nested_run_id,
+            store_run=store_run,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):
@@ -3224,6 +3236,7 @@ class Step:
         store_executor_outputs: bool = True,
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> StepOutput:
         """Execute a nested workflow as a step asynchronously (non-streaming)"""
         from agno.workflow.workflow import Workflow
@@ -3250,6 +3263,7 @@ class Step:
                 store_executor_outputs=store_executor_outputs,
                 workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
+                store_run=store_run,
             )
         finally:
             _nested_workflow_depth.set(current_depth)
@@ -3264,6 +3278,7 @@ class Step:
         store_executor_outputs: bool = True,
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> StepOutput:
         """Inner implementation of async non-streaming nested workflow execution"""
         from agno.workflow.workflow import Workflow
@@ -3294,6 +3309,7 @@ class Step:
             stream=False,
             background_tasks=background_tasks,
             run_id=nested_run_id,
+            store_run=store_run,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -3345,6 +3361,7 @@ class Step:
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with async streaming"""
         from agno.workflow.workflow import Workflow
@@ -3372,6 +3389,7 @@ class Step:
                 workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
+                store_run=store_run,
             ):
                 yield event
         finally:
@@ -3388,6 +3406,7 @@ class Step:
         workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
+        store_run: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Inner implementation of async streaming nested workflow execution"""
         from agno.run.workflow import WorkflowCompletedEvent
@@ -3422,6 +3441,7 @@ class Step:
             stream_events=stream_events,
             background_tasks=background_tasks,
             run_id=nested_run_id,
+            store_run=store_run,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):

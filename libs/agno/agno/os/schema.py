@@ -503,6 +503,10 @@ class ConfigResponse(BaseModel):
     # Optional for CLIENT compatibility (the SDK parses this same schema, and
     # older servers omit the field); the server always populates it.
     queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
+    # Optional for the same reason: older servers omit it.
+    allow_temporary_runs: Optional[bool] = Field(
+        None, description="Whether the run routes accept store_run=false (a run that is answered but not saved)"
+    )
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
