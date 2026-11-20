@@ -41,22 +41,19 @@ from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
 from agno.run.agent import (
-    RunContentEvent,
-    RunOutput,
+    RunErrorEvent as AgentRunErrorEvent,
 )
 from agno.run.agent import (
-    RunErrorEvent as AgentRunErrorEvent,
+    RunOutput,
 )
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.cancel import araise_if_cancelled, aregister_member_run, raise_if_cancelled, register_member_run
+from agno.run.streamed import StreamedContent
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
-)
-from agno.run.team import (
-    RunContentEvent as TeamRunContentEvent,
 )
 from agno.run.team import (
     RunErrorEvent as TeamRunErrorEvent,
@@ -1195,7 +1192,7 @@ class Step:
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
-                        content = ""
+                        streamed_content = StreamedContent()
                         final_response = None
                         try:
                             iterator = self._call_custom_function(
@@ -1206,31 +1203,12 @@ class Step:
                             for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
                                 if isinstance(chunk, StepProgress):
                                     continue
-                                elif isinstance(chunk, (BaseRunOutputEvent)):
-                                    if (
-                                        isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
-                                        and chunk.content is not None
-                                    ):
-                                        # Its a regular chunk of content
-                                        if isinstance(chunk.content, str):
-                                            content += chunk.content
-                                        # Its the BaseModel object, set it as the content. Replace any previous content.
-                                        # There should be no previous str content at this point
-                                        elif isinstance(chunk.content, BaseModel):
-                                            content = chunk.content  # type: ignore[assignment]
-                                        else:
-                                            # Case when parse_response is False and the content is a dict
-                                            content += str(chunk.content)
-                                elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                    # This is the final response from the agent/team
-                                    content = chunk.content  # type: ignore[assignment]
                                 # If the chunk is a StepOutput, use it as the final response
                                 elif isinstance(chunk, StepOutput):
                                     final_response = chunk
                                     break
-                                # Non Agent/Team data structure that was yielded
                                 else:
-                                    content += str(chunk)
+                                    streamed_content.add(chunk)
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -1243,7 +1221,7 @@ class Step:
                         if final_response is not None:
                             response = final_response
                         else:
-                            response = StepOutput(content=content)
+                            response = StepOutput(content=streamed_content.get())
                     else:
                         # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
@@ -1540,7 +1518,7 @@ class Step:
                         raise ValueError("Cannot use async function with synchronous execution")
                     if _is_generator_function(self.active_executor):
                         log_debug("Function returned iterable, streaming events", log_level=2)
-                        content = ""
+                        streamed_content = StreamedContent()
                         try:
                             iterator = self._call_custom_function(
                                 self.active_executor,
@@ -1564,36 +1542,25 @@ class Step:
                                             data=event.data,
                                         )
                                 elif isinstance(event, (BaseRunOutputEvent)):
-                                    if (
-                                        isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                        and event.content is not None
-                                    ):
-                                        if isinstance(event.content, str):
-                                            content += event.content
-                                        elif isinstance(event.content, BaseModel):
-                                            content = event.content  # type: ignore[assignment]
-                                        else:
-                                            content = str(event.content)
+                                    streamed_content.add(event)
                                     # Only yield executor events if stream_executor_events is True
                                     if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                         enriched_event = self._enrich_event_with_context(
                                             event, workflow_run_response, step_index
                                         )
                                         yield enriched_event  # type: ignore[misc]
-                                elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                    content = event.content  # type: ignore[assignment]
                                 elif isinstance(event, StepOutput):
                                     final_response = event
                                     break
                                 else:
-                                    content += str(event)
+                                    streamed_content.add(event)
 
                             # Merge session_state changes back
                             if run_context is None and session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
                             if not final_response:
-                                final_response = StepOutput(content=content)
+                                final_response = StepOutput(content=streamed_content.get())
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
@@ -1880,7 +1847,7 @@ class Step:
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
                     ):
-                        content = ""
+                        streamed_content = StreamedContent()
                         final_response = None
                         try:
                             if _is_generator_function(self.active_executor):
@@ -1892,24 +1859,11 @@ class Step:
                                 for chunk in self._function_events(iterator, workflow_run_response):  # type: ignore
                                     if isinstance(chunk, StepProgress):
                                         continue
-                                    elif isinstance(chunk, (BaseRunOutputEvent)):
-                                        if (
-                                            isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
-                                            and chunk.content is not None
-                                        ):
-                                            if isinstance(chunk.content, str):
-                                                content += chunk.content
-                                            elif isinstance(chunk.content, BaseModel):
-                                                content = chunk.content  # type: ignore[assignment]
-                                            else:
-                                                content = str(chunk.content)
-                                    elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                        content = chunk.content  # type: ignore[assignment]
                                     elif isinstance(chunk, StepOutput):
                                         final_response = chunk
                                         break
                                     else:
-                                        content += str(chunk)
+                                        streamed_content.add(chunk)
 
                             else:
                                 if _is_async_generator_function(self.active_executor):
@@ -1921,24 +1875,11 @@ class Step:
                                     async for chunk in self._afunction_events(iterator, workflow_run_response):  # type: ignore
                                         if isinstance(chunk, StepProgress):
                                             continue
-                                        elif isinstance(chunk, (BaseRunOutputEvent)):
-                                            if (
-                                                isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
-                                                and chunk.content is not None
-                                            ):
-                                                if isinstance(chunk.content, str):
-                                                    content += chunk.content
-                                                elif isinstance(chunk.content, BaseModel):
-                                                    content = chunk.content  # type: ignore[assignment]
-                                                else:
-                                                    content = str(chunk.content)
-                                        elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                            content = chunk.content  # type: ignore[assignment]
                                         elif isinstance(chunk, StepOutput):
                                             final_response = chunk
                                             break
                                         else:
-                                            content += str(chunk)
+                                            streamed_content.add(chunk)
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -1951,7 +1892,7 @@ class Step:
                         if final_response is not None:
                             response = final_response
                         else:
-                            response = StepOutput(content=content)
+                            response = StepOutput(content=streamed_content.get())
                     else:
                         if _is_async_callable(self.active_executor):
                             result = await self._acall_custom_function(
@@ -2203,7 +2144,7 @@ class Step:
 
                     # Check if the function is an async generator
                     if _is_async_generator_function(self.active_executor):
-                        content = ""
+                        streamed_content = StreamedContent()
                         # It's an async generator - iterate over it
                         iterator = await self._acall_custom_function(
                             self.active_executor,
@@ -2227,16 +2168,7 @@ class Step:
                                         data=event.data,
                                     )
                             elif isinstance(event, (BaseRunOutputEvent)):
-                                if (
-                                    isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                    and event.content is not None
-                                ):
-                                    if isinstance(event.content, str):
-                                        content += event.content
-                                    elif isinstance(event.content, BaseModel):
-                                        content = event.content  # type: ignore[assignment]
-                                    else:
-                                        content = str(event.content)
+                                streamed_content.add(event)
 
                                 # Only yield executor events if stream_executor_events is True
                                 if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
@@ -2244,15 +2176,13 @@ class Step:
                                         event, workflow_run_response, step_index
                                     )
                                     yield enriched_event  # type: ignore[misc]
-                            elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
                             else:
-                                content += str(event)
+                                streamed_content.add(event)
                         if not final_response:
-                            final_response = StepOutput(content=content)
+                            final_response = StepOutput(content=streamed_content.get())
                     elif _is_async_callable(self.active_executor):
                         # It's a regular async function - await it
                         result = await self._acall_custom_function(
@@ -2267,7 +2197,7 @@ class Step:
                         else:
                             final_response = StepOutput(content=str(result))
                     elif _is_generator_function(self.active_executor):
-                        content = ""
+                        streamed_content = StreamedContent()
                         # It's a regular generator function - iterate over it
                         iterator = self._call_custom_function(
                             self.active_executor,
@@ -2291,16 +2221,7 @@ class Step:
                                         data=event.data,
                                     )
                             elif isinstance(event, (BaseRunOutputEvent)):
-                                if (
-                                    isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                    and event.content is not None
-                                ):
-                                    if isinstance(event.content, str):
-                                        content += event.content
-                                    elif isinstance(event.content, BaseModel):
-                                        content = event.content  # type: ignore[assignment]
-                                    else:
-                                        content = str(event.content)
+                                streamed_content.add(event)
 
                                 # Only yield executor events if stream_executor_events is True
                                 if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
@@ -2308,18 +2229,13 @@ class Step:
                                         event, workflow_run_response, step_index
                                     )
                                     yield enriched_event  # type: ignore[misc]
-                            elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content  # type: ignore[assignment]
                             elif isinstance(event, StepOutput):
                                 final_response = event
                                 break
                             else:
-                                if isinstance(content, str):
-                                    content += str(event)
-                                else:
-                                    content = str(event)
+                                streamed_content.add(event)
                         if not final_response:
-                            final_response = StepOutput(content=content)
+                            final_response = StepOutput(content=streamed_content.get())
                     else:
                         # It's a regular function - call it directly
                         result = self._call_custom_function(

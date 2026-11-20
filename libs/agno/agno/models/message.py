@@ -106,6 +106,10 @@ class Message(BaseModel):
     tool_call_error: Optional[bool] = None
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
+    # If True, this tool result is shown to the user as part of the run content.
+    show_result: bool = False
+    # The full result shown to the user, kept when the content was replaced by a pointer to the stored result.
+    shown_content: Optional[str] = None
     # When True, the message will be added to the agent's memory.
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
@@ -315,6 +319,8 @@ class Message(BaseModel):
             "from_history": self.from_history,
             "compressed_content": self.compressed_content,
             "stop_after_tool_call": self.stop_after_tool_call,
+            "show_result": self.show_result or None,
+            "shown_content": self.shown_content,
             "role": self.role,
             "name": self.name,
             "tool_call_id": self.tool_call_id,
