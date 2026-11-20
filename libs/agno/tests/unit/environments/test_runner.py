@@ -1128,6 +1128,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.followup_model.cache_response is False
         assert attempt_agent.fallback_config is not caller.fallback_config
         assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
+        assert attempt_agent.fallback_config._sticky_state is not caller.fallback_config._sticky_state
         # The summary manager survives as an attempt-local copy: production's
         # resolver binds the attempt model on it, the read flag resolves True (a
         # fresh session has no summary to render), and only the WRITE is severed.
