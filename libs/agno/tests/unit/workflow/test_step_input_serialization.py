@@ -73,7 +73,7 @@ class TestStepInputFileSerialization:
 
 
 class TestStepInputPreviousStepContentSerialization:
-    @pytest.mark.parametrize("content", ["", 0, False, 0.0, "result", 42])
+    @pytest.mark.parametrize("content", ["", 0, False, 0.0])
     def test_roundtrip_preserves_previous_step_content(self, content):
         """Falsy content is a meaningful step result and must keep its value and type."""
         restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
@@ -97,6 +97,19 @@ class TestStepInputPreviousStepContentSerialization:
         assert restored.previous_step_content == content
         assert type(restored.previous_step_content) is type(content)
         assert not restored.previous_step_content
+
+    @pytest.mark.parametrize("content, expected", [(42, "42"), ("result", "result"), (float("inf"), "inf")])
+    def test_truthy_scalars_keep_string_form(self, content, expected):
+        """Truthy values keep the existing str() form, so strict JSON encoding still works."""
+        data = StepInput(input="run", previous_step_content=content).to_dict()
+        assert data["previous_step_content"] == expected
+        json.dumps(data, allow_nan=False)
+
+    @pytest.mark.parametrize("content", [[], (), set()])
+    def test_falsy_non_scalars_keep_none_fallback(self, content):
+        """Falsy values outside the scalar types still restore as None, not a truthy string."""
+        restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
+        assert restored.previous_step_content is None
 
     def test_list_with_datetime_still_encodes(self):
         """Lists stay stringified so plain json.dumps works on non-JSON elements."""

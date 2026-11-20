@@ -490,10 +490,10 @@ class StepInput:
             previous_step_content_val = json.dumps(
                 self.previous_step_content, indent=2, default=str, ensure_ascii=False
             )
-        elif isinstance(self.previous_step_content, (str, int, float, bool)):
-            # Keep scalars as is so a restored 0 or False stays falsy.
+        elif isinstance(self.previous_step_content, (str, int, float, bool)) and not self.previous_step_content:
+            # Keep falsy scalars as is so a restored 0 or False stays falsy.
             previous_step_content_val = self.previous_step_content
-        elif self.previous_step_content is not None:
+        elif self.previous_step_content:
             previous_step_content_val = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
