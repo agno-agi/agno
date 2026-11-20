@@ -105,10 +105,14 @@ async def aclose_default_clients() -> None:
             _global_sync_client.close()
             _global_sync_client = None
 
+    # Retire the shared reference while locked, then close outside the lock.
+    # Async transports can yield: another shutdown or setter on this same event
+    # loop must not block that loop trying to acquire a held threading.Lock.
     with _async_client_lock:
-        if _global_async_client is not None and not _global_async_client.is_closed:
-            await _global_async_client.aclose()
-            _global_async_client = None
+        client = _global_async_client
+        _global_async_client = None
+    if client is not None and not client.is_closed:
+        await client.aclose()
 
 
 def set_default_sync_client(client: httpx.Client) -> None:
