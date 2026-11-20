@@ -19,6 +19,7 @@ Example:
 """
 
 import asyncio
+import inspect
 import json
 import posixpath
 import time
@@ -199,7 +200,7 @@ async def _aarchived_component_refusal(
         return None
     component_type = _component_type_arg(target_type)
     try:
-        if asyncio.iscoroutinefunction(get_component):
+        if inspect.iscoroutinefunction(get_component):
             row = await get_component(target_id, component_type=component_type, user_id=user_id, include_deleted=True)
         else:
             # A sync adapter would hold the event loop for the whole query
@@ -357,7 +358,7 @@ async def _adraft_only_component_refusal(
         return None
     component_type = _component_type_arg(target_type)
     try:
-        if asyncio.iscoroutinefunction(get_component):
+        if inspect.iscoroutinefunction(get_component):
             row = await get_component(target_id, component_type=component_type, user_id=user_id)
         else:
             row = await asyncio.to_thread(

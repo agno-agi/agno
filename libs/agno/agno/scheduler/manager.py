@@ -1,6 +1,7 @@
 """Pythonic API for managing schedules -- direct DB access, no HTTP."""
 
 import asyncio
+import inspect
 import concurrent.futures
 import time
 from typing import Any, Dict, List, Literal, Optional
@@ -76,7 +77,7 @@ class ScheduleManager:
 
     def __init__(self, db: Any) -> None:
         self.db = db
-        self._is_async = asyncio.iscoroutinefunction(getattr(db, "get_schedule", None))
+        self._is_async = inspect.iscoroutinefunction(getattr(db, "get_schedule", None))
         self._pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
 
     def close(self) -> None:
@@ -94,7 +95,7 @@ class ScheduleManager:
         fn = getattr(self.db, method_name, None)
         if fn is None:
             raise NotImplementedError(f"Database does not support {method_name}")
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             try:
                 asyncio.get_running_loop()
                 # Running inside an async context — bridge via thread
@@ -124,7 +125,7 @@ class ScheduleManager:
         fn = getattr(self.db, method_name, None)
         if fn is None:
             raise NotImplementedError(f"Database does not support {method_name}")
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             return await fn(*args, **kwargs)
         # A sync adapter (SqliteDb, sync PostgresDb) would hold the event loop for the
         # whole query, so it runs on a worker thread.
