@@ -289,6 +289,18 @@ def test_agentcore_sandbox_carries_harness_settings():
         AgentCoreSandbox(arn, lifetime=600, execution_timeout=600)
 
 
+def test_agent37_sandbox_carries_harness_settings():
+    from agno.sandbox.agent37 import Agent37Sandbox
+
+    store = MagicMock()
+    sandbox = Agent37Sandbox("agno-sandbox", api_key="key", checkpoints=store, env={"A": "1"}, execution_timeout=60)
+    assert (sandbox.checkpoints, sandbox.env, sandbox.execution_timeout) == (store, {"A": "1"}, 60)
+    assert type(sandbox.checkpoint_transfer(store)).__name__ == "Agent37CheckpointTransfer"
+    assert ClaudeAgent(id="coder", sandbox=sandbox).sandbox is sandbox
+    with pytest.raises(ValueError, match="execution timeout"):
+        Agent37Sandbox("agno-sandbox", api_key="key", execution_timeout=0)
+
+
 @pytest.mark.asyncio
 async def test_unsupported_run_options_are_rejected(coordinator, sandbox):
     agent = ClaudeAgent(id="coder", sandbox=sandbox)

@@ -24,7 +24,7 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 import agno.sandbox.agentcore.sandbox as agentcore_sandbox
 from agno.sandbox.agentcore import AgentCoreCheckpointTransfer, AgentCoreSandbox, server
 from agno.sandbox.base import SandboxError
-from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
+from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore, check_excluded
 
 ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/agno_sandbox-abc123"
 
@@ -655,7 +655,7 @@ def test_capture_rejects_an_archive_whose_exclusions_were_tampered_with(computer
     CheckpointArchive().capture({"workspace": computer.workspace, "native": computer.native}, tampered, state={})
     transfer = AgentCoreCheckpointTransfer(computer.sandbox, FileCheckpointStore(tmp_path / "store"))
     with pytest.raises(SandboxError, match="requested exclusions"):
-        transfer._check_excluded(tampered, ["native/codex/auth.json"])
+        check_excluded(tampered, transfer.archive.limits, ["native/codex/auth.json"])
 
 
 @pytest.mark.asyncio
@@ -726,11 +726,11 @@ def test_capture_rejects_data_after_the_end_of_the_archive(computer, tmp_path):
     transfer = AgentCoreCheckpointTransfer(
         computer.sandbox, FileCheckpointStore(tmp_path / "store"), archive=CheckpointArchive(compress=False)
     )
-    transfer._check_excluded(archive, exclude)
+    check_excluded(archive, transfer.archive.limits, exclude)
     with archive.open("ab") as stream:
         stream.write(b"native/codex/auth.json secret")
     with pytest.raises(SandboxError, match="after the end of the archive"):
-        transfer._check_excluded(archive, exclude)
+        check_excluded(archive, transfer.archive.limits, exclude)
 
 
 def test_a_handle_arriving_during_a_first_claim_waits_instead_of_retiring(computer):

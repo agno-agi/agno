@@ -71,6 +71,21 @@ class ExecResult:
     output_limited: bool = False
 
 
+def rpc_wait(operation: str, payload: bytes) -> float:
+    """Validate a runtime request and return the seconds its poll may wait inside the computer."""
+    if (
+        operation not in ("start", "poll", "resolve", "capabilities")
+        or not isinstance(payload, bytes)
+        or len(payload) > 1024 * 1024
+    ):
+        raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
+    try:
+        wait = float(json.loads(payload).get("wait", 0) or 0)
+    except (ValueError, AttributeError):
+        wait = 0.0
+    return min(max(wait, 0.0), 30.0)
+
+
 def _sync(coro: Coroutine[Any, Any, Any]) -> Any:
     # Inside a running loop (notebook, async server) run on a worker thread with its own loop.
     try:
@@ -207,21 +222,12 @@ class Sandbox(ABC):
         connection; the default spawns the runtime over exec, which works on any
         image carrying the package but costs a process per request.
         """
-        if (
-            operation not in ("start", "poll", "resolve", "capabilities")
-            or not isinstance(payload, bytes)
-            or len(payload) > 1024 * 1024
-        ):
-            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
-        try:
-            wait = float(json.loads(payload).get("wait", 0) or 0)
-        except (ValueError, AttributeError):
-            wait = 0.0
+        wait = rpc_wait(operation, payload)
         return await self.aexec(
             handle,
             ["python", "-I", "-m", "agno.sandbox.runtime", operation],
             stdin=payload,
-            timeout=15 + min(max(wait, 0.0), 30.0),
+            timeout=15 + wait,
             max_output_bytes=4 * 1024 * 1024,
         )
 
