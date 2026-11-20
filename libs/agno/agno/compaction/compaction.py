@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -22,11 +22,12 @@ from agno.compaction.prompts import (
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import get_model
+from agno.models.utils import get_model, resolve_model
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
+    from agno.registry import Registry
 
 
 # Model id the local token counts fall back to when no model carries one. It is the Agent and
@@ -223,6 +224,58 @@ class Compaction:
             self._check_token_tail()
         # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
         # agent.compact() as the only way to fold, which is a coherent way to run this.
+
+    # -- storage --------------------------------------------------------
+
+    _STORED_FIELDS = (
+        "id",
+        "name",
+        "instructions",
+        "compacted_token_budget",
+        "enforce_token_budget",
+        "compact_at_tokens",
+        "use_model_token_count",
+        "uncompacted_runs",
+        "uncompacted_tokens",
+        "store_compacted_messages",
+        "search_compacted_messages",
+        "on_context_overflow",
+        "enforce_min_fold_ratio",
+        "min_fold_ratio",
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the settings for component storage; a model keeps only its identity.
+
+        A threshold still on its default is left out, so the load gets the default back rather
+        than an explicit value: an explicit compact_at_tokens is what stops on_context_overflow
+        from clearing it. Stats, the OS-assigned owner and a token_counter function are not stored.
+        """
+        from agno.agent.followup import model_identity
+
+        config: Dict[str, Any] = {}
+        if self.model is not None:
+            config["model"] = model_identity(self.model) if isinstance(self.model, Model) else str(self.model)
+        for name in self._STORED_FIELDS:
+            value = getattr(self, name)
+            if isinstance(value, (_UnsetTokens, _Unset)):
+                continue
+            if value is None and name in ("id", "name", "instructions", "compacted_token_budget", "uncompacted_tokens"):
+                continue
+            config[name] = value
+        if self.token_counter is not None:
+            log_warning(
+                "Compaction.token_counter is a function and cannot be stored; the loaded Compaction counts "
+                "tokens with the default estimate. Set token_counter again after loading."
+            )
+        return config
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], registry: Optional["Registry"] = None) -> "Compaction":
+        """Rebuild from to_dict output; a registered live model is preferred over its identity dict."""
+        model = data.get("model")
+        kwargs = {name: data[name] for name in cls._STORED_FIELDS if name in data}
+        return cls(model=resolve_model(model, registry) if model is not None else None, **kwargs)
 
     # -- thresholds -----------------------------------------------------
 
