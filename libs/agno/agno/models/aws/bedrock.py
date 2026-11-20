@@ -378,13 +378,18 @@ class AwsBedrock(Model):
                     tool_use_content = []
                     for tool_call in message.tool_calls:
                         try:
-                            # Parse arguments with error handling for empty or invalid JSON
+                            # Parse arguments with error handling for empty, dict, or invalid JSON
                             arguments = tool_call["function"]["arguments"]
-                            if not arguments or arguments.strip() == "":
+                            if isinstance(arguments, dict):
+                                tool_input = arguments
+                            elif not arguments or (isinstance(arguments, str) and arguments.strip() == ""):
                                 tool_input = {}
+                            elif isinstance(arguments, str):
+                                parsed = json.loads(arguments)
+                                tool_input = parsed if isinstance(parsed, dict) else {}
                             else:
-                                tool_input = json.loads(arguments)
-                        except (json.JSONDecodeError, KeyError) as e:
+                                tool_input = {}
+                        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
                             log_warning(f"Failed to parse tool call arguments: {str(e)}")
                             tool_input = {}
 
