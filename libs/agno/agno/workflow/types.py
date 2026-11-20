@@ -480,7 +480,7 @@ class StepInput:
             else:
                 input_dict = str(self.input)
 
-        previous_step_content_val: Optional[Union[str, int, float, bool, List[Any]]] = None
+        previous_step_content_val: Optional[Union[str, int, float, bool]] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
             previous_step_content_val = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
@@ -490,8 +490,8 @@ class StepInput:
             previous_step_content_val = json.dumps(
                 self.previous_step_content, indent=2, default=str, ensure_ascii=False
             )
-        elif isinstance(self.previous_step_content, (list, str, int, float, bool)):
-            # Keep JSON-native values as is so a restored 0 or False stays falsy.
+        elif isinstance(self.previous_step_content, (str, int, float, bool)):
+            # Keep scalars as is so a restored 0 or False stays falsy.
             previous_step_content_val = self.previous_step_content
         elif self.previous_step_content is not None:
             previous_step_content_val = str(self.previous_step_content)

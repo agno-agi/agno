@@ -73,14 +73,14 @@ class TestStepInputFileSerialization:
 
 
 class TestStepInputPreviousStepContentSerialization:
-    @pytest.mark.parametrize("content", ["", 0, False, 0.0, [], ["x", 1], "result", 42])
+    @pytest.mark.parametrize("content", ["", 0, False, 0.0, "result", 42])
     def test_roundtrip_preserves_previous_step_content(self, content):
         """Falsy content is a meaningful step result and must keep its value and type."""
         restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
         assert restored.previous_step_content == content
         assert type(restored.previous_step_content) is type(content)
 
-    @pytest.mark.parametrize("content", ["", 0, False, 0.0, []])
+    @pytest.mark.parametrize("content", ["", 0, False, 0.0])
     def test_roundtrip_keeps_falsy_previous_step_content_falsy(self, content):
         restored = StepInput.from_dict(StepInput(input="run", previous_step_content=content).to_dict())
         assert not restored.previous_step_content
@@ -99,7 +99,7 @@ class TestStepInputPreviousStepContentSerialization:
         assert not restored.previous_step_content
 
     def test_list_with_datetime_still_encodes(self):
-        """Lists are passed through as is, so non-JSON elements must still encode via the DB serializer."""
-        step_input = StepInput(input="run", previous_step_content=[datetime(2026, 1, 1)])
-        decoded = json.loads(json_serializer(step_input.to_dict()))
-        assert decoded["previous_step_content"] == ["2026-01-01T00:00:00"]
+        """Lists stay stringified so plain json.dumps works on non-JSON elements."""
+        content = [datetime(2026, 1, 1)]
+        encoded = json.dumps(StepInput(input="run", previous_step_content=content).to_dict())
+        assert json.loads(encoded)["previous_step_content"] == str(content)
