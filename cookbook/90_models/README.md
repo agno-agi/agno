@@ -20,6 +20,7 @@ Examples for all supported LLM providers in Agno.
 | **llama.cpp** | Local GGUF | Local |
 | **llmman** | Local models as OCI artifacts | Local |
 | **Tuning Engines** | Governed OpenAI-compatible endpoint | `TUNING_ENGINES_API_KEY` |
+| **Sarvam** | Sarvam-105B, GLM-5.3, Gemma 4, DeepSeek V4.1 on Token Factory | `SARVAM_API_KEY` |
 
 ## Getting Started
 

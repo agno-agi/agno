@@ -889,6 +889,44 @@ async def test_codex_transport_preserves_native_policy(monkeypatch, policy):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("installed, supported", [("0.162.1", False), ("0.163.0", True), ("0.169.0", True)])
+async def test_codex_transport_accepts_any_version_from_the_minimum(monkeypatch, installed, supported):
+    pytest.importorskip("openai_codex")
+    import importlib.metadata
+
+    from agno.agents.codex._hitl import human_client
+
+    real = importlib.metadata.version
+    monkeypatch.setattr(
+        importlib.metadata, "version", lambda name: installed if name == "openai-codex" else real(name)
+    )
+    if supported:
+        assert human_client(None, None)._client._sync is not None
+    else:
+        with pytest.raises(ValueError, match=r"openai-codex>=0\.163\.0"):
+            human_client(None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner, hook",
+    [
+        ("openai_codex.client.CodexClient", "_reader_loop"),
+        ("openai_codex.client.CodexClient", "_write_message"),
+        ("openai_codex._message_router.MessageRouter", "fail_all"),
+    ],
+)
+async def test_codex_transport_refuses_an_sdk_without_its_hooks(monkeypatch, owner, hook):
+    # A missing hook would leave the SDK's accept-everything default in charge, so it must fail closed.
+    pytest.importorskip("openai_codex")
+    from agno.agents.codex._hitl import human_client
+
+    monkeypatch.delattr(f"{owner}.{hook}")
+    with pytest.raises(ValueError, match=f"not compatible with this openai-codex version.*{hook}"):
+        human_client(None, None)
+
+
+@pytest.mark.asyncio
 async def test_codex_reader_does_not_wait_for_a_permission_decision(monkeypatch, tmp_path):
     pytest.importorskip("openai_codex")
     import queue

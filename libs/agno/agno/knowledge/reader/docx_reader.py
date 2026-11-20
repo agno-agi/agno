@@ -55,7 +55,9 @@ class DocxReader(Reader):
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 docx_document = DocxDocument(file)
-                doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
+                # Native temporary streams may expose an integer descriptor or None as their name.
+                stream_name = getattr(file, "name", None)
+                doc_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "docx_file")
 
             doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
 

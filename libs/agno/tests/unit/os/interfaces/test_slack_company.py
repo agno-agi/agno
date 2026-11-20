@@ -176,12 +176,14 @@ def _delivery(
     slack: FakeSlack,
     users: Optional[Dict[str, str]] = None,
     resolve_user_identity: bool = False,
+    default_role: Optional[str] = None,
 ):
     ctx = SimpleNamespace(
         company=CompanyBridge(agent_os),
         entity=Team(id=ENTITY_ID, members=[], db=db),
         entity_id=ENTITY_ID,
         users=users,
+        default_role=default_role,
         resolve_user_identity=resolve_user_identity,
         web=lambda: slack,
         lookup_cache=LookupCache(),
@@ -461,6 +463,7 @@ def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, sessi
     auth.define_role("asker", ["teams:run", "tasks:read"])
     auth.define_role("runner", ["teams:run"])
     auth.assign("alice", "asker").assign("bob", "asker").assign("carol", "runner")
+    auth.assign("slack-bot", "asker").assign("slack-runner", "runner")
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
     db = SqliteDb(db_file=db_file)
@@ -495,6 +498,32 @@ async def test_authorization_posts_only_message_authors_task(tmp_path, run_user,
     db, agent_os = _authorized_company(tmp_path, run_user, message_ts, session_owner="alice")
     slack = FakeSlack(root_user=root_user, replies=[{"user": "U_BOB", "ts": BOB_REPLY}])
     await _delivery(agent_os, db, slack, users=USERS).sweep()
+    assert bool(slack.posted()) is posted
+
+
+@pytest.mark.parametrize(
+    "users, default_role, posted",
+    [
+        (None, "slack-bot", True),
+        (None, "slack-runner", False),
+        (None, None, False),
+        (USERS, "slack-bot", True),
+        (USERS, None, False),
+    ],
+    ids=[
+        "default-role-reads-tasks",
+        "default-role-cannot-read-tasks",
+        "no-default-role",
+        "not-in-users-default-role-reads-tasks",
+        "not-in-users-no-default-role",
+    ],
+)
+@pytest.mark.asyncio
+async def test_unmapped_user_gets_result_through_the_default_role(tmp_path, users, default_role, posted):
+    # A user users= does not map runs as the Slack id, and the default role holds the access
+    db, agent_os = _authorized_company(tmp_path, "U_DAVE")
+    slack = FakeSlack(root_user="U_DAVE")
+    await _delivery(agent_os, db, slack, users=users, default_role=default_role).sweep()
     assert bool(slack.posted()) is posted
 
 

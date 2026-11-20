@@ -1116,10 +1116,7 @@ class Model(ABC):
         compress_tool_results: bool = False,
     ) -> None:
         """
-        Process a single model response and return the assistant message and whether to continue.
-
-        Returns:
-            Tuple[Message, bool]: (assistant_message, should_continue)
+        Process a single model response, populating the assistant message and the model response.
         """
         # Generate response with retry logic for ModelProviderError
         provider_response = self._invoke_with_retry(
@@ -1186,10 +1183,7 @@ class Model(ABC):
         compress_tool_results: bool = False,
     ) -> None:
         """
-        Process a single async model response and return the assistant message and whether to continue.
-
-        Returns:
-            Tuple[Message, bool]: (assistant_message, should_continue)
+        Process a single async model response, populating the assistant message and the model response.
         """
         # Generate response with retry logic for ModelProviderError
         provider_response = await self._ainvoke_with_retry(
