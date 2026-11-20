@@ -143,11 +143,8 @@ def ensure_env_file_url_trusted(
 # Where a human gets an admin credential when none is in the environment. The UI path
 # ships with the AgentOS control plane; on a JWT-mode OS it is the only sanctioned source.
 ADMIN_TOKEN_SOURCES = (
-    "Generate a short-lived admin token in the AgentOS UI (Settings -> OS & Security), or set "
-    + ADMIN_TOKEN_ENV
-    + " (or "
-    + SECURITY_KEY_ENV
-    + ")."
+    "Run `agno login` if this AgentOS is registered on os.agno.com, generate a short-lived admin token "
+    "in the AgentOS UI (Settings -> OS & Security), or set " + ADMIN_TOKEN_ENV + " (or " + SECURITY_KEY_ENV + ")."
 )
 
 
@@ -191,10 +188,34 @@ def require_mint_capable(base_url: str, auth_mode: str, or_else: Optional[str] =
     )
 
 
-def resolve_admin_token(auth_mode: str, json_mode: bool) -> Optional[str]:
+def cloud_admin_token(base_url: str, json_mode: bool) -> Optional[str]:
+    """A short-lived admin token from the os.agno.com login, when this AgentOS is registered there.
+
+    Returns None when there is no login or the URL is not registered, so the caller falls
+    back to prompting. Other failures, such as a lapsed subscription, are raised.
+    """
+    from agnoctl.cloud import CloudAPI, load_credentials
+
+    credentials = load_credentials()
+    if credentials is None:
+        return None
+    with CloudAPI(credentials) as api:
+        registered = api.find_operating_system(base_url)
+        if registered is None or not registered.enabled_jwt:
+            return None
+        token = api.admin_token(registered.id)
+    if not json_mode:
+        from agnoctl.console import print_info
+
+        print_info("Using a token from your os.agno.com login (" + (credentials.email or "signed in") + ").")
+    return token
+
+
+def resolve_admin_token(auth_mode: str, json_mode: bool, base_url: Optional[str] = None) -> Optional[str]:
     """Resolve the admin credential used to call the service-accounts API.
 
-    Order: AGNO_ADMIN_TOKEN env, OS_SECURITY_KEY env, interactive prompt. Prompting is
+    Order: AGNO_ADMIN_TOKEN env, OS_SECURITY_KEY env, a token from the os.agno.com login
+    (JWT mode only, when base_url is registered there), interactive prompt. Prompting is
     disabled in --json mode and when stdin is not a TTY, so agent-driven runs fail with
     a clear instruction instead of hanging. On auth_mode "none" an EXPORTED credential
     is still honored -- a service-account bearer authenticates by prefix even on an
@@ -206,6 +227,10 @@ def resolve_admin_token(auth_mode: str, json_mode: bool) -> Optional[str]:
     token = env_admin_credential()
     if token:
         return token
+    if auth_mode == "jwt" and base_url:
+        token = cloud_admin_token(base_url, json_mode)
+        if token:
+            return token
     if json_mode or not sys.stdin.isatty():
         raise CLIError(
             "This AgentOS requires an admin credential to mint tokens (auth mode: " + auth_mode + ").",
