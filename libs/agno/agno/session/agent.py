@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
@@ -147,6 +147,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        viewer_agent_id: Optional[str] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -158,6 +159,9 @@ class AgentSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            viewer_agent_id: Render a session shared between agents as this agent sees it: another
+                agent's replies become user-role messages prefixed with that agent's name, its tool
+                traffic is left out, and a user message that reached several agents appears once.
 
         Returns:
             A list of Messages belonging to the session.
@@ -203,16 +207,17 @@ class AgentSession:
                 return []
             runs = runs[-last_n_runs:]
 
+        run_messages: List[Tuple[Any, List[Message]]] = [(run, run.messages or []) for run in runs if run]
+        if viewer_agent_id is not None:
+            run_messages = self._shared_session_view(run_messages, viewer_agent_id)
+
         messages_from_history = []
         system_message = None
 
         # Limit the number of messages returned if limit is set
         if limit is not None:
-            for run_response in runs:
-                if not run_response or not run_response.messages:
-                    continue
-
-                for message in run_response.messages or []:
+            for _run_response, run_msgs in run_messages:
+                for message in run_msgs:
                     if _should_skip_message(message, skip_roles, skip_history_messages):
                         continue
 
@@ -242,11 +247,8 @@ class AgentSession:
 
         # If limit is not set, return all messages
         else:
-            for run_response in runs:
-                if not run_response or not run_response.messages:
-                    continue
-
-                for message in run_response.messages or []:
+            for _run_response, run_msgs in run_messages:
+                for message in run_msgs:
                     if _should_skip_message(message, skip_roles, skip_history_messages):
                         continue
 
@@ -260,6 +262,47 @@ class AgentSession:
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
+
+    @staticmethod
+    def _shared_session_view(
+        run_messages: List[Tuple[Any, List[Message]]], viewer_agent_id: str
+    ) -> List[Tuple[Any, List[Message]]]:
+        """Render the runs of a session shared between agents as ``viewer_agent_id`` sees them.
+
+        The viewer's own runs are left as they are. Another agent's run keeps its user messages
+        and its replies: a reply becomes a user-role message prefixed with the author's name, so
+        the viewer never mistakes it for its own words, and tool and system traffic is left out.
+        A user message run through several agents keeps one Message id across those runs, so it
+        appears once, in the first run that carried it.
+        """
+        seen_user_message_ids: Set[str] = set()
+        view: List[Tuple[Any, List[Message]]] = []
+        for run, messages in run_messages:
+            is_own_run = getattr(run, "agent_id", None) == viewer_agent_id
+            author = getattr(run, "agent_name", None) or getattr(run, "agent_id", None) or "agent"
+            kept: List[Message] = []
+            for message in messages:
+                if message.role == "user":
+                    # History copies keep the id of the message they replay and are dropped later,
+                    # so they must not claim the id ahead of the run's own input.
+                    if not message.from_history and message.id is not None:
+                        if message.id in seen_user_message_ids:
+                            continue
+                        seen_user_message_ids.add(message.id)
+                elif not is_own_run:
+                    if message.role != "assistant" or message.tool_calls or not message.content:
+                        continue
+                    # Same id as the stored reply, so compaction anchors and replay counts hold.
+                    message = Message(
+                        id=message.id,
+                        role="user",
+                        content=f"{author}: {message.get_content_string()}",
+                        from_history=message.from_history,
+                        created_at=message.created_at,
+                    )
+                kept.append(message)
+            view.append((run, kept))
+        return view
 
     def get_chat_history(self, last_n_runs: Optional[int] = None) -> List[Message]:
         """Return the chat history (user and assistant messages) for the session.

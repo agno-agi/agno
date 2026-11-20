@@ -112,3 +112,12 @@
 **Result:** Completed successfully in 23s.
 
 ---
+
+### shared_session_agents.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Three agents (Researcher, Skeptic, Writer) share one session with shared_session=True. A broadcast turn runs the same Message through all three; two turns are addressed to one agent with to=; a final turn is broadcast again. Tested 2026-10-25 with gpt-5.6-luna.
+**Result:** Completed in about 60s. The Skeptic answers the Researcher by name on turn one, so the labelled replay works. The Writer's context on turn three holds the Skeptic-only exchange and its plan folds that risk in. The stored transcript prints each broadcast turn once with every agent's reply under it.
+
+---
