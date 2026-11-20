@@ -231,6 +231,36 @@ def test_attention_history_and_duplicates_are_shared(system):
     assert cancelled.status_code == 200, cancelled.text
 
 
+def test_attention_counts_proposed_projects_only_for_project_readers(system):
+    client, db, os, queue = system
+    product = client.post("/company/products", json={"name": "SDK"}, headers=headers()).json()["id"]
+    created = client.post(
+        "/company/projects",
+        json={"product_id": product, "name": "Plan"},
+        headers=headers(scopes=["projects:write"]),
+    )
+    assert created.status_code == 201, created.text
+    readers = headers(scopes=SCOPES + ["projects:read"])
+    assert client.get("/company/attention", headers=readers).json()["proposed_projects"] == 1
+    other = client.post("/company/products", json={"name": "Docs"}, headers=headers()).json()["id"]
+    scoped = client.get("/company/attention", params={"product_id": other}, headers=readers).json()
+    assert scoped["proposed_projects"] == 0
+    # Attention itself needs only tasks:read; without projects:read the Project count is left out.
+    assert "proposed_projects" not in client.get("/company/attention", headers=headers()).json()
+
+
+def test_bulk_transitions_need_the_single_routes_scopes(system):
+    client, db, os, queue = system
+    item = {"id": "missing", "expected_status": "proposed"}
+    body = {"target": "active", "reason": "Approved", "items": [item]}
+    assert client.post("/company/projects/transitions", json=body, headers=headers()).status_code == 403
+    allowed = client.post("/company/projects/transitions", json=body, headers=headers(scopes=["projects:write"]))
+    assert allowed.status_code == 200 and allowed.json()["results"][0]["status_code"] == 404
+    task_body = {"target": "cancelled", "reason": "Rejected", "items": [{**item, "expected_status": "backlog"}]}
+    assert client.post("/company/tasks/transitions", json=task_body, headers=headers(scopes=[])).status_code == 403
+    assert client.post("/company/tasks/transitions", json=task_body, headers=headers()).status_code == 200
+
+
 def test_unaccepted_no_queue_and_request_overrides(system):
     client, db, os, queue = system
     path, task = accepted(client)
