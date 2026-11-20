@@ -27,7 +27,9 @@ import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.os.auth import aprovision_user_with_default_role
+from agno.os.middleware.jwt import build_jwt_middleware_kwargs
 from agno.os.middleware.jwt import is_reserved_principal as _is_reserved_principal
+from agno.os.scopes import DENIES_CLAIM, apply_scope_denies, has_denies, restrict_scope_claims
 from agno.utils.log import log_warning
 
 
@@ -158,6 +160,10 @@ class JWTBearerTokenVerifier(TokenVerifier):
         # user_id here and client_id below falls back to "agno-jwt" only as the pydantic-
         # required client_id string -- the bridge keys identity off ``sub``.
         safe_claims = {k: v for k, v in payload.items() if k not in RESERVED_MARKER_CLAIMS}
+        # extract_claims removed the denied grants; keep the raw scopes out of claims too.
+        safe_claims = restrict_scope_claims(
+            safe_claims, list(claims.get("scopes") or []), getattr(self._validator, "scopes_claim", "scopes")
+        )
         return AccessToken(
             token=token,
             client_id=str(user_id) if user_id is not None else "agno-jwt",
@@ -301,8 +307,9 @@ class _MarkerScrubbingProvider(AuthProvider):
     through the composed provider, never branching on its concrete type).
     """
 
-    def __init__(self, wrapped: AuthProvider) -> None:
+    def __init__(self, wrapped: AuthProvider, admin_scope: Optional[str] = None) -> None:
         object.__setattr__(self, "_wrapped", wrapped)
+        object.__setattr__(self, "_admin_scope", admin_scope)
         super().__init__(
             base_url=getattr(wrapped, "base_url", None),
             required_scopes=getattr(wrapped, "required_scopes", None),
@@ -325,9 +332,20 @@ class _MarkerScrubbingProvider(AuthProvider):
         if _is_reserved_principal(effective_sub):
             log_warning(f"Rejected external MCP token asserting a reserved principal: {effective_sub!r}")
             return None
+        update: Dict[str, Any] = {}
         if any(marker in claims for marker in RESERVED_MARKER_CLAIMS):
-            scrubbed = {k: v for k, v in claims.items() if k not in RESERVED_MARKER_CLAIMS}
-            return access_token.model_copy(update={"claims": scrubbed})
+            update["claims"] = {k: v for k, v in claims.items() if k not in RESERVED_MARKER_CLAIMS}
+        if has_denies(claims.get(DENIES_CLAIM)):
+            # Same rewrite as the agno JWT paths, so a token verified by an external
+            # provider cannot reach a grant its own denies claim names. The provider may
+            # have read its scopes from scope, scp or permissions; each one present is
+            # rewritten.
+            update["scopes"] = apply_scope_denies(
+                list(access_token.scopes or []), claims.get(DENIES_CLAIM), self._admin_scope
+            )
+            update["claims"] = restrict_scope_claims(update.get("claims", claims), update["scopes"])
+        if update:
+            return access_token.model_copy(update=update)
         return access_token
 
     def get_routes(self, mcp_path: Optional[str] = None) -> Any:
@@ -372,6 +390,7 @@ def _build_jwt_token_verifier(os: "AgentOS") -> Optional[JWTBearerTokenVerifier]
         # rejects would still verify on /mcp (the audience is threaded, but issuer was
         # dropped), so a multi-issuer deployment's pin did not hold on the MCP transport.
         issuer=kwargs.get("issuer"),
+        admin_scope=kwargs.get("admin_scope"),
     )
     return JWTBearerTokenVerifier(
         validator,
@@ -428,7 +447,18 @@ def resolve_mcp_auth(os: "AgentOS") -> Optional[AuthProvider]:
     # AccessToken.claims, so wrap it to strip agno's trust markers -- the built-in AS is
     # first-party and sets them itself, so it is used unwrapped. This holds whether or not
     # the deployment adds first-party verifiers below (the MultiAuth-less return path too).
-    server: AuthProvider = raw if is_builtin else _MarkerScrubbingProvider(raw)
+    server: AuthProvider = (
+        raw
+        if is_builtin
+        else _MarkerScrubbingProvider(
+            raw,
+            admin_scope=build_jwt_middleware_kwargs(
+                getattr(os, "authorization_config", None),
+                authorization=bool(getattr(os, "authorization", False)),
+                issuer=getattr(os, "_authz_issuer", None),
+            ).get("admin_scope"),
+        )
+    )
     verifiers: List[TokenVerifier] = []
     service_account_verifier = os._get_service_account_verifier()
     if service_account_verifier is not None:
