@@ -12,7 +12,7 @@ class _FakeChoiceDeltaToolCallFunction:
 class _FakeChoiceDeltaToolCall:
     def __init__(
         self,
-        index: int,
+        index: Optional[int],
         tool_id: Optional[str] = None,
         tool_type: Optional[str] = None,
         func_name: Optional[str] = None,
@@ -69,6 +69,46 @@ def test_parse_tool_calls_multiple_tools_independent():
     assert result[0]["function"]["name"] == "tool_a"
     assert result[1]["function"]["name"] == "tool_b"
     assert result[0] is not result[1]
+
+
+def test_parse_tool_calls_without_index_keeps_parallel_calls_apart():
+    """Gemini's OpenAI-compatible endpoint streams each parallel call whole, with no index.
+
+    Deltas recorded in pydantic-ai's cassette test_compatible_api_gemini_3_tool_call_thought_signature[True].
+    """
+    deltas = [
+        _FakeChoiceDeltaToolCall(
+            index=None,
+            tool_id="call_108766",
+            tool_type="function",
+            func_name="get_weather",
+            func_args='{"city":"Taipei"}',
+        ),
+        _FakeChoiceDeltaToolCall(
+            index=None,
+            tool_id="call_108772",
+            tool_type="function",
+            func_name="get_weather",
+            func_args='{"city":"Kaohsiung"}',
+        ),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert [(tc["id"], tc["function"]["arguments"]) for tc in result] == [
+        ("call_108766", '{"city":"Taipei"}'),
+        ("call_108772", '{"city":"Kaohsiung"}'),
+    ]
+
+
+def test_parse_tool_calls_without_index_continues_call_without_id():
+    """A delta with neither index nor id continues the latest tool call."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(index=None, tool_id="call_1", tool_type="function", func_name="f", func_args='{"a"'),
+        _FakeChoiceDeltaToolCall(index=None, func_args=": 1}"),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert [(tc["id"], tc["function"]["arguments"]) for tc in result] == [("call_1", '{"a": 1}')]
 
 
 # ---------------------------------------------------------------------------

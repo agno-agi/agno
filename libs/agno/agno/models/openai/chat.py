@@ -758,8 +758,20 @@ class OpenAIChat(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
+        last_index = -1
         for _tool_call in tool_calls_data:
-            _index = _tool_call.index or 0
+            _index = _tool_call.index
+            if _index is None:
+                # Gemini's OpenAI-compatible endpoint and Mistral send each tool call whole with an id
+                # but no index. A new id starts a new tool call; a delta without one continues the last.
+                known = [i for i, tc in enumerate(tool_calls) if _tool_call.id and tc.get("id") == _tool_call.id]
+                if known:
+                    _index = known[0]
+                elif _tool_call.id or last_index < 0:
+                    _index = len(tool_calls)
+                else:
+                    _index = last_index
+            last_index = _index
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
