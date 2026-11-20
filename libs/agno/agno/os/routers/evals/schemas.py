@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.db.schemas.evals import EvalType
 from agno.eval import AccuracyResult, AgentAsJudgeResult, PerformanceResult, ReliabilityResult
@@ -19,7 +19,9 @@ class EvalRunInput(BaseModel):
 
     model_id: Optional[str] = Field(None, description="Model ID to use for evaluation")
     model_provider: Optional[str] = Field(None, description="Model provider name")
-    eval_type: EvalType = Field(..., description="Type of evaluation to run (accuracy, performance, or reliability)")
+    eval_type: Literal[EvalType.ACCURACY, EvalType.AGENT_AS_JUDGE, EvalType.PERFORMANCE, EvalType.RELIABILITY] = Field(
+        ..., description="Type of standalone evaluation to run"
+    )
     input: str = Field(..., description="Input text/query for the evaluation", min_length=1)
     additional_guidelines: Optional[str] = Field(None, description="Additional guidelines for the evaluation")
     additional_context: Optional[str] = Field(None, description="Additional context for the evaluation")
@@ -182,3 +184,46 @@ class DeleteEvalRunsRequest(BaseModel):
 
 class UpdateEvalRunRequest(BaseModel):
     name: str = Field(..., description="New name for the evaluation run", min_length=1, max_length=255)
+
+
+class EvalSuiteCaseInput(BaseModel):
+    """Declarative checks against a registered agent or team; executable callbacks stay in Python."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=200)
+    input: str = Field(min_length=1)
+    agent_id: Optional[str] = Field(default=None, min_length=1)
+    team_id: Optional[str] = Field(default=None, min_length=1)
+    tags: List[str] = Field(default_factory=list)
+    timeout_seconds: Optional[int] = Field(default=None, ge=1, le=600)
+    criteria: Optional[str] = Field(default=None, min_length=1)
+    judge_mode: Literal["binary", "numeric"] = "binary"
+    judge_threshold: int = Field(default=7, ge=1, le=10)
+    expected_tool_calls: Optional[List[str]] = None
+    allow_additional_tool_calls: bool = True
+
+    @model_validator(mode="after")
+    def validate_case(self) -> "EvalSuiteCaseInput":
+        if bool(self.agent_id) == bool(self.team_id):
+            raise ValueError("Each case requires exactly one of agent_id or team_id")
+        if not self.criteria and not self.expected_tool_calls:
+            raise ValueError("Each case requires criteria or expected_tool_calls")
+        if self.expected_tool_calls is not None and any(not tool.strip() for tool in self.expected_tool_calls):
+            raise ValueError("Expected tool names must not be blank")
+        return self
+
+
+class EvalSuiteRunInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=200)
+    cases: List[EvalSuiteCaseInput] = Field(min_length=1, max_length=100)
+    tag: Optional[str] = Field(default=None, min_length=1)
+    case_name: Optional[str] = Field(default=None, min_length=1)
+    default_timeout: int = Field(default=120, ge=1, le=600)
+
+    @model_validator(mode="after")
+    def validate_names(self) -> "EvalSuiteRunInput":
+        names = [case.name for case in self.cases]
+        if len(names) != len(set(names)):
+            raise ValueError("Case names must be unique within a suite")
+        return self

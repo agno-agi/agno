@@ -9,6 +9,7 @@ class EvalType(str, Enum):
     AGENT_AS_JUDGE = "agent_as_judge"
     PERFORMANCE = "performance"
     RELIABILITY = "reliability"
+    SUITE = "suite"
 
 
 class EvalFilterType(str, Enum):
