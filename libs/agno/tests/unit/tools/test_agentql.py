@@ -4,20 +4,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-# Check if agentql can be imported without errors
-# The library may be installed but have broken dependencies (playwright_stealth)
+# The toolkit imports agentql and playwright, either of which can be missing or broken.
 try:
-    import agentql  # noqa: F401
+    from agno.tools.agentql import AgentQLTools
 
     AGENTQL_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
+except ImportError:
     AGENTQL_AVAILABLE = False
 
-# Skip entire module if agentql is not properly available
-if not AGENTQL_AVAILABLE:
-    pytest.skip("agentql not available or has broken dependencies", allow_module_level=True)
-
-from agno.tools.agentql import AgentQLTools
+# Skip at run time, not collection, so every CI shard collects the same tests.
+pytestmark = pytest.mark.skipif(not AGENTQL_AVAILABLE, reason="agentql not available or has broken dependencies")
 
 
 @pytest.fixture

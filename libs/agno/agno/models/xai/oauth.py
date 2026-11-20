@@ -66,8 +66,9 @@ _scope_guard = threading.Lock()
 # Serializes cache MUTATIONS (put/pop/evict/reset): an unguarded finalizer
 # eviction raced concurrent pops/puts, raised mid-iteration, and silently
 # stranded the dead scope's entries. Reads stay lock-free; held only around
-# dict operations, never during I/O.
-_cache_mutation_guard = threading.Lock()
+# dict operations, never during I/O. Reentrant because garbage collection can run
+# the eviction finalizer on a thread that already holds it, which would deadlock a Lock.
+_cache_mutation_guard = threading.RLock()
 
 
 def _evict_scope(scope: str) -> None:

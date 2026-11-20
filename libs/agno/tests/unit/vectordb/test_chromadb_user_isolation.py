@@ -12,7 +12,8 @@ from agno.vectordb.chroma import ChromaDb
 from .conftest import DeterministicEmbedder
 
 TEST_COLLECTION = "isolation_test"
-TEST_PATH = "tmp/test_chromadb_isolation"
+# One folder per xdist worker, so parallel workers never delete each other's database.
+TEST_PATH = f"tmp/test_chromadb_isolation_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 
 
 @pytest.fixture
