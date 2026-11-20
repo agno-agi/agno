@@ -95,7 +95,7 @@ def test_team_run_with_images_form_field(test_os_client, test_team: Team):
 
 
 def test_agent_run_with_invalid_images_form_field(test_os_client, test_agent: Agent):
-    """An unparseable images field is dropped with a warning instead of failing the run."""
+    """An unparseable images field is rejected before executing the run."""
     response = test_os_client.post(
         f"/agents/{test_agent.id}/runs",
         data={
@@ -105,5 +105,5 @@ def test_agent_run_with_invalid_images_form_field(test_os_client, test_agent: Ag
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert response.status_code == 200
-    assert response.json()["content"] is not None
+    assert response.status_code == 422
+    assert "images" in response.json()["detail"]

@@ -2,7 +2,7 @@
 Expose one custom MCP tool
 ==========================
 
-Replace the eight built-in AgentOS MCP tools with one purpose-built tool. The
+Publish one purpose-built tool using the custom AgentOS MCP surface. The
 tool routes a question through an agent while AgentOS owns the MCP transport,
 mount, and lifespan.
 
@@ -67,7 +67,6 @@ agent_os = AgentOS(
     agents=[workspace_agent],
     mcp=MCPConfig(
         tools=[ask_workspace],
-        default_tools=False,
     ),
 )
 app = agent_os.get_app()

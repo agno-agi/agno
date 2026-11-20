@@ -48,9 +48,9 @@ def test_team_anthropic_claude_reasoning_non_streaming():
     """Test that Team reasoning works with Anthropic Claude (extended thinking) in non-streaming mode."""
     # Create a Team with Anthropic Claude reasoning model
     team = Team(
-        model=Claude(id="claude-sonnet-4-5-20250929"),
+        model=Claude(id="claude-sonnet-5-5"),
         reasoning_model=Claude(
-            id="claude-sonnet-4-5-20250929",
+            id="claude-sonnet-5-5",
             thinking={"type": "enabled", "budget_tokens": 512},
         ),
         members=[],
@@ -82,9 +82,9 @@ def test_team_anthropic_claude_reasoning_streaming(shared_db):
     """Test that Team reasoning works with Anthropic Claude (extended thinking) in streaming mode."""
     # Create a Team with Anthropic Claude reasoning model
     team = Team(
-        model=Claude(id="claude-sonnet-4-5-20250929"),
+        model=Claude(id="claude-sonnet-5-5"),
         reasoning_model=Claude(
-            id="claude-sonnet-4-5-20250929",
+            id="claude-sonnet-5-5",
             thinking={"type": "enabled", "budget_tokens": 512},
         ),
         db=shared_db,
@@ -205,9 +205,9 @@ def test_team_vertexai_claude_reasoning_non_streaming():
     # Create a Team with VertexAI Claude reasoning model
     # Note: VertexAI Claude uses the same Claude class but with VertexAI provider
     team = Team(
-        model=Claude(id="claude-sonnet-4-5-20250929", provider="VertexAI"),
+        model=Claude(id="claude-sonnet-5-5", provider="VertexAI"),
         reasoning_model=Claude(
-            id="claude-sonnet-4-5-20250929",
+            id="claude-sonnet-5-5",
             provider="VertexAI",
             thinking={"type": "enabled", "budget_tokens": 512},
         ),
@@ -240,9 +240,9 @@ def test_team_vertexai_claude_reasoning_streaming(shared_db):
     """Test that Team reasoning works with VertexAI Claude (extended thinking) in streaming mode."""
     # Create a Team with VertexAI Claude reasoning model
     team = Team(
-        model=Claude(id="claude-sonnet-4-5-20250929", provider="VertexAI"),
+        model=Claude(id="claude-sonnet-5-5", provider="VertexAI"),
         reasoning_model=Claude(
-            id="claude-sonnet-4-5-20250929",
+            id="claude-sonnet-5-5",
             provider="VertexAI",
             thinking={"type": "enabled", "budget_tokens": 512},
         ),
@@ -661,15 +661,15 @@ def test_team_accepts_anthropic_claude_reasoning_model():
     """Test that Team can be instantiated with Anthropic Claude reasoning model."""
     try:
         team = Team(
-            model=Claude(id="claude-sonnet-4-5-20250929"),
+            model=Claude(id="claude-sonnet-5-5"),
             reasoning_model=Claude(
-                id="claude-sonnet-4-5-20250929",
+                id="claude-sonnet-5-5",
                 thinking={"type": "enabled", "budget_tokens": 512},
             ),
             members=[],
         )
         assert team.reasoning_model is not None
-        assert team.reasoning_model.id == "claude-sonnet-4-5-20250929"
+        assert team.reasoning_model.id == "claude-sonnet-5-5"
     except Exception as e:
         pytest.fail(f"Failed to create Team with Anthropic Claude reasoning model: {e}")
 
@@ -692,16 +692,16 @@ def test_team_accepts_vertexai_claude_reasoning_model():
     """Test that Team can be instantiated with VertexAI Claude reasoning model."""
     try:
         team = Team(
-            model=Claude(id="claude-sonnet-4-5-20250929", provider="VertexAI"),
+            model=Claude(id="claude-sonnet-5-5", provider="VertexAI"),
             reasoning_model=Claude(
-                id="claude-sonnet-4-5-20250929",
+                id="claude-sonnet-5-5",
                 provider="VertexAI",
                 thinking={"type": "enabled", "budget_tokens": 512},
             ),
             members=[],
         )
         assert team.reasoning_model is not None
-        assert team.reasoning_model.id == "claude-sonnet-4-5-20250929"
+        assert team.reasoning_model.id == "claude-sonnet-5-5"
     except Exception as e:
         pytest.fail(f"Failed to create Team with VertexAI Claude reasoning model: {e}")
 

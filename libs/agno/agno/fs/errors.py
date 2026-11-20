@@ -42,3 +42,11 @@ class UnsupportedOperationError(FileSystemError):
         super().__init__(message)
         self.operation = operation
         self.backend = backend
+
+
+class SchemaOutdatedError(FileSystemError):
+    """Raised when the storage table predates the current schema and must be upgraded first.
+
+    ``DbFileSystem.upgrade_schema()`` performs the upgrade, as do the scripts
+    ``libs/agno/migrations/migrate_filesystem_postgres.py`` and ``migrate_filesystem_sqlite.py``.
+    """

@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import ipaddress
+import random
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Dict, Optional
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 import httpx
 
 from agno.fs._paths import normalize_path
-from agno.knowledge.page.types import SyncFailed
+from agno.knowledge.page.types import PageMoved, PageNotMarkdown, SyncFailed
 from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
 from agno.utils.bounded import WorkBudget
 
@@ -58,6 +62,21 @@ def source_url(url: str) -> str:
     return urlunsplit(("https", parts.netloc.lower(), parts.path or "/", "", ""))
 
 
+# Files an index may link to that can never be a documentation page: API specs,
+# data, media and archives. Discovery skips them wherever they point, so a link to
+# an OpenAPI spec neither fails as a page nor marks discovery incomplete. Not .js
+# or .css: pages can be named like "/guides/node.js".
+NON_PAGE_FILE = re.compile(
+    r"\.(?:json|ya?ml|xml|csv|tsv|pdf|png|jpe?g|gif|svg|webp|ico|mp3|mp4|webm|wav|zip|gz|tgz|tar|woff2?|ttf)$",
+    re.I,
+)
+
+
+def is_non_page_file(url: str) -> bool:
+    """True when a link names a file that cannot be a documentation page."""
+    return isinstance(url, str) and NON_PAGE_FILE.search(urlsplit(url).path) is not None
+
+
 @dataclass(frozen=True)
 class SourcePage:
     path: str
@@ -66,12 +85,39 @@ class SourcePage:
     citation_url: str
 
 
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """Seconds requested by a Retry-After header (delta-seconds or HTTP date), if valid."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+
 class PageSource:
     max_pages = 20_000
     max_indexes = 100
     max_depth = 3
     max_index_bytes = 8 * 1024 * 1024
     max_page_bytes = 4 * 1024 * 1024
+    # Transient failures (connection resets, timeouts, 429/5xx) arrive in bursts during
+    # a full sync, so retries back off for several seconds, within each fetch's deadline.
+    fetch_attempts = 5
+    retry_base_seconds = 0.5
+    retry_max_seconds = 4.0
+    retry_after_max_seconds = 10.0
+    # A stalled connection (seen as a TLS handshake that hangs, then resets) must not
+    # consume the whole fetch deadline: each attempt gets its own bound so a retry on
+    # a fresh connection still fits. Healthy page fetches take well under a second.
+    connect_timeout_seconds = 5.0
+    attempt_timeout_seconds = 10.0
 
     def __init__(self, url: str, public_url: Optional[str], budget: WorkBudget):
         self.url = source_url(url)
@@ -86,7 +132,7 @@ class PageSource:
         """Pin validated DNS answers to the connection while retaining TLS hostname checks."""
         url = source_url(url)
         deadline = time.monotonic() + min(30, self.budget.remaining())
-        for attempt in range(3):
+        for attempt in range(self.fetch_attempts):
             current = url
             try:
                 for redirect in range(4):
@@ -113,7 +159,9 @@ class PageSource:
                     remaining = min(deadline - time.monotonic(), self.budget.remaining())
                     if remaining <= 0:
                         raise TimeoutError()
-                    with httpx.Client(timeout=remaining, trust_env=False, follow_redirects=False) as client:
+                    attempt_timeout = min(remaining, self.attempt_timeout_seconds)
+                    timeout = httpx.Timeout(attempt_timeout, connect=min(self.connect_timeout_seconds, attempt_timeout))
+                    with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
                         with client.stream(
                             "GET",
                             pinned,
@@ -121,11 +169,24 @@ class PageSource:
                             extensions={"sni_hostname": parts.hostname},
                         ) as response:
                             if response.is_redirect:
+                                location = urljoin(current, response.headers["location"])
+                                if url.endswith(".md"):
+                                    # A listed Markdown page that now redirects to another host, to a
+                                    # section of another page, or to a non-Markdown URL (which serves
+                                    # HTML) is an alias, not a page of this source. A move to another
+                                    # Markdown URL on the same host is followed.
+                                    target = urlsplit(location)
+                                    if target.netloc.lower() != self.origin or not target.path.endswith(".md"):
+                                        raise PageMoved(location)
+                                    location = urlunsplit(target._replace(fragment=""))
                                 if redirect == 3:
                                     raise SyncFailed()
-                                current = source_url(urljoin(current, response.headers["location"]))
+                                current = source_url(location)
                                 continue
                             response.raise_for_status()
+                            content_type = response.headers.get("content-type", "").lower()
+                            if url.endswith(".md") and content_type.startswith("text/html"):
+                                raise PageNotMarkdown()
                             body = bytearray()
                             for chunk in response.iter_bytes():
                                 self.budget.remaining()
@@ -134,21 +195,34 @@ class PageSource:
                                 body.extend(chunk)
                             return body.decode("utf-8", errors="strict")
                 raise SyncFailed()
-            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.HTTPStatusError) as exc:
-                if (
-                    isinstance(exc, httpx.HTTPStatusError)
-                    and exc.response.status_code != 429
-                    and exc.response.status_code < 500
-                ):
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+                httpx.HTTPStatusError,
+            ) as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                if status is not None and status != 429 and status < 500:
                     raise SyncFailed() from exc
-                if attempt == 2:
+                if attempt == self.fetch_attempts - 1:
                     raise SyncFailed() from exc
-                delay = min(0.25 * 2**attempt, self.budget.remaining())
-                if self.budget.cancelled.wait(delay):
+                delay = self._retry_delay(attempt, exc)
+                # Never sleep past the fetch deadline; fail now with the transport cause.
+                if time.monotonic() + delay >= deadline:
+                    raise SyncFailed() from exc
+                if self.budget.cancelled.wait(min(delay, self.budget.remaining())):
                     self.budget.remaining()
-                if time.monotonic() >= deadline:
-                    raise SyncFailed() from exc
         raise SyncFailed()
+
+    def _retry_delay(self, attempt: int, exc: Exception) -> float:
+        """Exponential backoff with jitter; a server's bounded Retry-After takes precedence."""
+        if isinstance(exc, httpx.HTTPStatusError):
+            after = _retry_after_seconds(exc.response.headers.get("retry-after"))
+            if after is not None:
+                return min(after, self.retry_after_max_seconds)
+        backoff = min(self.retry_base_seconds * 2**attempt, self.retry_max_seconds)
+        # Jitter keeps concurrent page fetches from retrying in lockstep.
+        return backoff * random.uniform(0.5, 1.0)
 
     def discover(self) -> Dict[str, SourcePage]:
         pages: Dict[str, SourcePage] = {}
@@ -173,13 +247,15 @@ class PageSource:
             if not entries:
                 self.complete = False
             for entry in entries:
+                if is_non_page_file(entry.url):
+                    continue
                 try:
                     target = source_url(entry.url)
                     if urlsplit(target).netloc != self.origin or not target.startswith(self.base + "/"):
                         raise ValueError("invalid_source_destination")
                     relative = target[len(self.base) :]
                     if relative.endswith("/llms.txt") or relative.startswith("/_llms/"):
-                        visit(target, depth + 1)
+                        queue.append((target, depth + 1))
                         continue
                     # Fumadocs links can identify the rendered page through an
                     # llms.mdx route while its resolved Markdown is served at .md.
@@ -219,7 +295,12 @@ class PageSource:
                 except Exception:
                     self.complete = False
 
-        visit(self.url, 0)
+        # Breadth-first, so each nested index is reached at its shallowest depth: a root
+        # that lists every sub-index directly stays within max_depth however deep the
+        # sub-indexes link to each other.
+        queue: deque[tuple[str, int]] = deque([(self.url, 0)])
+        while queue:
+            visit(*queue.popleft())
         if not pages:
             raise SyncFailed()
         return pages

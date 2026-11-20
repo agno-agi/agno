@@ -11,7 +11,11 @@ _NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 ._-]*$")
 
 class ScheduleCreate(BaseModel):
     name: str = Field(..., max_length=255)
-    cron_expr: str = Field(..., max_length=128)
+    cron_expr: str = Field(
+        default="",
+        max_length=128,
+        description="An empty or omitted cron makes the schedule on demand; it runs only through trigger.",
+    )
     endpoint: str = Field(..., max_length=512)
     method: str = Field(default="POST", max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
@@ -51,7 +55,11 @@ class ScheduleCreate(BaseModel):
 
 class ScheduleUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=255)
-    cron_expr: Optional[str] = Field(default=None, max_length=128)
+    cron_expr: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="An empty cron makes the schedule on demand; it runs only through trigger. Omit to keep the current cron.",
+    )
     endpoint: Optional[str] = Field(default=None, max_length=512)
     method: Optional[str] = Field(default=None, max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
@@ -117,7 +125,7 @@ class ScheduleResponse(BaseModel):
     method: str
     endpoint: str
     payload: Optional[Dict[str, Any]] = None
-    cron_expr: str
+    cron_expr: Optional[str] = None
     timezone: str
     timeout_seconds: int
     max_retries: int
@@ -134,6 +142,20 @@ class ScheduleResponse(BaseModel):
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
+    @field_validator("cron_expr", mode="before")
+    @classmethod
+    def public_cron(cls, value: Optional[str]) -> Optional[str]:
+        from agno.scheduler.cron import is_on_demand
+
+        return None if value is None or is_on_demand(value) else value
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def hide_authorization(cls, value: Any) -> Any:
+        from agno.run.authorization import public_payload
+
+        return public_payload(value)
+
 
 class ScheduleStateResponse(BaseModel):
     """Trimmed response for state-changing operations (enable/disable)."""
@@ -148,7 +170,7 @@ class ScheduleStateResponse(BaseModel):
 class ScheduleRunResponse(BaseModel):
     id: str
     schedule_id: str
-    # Denormalised from the parent schedule when the run is recorded.
+    # Execution identity: the caller for manual Company runs, otherwise the schedule owner.
     user_id: Optional[str] = None
     attempt: int
     triggered_at: Optional[int] = None

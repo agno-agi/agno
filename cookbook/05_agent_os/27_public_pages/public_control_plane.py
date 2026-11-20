@@ -34,7 +34,7 @@ agent_os = AgentOS(
     db=db,
     authorization=True,
     public=PublicSurface(agents=[agent], mcp=True),
-    mcp=MCPConfig(tools=[service_description], default_tools=False, stateless=True),
+    mcp=MCPConfig(tools=[service_description], stateless=True),
     cors_allowed_origins=["https://os.agno.com", "http://localhost:3000"],
 )
 app = agent_os.get_app()

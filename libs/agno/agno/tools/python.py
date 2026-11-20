@@ -114,9 +114,9 @@ class PythonTools(Toolkit):
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
 
             if variable_to_return:
-                variable_value = globals_after_run.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in globals_after_run:
                     return f"Variable {variable_to_return} not found"
+                variable_value = globals_after_run[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
@@ -142,9 +142,9 @@ class PythonTools(Toolkit):
             log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
             if variable_to_return:
-                variable_value = globals_after_run.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in globals_after_run:
                     return f"Variable {variable_to_return} not found"
+                variable_value = globals_after_run[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:
@@ -202,9 +202,9 @@ class PythonTools(Toolkit):
             exec(code, self.safe_globals, self.safe_locals)
 
             if variable_to_return:
-                variable_value = self.safe_locals.get(variable_to_return)
-                if variable_value is None:
+                if variable_to_return not in self.safe_locals:
                     return f"Variable {variable_to_return} not found"
+                variable_value = self.safe_locals[variable_to_return]
                 log_debug(f"Variable {variable_to_return} value: {variable_value}")
                 return str(variable_value)
             else:

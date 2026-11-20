@@ -5,7 +5,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from sqlalchemy import Engine, create_engine
+    from sqlalchemy import URL, Engine, create_engine
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql.expression import text
@@ -33,13 +33,20 @@ class SQLTools(Toolkit):
     ):
         # Get the database engine
         _engine: Optional[Engine] = db_engine
-        if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
-        elif user and password and host and port and dialect:
-            if schema is not None:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}/{schema}")
-            else:
-                _engine = create_engine(f"{dialect}://{user}:{password}@{host}:{port}")
+        if _engine is None:
+            if db_url is not None:
+                _engine = create_engine(db_url)
+            elif user and password and host and port and dialect:
+                _engine = create_engine(
+                    URL.create(
+                        drivername=dialect,
+                        username=user,
+                        password=password,
+                        host=host,
+                        port=port,
+                        database=schema,
+                    )
+                )
 
         if _engine is None:
             raise ValueError("Could not build the database connection")
@@ -120,6 +127,7 @@ class SQLTools(Toolkit):
         Args:
             query (str): The query to run.
             limit (int, optional): The number of rows to return. Defaults to 10. Use `None` to show all results.
+                Non-positive values return no rows.
         Returns:
             str: Result of the SQL query.
         Notes:
@@ -137,7 +145,7 @@ class SQLTools(Toolkit):
 
         Args:
             sql (str): The sql query to run.
-            limit (int, optional): The number of rows to return. Defaults to None.
+            limit (int, optional): The number of rows to return. Defaults to None. Non-positive values return no rows.
 
         Returns:
             List[dict]: The result of the query.
@@ -153,12 +161,12 @@ class SQLTools(Toolkit):
             if not result.returns_rows:  # type: ignore[attr-defined]
                 return []
 
-            try:
-                if limit:
-                    rows = result.fetchmany(limit)
-                else:
-                    rows = result.fetchall()
-                return [row._asdict() for row in rows]
-            except Exception:
-                logger.exception("Error while executing SQL")
-                return []
+            # Fetch errors are not caught here: run_sql_query reports them,
+            # and returning [] would make a failed fetch look like no rows.
+            if limit is None:
+                rows = result.fetchall()
+            elif limit > 0:
+                rows = result.fetchmany(limit)
+            else:
+                rows = []
+            return [row._asdict() for row in rows]

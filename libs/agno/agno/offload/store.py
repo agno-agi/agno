@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from agno.fs import FileSystem
 from agno.fs._paths import MAX_SEGMENT_CHARS
 from agno.fs.errors import QuotaExceededError
+from agno.offload._scan import _find_match_positions, _match_window
 from agno.offload.types import NEVER_OFFLOADED_TOOLS, ResultMatch, ResultPage, ResultRef
 from agno.utils.log import log_debug, log_warning
 from agno.utils.string import hash_string_sha256
@@ -97,33 +98,10 @@ def _clip_around(line: str, char_offset: int, match_len: int = 1) -> str:
     from a little before the match, with ellipses marking cut ends, so the
     match itself is always inside the window whatever its position.
     """
-    if len(line) <= SEARCH_LINE_CLIP:
-        return line
-    width = SEARCH_LINE_CLIP - 6
-    lead = width // 4
-    start = max(0, min(char_offset - lead, len(line) - width))
-    need_end = char_offset + min(max(match_len, 1), width)
-    if start + width < need_end:
-        start = min(need_end - width, len(line) - width)
+    start, end = _match_window(line, char_offset, match_len, SEARCH_LINE_CLIP)
     head = "..." if start > 0 else ""
-    tail = "..." if start + width < len(line) else ""
-    return f"{head}{line[start : start + width]}{tail}"
-
-
-def _find_match_positions(
-    lines: List[str], compiled: "re.Pattern[str]", limit: int
-) -> Tuple[List[Tuple[int, int, int]], bool]:
-    """(1-indexed line number, char offset, match length) for each matching
-    line, capped at ``limit``; the flag is True when one more match exists."""
-    positions: List[Tuple[int, int, int]] = []
-    for index, line in enumerate(lines):
-        found = compiled.search(line)
-        if found is None:
-            continue
-        if len(positions) >= limit:
-            return positions, True
-        positions.append((index + 1, found.start(), found.end() - found.start()))
-    return positions, False
+    tail = "..." if end < len(line) else ""
+    return f"{head}{line[start:end]}{tail}"
 
 
 def _render_matches(
@@ -140,13 +118,18 @@ def _render_matches(
     matches: List[ResultMatch] = []
     budget = SEARCH_MAX_CHARS
     stopped_early = False
+    previous_line = 0
     for line_number, char_offset, match_len in positions:
         if matches and budget <= _MATCH_HEADER_CHARS:
             # This match exists but no longer fits the reply budget.
             stopped_early = True
             break
         index = line_number - 1
-        if context_lines > 0:
+        if context_lines > 0 and line_number == previous_line:
+            # The context block was rendered with the previous match on this line;
+            # repeating it would spend the budget on lines the model already has.
+            text = f"{line_number}: {_clip_around(lines[index], char_offset, match_len)}"
+        elif context_lines > 0:
             start = max(0, index - context_lines)
             end = min(len(lines), index + context_lines + 1)
             # Each row carries its own line number, so the block reads the
@@ -161,8 +144,12 @@ def _render_matches(
         # for it so the reply the model sees stays within one page.
         budget -= _MATCH_HEADER_CHARS
         if len(text) > budget:
+            # The excerpt is cut to fit; a match the scan skipped because this excerpt
+            # would have shown it may now be out of view, so say there is more.
             text = text[:budget]
+            stopped_early = True
         budget -= len(text) + 1
+        previous_line = line_number
         matches.append(ResultMatch(line_number=line_number, line=text, char_offset=char_offset))
     if matches and (more or stopped_early):
         matches[-1].more = True
@@ -172,7 +159,7 @@ def _render_matches(
 def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
     """The search scan itself: at most 20 matches, one read_result page in total."""
     lines = content.split("\n")
-    positions, more = _find_match_positions(lines, re.compile(pattern), SEARCH_MAX_MATCHES)
+    positions, more = _find_match_positions(lines, re.compile(pattern), SEARCH_MAX_MATCHES, SEARCH_LINE_CLIP)
     return _render_matches(lines, positions, more, context_lines)
 
 
@@ -198,7 +185,9 @@ def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[
         log_warning(f"Result search: {scan_script} is missing; the scan runs in-process without a time limit")
         return _scan_for_matches(content, pattern, context_lines)
 
-    payload = json.dumps({"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES})
+    payload = json.dumps(
+        {"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES, "clip": SEARCH_LINE_CLIP}
+    )
     process = subprocess.Popen(
         [sys.executable, "-I", str(scan_script)],
         stdin=subprocess.PIPE,
@@ -476,6 +465,9 @@ class ResultStore:
             max_namespace_bytes=MAX_SESSION_NAMESPACE_BYTES,
         )
 
+    def _fs_for_row(self, row: Dict[str, Any]) -> FileSystem:
+        return self._fs_for_namespace(str(row["namespace"]))
+
     def _build_row(
         self,
         *,
@@ -582,6 +574,9 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
         session_fs.write(path, output)
         row = self._build_row(
@@ -624,6 +619,9 @@ class ResultStore:
         path, content_type = self._plan(
             session_id=session_id, run_id=run_id, tool_call_id=tool_call_id, output=output, shared=shared
         )
+        # Payloads stay in the shared partition: the namespace is already per
+        # session, the index row records the user, and releases before 3.1 wrote
+        # them there, so older results stay readable.
         session_fs = self._session_fs(session_id)
         await session_fs.awrite(path, output)
         row = self._build_row(
@@ -761,13 +759,19 @@ class ResultStore:
         return await self._adb_call("get_tool_result", result_id)
 
     def _page_from_content(
-        self, content: str, start_line: int, end_line: Optional[int], start_char: int = 0
+        self,
+        content: str,
+        start_line: int,
+        end_line: Optional[int],
+        start_char: int = 0,
+        max_chars: int = READ_MAX_CHARS,
     ) -> ResultPage:
         lines = content.split("\n")
         line_count = len(lines)
         start = min(max(1, start_line), line_count)
         end = line_count if end_line is None else min(max(end_line, start), line_count)
         offset = max(0, start_char)
+        char_limit = max(1, min(max_chars, READ_MAX_CHARS))
         pieces: List[str] = []
         chars = 0
         truncated = False
@@ -783,7 +787,7 @@ class ResultStore:
             skip = offset if current == start else 0
             line = lines[current - 1][skip:]
             separator = 1 if pieces else 0
-            room = READ_MAX_CHARS - chars - separator
+            room = char_limit - chars - separator
             if len(line) > room:
                 # The line does not fit. Take what fits and continue inside
                 # this line on the next page, so no character is ever lost.
@@ -812,13 +816,13 @@ class ResultStore:
         )
 
     def _read_payload(self, row: Dict[str, Any]) -> str:
-        content = self._fs_for_namespace(str(row["namespace"])).read(str(row["path"]))
+        content = self._fs_for_row(row).read(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
 
     async def _aread_payload(self, row: Dict[str, Any]) -> str:
-        content = await self._fs_for_namespace(str(row["namespace"])).aread(str(row["path"]))
+        content = await self._fs_for_row(row).aread(str(row["path"]))
         if content is None:
             raise KeyError(f"stored payload for {row['result_id']} is missing")
         return content
@@ -844,24 +848,35 @@ class ResultStore:
         return await self._aread_payload(row)
 
     def read(
-        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+        self,
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        max_chars: int = READ_MAX_CHARS,
     ) -> ResultPage:
         """Read a page of a stored result. Lines are 1-indexed and inclusive;
-        ``start_char`` is the 0-indexed offset into ``start_line`` to begin at."""
+        ``start_char`` is the 0-indexed offset into ``start_line`` to begin at.
+        ``max_chars`` bounds a focused excerpt, clamped to 1 through 16000."""
         row = self.get_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
-        return self._page_from_content(self._read_payload(row), start_line, end_line, start_char)
+        return self._page_from_content(self._read_payload(row), start_line, end_line, start_char, max_chars)
 
     async def aread(
-        self, result_id: str, start_line: int = 1, end_line: Optional[int] = None, start_char: int = 0
+        self,
+        result_id: str,
+        start_line: int = 1,
+        end_line: Optional[int] = None,
+        start_char: int = 0,
+        max_chars: int = READ_MAX_CHARS,
     ) -> ResultPage:
         """Async variant of ``read``."""
         row = await self.aget_row(result_id)
         if row is None:
             raise KeyError(f"unknown result id {result_id}")
         content = await self._aread_payload(row)
-        return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char)
+        return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char, max_chars)
 
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
         # Compiled here first so an invalid pattern raises re.error in the
@@ -917,7 +932,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    self._fs_for_namespace(str(row["namespace"])).delete(str(row["path"]))
+                    self._fs_for_row(row).delete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             self._db_call("delete_tool_results", [str(row["result_id"]) for row in batch])
@@ -928,7 +943,7 @@ class ResultStore:
             batch = rows[batch_start : batch_start + DELETE_BATCH_SIZE]
             for row in batch:
                 try:
-                    await self._fs_for_namespace(str(row["namespace"])).adelete(str(row["path"]))
+                    await self._fs_for_row(row).adelete(str(row["path"]))
                 except Exception as e:
                     log_warning(f"Result payload delete failed for {row.get('result_id')}: {e}")
             await self._adb_call("delete_tool_results", [str(row["result_id"]) for row in batch])
