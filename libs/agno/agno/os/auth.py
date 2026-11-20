@@ -421,7 +421,8 @@ def _default_scope_mappings() -> Dict[str, List[str]]:
 # Shared constant so auth.py and jwt.py stay in sync.
 # Deliberately excludes schedules:write and schedules:delete: the executor only
 # POSTs a schedule's own run endpoint, so a leaked internal token must not be
-# able to create or repoint schedule rows.
+# able to create or repoint schedule rows. evals:run lets a schedule run an eval suite,
+# registered or posted, and nothing else under evals.
 INTERNAL_SERVICE_SCOPES: List[str] = [
     "agents:read",
     "agents:run",
@@ -430,6 +431,7 @@ INTERNAL_SERVICE_SCOPES: List[str] = [
     "workflows:read",
     "workflows:run",
     "schedules:read",
+    "evals:run",
 ]
 
 

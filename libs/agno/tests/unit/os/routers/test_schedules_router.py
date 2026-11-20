@@ -559,6 +559,34 @@ class TestScheduleRunScope:
         resp = scoped_client(["agent_os:admin"]).post("/schedules", json=self._body())
         assert resp.status_code == 201
 
+    def test_eval_suite_run_needs_run_on_its_agent_and_evals_run(self, scoped_client, mock_db):
+        """Scheduling a suite asks what running it by hand asks: run on its one agent, plus evals:run."""
+        from agno.agent import Agent
+        from agno.eval import Case, EvalSuite
+
+        suite = EvalSuite(id="s1", cases=(Case(name="c", agent=Agent(id="a1"), input="q", criteria="k"),))
+
+        def _client(scopes):
+            client = scoped_client(scopes)
+            client.app.state.eval_suites = [suite]
+            return client
+
+        body = self._body("/eval-suites/s1/runs")
+        assert (
+            _client(["schedules:write", "evals:run", "agents:a1:run"]).post("/schedules", json=body).status_code == 201
+        )
+        assert _client(["schedules:write", "agents:a1:run"]).post("/schedules", json=body).status_code == 403
+        assert (
+            _client(["schedules:write", "evals:run", "agents:a2:run"]).post("/schedules", json=body).status_code == 403
+        )
+        unknown = self._body("/eval-suites/nope/runs")
+        assert (
+            _client(["schedules:write", "evals:run", "agents:run"]).post("/schedules", json=unknown).status_code == 404
+        )
+        # Without evals:run an unknown and a real suite answer alike, as /agents/<id>/runs does.
+        assert _client(["schedules:write"]).post("/schedules", json=unknown).status_code == 403
+        assert _client(["schedules:write"]).post("/schedules", json=body).status_code == 403
+
     def test_repointing_endpoint_rechecks_scope(self, scoped_client, mock_db):
         mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         resp = scoped_client(["schedules:write"]).patch("/schedules/sched-1", json={"endpoint": "/teams/t1/runs"})

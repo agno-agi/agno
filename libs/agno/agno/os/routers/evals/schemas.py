@@ -2,7 +2,7 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agno.db.schemas.evals import EvalType
 from agno.eval import AccuracyResult, AgentAsJudgeResult, PerformanceResult, ReliabilityResult
@@ -10,6 +10,7 @@ from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
+from agno.eval.suite import EvalSuite, SuiteResult
 from agno.os.utils import to_utc_datetime
 
 
@@ -174,6 +175,101 @@ class EvalSchema(BaseModel):
             eval_type=EvalType.RELIABILITY,
             eval_data=asdict(result),
         )
+
+    @classmethod
+    def from_suite_result(
+        cls,
+        eval_suite: EvalSuite,
+        result: SuiteResult,
+        run_id: str,
+        eval_input: Dict[str, Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "EvalSchema":
+        return cls(
+            id=run_id,
+            name=eval_suite.name or eval_suite.id,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=None,
+            eval_type=EvalType.SUITE,
+            eval_data=result.to_dict(),
+            eval_input=eval_input,
+        )
+
+
+class EvalSuiteCaseInput(BaseModel):
+    # A field Case does not have is refused, as Case(...) refuses an unknown keyword.
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., description="Name of the case", min_length=1, max_length=255)
+    input: str = Field(..., description="Input text/query for the case", min_length=1)
+    agent_id: Optional[str] = Field(None, description="Agent ID the case runs; exactly one of agent_id or team_id")
+    team_id: Optional[str] = Field(None, description="Team ID the case runs; exactly one of agent_id or team_id")
+    tags: List[str] = Field(default_factory=list, description="Tags the case can be selected by")
+    timeout_seconds: Optional[int] = Field(None, description="Per-case timeout in seconds", ge=1)
+    criteria: Optional[str] = Field(None, description="What the judge checks the output for", min_length=1)
+    judge_mode: Literal["binary", "numeric"] = Field("binary", description="How the judge scores: pass/fail or 1-10")
+    judge_threshold: int = Field(7, description="Minimum numeric judge score to pass", ge=1, le=10)
+    expected_tool_calls: Optional[List[str]] = Field(None, description="Tool names the run must have called")
+    allow_additional_tool_calls: bool = Field(True, description="Whether tools beyond the expected ones are allowed")
+    judge_model_id: Optional[str] = Field(
+        None, description="Model ID that judges this case; defaults to the eval judge"
+    )
+    judge_model_provider: Optional[str] = Field(None, description="Provider of judge_model_id, e.g. anthropic")
+    session_id: Optional[str] = Field(None, description="Session to run in; cases sharing one continue a conversation")
+    session_state: Optional[Dict[str, Any]] = Field(None, description="Session state for the run")
+    dependencies: Optional[Dict[str, Any]] = Field(None, description="Dependencies for the run")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata for the run")
+    knowledge_filters: Optional[Dict[str, Any]] = Field(None, description="Knowledge filters for the run")
+
+    @model_validator(mode="after")
+    def validate_case(self) -> "EvalSuiteCaseInput":
+        if bool(self.agent_id) == bool(self.team_id):
+            raise ValueError("Each case requires exactly one of agent_id or team_id")
+        if bool(self.judge_model_id) != bool(self.judge_model_provider):
+            raise ValueError("judge_model_id and judge_model_provider must be set together")
+        if not self.criteria and not self.expected_tool_calls:
+            raise ValueError("Each case requires criteria or expected_tool_calls")
+        return self
+
+
+class EvalSuiteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., description="Name for the suite run", min_length=1, max_length=255)
+    cases: List[EvalSuiteCaseInput] = Field(..., description="The cases to run", min_length=1)
+    tag: Optional[str] = Field(None, description="Run only the cases with this tag")
+    case_name: Optional[str] = Field(None, description="Run only the case with this name")
+    default_timeout: int = Field(120, description="Default per-case timeout in seconds", ge=1)
+
+
+class EvalSuiteRunInput(BaseModel):
+    # A mistyped selector must not run the whole suite.
+    model_config = ConfigDict(extra="forbid")
+
+    tag: Optional[str] = Field(None, description="Run only the cases with this tag")
+    case_name: Optional[str] = Field(None, description="Run only the case with this name")
+    default_timeout: int = Field(120, description="Default per-case timeout in seconds", ge=1)
+
+
+class EvalSuiteCaseSchema(BaseModel):
+    name: str = Field(..., description="Name of the case")
+    agent_id: Optional[str] = Field(None, description="Agent ID the case runs")
+    team_id: Optional[str] = Field(None, description="Team ID the case runs")
+    tags: List[str] = Field(default_factory=list, description="Tags the case can be selected by")
+    timeout_seconds: int = Field(..., description="Per-case timeout in seconds")
+
+
+class EvalSuiteSchema(BaseModel):
+    id: str = Field(..., description="Unique identifier for the eval suite")
+    name: Optional[str] = Field(None, description="Name of the eval suite")
+    description: Optional[str] = Field(None, description="Description of the eval suite")
+    cases: List[EvalSuiteCaseSchema] = Field(default_factory=list, description="The cases the suite runs")
+
+    @classmethod
+    def from_eval_suite(cls, eval_suite: EvalSuite) -> "EvalSuiteSchema":
+        return cls(**eval_suite.to_dict())
 
 
 class DeleteEvalRunsRequest(BaseModel):

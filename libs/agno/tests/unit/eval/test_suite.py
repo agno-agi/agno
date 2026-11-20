@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, CaseResult, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, CaseResult, EvalSuite, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -174,6 +174,17 @@ def test_case_with_falsy_checks_raises():
         Case(name="x", agent=StubAgent(), input="q", criteria="")
     with pytest.raises(ValueError, match="has no checks"):
         Case(name="x", agent=StubAgent(), input="q", expected_tool_calls=())
+
+
+def test_run_cases_accepts_an_eval_suite(monkeypatch):
+    # The wrapper stands in for its cases, so one file can serve a suite and run it in CI.
+    _install_fake_evals(monkeypatch)
+    eval_suite = EvalSuite(id="s", cases=(_make_case(name="a", tags=("smoke",)), _make_case(name="b")))
+
+    result = run_cases(eval_suite, tag="smoke")
+
+    assert [r.name for r in result.results] == ["a"]
+    assert cli(eval_suite, argv=["--list"]) == 0
 
 
 def test_empty_expected_tool_calls_with_criteria_skips_reliability(monkeypatch):

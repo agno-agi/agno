@@ -323,6 +323,12 @@ class TestInternalServiceScopes:
         assert "schedules:delete" not in INTERNAL_SERVICE_SCOPES
         assert "schedules:read" in INTERNAL_SERVICE_SCOPES
 
+    def test_internal_token_runs_eval_suites_and_nothing_else_under_evals(self):
+        from agno.os.auth import INTERNAL_SERVICE_SCOPES
+
+        assert "evals:run" in INTERNAL_SERVICE_SCOPES
+        assert "evals:write" not in INTERNAL_SERVICE_SCOPES
+
 
 # ----------------------------------------------------------------------
 # Composition, dispatch, and scheduling respect visibility

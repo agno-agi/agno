@@ -179,3 +179,16 @@ def test_same_id_across_different_entity_types_allowed():
     assert len(app.agents) == 1
     assert len(app.teams) == 1
     assert len(app.workflows) == 1
+
+
+def test_duplicate_eval_suite_ids_keep_the_first():
+    """A suite never stops the OS: a second suite with the same id is dropped with a warning."""
+    from agno.eval import Case, EvalSuite
+
+    agent = Agent(name="Agent 1", id="agent-1", telemetry=False)
+    first = EvalSuite(id="same-id", cases=(Case(name="a", agent=agent, input="q", criteria="k"),))
+    second = EvalSuite(id="same-id", cases=(Case(name="b", agent=agent, input="q", criteria="k"),))
+
+    agent_os = AgentOS(agents=[agent], eval_suites=[first, second], telemetry=False)
+
+    assert agent_os.eval_suites == [first]

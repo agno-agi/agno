@@ -7,6 +7,7 @@ Suite examples run multiple eval cases as one aggregated suite with tag selectio
 - `suite_basic.py` - Two cases (judge + reliability checks) run through the built-in `cli()`.
 - `suite_team_scoring.py` - A Team run through the suite (the leader delegates to a calculator member and a writer member); reliability sees the members' tool calls, and every answer is graded by a numeric 1-10 judge.
 - `suite_session.py` - Cases that pass `session_state` and `user_id` to the run, and a case that continues a session (`session_id`) whose earlier turn runs in its `setup` hook, to check a two-turn booking conversation; the last case sends an image with its turn by giving a `Message` as the input.
+- `suite_agent_os.py` - An `EvalSuite` registered on AgentOS: list it with `GET /eval-suites`, run it with `POST /eval-suites/{id}/runs`, and read the pass rate back from `GET /eval-runs?eval_types=suite`.
 
 ## Usage
 
@@ -17,6 +18,9 @@ python cookbook/09_evals/suite/suite_basic.py --tag smoke     # run a tagged sub
 python cookbook/09_evals/suite/suite_basic.py --name factorial_uses_calculator
 python cookbook/09_evals/suite/suite_basic.py --json-output tmp/evals.json
 python cookbook/09_evals/suite/suite_basic.py -v              # full run panels per case
+python cookbook/09_evals/suite/suite_agent_os.py              # serve the suite on AgentOS
 ```
+
+Pin a case's `session_id` only to share one conversation across cases. On AgentOS a pinned session belongs to the first user who writes to it, as on the run routes; leave it unset for a fresh session per run.
 
 For programmatic use (CI workflows, embedding), call `run_cases(CASES)` or `await arun_cases(CASES)` instead and read `SuiteResult.to_dict()` - the runner does no console I/O.
