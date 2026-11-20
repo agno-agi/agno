@@ -534,12 +534,13 @@ class PgVector(VectorDb):
                         # Insert the batch of records
                         if batch_records:
                             insert_stmt = postgresql.insert(self.table)
-                            sess.execute(insert_stmt, batch_records)
-                            sess.commit()  # Commit batch independently
+                            # The engine is synchronous: run its I/O in a worker thread
+                            await asyncio.to_thread(sess.execute, insert_stmt, batch_records)
+                            await asyncio.to_thread(sess.commit)  # Commit batch independently
                             log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         log_error(f"Error with batch starting at index {i}: {str(e)}")
-                        sess.rollback()  # Rollback the current batch if there's an error
+                        await asyncio.to_thread(sess.rollback)  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
             log_error(f"Error inserting documents: {str(e)}")
@@ -791,8 +792,9 @@ class PgVector(VectorDb):
         documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
-            if self.content_hash_exists(content_hash, user_id=user_id):
-                self._delete_by_content_hash(content_hash, user_id=user_id)
+            # The engine is synchronous: keep its I/O off the event loop
+            if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id=user_id):
+                await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id=user_id)
             await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
@@ -895,12 +897,13 @@ class PgVector(VectorDb):
                             index_elements=["id"],
                             set_=set_clause,
                         )
-                        sess.execute(upsert_stmt)
-                        sess.commit()  # Commit batch independently
+                        # The engine is synchronous: run its I/O in a worker thread
+                        await asyncio.to_thread(sess.execute, upsert_stmt)
+                        await asyncio.to_thread(sess.commit)  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         log_error(f"Error with batch starting at index {i}: {str(e)}")
-                        sess.rollback()  # Rollback the current batch if there's an error
+                        await asyncio.to_thread(sess.rollback)  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
             log_error(f"Error upserting documents: {str(e)}")
