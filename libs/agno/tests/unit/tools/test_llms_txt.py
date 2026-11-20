@@ -567,6 +567,16 @@ def test_reader_allowed_hosts_normalizes_case():
     assert is_host_allowed("https://other.example/x", reader.allowed_hosts) is False
 
 
+@pytest.mark.parametrize("port", ["invalid", "65536"])
+def test_reader_rejects_invalid_port_before_fetch(reader, port):
+    url = f"https://example.com:{port}/docs"
+    with patch("socket.getaddrinfo") as resolve, patch("httpx.Client") as client:
+        assert is_host_allowed(url, reader.allowed_hosts) is False
+        assert reader.fetch_url(url) is None
+    resolve.assert_not_called()
+    client.assert_not_called()
+
+
 def test_reader_allowed_hosts_ignores_port_and_userinfo():
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
     assert is_host_allowed("https://docs.agno.com:8443/x", reader.allowed_hosts) is True

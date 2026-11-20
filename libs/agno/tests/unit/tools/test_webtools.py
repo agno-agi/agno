@@ -1,7 +1,8 @@
 """Unit tests for WebTools class."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
+import httpx
 import pytest
 
 from agno.tools.webtools import WebTools, _is_safe_url
@@ -57,24 +58,26 @@ def test_is_safe_url_allows_public_ip():
 # ---------------------------------------------------------------------------
 
 
-def test_expand_url_success(web_tools):
-    """Test successful expansion of a public URL."""
-    mock_url = "https://tinyurl.com/k2fkfxra"
-    final_url = "https://github.com/agno-agi/agno"
-
-    mock_response = Mock()
-    mock_response.is_redirect = False
-    mock_response.url = final_url
+@pytest.mark.parametrize("location", ["/docs/index", "https://example.com/docs/index"])
+def test_expand_url_success(web_tools, location):
+    start = "https://example.com/start"
+    index = "https://example.com/docs/index"
+    final = "https://example.com/docs/guide"
+    responses = [
+        httpx.Response(301, headers={"location": location}),
+        httpx.Response(302, headers={"location": "guide"}),
+        httpx.Response(200),
+    ]
 
     with (
-        patch("agno.tools.webtools._is_safe_url", return_value=(True, "")),
-        patch("httpx.head", return_value=mock_response) as mock_head,
+        patch("socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 443))]),
+        patch("agno.tools.webtools._is_safe_url", wraps=_is_safe_url) as validate,
+        patch("httpx.head", side_effect=responses) as head,
     ):
-        result = web_tools.expand_url(mock_url)
+        assert web_tools.expand_url(start) == final
 
-    assert result == final_url
-    # redirects are now followed manually (follow_redirects=False for security)
-    mock_head.assert_called_once_with(mock_url, follow_redirects=False, timeout=5)
+    assert validate.call_args_list == [call(start), call(index), call(final)]
+    assert head.call_args_list == [call(url, follow_redirects=False, timeout=5) for url in (start, index, final)]
 
 
 def test_expand_url_blocks_private_ip(web_tools):

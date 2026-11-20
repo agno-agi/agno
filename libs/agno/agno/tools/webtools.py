@@ -1,6 +1,6 @@
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -97,6 +97,7 @@ class WebTools(Toolkit):
                     location = response.headers.get("location", "")
                     if not location:
                         return current_url
+                    location = urljoin(current_url, location)
                     safe, reason = _is_safe_url(location)
                     if not safe:
                         logger.warning(f"expand_url: redirect to {location!r} blocked: {reason}")

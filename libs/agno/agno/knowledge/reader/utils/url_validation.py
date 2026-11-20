@@ -67,12 +67,15 @@ def is_host_allowed(url: str, allowed_hosts: Optional[List[str]]) -> bool:
     Returns:
         ``True`` if the URL's host is permitted and resolves to a public IP.
     """
-    parsed = urlparse(url)
-    host = parsed.hostname
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False
     if not host:
         return False
 
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if _resolves_to_private(host, port):
         return False
 
