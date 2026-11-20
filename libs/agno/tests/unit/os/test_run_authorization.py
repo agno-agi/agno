@@ -27,6 +27,7 @@ from agno.run import RunContext
 from agno.run.authorization import (
     AUTHORIZATION_HEADER,
     AUTHORIZATION_KEY,
+    InterfaceAuthorization,
     RunAuthorization,
     authorization_scope,
     current_authorization,
@@ -87,6 +88,15 @@ def authority(scopes, provider=None):
     return RunAuthorization(
         provider or ScopeAuthorizationProvider(),
         AuthorizationContext(principal_id="alice", scopes=scopes, claims={"sub": "alice"}),
+    )
+
+
+def bot_authority(scopes):
+    return RunAuthorization(
+        ScopeAuthorizationProvider(),
+        AuthorizationContext(principal_id="sa:slack-bot", scopes=scopes),
+        True,
+        enforce_tools=False,
     )
 
 
@@ -234,6 +244,79 @@ def test_executor_authority_is_never_used_for_tool_calls():
     request.headers[AUTHORIZATION_HEADER] = "null"
     with pytest.raises(PermissionError):
         request_authorization(request).require("agents", "run", "restricted")
+
+
+def test_interface_service_account_still_caps_restored_company_authorities():
+    from agno.company.execution import _ExecutorAuthorization
+    from agno.company.routines import _RoutineAuthorization
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    capped = InterfaceAuthorization.wrap(authority(["agents:run"]), bot_authority(["agents:allowed:run"]))
+    executor = _ExecutorAuthorization(capped, task_id="task")
+    delegated = _ExecutorAuthorization(restore_authorization(app, executor.snapshot()), task_id="task")
+    for company_authority in (executor, delegated, _RoutineAuthorization(capped)):
+        restored = restore_authorization(app, company_authority.snapshot())
+        restored.require("agents", "run", "allowed")
+        with pytest.raises(PermissionError):
+            restored.require("agents", "run", "restricted")
+    # Without an interface service account the caller's own grant decides
+    uncapped = _ExecutorAuthorization(authority(["agents:run"]), task_id="task")
+    restore_authorization(app, uncapped.snapshot()).require("agents", "run", "restricted")
+
+
+def test_scheduled_target_is_capped_by_the_interface_service_account(tmp_path):
+    os = AgentOS(
+        id="test",
+        db=SqliteDb(db_file=str(tmp_path / "test.db")),
+        telemetry=False,
+        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test"),
+        agents=[Agent(id=agent_id, model=ScriptedModel()) for agent_id in ("allowed", "restricted")],
+        internal_service_token="internal-service-token",
+    )
+    client = TestClient(os.get_app())
+    # A schedule made through an interface with its own service account forwards both authorities
+    caller = InterfaceAuthorization.wrap(authority(["agents:run"]), bot_authority(["agents:allowed:run"]))
+    internal = {"Authorization": "Bearer internal-service-token", AUTHORIZATION_HEADER: json.dumps(caller.snapshot())}
+    data = {"message": "hi", "stream": "false"}
+    assert client.post("/agents/restricted/runs", headers=internal, data=data).status_code == 403
+    assert client.post("/agents/allowed/runs", headers=internal, data=data).status_code == 200
+    # A Routine fired by a schedule wraps the capped authority and is capped the same way
+    from agno.company.routines import _RoutineAuthorization
+
+    routine = {**internal, AUTHORIZATION_HEADER: json.dumps(_RoutineAuthorization(caller).snapshot())}
+    assert client.post("/agents/restricted/runs", headers=routine, data=data).status_code == 403
+    assert client.post("/agents/allowed/runs", headers=routine, data=data).status_code == 200
+    # A read is decided by the interface's account too, as a service account token's read is
+    reader = authority(["agents:run", "agents:read"])
+    for bot_scopes, status in ((["agents:allowed:run"], 403), (["agents:allowed:run", "agents:allowed:read"], 200)):
+        capped = InterfaceAuthorization.wrap(reader, bot_authority(bot_scopes))
+        headers = {**internal, AUTHORIZATION_HEADER: json.dumps(capped.snapshot())}
+        assert client.get("/agents/allowed", headers=headers).status_code == status
+
+
+def test_interface_service_account_alone_decides_a_restored_unchecked_run(tmp_path):
+    from dataclasses import replace
+
+    from agno.company.execution import _ExecutorAuthorization
+
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test")
+    authz.define_role("member", ["agents:run"], default=True)
+    # Managed roles decide this AgentOS, so the sender's own roles would refuse a restored run they never needed
+    app = AgentOS(
+        id="test", db=SqliteDb(db_file=str(tmp_path / "test.db")), telemetry=False, authorization=authz
+    ).get_app()
+    interface = bot_authority(["agents:allowed:run"])
+    # A run with no authority of its own is checked against the bot's account alone, as its sender
+    unchecked = InterfaceAuthorization(
+        interface.provider, replace(interface.context, principal_id="U123"), enforce_tools=False, interface=interface
+    )
+    for saved in (unchecked, _ExecutorAuthorization(unchecked, task_id="task")):
+        restored = restore_authorization(app, saved.snapshot())
+        restored.require("agents", "run", "allowed")
+        with pytest.raises(PermissionError):
+            restored.require("agents", "run", "restricted")
+    # A fired schedule stays marked as one, so no person is taken to be present
+    assert restore_authorization(app, {**unchecked.snapshot(), "scheduled": True}).scheduled
 
 
 @pytest.mark.asyncio
