@@ -558,6 +558,23 @@ def get_metrics_legacy_runs(sessions: Sequence[Dict[str, Any]]) -> List[Dict[str
     return legacy_runs
 
 
+# The run_data keys GET /sessions/{id}/run-previews reads. get_session(run_preview=True) may return only
+# these, with input reduced to input_content outside workflow runs, plus messages / step_executor_runs
+# for runs that stored no input to preview.
+RUN_PREVIEW_FIELDS: Tuple[str, ...] = (
+    "run_id",
+    "parent_run_id",
+    "agent_id",
+    "team_id",
+    "workflow_id",
+    "user_id",
+    "status",
+    "created_at",
+    "content",
+    "input",
+)
+
+
 async def resolve_session_type(
     db: Union["BaseDb", "AsyncBaseDb"],
     session_id: str,
