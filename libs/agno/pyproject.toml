@@ -41,6 +41,8 @@ dependencies = [
 
 [project.optional-dependencies]
 agentcore-sandbox = ["boto3>=1.43.113"]
+# The SDK needs Python 3.10+, so the extra is unmarked: on 3.9 a request for it fails loudly instead of installing nothing.
+vercel-sandbox = ["vercel-sandbox>=0.9.0,<0.10"]
 dev = [
   "mypy==2.1.0",
   "ruff==0.15.20",
@@ -75,6 +77,8 @@ dev = [
   "agno[agui]",
   "agno[a2a]",
   "agno[scheduler]",
+  # The Vercel sandbox SDK needs Python 3.10+.
+  "agno[vercel-sandbox]; python_version >= '3.10'",
 ]
 
 # AgentOS server bundle
