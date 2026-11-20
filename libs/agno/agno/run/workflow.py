@@ -1026,15 +1026,16 @@ class WorkflowRunOutput:
                 if "team_id" in run_data or "team_name" in run_data:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
                 # Check for agent (agent_id is unique to RunOutput; RunOutput also has workflow_id
-                # when used as a workflow agent, so we must check agent_id before workflow_name)
+                # when used as a workflow agent, so we must check agent_id before workflow_id)
                 elif "agent_id" in run_data or "agent_name" in run_data:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
-                # Nested workflow run (workflow_name is unique to WorkflowRunOutput)
-                elif "workflow_name" in run_data and "parent_run_id" in run_data:
+                # Nested workflow run. workflow_id is set on every workflow run, while
+                # workflow_name is missing when the nested workflow has no name.
+                elif ("workflow_id" in run_data or "workflow_name" in run_data) and "parent_run_id" in run_data:
                     if _depth >= cls._MAX_NESTED_DEPTH:
                         log_warning(
                             f"Max nested workflow deserialization depth ({cls._MAX_NESTED_DEPTH}) reached, "
-                            f"skipping nested workflow '{run_data.get('workflow_name')}'"
+                            f"skipping nested workflow '{run_data.get('workflow_name') or run_data.get('workflow_id')}'"
                         )
                     else:
                         step_executor_runs.append(cls.from_dict(run_data, _depth=_depth + 1))
