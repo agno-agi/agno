@@ -69,7 +69,7 @@ if __name__ == "__main__":
         )
     )
 
-# More example prompts:
+# More example queries:
 """
 - "Search YouTube for talks about vector databases from the last year and summarize the top three."
 - "List the latest five uploads from @veritasium and give me one line on each."
