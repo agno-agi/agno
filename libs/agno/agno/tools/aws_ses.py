@@ -63,4 +63,4 @@ class AWSSESTool(Toolkit):
             log_debug(f"Email sent with message ID: {response['MessageId']}")
             return "Email sent successfully!"
         except Exception as e:
-            raise Exception(f"Failed to send email: {e}")
+            raise Exception(f"Failed to send email: {e}") from e
