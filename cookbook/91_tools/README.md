@@ -60,3 +60,17 @@ Agno WAV audio artifact. Incompatible audio formats fail explicitly.
 - `tool_decorator/` - Custom tool patterns
 - `tool_hooks/` - Pre/post processing
 - `async/` - Async execution
+
+## Social media publishing
+
+`rizamo_tools.py` gives an agent Rizamo's REST API: profiles, connected
+accounts on Instagram, Facebook, TikTok, Threads, LinkedIn and YouTube, posts,
+media, analytics and the inbox. Set `RIZAMO_API_KEY` (created in the Rizamo web
+app under Developers) and the credentials for the agent's model, then run
+`python cookbook/91_tools/rizamo_tools.py` from the repository root.
+
+`create_post` saves a draft, or schedules the post when it gets a time.
+`publish_post` and `reply_to_thread` reach the networks at once, so they are
+off unless enabled with `enable_publish_post=True`, `enable_reply_to_thread=True`
+or `all=True`. Rizamo's error messages are returned to the model as JSON, and
+failures are logged without the API key.

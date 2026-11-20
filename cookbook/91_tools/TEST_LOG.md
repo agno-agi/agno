@@ -1,5 +1,23 @@
 # Test Log
 
+### rizamo_tools.py
+
+**Status:** PASS (unit and live API checks); live agent run pending
+
+**Description:** List the Instagram accounts, save a draft for the first one,
+and summarize the last 7 days of analytics. Set `RIZAMO_API_KEY` and the
+credentials for the agent's model.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_rizamo.py` covers the
+request each tool sends (paths, bodies, query parameters, an Idempotency-Key per
+POST), the tools that are off by default, unsafe base URLs, errors passed to the
+model and network failures without the key. Every default tool also ran against
+Rizamo's staging API with a real key: profiles, accounts, a draft created and
+read back (then deleted), analytics and inbox threads. These do not verify an
+LLM-driven conversation; that requires model credentials.
+
+---
+
 ### sixtydb_tools.py
 
 **Status:** PASS (local HTTP and cookbook checks); live agent run pending
