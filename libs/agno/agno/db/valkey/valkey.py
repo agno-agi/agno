@@ -44,6 +44,7 @@ from agno.db.utils import (
     get_metrics_rows_by_key,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
+    log_unstable_client_id,
     merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
@@ -98,6 +99,7 @@ from agno.db.valkey.utils import (
     serialize_data,
     upsert_aggregate_metrics_row,
     validate_filter_expr,
+    valkey_client_seed,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -201,7 +203,11 @@ class ValkeyDb(BaseDb):
             ValueError: If username is provided without a password.
         """
         if id is None:
-            base_seed = f"{host}:{port}" if valkey_client is None else str(valkey_client)
+            # str(client) holds memory addresses, so a client is seeded from the server it connects to.
+            base_seed = f"{host}:{port}" if valkey_client is None else valkey_client_seed(valkey_client)
+            if base_seed is None:
+                log_unstable_client_id(type(self).__name__)
+                base_seed = str(valkey_client)
             seed = f"{base_seed}#{db_prefix}"
             id = generate_id(seed)
 

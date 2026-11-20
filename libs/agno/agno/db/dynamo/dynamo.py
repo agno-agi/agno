@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from os import getenv
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from packaging import version as packaging_version
@@ -80,6 +81,7 @@ from agno.db.utils import (
     get_metrics_reopen_session_ids,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
+    log_unstable_client_id,
     merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metrics_day_completed,
@@ -141,7 +143,8 @@ class DynamoDb(BaseDb):
         Interface for interacting with a DynamoDB database.
 
         Args:
-            db_client: The DynamoDB client to use.
+            db_client: The DynamoDB client to use. Without an id, the id comes from its region and endpoint, so
+                clients for different AWS accounts in the same region need their own id.
             region_name: AWS region name.
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
@@ -158,7 +161,19 @@ class DynamoDb(BaseDb):
             id: ID of the database.
         """
         if id is None:
-            seed = str(db_client) if db_client else f"{region_name}_{aws_access_key_id}"
+            # str(client) holds a memory address; region and endpoint are what a boto3 client says about its target.
+            meta = getattr(db_client, "meta", None)
+            region = getattr(meta, "region_name", None)
+            endpoint_url = getattr(meta, "endpoint_url", None)
+            client_seed = None
+            # Strings only: a stand-in client (a test mock) has neither, and urlsplit raises on a non-string.
+            if region and isinstance(region, str) and isinstance(endpoint_url, str):
+                url = urlsplit(endpoint_url)
+                # Drop any user:password the endpoint URL carries: credentials never go into an id.
+                client_seed = f"{region}_{url._replace(netloc=url.netloc.rpartition('@')[2]).geturl()}"
+            if db_client and client_seed is None:
+                log_unstable_client_id(type(self).__name__)
+            seed = (client_seed or str(db_client)) if db_client else f"{region_name}_{aws_access_key_id}"
             id = generate_id(seed)
 
         super().__init__(
