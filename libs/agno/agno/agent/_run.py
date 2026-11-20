@@ -485,6 +485,9 @@ def _run(
                     deque(pre_hook_iterator, maxlen=0)
 
                 # 5. Determine tools for model
+                # Expose the current turn's input to the callable tools factory
+                # so it can select tools by relevance (#8603).
+                run_context.input_content = run_input.input_content
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -894,6 +897,9 @@ def _run_stream(
                         yield event
 
                 # 5. Determine tools for model
+                # Expose the current turn's input to the callable tools factory
+                # so it can select tools by relevance (#8603).
+                run_context.input_content = run_input.input_content
                 processed_tools = agent.get_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -1634,6 +1640,9 @@ async def _arun(
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
+                # Expose the current turn's input to the callable tools factory
+                # so it can select tools by relevance (#8603).
+                run_context.input_content = run_input.input_content
                 processed_tools = await agent.aget_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -2251,6 +2260,9 @@ async def _arun_stream(
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
+                # Expose the current turn's input to the callable tools factory
+                # so it can select tools by relevance (#8603).
+                run_context.input_content = run_input.input_content
                 processed_tools = await agent.aget_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -3602,6 +3614,10 @@ def continue_run_dispatch(
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
     agent.model = cast(Model, agent.model)
 
+    # Expose the current turn's input (if the continue supplied a new message)
+    # to the callable tools factory so it can select tools by relevance (#8603).
+    run_context.input_content = input
+
     processed_tools = agent.get_tools(
         run_response=run_response,
         run_context=run_context,
@@ -4939,6 +4955,10 @@ async def _acontinue_run(
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
+                # Expose the current turn's input (if the continue supplied a new
+                # message) to the callable tools factory so it can select tools by
+                # relevance (#8603).
+                run_context.input_content = input
                 processed_tools = await agent.aget_tools(
                     run_response=run_response,
                     run_context=run_context,
@@ -5462,6 +5482,10 @@ async def _acontinue_run_stream(
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
+                # Expose the current turn's input (if the continue supplied a new
+                # message) to the callable tools factory so it can select tools by
+                # relevance (#8603).
+                run_context.input_content = input
                 processed_tools = await agent.aget_tools(
                     run_response=run_response,
                     run_context=run_context,
