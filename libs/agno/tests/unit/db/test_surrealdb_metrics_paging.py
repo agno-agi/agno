@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -10,6 +11,7 @@ surrealdb = pytest.importorskip("surrealdb")
 
 from agno.db.surrealdb import metrics  # noqa: E402
 from agno.db.utils import METRICS_BATCH_SIZE  # noqa: E402
+from agno.utils.surrealdb import run_query  # noqa: E402
 
 
 @pytest.fixture
@@ -102,7 +104,7 @@ def test_stop_during_paged_day_writes_no_partial_metrics(run_day, monkeypatch):
     )
     db.stop_metrics_refresh_on_read()
     db.upsert_session(AgentSession(session_id="included", agent_id="agent", created_at=int(start.timestamp())))
-    client.query("UPDATE page_runs:old SET created_at=$future", {"future": start + timedelta(days=1)})
+    run_query(client, "UPDATE page_runs:old SET created_at=$future", {"future": start + timedelta(days=1)})
     original = metrics.utils.query
     page_sizes = []
 
@@ -115,5 +117,25 @@ def test_stop_during_paged_day_writes_no_partial_metrics(run_day, monkeypatch):
     monkeypatch.setattr(metrics.utils, "query", observe)
     assert db.calculate_metrics_dates(should_stop=lambda: bool(page_sizes)) is None
     assert page_sizes == [METRICS_BATCH_SIZE]
-    assert client.query("SELECT * FROM agno_component_metrics") == []
-    assert client.query("SELECT * FROM agno_aggregate_metrics") == []
+    assert run_query(client, "SELECT * FROM agno_component_metrics") == []
+    assert run_query(client, "SELECT * FROM agno_aggregate_metrics") == []
+
+
+def test_record_range_function_matches_the_engine():
+    client = surrealdb.Surreal("mem://")
+    client.use("pr_su_paging", f"probe_{uuid4().hex}")
+
+    assert metrics.record_range_function(client) in ("type::record", "type::thing")
+    probe = run_query(client, f"RETURN {metrics.record_range_function(client)}('t', 'x')")
+    assert isinstance(probe, surrealdb.RecordID)
+
+
+@pytest.mark.parametrize("probe", ["Expected a record<x> but cannot convert 't' into a record<x>", Exception("bad")])
+def test_record_range_function_falls_back_to_type_thing_on_older_engines(probe):
+    client = MagicMock()
+    if isinstance(probe, Exception):
+        client.query.side_effect = probe
+    else:
+        client.query.return_value = probe
+
+    assert metrics.record_range_function(client) == "type::thing"
