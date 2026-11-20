@@ -290,6 +290,28 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
 
 ---
 
+### super_agent_linked_accounts.py
+
+**Status:** PASS (linking and a linked run; Tasks and approvals not yet run live)
+
+**Description:** Tested on 2026-11-17 against a local Agno platform (agent-os-api
+on port 7090, agno-os on port 3000), with JWT on for the OS, an OS service token
+generated in OS Settings > Security, and the app reached through ngrok. A DM
+from an unlinked member, the link confirmed on the connect page, then another DM.
+
+**Result:**
+- Live: the first DM got the private "Link your Agno account" button and
+  nothing ran. Before the fix in this change, a top-level DM's prompt went into
+  a thread that did not exist yet and was not shown.
+- Live: the button opened `/connect/slack`; confirming stored the link for
+  the member's Slack workspace and id on the platform.
+- Live: the next DM was answered, and its session was stored under the linked
+  account's email instead of the Slack id.
+- With `AGNO_PLATFORM_API_URL` unset, the server warned that linking was
+  unavailable (the production platform answered 404) and nothing ran.
+
+---
+
 ## Validation
 
 - `Slack(...)` raises `ValueError` when the token, the signing secret, or the

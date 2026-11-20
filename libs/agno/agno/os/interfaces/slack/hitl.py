@@ -36,7 +36,13 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped, can_act
+from agno.os.interfaces.slack.security import (
+    authorize_linked,
+    authorize_run,
+    authorize_unmapped,
+    can_act,
+    linking_enabled,
+)
 from agno.os.interfaces.slack.types import ParsedDecision, RowActionContext, SubmitContext
 from agno.run.approval import aresolve_approval
 from agno.run.base import RunStatus
@@ -44,6 +50,7 @@ from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error, log_info
 
 _NOT_ALLOWED_MESSAGE = "Only the person who started this run or an approver can decide."
+_OTHER_ACCOUNT_MESSAGE = "Not run: this run belongs to an Agno account other than the one now linked."
 _ALREADY_SUBMITTED_MESSAGE = "Already submitted."
 _REMOTE_MESSAGE = "This run is paused on a remote AgentOS. Approve it there."
 
@@ -145,6 +152,14 @@ async def _decider_context(
     if ctx.users is not None and ctx.users.get(event_context.owner) is not None:
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
             return None
+    elif linking_enabled(ctx):
+        run_user = event_context.user_id
+        if not await authorize_linked(ctx, event_context, client, user, thread_ts):
+            return None
+        # An owner who has since linked another Agno account does not decide for the one that started the run
+        if event_context.user_id != run_user:
+            await post_ephemeral(client, channel, user, _OTHER_ACCOUNT_MESSAGE, thread_ts)
+            return None
     elif not await authorize_unmapped(ctx, event_context, client, user, thread_ts):
         return None
     return event_context
@@ -170,6 +185,7 @@ async def _decidable_row(
         card_ts=row.card_ts,
         awaiting_ts=row.awaiting_ts,
         card_blocks=(payload.get("message") or {}).get("blocks") or [],
+        team_id=(payload.get("team") or {}).get("id"),
     )
     if event_context is None:
         return None

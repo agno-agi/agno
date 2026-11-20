@@ -9,7 +9,7 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped
+from agno.os.interfaces.slack.security import authorize_linked, authorize_run, authorize_unmapped, linking_enabled
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
@@ -58,6 +58,13 @@ async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackC
     """Run the message under the sender's authority, mapped, default or none; a refused user gets an ephemeral."""
     from agno.os.auth import _authorization_enforced
 
+    # Super Agent with account linking runs as the sender's linked Agno account; users= still maps its members
+    if linking_enabled(ctx) and (ctx.users is None or event_context.owner not in ctx.users):
+        # Slack does not show an ephemeral in a thread that has no replies yet, so a top-level
+        # message gets its link prompt beside it
+        return await authorize_linked(
+            ctx, event_context, client, event_context.owner, event_context.event.get("thread_ts")
+        )
     # Without users=, the message runs and its permission checks use the default role, or no roles
     if ctx.users is None:
         return await authorize_unmapped(ctx, event_context, client, event_context.owner, event_context.thread_ts)

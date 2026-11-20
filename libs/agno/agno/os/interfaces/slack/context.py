@@ -17,6 +17,7 @@ from agno.os.interfaces.slack.helpers import (
     slack_run_id,
     strip_bot_mention,
 )
+from agno.os.interfaces.slack.links import PlatformLinks
 from agno.os.interfaces.slack.runs import SlackRuns
 from agno.os.interfaces.slack.security import resolve_signing_secret, resolve_token
 from agno.team import RemoteTeam
@@ -51,6 +52,8 @@ class SlackContext:
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
     default_role: Optional[str] = None
+    # Set from AGNO_OS_SERVICE_TOKEN: Super Agent members then act as their linked os.agno.com accounts
+    links: Optional[PlatformLinks] = None
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -138,6 +141,7 @@ def build_context(
         approvers=approvers,
         users=users,
         default_role=default_role,
+        links=PlatformLinks.from_env(),
     )
 
 

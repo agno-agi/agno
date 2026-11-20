@@ -30,7 +30,13 @@ from agno.os.interfaces.slack.handlers import (
     handle_message,
     handle_session_stopped,
 )
-from agno.os.interfaces.slack.ids import ACTION_CHECK_STATUS, ACTION_ROW_APPROVE, ACTION_ROW_REJECT, ACTION_SUBMIT
+from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
+    ACTION_LINK_ACCOUNT,
+    ACTION_ROW_APPROVE,
+    ACTION_ROW_REJECT,
+    ACTION_SUBMIT,
+)
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_error, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
@@ -122,6 +128,7 @@ def _build_bolt_app(ctx: SlackContext) -> AsyncApp:
     app.action(ACTION_ROW_REJECT)(_listener(hitl.handle_row_reject))
     app.action(ACTION_CHECK_STATUS)(_listener(hitl.handle_check_status))
     app.action(ACTION_SUBMIT)(_listener(hitl.handle_submit))
+    app.action(ACTION_LINK_ACCOUNT)(_ack_only)
 
     return app
 

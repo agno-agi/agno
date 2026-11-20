@@ -8,7 +8,7 @@ from weakref import ReferenceType, ref
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
 from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
-from agno.os.interfaces.slack.security import resolve_principal_authorization
+from agno.os.interfaces.slack.security import linked_authorization, linking_enabled, resolve_principal_authorization
 from agno.utils.log import log_debug, log_error, log_warning
 
 # Slack message metadata event type that marks a Task attempt's result as posted
@@ -158,8 +158,13 @@ class TaskDelivery:
                 return True
             channel, thread_ts, user_id, message_ts = accepted
             client = self.ctx.web()
+            # Under account linking the author's Agno account, with its authority, is resolved once for both checks
+            if linking_enabled(self.ctx, app):
+                author, authority = await self._linked_author(app, client, channel, thread_ts, message_ts)
+            else:
+                author, authority = await self._message_author(client, channel, thread_ts, message_ts), None
             # The run's user must have written the message that started it, in this thread, read from Slack
-            if await self._message_author(client, channel, thread_ts, message_ts) != user_id:
+            if author != user_id:
                 log_debug(f"Task {key[0]} was not started by a Slack message from its run's user; not posted")
                 self._finish(key, updated)
                 return True
@@ -169,10 +174,11 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                # A run user equal to a mapped principal counts as mapped; anyone else started with the default role
-                mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
-                roles = [self.ctx.default_role] if self.ctx.default_role and not mapped else None
-                authority = await self.company.authorize(app, user_id, self.ctx.entity_id, roles)
+                if authority is None:
+                    # A run user equal to a mapped principal counts as mapped; anyone else started with the default role
+                    mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
+                    roles = [self.ctx.default_role] if self.ctx.default_role and not mapped else None
+                    authority = await self.company.authorize(app, user_id, self.ctx.entity_id, roles)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
             except PermissionError as exc:
@@ -231,8 +237,10 @@ class TaskDelivery:
             return None
         return coordinates[0], coordinates[1], run.user_id, message_ts
 
-    async def _message_author(self, client: Any, channel: str, thread_ts: str, message_ts: str) -> Optional[str]:
-        """The agno user id of the message's author, derived as for the event context; None outside the thread."""
+    async def _message_sender(
+        self, client: Any, channel: str, thread_ts: str, message_ts: str
+    ) -> Optional[Tuple[str, str]]:
+        """The Slack user and bot id of the message's sender; None outside the thread."""
         key = f"message_author:{channel}:{message_ts}"
         sender = self.ctx.lookup_cache.get(key)
         if sender is None:
@@ -244,6 +252,31 @@ class TaskDelivery:
                 return None
             sender = (message.get("user") or "", message.get("bot_id") or "")
             self.ctx.lookup_cache.set(key, sender)
+        return sender
+
+    async def _linked_author(
+        self, app: Any, client: Any, channel: str, thread_ts: str, message_ts: str
+    ) -> Tuple[Optional[str], Any]:
+        """The message author's linked Agno account and its authority; a member users= maps uses the mapping."""
+        sender = await self._message_sender(client, channel, thread_ts, message_ts)
+        if sender is None or not sender[0]:
+            return None, None
+        user = sender[0]
+        if self.ctx.users is not None and user in self.ctx.users:
+            return self.ctx.users[user], None
+        try:
+            _, authority = await linked_authorization(self.ctx, client, user, app)
+        except PermissionError:
+            return None, None
+        if authority is None:
+            return None, None
+        return authority.context.principal_id, authority
+
+    async def _message_author(self, client: Any, channel: str, thread_ts: str, message_ts: str) -> Optional[str]:
+        """The agno user id of the message's author, derived as for the event context; None outside the thread."""
+        sender = await self._message_sender(client, channel, thread_ts, message_ts)
+        if sender is None:
+            return None
         user, bot_id = sender
         # A member users= leaves out is derived as without users= when a default role is set
         if self.ctx.users is not None and (self.ctx.default_role is None or (user or bot_id) in self.ctx.users):
