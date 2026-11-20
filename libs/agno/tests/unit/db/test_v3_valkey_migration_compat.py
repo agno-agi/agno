@@ -203,7 +203,7 @@ def _new_db():
     valkey_module.ExpirySet = _ExpirySet  # type: ignore[assignment]
     valkey_module.ExpiryType = _ExpiryType  # type: ignore[assignment]
     db._create_pipeline = lambda: _Batch()  # type: ignore[method-assign]
-    db._exec_pipeline = lambda pipeline: client.exec(pipeline)  # type: ignore[method-assign]
+    db._exec_pipeline = lambda pipeline, raise_on_error=False: client.exec(pipeline, raise_on_error=raise_on_error)  # type: ignore[method-assign]
     return db
 
 

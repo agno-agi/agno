@@ -112,12 +112,14 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
-def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
+def is_table_available(
+    session: Session, table_name: str, db_schema: Optional[str], raise_on_error: bool = False
+) -> bool:
     """
     Check if a table with the given name exists in the given schema.
 
     Returns:
-        bool: True if the table exists, False otherwise.
+        bool: True if the table exists, False otherwise (also when the check fails, unless raise_on_error).
     """
     try:
         if db_schema is not None:
@@ -136,6 +138,8 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
 
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
+        if raise_on_error:
+            raise
         return False
 
 

@@ -705,6 +705,22 @@ class SqliteDb(BaseDb):
         }
         return table_map.get(logical_name, logical_name)
 
+    def _get_runs_table(self) -> Optional[Table]:
+        """The runs table, or None only when it does not exist.
+
+        _get_table also returns None when its existence check fails, so recheck with errors raised.
+        """
+        table = self._get_table(table_type="runs")
+        if table is None:
+            with self.Session() as sess:
+                exists = is_table_available(session=sess, table_name=self.runs_table_name, raise_on_error=True)
+            if exists:
+                # The first check failed (e.g. a stale pooled connection) and was swallowed
+                table = self._get_table(table_type="runs")
+                if table is None:
+                    raise RuntimeError(f"Runs table {self.runs_table_name} exists but could not be resolved")
+        return table
+
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "transcripts":
             return self._get_or_create_table(
@@ -1185,7 +1201,7 @@ class SqliteDb(BaseDb):
             - When deserialize=False: Run row dictionary
         """
         try:
-            table = self._get_table(table_type="runs")
+            table = self._get_runs_table()
             if table is None:
                 return None
 
@@ -1392,7 +1408,7 @@ class SqliteDb(BaseDb):
         """
         validate_pagination(limit, page)
         try:
-            table = self._get_table(table_type="runs")
+            table = self._get_runs_table()
             if table is None:
                 return [] if deserialize else ([], 0)
 
