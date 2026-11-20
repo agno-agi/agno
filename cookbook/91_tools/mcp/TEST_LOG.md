@@ -1,5 +1,15 @@
 # Test Log
 
+### getyoutubetranscript.py
+
+**Status:** NOT RUN
+
+**Description:** Connects to GetYouTubeTranscript's production Streamable HTTP MCP endpoint through Agno's `MCPTools` with bearer authentication and runs a research task with OpenAI.
+
+**Result:** Not run end to end through Agno. Checked directly against the endpoint: `initialize` and `tools/list` succeed and list 13 tools (`get_youtube_transcript`, `search_youtube`, channel and playlist tools, `get_credits`); a `tools/call` with an invalid bearer token returns HTTP 401, and one without a token returns `invalid_token`. The example passes Python compilation; Ruff was not run.
+
+---
+
 ### magic_hour.py
 
 **Status:** PASS
