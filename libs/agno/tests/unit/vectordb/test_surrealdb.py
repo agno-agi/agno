@@ -395,3 +395,37 @@ async def test_async_exists(async_surrealdb_vector: SurrealDb, mock_async_surrea
 
     result = await async_surrealdb_vector.async_exists()
     assert result is False
+
+
+# --- filter injection hardening (#8823) ---
+
+
+def test_build_filter_condition_binds_injected_key(surrealdb_vector):
+    """Caller-controlled keys are parameters, not SurrealQL syntax."""
+    injected_key = "x = 1 OR true //"
+    condition = surrealdb_vector._build_filter_condition({injected_key: 1})
+    params = surrealdb_vector._build_filter_params({injected_key: 1})
+
+    assert injected_key not in condition
+    assert condition == "AND meta_data[$filter_key_0] = $filter_value_0"
+    assert params == {"filter_key_0": injected_key, "filter_value_0": 1}
+
+
+def test_delete_by_metadata_binds_injected_key(surrealdb_vector, mock_surrealdb_client):
+    """An SSRF-shaped key is passed only as data to the query client."""
+    injected_key = "http::get('http://listener/')"
+    surrealdb_vector.delete_by_metadata({injected_key: "x"})
+
+    query, params = mock_surrealdb_client.query.call_args.args
+    assert injected_key not in query
+    assert "meta_data[$key_0] = $value_0" in query
+    assert params == {"key_0": injected_key, "value_0": "x"}
+
+
+def test_build_filter_condition_allows_safe_keys(surrealdb_vector):
+    """Safe keys use the same bound-parameter representation."""
+    result = surrealdb_vector._build_filter_condition({"linked_to": "tenantA", "category": "alpha"})
+    assert result == (
+        "AND meta_data[$filter_key_0] = $filter_value_0 "
+        "AND meta_data[$filter_key_1] = $filter_value_1"
+    )
