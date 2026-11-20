@@ -963,7 +963,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             output_schema=output_schema,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     @overload
@@ -1073,7 +1073,7 @@ class Team:
             yield_run_output=yield_run_output,
             output_schema=output_schema,
             background=background,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     ###########################################################################
@@ -1162,7 +1162,7 @@ class Team:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     @overload
@@ -1249,7 +1249,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             background=background,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     def _handle_model_response_chunk(

@@ -1569,7 +1569,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     @overload
@@ -1678,7 +1678,7 @@ class Agent:
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
             background=background,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     @overload
@@ -1762,7 +1762,7 @@ class Agent:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
     @overload
@@ -1848,7 +1848,7 @@ class Agent:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             background=background,
-            **kwargs,
+            extra_kwargs=kwargs,
         )
 
 

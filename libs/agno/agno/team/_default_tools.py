@@ -71,6 +71,7 @@ from agno.session import TeamSession
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
 from agno.utils.knowledge import (
+    build_knowledge_retriever_kwargs,
     get_agentic_or_user_search_filters,
     get_run_response_kwarg,
     get_user_id_kwarg,
@@ -1813,27 +1814,18 @@ def get_relevant_docs_from_knowledge(
                 filters = None
 
     if team.knowledge_retriever is not None and callable(team.knowledge_retriever):
-        from inspect import signature
-
         try:
-            sig = signature(team.knowledge_retriever)
-            knowledge_retriever_kwargs: Dict[str, Any] = {}
-            if "team" in sig.parameters:
-                knowledge_retriever_kwargs = {"team": team}
-            if "filters" in sig.parameters:
-                knowledge_retriever_kwargs["filters"] = filters
-            if "run_context" in sig.parameters:
-                knowledge_retriever_kwargs["run_context"] = run_context
-            elif "dependencies" in sig.parameters:
-                # Backward compatibility: support dependencies parameter
-                knowledge_retriever_kwargs["dependencies"] = dependencies
-            knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # After the **kwargs merge so caller kwargs cannot override the run's owner
-            knowledge_retriever_kwargs.update(
-                get_user_id_kwarg(
-                    team.knowledge_retriever,
-                    run_context.user_id if run_context else team.user_id,
-                )
+            knowledge_retriever_kwargs = build_knowledge_retriever_kwargs(
+                team.knowledge_retriever,
+                owner_name="team",
+                owner=team,
+                query=query,
+                num_documents=num_documents,
+                filters=filters,
+                run_context=run_context,
+                dependencies=dependencies,
+                caller_kwargs=kwargs,
+                user_id=run_context.user_id if run_context else team.user_id,
             )
             return team.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
@@ -1916,27 +1908,20 @@ async def aget_relevant_docs_from_knowledge(
                 filters = None
 
     if team.knowledge_retriever is not None and callable(team.knowledge_retriever):
-        from inspect import isawaitable, signature
+        from inspect import isawaitable
 
         try:
-            sig = signature(team.knowledge_retriever)
-            knowledge_retriever_kwargs: Dict[str, Any] = {}
-            if "team" in sig.parameters:
-                knowledge_retriever_kwargs = {"team": team}
-            if "filters" in sig.parameters:
-                knowledge_retriever_kwargs["filters"] = filters
-            if "run_context" in sig.parameters:
-                knowledge_retriever_kwargs["run_context"] = run_context
-            elif "dependencies" in sig.parameters:
-                # Backward compatibility: support dependencies parameter
-                knowledge_retriever_kwargs["dependencies"] = dependencies
-            knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-            # After the **kwargs merge so caller kwargs cannot override the run's owner
-            knowledge_retriever_kwargs.update(
-                get_user_id_kwarg(
-                    team.knowledge_retriever,
-                    run_context.user_id if run_context else team.user_id,
-                )
+            knowledge_retriever_kwargs = build_knowledge_retriever_kwargs(
+                team.knowledge_retriever,
+                owner_name="team",
+                owner=team,
+                query=query,
+                num_documents=num_documents,
+                filters=filters,
+                run_context=run_context,
+                dependencies=dependencies,
+                caller_kwargs=kwargs,
+                user_id=run_context.user_id if run_context else team.user_id,
             )
 
             result = team.knowledge_retriever(**knowledge_retriever_kwargs)
