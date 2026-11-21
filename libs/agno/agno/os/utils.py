@@ -34,6 +34,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
+from agno.utils.copies import copy_divergence
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.models.json_schema_model import UnsupportedJsonSchemaError, json_schema_to_model
 from agno.utils.models.schema_utils import json_schema_error
@@ -1765,6 +1766,64 @@ def _serve_stored_agent(agent: Any, registry: Optional[Registry]) -> Any:
     return agent
 
 
+def _fresh_registry_agent(agent: Agent, *, strict: bool) -> Agent:
+    """Return a faithful fresh copy of a registry agent for request isolation.
+
+    A kwargs-forwarding Agent subclass can inherit deep_copy() but lose its stored
+    fields when reconstructed, yielding a blank shell. AgentOS must refuse that
+    copy in strict mode rather than silently serve the wrong agent.
+    """
+
+    label = f"Registry agent '{agent.id}'"
+    try:
+        fresh_agent = agent.deep_copy()
+    except Exception as e:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} could not be copied for create_fresh (deep_copy failed: {e}). "
+                "AgentOS refuses to dispatch the shared registry instance; give the subclass "
+                "a faithful deep_copy or store the agent in the database."
+            ) from e
+        log_warning(f"{label}: create_fresh deep_copy failed ({e}); using the shared registry instance.")
+        return agent
+
+    if fresh_agent is agent:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy returned the shared registry instance; AgentOS create_fresh "
+                "requires an isolated copy."
+            )
+        log_warning(f"{label}: create_fresh deep_copy returned the shared registry instance.")
+        return agent
+
+    if not isinstance(fresh_agent, Agent):
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy returned a {type(fresh_agent).__name__}, not an Agent; "
+                "AgentOS create_fresh refuses it."
+            )
+        log_warning(
+            f"{label}: create_fresh deep_copy returned a {type(fresh_agent).__name__}; "
+            "using the shared registry instance."
+        )
+        return agent
+
+    divergence = copy_divergence(agent, fresh_agent)
+    if divergence is not None:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy lost state: {divergence}. AgentOS create_fresh refuses a copy "
+                "that does not serialize like its original; give the subclass a faithful deep_copy "
+                "or store the agent in the database."
+            )
+        log_warning(f"{label}: create_fresh deep_copy lost state ({divergence}); using the shared registry instance.")
+        return agent
+
+    fresh_agent.team_id = None
+    fresh_agent.workflow_id = None
+    return fresh_agent
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
@@ -1812,10 +1871,7 @@ def get_agent_by_id(
                 # Base Agent — most common path, early exit
                 if isinstance(agent, Agent):
                     if create_fresh:
-                        fresh_agent = agent.deep_copy()
-                        fresh_agent.team_id = None
-                        fresh_agent.workflow_id = None
-                        return fresh_agent
+                        return _fresh_registry_agent(agent, strict=strict)
                     return agent
                 # Factory path
                 if isinstance(agent, AgentFactory):
@@ -1877,10 +1933,7 @@ async def get_agent_by_id_async(
                 # Base Agent — most common path, early exit
                 if isinstance(agent, Agent):
                     if create_fresh:
-                        fresh_agent = agent.deep_copy()
-                        fresh_agent.team_id = None
-                        fresh_agent.workflow_id = None
-                        return fresh_agent
+                        return _fresh_registry_agent(agent, strict=strict)
                     return agent
                 # Factory path
                 if isinstance(agent, AgentFactory):
