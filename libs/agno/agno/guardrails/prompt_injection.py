@@ -9,12 +9,15 @@ from agno.run.team import TeamRunInput
 class PromptInjectionGuardrail(BaseGuardrail):
     """Guardrail for detecting prompt injection attempts.
 
+    Matching is case-insensitive: the input and every pattern are lowercased
+    before they are compared.
+
     Args:
         injection_patterns (Optional[List[str]]): A list of patterns to check for. Defaults to a list of common prompt injection patterns.
     """
 
     def __init__(self, injection_patterns: Optional[List[str]] = None):
-        self.injection_patterns = injection_patterns or [
+        patterns = injection_patterns or [
             "ignore previous instructions",
             "ignore your instructions",
             "you are now a",
@@ -34,6 +37,10 @@ class PromptInjectionGuardrail(BaseGuardrail):
             "root access",
             "forget everything",
         ]
+        # Both checks lowercase the input before matching, so a pattern has to be
+        # lowercased once here: a capital letter in a custom pattern could never
+        # match the lowercased input, and the prompt it guards would be let through.
+        self.injection_patterns = [pattern.lower() for pattern in patterns]
 
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for prompt injection patterns in the input."""
