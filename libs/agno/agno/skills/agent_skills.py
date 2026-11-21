@@ -28,37 +28,47 @@ class Skills:
 
     def __init__(self, loaders: List[SkillLoader]):
         self.loaders = loaders
-        self._skills: Dict[str, Skill] = {}
-        self._load_skills()
+        self._skills: Dict[str, Skill] = self._load_skills()
 
-    def _load_skills(self) -> None:
-        """Load skills from all loaders.
+    def _load_skills(self) -> Dict[str, Skill]:
+        """Load skills from all loaders into a new mapping.
+
+        Returns:
+            A mapping of skill name to Skill.
+
+        The returned mapping is never mutated after it is published, so readers
+        may safely iterate it while another thread replaces ``_skills``. Do not
+        add methods that write into the returned mapping in place.
 
         Raises:
             SkillValidationError: If any skill fails validation.
         """
+        skills_by_name: Dict[str, Skill] = {}
         for loader in self.loaders:
             try:
                 skills = loader.load()
                 for skill in skills:
-                    if skill.name in self._skills:
+                    if skill.name in skills_by_name:
                         log_warning(f"Duplicate skill name '{skill.name}', overwriting with newer version")
-                    self._skills[skill.name] = skill
+                    skills_by_name[skill.name] = skill
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
                 log_warning(f"Error loading skills from {loader}: {str(e)}")
 
-        log_debug(f"Loaded {len(self._skills)} total skills")
+        log_debug(f"Loaded {len(skills_by_name)} total skills")
+        return skills_by_name
 
     def reload(self) -> None:
-        """Reload skills from all loaders, clearing existing skills.
+        """Reload skills from all loaders, replacing the previous set atomically.
+
+        The previous skills stay in place if any loader fails, so a failed
+        reload never leaves the agent without skills.
 
         Raises:
             SkillValidationError: If any skill fails validation.
         """
-        self._skills.clear()
-        self._load_skills()
+        self._skills = self._load_skills()
 
     def get_skill(self, name: str) -> Optional[Skill]:
         """Get a skill by name.
