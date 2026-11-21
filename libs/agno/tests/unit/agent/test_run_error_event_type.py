@@ -9,11 +9,14 @@ class, not a taxonomy.
 
 from typing import Any, AsyncIterator, Iterator
 
+import pytest
+
 from agno.agent import Agent
-from agno.exceptions import ModelProviderError
+from agno.exceptions import InputCheckError, ModelProviderError, OutputCheckError
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.run.agent import RunErrorEvent
+from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 
 
@@ -86,3 +89,40 @@ async def test_agno_error_keeps_its_slug():
     error_events = [event for event in events if isinstance(event, RunErrorEvent)]
     assert error_events
     assert all(event.error_type == "model_provider_error" for event in error_events)
+
+
+@pytest.mark.parametrize("error_type", [ModelProviderError, InputCheckError, OutputCheckError])
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("yield_run_output", [False, True])
+async def test_continuation_error_yields_final_output_when_requested(error_type, async_mode, yield_run_output):
+    agent = Agent(model=ExplodingModel(error_type("boom")), telemetry=False)
+    previous = RunOutput(
+        run_id="run",
+        session_id="session",
+        status=RunStatus.paused,
+        messages=[Message(role="user", content="hi")],
+        content="Earlier answer",
+    )
+    if async_mode:
+        events = [
+            event
+            async for event in agent.acontinue_run(
+                previous, stream=True, stream_events=True, yield_run_output=yield_run_output
+            )
+        ]
+    else:
+        events = list(agent.continue_run(previous, stream=True, stream_events=True, yield_run_output=yield_run_output))
+
+    errors = [event for event in events if isinstance(event, RunErrorEvent)]
+    assert len(errors) == 1
+    assert errors[0].content == "boom"
+    outputs = [event for event in events if isinstance(event, RunOutput)]
+    if yield_run_output:
+        assert len(outputs) == 1
+        assert events[-1] is outputs[0]
+        assert outputs[0].status == RunStatus.error
+        assert outputs[0].run_id == errors[0].run_id == "run"
+        assert outputs[0].session_id == errors[0].session_id == "session"
+        assert outputs[0].content == "Earlier answer"
+    else:
+        assert outputs == []
