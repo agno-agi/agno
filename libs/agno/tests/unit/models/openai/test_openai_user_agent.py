@@ -16,6 +16,7 @@ DEFAULT_USER_AGENT = f"agno/{__version__} Python/{python_version()}"
     ("model_class", "env_user_agent", "options", "expected_user_agent", "expected_header"),
     [
         pytest.param(OpenAILike, None, {}, DEFAULT_USER_AGENT, None, id="default"),
+        pytest.param(OpenAILike, "", {}, DEFAULT_USER_AGENT, None, id="empty-env"),
         pytest.param(OpenAILike, "env-agent", {}, "env-agent", None, id="env-override"),
         pytest.param(
             OpenAILike,

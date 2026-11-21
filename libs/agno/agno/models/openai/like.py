@@ -43,5 +43,8 @@ class OpenAILike(OpenAIChat):
             for name, value in (client_params.get("default_headers") or {}).items()
         }
         if "User-Agent" not in headers:
-            headers["User-Agent"] = getenv("AGNO_USER_AGENT", f"agno/{__version__} Python/{python_version()}")
+            env_user_agent = getenv("AGNO_USER_AGENT", "")
+            headers["User-Agent"] = (
+                env_user_agent if env_user_agent.strip() else f"agno/{__version__} Python/{python_version()}"
+            )
         return {**client_params, "default_headers": headers}
