@@ -5,6 +5,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 ## Root Integrations
 
 - `agent_ops.py`
+- `agnost_ai_via_openinference.py`
 - `arize_phoenix_moving_traces_to_different_projects.py`
 - `arize_phoenix_via_openinference.py`
 - `arize_phoenix_via_openinference_local.py`
