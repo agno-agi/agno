@@ -74,6 +74,7 @@ async def _aget_learning_tools(
     team: "Team",
     user_id: Optional[str] = None,
     session: Optional[TeamSession] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> List[Callable]:
     """Async helper to fetch learning tools for Team runs."""
     if team._learning is None:
@@ -82,6 +83,7 @@ async def _aget_learning_tools(
         user_id=user_id,
         session_id=session.session_id if session else None,
         team_id=team.id,
+        run_metrics=run_response.metrics if run_response else None,
     )
 
 
@@ -192,7 +194,9 @@ def _determine_tools_for_model(
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
 
     if team.memory_manager is not None and team.enable_agentic_memory:
-        _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
+        _tools.append(
+            _get_update_user_memory_function(team, user_id=user_id, run_response=run_response, async_mode=async_mode)
+        )
 
     # Add learning machine tools
     # In async mode, caller should pre-fetch with await team._learning.aget_tools() and pass learning_tools
@@ -204,6 +208,7 @@ def _determine_tools_for_model(
                 user_id=user_id,
                 session_id=session.session_id if session else None,
                 team_id=team.id,
+                run_metrics=run_response.metrics,
             )
             _tools.extend(_learning_tools)
 
@@ -405,6 +410,8 @@ def _determine_tools_for_model(
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
+                if isinstance(tool.name, str) and tool.name:
+                    _func.owning_toolkit = tool.recorded_name
 
                 _func._team = team
                 # Respect the function's explicit strict setting if set
@@ -438,6 +445,10 @@ def _determine_tools_for_model(
                 continue
             _function_names.append(tool.name)
             tool = tool._per_run_copy()
+            # The saved toolkit name can be stale (renamed, or an MCP default name
+            # holding the old command's arguments): record the live toolkit's name,
+            # and no name when no live toolkit runs the function
+            tool.owning_toolkit = tool.bound_toolkit.recorded_name if isinstance(tool.bound_toolkit, Toolkit) else None
             tool._team = team
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
