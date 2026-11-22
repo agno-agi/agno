@@ -61,6 +61,10 @@ This example connects to Magic Hour's hosted MCP server to create images and vid
 
 This example connects to GetYouTubeTranscript's hosted MCP server to read and research YouTube videos: transcripts in any caption language a video has, YouTube search, and channel and playlist data. It shows bearer authentication and quoting with timestamps.
 
+15. Datacircle Agent (`datacircle.py`)
+
+This example connects to Datacircle's hosted MCP server, which needs no API key. It lists the GTM APIs Datacircle benchmarks and searches their plans by API, provider or price.
+
 ## Getting Started
 
 ### Prerequisites
@@ -93,6 +97,7 @@ python emem.py
 python peer_cash.py
 python magic_hour.py
 python getyoutubetranscript.py
+python datacircle.py
 ```
 
 ## How It Works
