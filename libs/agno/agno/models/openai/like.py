@@ -38,10 +38,14 @@ class OpenAILike(OpenAIChat):
         return Model.get_provider(self)
 
     def _with_client_defaults(self, client_params: Dict[str, Any]) -> Dict[str, Any]:
-        headers = {
-            "User-Agent" if name.lower() == "user-agent" else name: value
-            for name, value in (client_params.get("default_headers") or {}).items()
-        }
+        caller_headers = dict((client_params.get("default_headers") or {}).items())
+        headers = {}
+        for name, value in caller_headers.items():
+            if name != "User-Agent" and name.lower() == "user-agent":
+                if "User-Agent" in caller_headers:
+                    continue
+                name = "User-Agent"
+            headers[name] = value
         if "User-Agent" not in headers:
             env_user_agent = getenv("AGNO_USER_AGENT", "")
             headers["User-Agent"] = (

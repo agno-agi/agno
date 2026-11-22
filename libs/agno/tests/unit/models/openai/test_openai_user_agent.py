@@ -37,6 +37,22 @@ DEFAULT_USER_AGENT = f"agno/{__version__} Python/{python_version()}"
         pytest.param(
             OpenAILike,
             "env-agent",
+            {"default_headers": {"User-Agent": "canonical-agent", "user-agent": "lowercase-agent"}},
+            "canonical-agent",
+            None,
+            id="canonical-header-first",
+        ),
+        pytest.param(
+            OpenAILike,
+            "env-agent",
+            {"client_params": {"default_headers": {"user-agent": "lowercase-agent", "User-Agent": "canonical-agent"}}},
+            "canonical-agent",
+            None,
+            id="canonical-header-last",
+        ),
+        pytest.param(
+            OpenAILike,
+            "env-agent",
             {
                 "default_headers": {"User-Agent": "model-agent", "X-Provider-Header": "model"},
                 "client_params": {"default_headers": {"uSeR-aGeNt": "client-agent", "X-Provider-Header": "client"}},
@@ -66,8 +82,8 @@ async def test_openai_user_agent_on_request(
     model = model_class(id="test-model", api_key="test-key", base_url="https://example.test/v1", **options)
     transport = httpx.MockTransport(capture)
     if use_async:
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            model.http_client = http_client
+        async with httpx.AsyncClient(transport=transport) as async_http_client:
+            model.http_client = async_http_client
             client = model.get_async_client()
             await client.models.list()
     else:
