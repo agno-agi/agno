@@ -55,7 +55,7 @@ def run_batch_analysis(batch_id: str) -> str:
 
 analysis_agent = Agent(
     name="BatchAnalysisAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[run_batch_analysis],
     instructions=(
         "You analyze data batches. "

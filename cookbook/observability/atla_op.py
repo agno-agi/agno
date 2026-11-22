@@ -23,7 +23,7 @@ configure(token=getenv("ATLA_API_KEY"))
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
 )

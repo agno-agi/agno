@@ -97,7 +97,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id(shared_db):
         telemetry=False,
     )
 
-    response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
+    response = agent.continue_run(run_id=response.run_id, requirements=response.requirements, session_id=session_id)
     assert response.is_paused is False
     assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
@@ -117,7 +117,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
         telemetry=False,
     )
 
-    updated_tools = None
+    requirements = None
     for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True, stream_events=True):
         if response.is_paused:
             assert response.tools is not None
@@ -127,7 +127,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
 
             # Mark the tool as confirmed
             response.tools[0].confirmed = True
-            updated_tools = response.tools
+            requirements = response.requirements
 
     run_response = agent.get_last_run_output(session_id=session_id)
     assert run_response and run_response.is_paused
@@ -142,7 +142,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(shared_db):
     )
 
     response = agent.continue_run(
-        run_id=run_response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True, stream_events=True
+        run_id=run_response.run_id, requirements=requirements, session_id=session_id, stream=True, stream_events=True
     )
     for response in response:
         if response.is_paused:
@@ -188,7 +188,9 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(shared
         telemetry=False,
     )
 
-    response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
+    response = await agent.acontinue_run(
+        run_id=response.run_id, requirements=response.requirements, session_id=session_id
+    )
     assert response.is_paused is False
     assert response.tools is not None
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
@@ -463,7 +465,7 @@ def test_streaming_confirmation(shared_db):
     # Continue the run, streaming the response
     for run_output in agent.continue_run(
         run_id=paused_run_output.run_id,
-        updated_tools=paused_run_output.tools,  # type: ignore
+        requirements=paused_run_output.requirements,  # type: ignore
         session_id=session_id,
         stream=True,
         yield_run_output=True,
@@ -519,7 +521,7 @@ async def test_streaming_confirmation_async(shared_db):
     # Continue the run, streaming the response
     async for run_output in agent.acontinue_run(
         run_id=paused_run_output.run_id,
-        updated_tools=paused_run_output.tools,  # type: ignore
+        requirements=paused_run_output.requirements,  # type: ignore
         session_id=session_id,
         stream=True,
         yield_run_output=True,

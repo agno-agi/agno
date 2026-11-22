@@ -34,16 +34,8 @@ uv pip install -U anthropic ddgs duckdb agno
 
 ### 5. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/vertexai/claude/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/vertexai/claude/basic.py
+python cookbook/90_models/vertexai/claude/basic.py
 ```
 
 ### 6. Run Agent with Tools
@@ -51,19 +43,19 @@ python cookbook/92_models/vertexai/claude/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/vertexai/claude/tool_use.py
+python cookbook/90_models/vertexai/claude/tool_use.py
 ```
 
 ### 7. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/vertexai/claude/structured_output.py
+python cookbook/90_models/vertexai/claude/structured_output.py
 ```
 
 ### 8. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/vertexai/claude/db.py
+python cookbook/90_models/vertexai/claude/db.py
 ```
 
 ### 9. Run Agent that uses knowledge
@@ -75,33 +67,25 @@ export OPENAI_API_KEY=***
 ```
 
 ```shell
-python cookbook/92_models/vertexai/claude/knowledge.py
+python cookbook/90_models/vertexai/claude/knowledge.py
 ```
 
 ### 10. Run Agent that uses memory
 
 ```shell
-python cookbook/92_models/vertexai/claude/memory.py
+python cookbook/90_models/vertexai/claude/memory.py
 ```
 
 ### 11. Run Agent that analyzes an image
 
 ```shell
-python cookbook/92_models/vertexai/claude/image_input_url.py
+python cookbook/90_models/vertexai/claude/image_input_url.py
 ```
 
 ### 12. Run Agent with Thinking enabled
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/vertexai/claude/thinking.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/vertexai/claude/thinking_stream.py
+python cookbook/90_models/vertexai/claude/thinking.py
 ```
 
 ### 13. Adaptive Thinking with `output_config`

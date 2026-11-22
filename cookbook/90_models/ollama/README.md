@@ -40,14 +40,7 @@ The `chat/` folder contains examples using the native Ollama Chat API.
 ### Basic Usage
 
 ```shell
-# Streaming
-python cookbook/90_models/ollama/chat/basic_stream.py
-
-# Non-streaming
 python cookbook/90_models/ollama/chat/basic.py
-
-# Async
-python cookbook/90_models/ollama/chat/async_basic.py
 ```
 
 ### Tools and Structured Output
@@ -101,12 +94,6 @@ The `responses/` folder contains examples using the OpenAI-compatible Responses 
 ```shell
 # Basic
 python cookbook/90_models/ollama/responses/basic.py
-
-# Streaming
-python cookbook/90_models/ollama/responses/basic_stream.py
-
-# Async
-python cookbook/90_models/ollama/responses/async_basic.py
 ```
 
 ### Tools and Structured Output

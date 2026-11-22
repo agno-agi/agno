@@ -16,7 +16,7 @@ class V0(OpenAILike):
         name (str): The name of the API. Defaults to "v0".
         provider (str): The provider of the API. Defaults to "v0".
         api_key (Optional[str]): The API key for the v0 API.
-        base_url (Optional[str]): The base URL for the v0 API. Defaults to "https://v0.dev/chat/settings/keys".
+        base_url (Optional[str]): The base URL for the v0 API. Defaults to "https://api.v0.dev/v1/".
     """
 
     id: str = "v0-1.0-md"

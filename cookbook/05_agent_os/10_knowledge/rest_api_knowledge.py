@@ -37,6 +37,11 @@ def wait_until_processed(client: httpx.Client, content_id: str) -> dict[str, Any
 
         if status["status"] == "completed":
             return status
+        if status["status"] == "partial":
+            # Some chunks embedded and are searchable, others failed. The content is
+            # usable but incomplete, so surface the detail instead of failing outright.
+            print(f"Partial ingestion: {status.get('status_message')}")
+            return status
         if status["status"] == "failed":
             raise RuntimeError(
                 status.get("status_message") or "Knowledge processing failed"

@@ -498,10 +498,11 @@ async def test_session_persistence_across_async_runs(async_shared_db):
     # Async run again
     await team.arun("Third message", session_id=session_id)
 
-    # Verify all runs are in session
+    # Verify all runs are in session; delegated member runs share it, tagged without the team_id.
     session = await team.aget_session(session_id=session_id)
     assert session is not None
-    assert len(session.runs) == 3
+    team_runs = [run for run in session.runs if getattr(run, "team_id", None) == team.id]
+    assert len(team_runs) == 3
 
 
 @pytest.mark.asyncio

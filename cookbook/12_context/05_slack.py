@@ -42,7 +42,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create the provider (token read from SLACK_BOT_TOKEN / SLACK_TOKEN)
 # ---------------------------------------------------------------------------
-slack = SlackContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
+slack = SlackContextProvider(model=OpenAIResponses(id="gpt-5.6-luna"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent

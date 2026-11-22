@@ -63,6 +63,11 @@ class ParallelMCPBackend(ContextBackend):
         # regularly exceeds MCPTools' 10s default.
         self.timeout_seconds = timeout_seconds
         self._mcp_tools: Any = None
+        # The keyless tier meters by session_id (per the web_fetch schema); one per backend
+        # keeps this instance's fetches on one meter and correlates them in Parallel's logs.
+        from uuid import uuid4
+
+        self._fetch_session_id = uuid4().hex
 
     def status(self) -> Status:
         endpoint = self.url.rsplit("/", 1)[-1]
@@ -76,20 +81,22 @@ class ParallelMCPBackend(ContextBackend):
             self._mcp_tools = self._build_tools()
         return [self._mcp_tools]
 
-    def _build_tools(self) -> Any:
-        from datetime import timedelta
-
-        from agno.tools.mcp import MCPTools
-        from agno.tools.mcp.params import StreamableHTTPClientParams
-
+    def _headers(self) -> dict:
         headers: dict[str, Any] = {"User-Agent": f"agno/{_AGNO_VERSION}"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    def _build_tools(self) -> Any:
+        from agno.tools.mcp import MCPTools
+        from agno.tools.mcp.params import StreamableHTTPClientParams
+
+        headers = self._headers()
 
         server_params = StreamableHTTPClientParams(
             url=self.url,
             headers=headers,
-            timeout=timedelta(seconds=self.timeout_seconds),
+            timeout=float(self.timeout_seconds),
         )
         return MCPTools(
             server_params=server_params,
@@ -127,3 +134,125 @@ class ParallelMCPBackend(ContextBackend):
             await tools.close()
         except Exception as exc:
             log_warning(f"ParallelMCPBackend close raised {type(exc).__name__}: {exc}")
+
+    # ------------------------------------------------------------------
+    # Page fetching (knowledge readers fetch through this)
+    # ------------------------------------------------------------------
+
+    extractor_id = "parallel_mcp"
+    fetch_batch_limit = 20  # web_fetch takes up to 20 URLs per request
+
+    def _pages_from_fetch_payload(self, urls: list, payload: dict, max_chars: int = 50_000) -> list:
+        from agno.knowledge.reader.page_fetcher import FetchedPage
+
+        by_url: dict = {}
+        for entry in payload.get("results") or []:
+            if isinstance(entry, dict) and entry.get("url"):
+                by_url[entry["url"]] = entry
+        errors_by_url: dict = {}
+        for entry in payload.get("errors") or []:
+            if isinstance(entry, dict) and entry.get("url"):
+                errors_by_url[entry["url"]] = str(entry.get("error") or entry.get("message") or "fetch error")
+
+        pages = []
+        for url in urls:
+            entry = by_url.get(url)
+            content = None
+            title = None
+            if entry is not None:
+                content = entry.get("full_content") or "\n".join(entry.get("excerpts") or [])
+                title = entry.get("title")
+            if content:
+                # The MCP tool has no per-page size parameter, so the cap is applied here
+                pages.append(
+                    FetchedPage(url=url, content=content[:max_chars], title=title, extractor=self.extractor_id)
+                )
+            else:
+                pages.append(FetchedPage(url=url, error=errors_by_url.get(url, "empty"), extractor=self.extractor_id))
+        return pages
+
+    async def afetch_many(self, urls: list, *, max_chars: int = 50_000) -> list:
+        """Fetch up to ``fetch_batch_limit`` pages with one ``web_fetch`` call.
+
+        Opens and closes its own MCP session on the calling task — the HTTP transport keeps
+        anyio cancel scopes that must be entered and exited on one task, so a fetch never
+        reuses the provider-side session ``get_tools()`` manages.
+        """
+        import json
+
+        import httpx2
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.shared._httpx_utils import create_mcp_http_client
+
+        from agno.knowledge.reader.page_fetcher import FetchedPage, RateLimited, rate_limit_from_text
+
+        arguments: dict[str, Any] = {"urls": list(urls), "full_content": True}
+        if not self.api_key:
+            arguments["session_id"] = self._fetch_session_id
+
+        try:
+            # MCP SDK v2: streamable_http_client takes only url/http_client, so the
+            # per-request headers and timeout ride on the httpx2 client itself.
+            timeout = float(self.timeout_seconds)
+            async with create_mcp_http_client(
+                headers=self._headers(), timeout=httpx2.Timeout(timeout, read=timeout)
+            ) as http_client:
+                async with streamable_http_client(url=self.url, http_client=http_client) as (read, write):
+                    async with ClientSession(read, write, read_timeout_seconds=timeout) as session:
+                        await session.initialize()
+                        result = await session.call_tool("web_fetch", arguments)
+        except Exception as e:
+            message = str(e)
+            if rate_limit_from_text(message):
+                raise RateLimited(message) from e
+            return [
+                FetchedPage(url=url, error=f"{type(e).__name__}: {message}"[:300], extractor=self.extractor_id)
+                for url in urls
+            ]
+
+        text = "".join(getattr(block, "text", "") or "" for block in result.content or [])
+        if result.is_error:
+            if rate_limit_from_text(text):
+                raise RateLimited(text[:300])
+            return [
+                FetchedPage(url=url, error=(text or "tool error")[:300], extractor=self.extractor_id) for url in urls
+            ]
+
+        try:
+            payload = json.loads(text) if text else {}
+        except ValueError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        return self._pages_from_fetch_payload(list(urls), payload, max_chars=max_chars)
+
+    def fetch_many(self, urls: list, *, max_chars: int = 50_000) -> list:
+        """Sync variant: runs :meth:`afetch_many` on a private event loop in a worker thread.
+
+        The MCP client is async-only, so the sync path pays one thread per call. Works from
+        inside a running event loop too, because the loop lives on its own thread.
+        """
+        import threading
+
+        outcome: dict[str, Any] = {}
+
+        def runner() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                outcome["pages"] = loop.run_until_complete(self.afetch_many(list(urls), max_chars=max_chars))
+            except BaseException as e:  # noqa: BLE001 - re-raised on the calling thread
+                outcome["error"] = e
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                loop.close()
+
+        thread = threading.Thread(target=runner, name="parallel-mcp-fetch", daemon=True)
+        thread.start()
+        thread.join()
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["pages"]

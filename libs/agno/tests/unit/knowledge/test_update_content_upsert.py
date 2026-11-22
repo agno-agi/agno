@@ -1,9 +1,8 @@
-"""Pin behavior of Knowledge._update_content / _aupdate_content after the
-upsert refactor:
+"""Pin behavior of Knowledge._update_content / _aupdate_content:
 
 - Existing row -> partial patch must merge metadata (incl. ``_agno`` key) and
   leave untouched fields alone.
-- Missing row -> must fall through to upsert (insert path) instead of bailing.
+- Missing row -> update is skipped; no row is created.
 """
 
 import os
@@ -11,6 +10,7 @@ import tempfile
 
 import pytest
 
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.knowledge import Knowledge
@@ -31,15 +31,19 @@ def knowledge():
         pass
 
 
+def _seed(knowledge: Knowledge, **fields) -> None:
+    knowledge.contents_db.upsert_knowledge_content(knowledge_row=KnowledgeRow(**fields))  # type: ignore[union-attr]
+
+
 def test_existing_row_partial_patch_merges_metadata(knowledge: Knowledge):
-    seed = Content(
+    _seed(
+        knowledge,
         id="abc",
         name="doc",
         description="desc",
         metadata={"a": 1, "_agno": {"source": "seed"}},
         status=ContentStatus.PROCESSING,
     )
-    knowledge._update_content(seed)
 
     patch = Content(
         id="abc",
@@ -59,26 +63,11 @@ def test_existing_row_partial_patch_merges_metadata(knowledge: Knowledge):
     assert merged["_agno"] == {"source": "seed", "checksum": "deadbeef"}
 
 
-def test_missing_row_falls_through_to_upsert(knowledge: Knowledge):
-    ghost = Content(
-        id="missing-id",
-        name="ghost",
-        description="appears via upsert",
-        status=ContentStatus.FAILED,
-        status_message="initial failure",
-    )
+def test_missing_row_is_skipped(knowledge: Knowledge):
+    out = knowledge._update_content(Content(id="missing-id", name="ghost", status=ContentStatus.FAILED))
 
-    out = knowledge._update_content(ghost)
-
-    assert out is not None
-    assert out["id"] == "missing-id"
-    assert out["status"] == "failed"
-    assert out["status_message"] == "initial failure"
-
-    roundtrip = knowledge.contents_db.get_knowledge_content("missing-id")  # type: ignore[union-attr]
-    assert roundtrip is not None
-    assert roundtrip.status == "failed"
-    assert roundtrip.name == "ghost"
+    assert out is None
+    assert knowledge.contents_db.get_knowledge_content("missing-id") is None  # type: ignore[union-attr]
 
 
 def test_update_without_id_returns_none(knowledge: Knowledge):
@@ -88,8 +77,7 @@ def test_update_without_id_returns_none(knowledge: Knowledge):
 
 @pytest.mark.asyncio
 async def test_async_existing_row_partial_patch(knowledge: Knowledge):
-    seed = Content(id="zzz", name="n", description="d", metadata={"x": 1})
-    await knowledge._aupdate_content(seed)
+    _seed(knowledge, id="zzz", name="n", description="d", metadata={"x": 1})
 
     patch = Content(id="zzz", status=ContentStatus.COMPLETED, metadata={"y": 2})
     out = await knowledge._aupdate_content(patch)
@@ -100,17 +88,8 @@ async def test_async_existing_row_partial_patch(knowledge: Knowledge):
 
 
 @pytest.mark.asyncio
-async def test_async_missing_row_falls_through_to_upsert(knowledge: Knowledge):
-    ghost = Content(
-        id="async-ghost",
-        name="g",
-        description="d",
-        status=ContentStatus.FAILED,
-    )
-    out = await knowledge._aupdate_content(ghost)
+async def test_async_missing_row_is_skipped(knowledge: Knowledge):
+    out = await knowledge._aupdate_content(Content(id="async-ghost", name="g", status=ContentStatus.FAILED))
 
-    assert out is not None
-    assert out["status"] == "failed"
-    roundtrip = knowledge.contents_db.get_knowledge_content("async-ghost")  # type: ignore[union-attr]
-    assert roundtrip is not None
-    assert roundtrip.status == "failed"
+    assert out is None
+    assert knowledge.contents_db.get_knowledge_content("async-ghost") is None  # type: ignore[union-attr]

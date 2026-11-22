@@ -60,7 +60,7 @@ def run_deep_analysis(subject: str) -> str:
 
 deep_analysis_agent = Agent(
     name="DeepAnalysisAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[run_deep_analysis],
     instructions=(
         "You perform deep data analysis. "
