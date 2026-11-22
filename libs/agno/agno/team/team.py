@@ -143,7 +143,9 @@ class Team:
     add_team_history_to_members: bool = False
     # Number of historical runs to include in the messages sent to the members
     num_team_history_runs: int = 3
-    # Optional callback to filter team history before it is sent to members
+    # Synchronous callback for rendered history when add_team_history_to_members=True.
+    # Return a redacted string, or None/"" to omit history. Stored history is unchanged.
+    # Does not filter current input, shared member interactions, or members' own history.
     team_history_filter: Optional[Callable[[str], Optional[str]]] = None
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False

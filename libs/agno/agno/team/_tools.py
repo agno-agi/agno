@@ -547,6 +547,11 @@ def _get_history_for_member_agent(
 
 
 def _filter_team_history(team: "Team", team_history: Optional[str]) -> Optional[str]:
+    """Filter rendered team history without changing the session's stored runs.
+
+    The synchronous callback may return None or an empty string to omit history.
+    Let callback errors propagate so unfiltered history is never used as a fallback.
+    """
     if team_history is not None and team.team_history_filter is not None:
         return team.team_history_filter(team_history)
     return team_history
