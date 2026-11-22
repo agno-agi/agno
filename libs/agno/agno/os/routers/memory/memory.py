@@ -8,6 +8,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
+from agno.exceptions import AgnoError
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
@@ -30,6 +31,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -265,7 +267,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         topics: Optional[List[str]] = Depends(parse_topics),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search within memory content"),
         limit: Optional[int] = Query(default=20, description="Number of memories to return per page", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=1),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
@@ -573,7 +575,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     async def get_user_memory_stats(
         request: Request,
         limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page", ge=1),
-        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=1),
         user_id: Optional[str] = Query(default=None, description="User ID to filter statistics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
@@ -614,6 +616,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 ),
             )
 
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
 
@@ -771,6 +775,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             logger.exception(f"Failed to optimize memories for user {request.user_id}")
             raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")

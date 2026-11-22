@@ -17,6 +17,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.team.team import Team
 
+from agno.agent.followup import drop_derived_followup_fields
 from agno.filters import FilterExpr
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -146,10 +147,12 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
     # Update fields if provided
     if update:
         fields_for_new_team.update(update)
+    drop_derived_followup_fields(fields_for_new_team, update)
 
     # Create a new Team
     try:
         new_team = team.__class__(**fields_for_new_team)
+        new_team._registry_excluded = team._registry_excluded
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:
@@ -192,7 +195,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
                 try:
                     # Share MCP tools (they maintain server connections)
                     is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        c.__name__ == "MCPTools" for c in type(tool).__mro__
                     )
                     if is_mcp_tool:
                         copied_tools.append(tool)

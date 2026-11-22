@@ -33,7 +33,7 @@ Execution requirements:
 
 Special cases:
 - `human_in_the_loop/` examples require interactive input — validate startup and initial tool call, then terminate.
-- Some subdirectories require pgvector (`rag/`, `session/`, `culture/`).
+- Some subdirectories require pgvector (`rag/`, `session/`).
 - Multimodal examples may require specific API keys (OpenAI for audio, FAL for image generation).
 
 Validation commands (must all pass before finishing):

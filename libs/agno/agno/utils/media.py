@@ -3,9 +3,7 @@ import mimetypes
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Union
-
-import httpx
+from typing import Any, List, Optional, Union
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_info, log_warning
@@ -80,6 +78,8 @@ def download_image(url: str, output_path: str) -> bool:
     - url (str): URL of the image to download.
     - output_path (str): Local filesystem path to save the image
     """
+    import httpx
+
     try:
         # Send HTTP GET request to the image URL
         response = httpx.get(url)
@@ -113,6 +113,8 @@ def download_image(url: str, output_path: str) -> bool:
 
 def download_audio(url: str, output_path: str) -> str:
     """Download audio from URL"""
+    import httpx
+
     response = httpx.get(url)
     response.raise_for_status()
 
@@ -124,6 +126,8 @@ def download_audio(url: str, output_path: str) -> str:
 
 def download_video(url: str, output_path: str) -> str:
     """Download video from URL"""
+    import httpx
+
     response = httpx.get(url)
     response.raise_for_status()
 
@@ -144,6 +148,8 @@ def download_file(url: str, output_path: str) -> None:
     Raises:
         httpx.HTTPError: If the download fails
     """
+    import httpx
+
     try:
         response = httpx.get(url)
         response.raise_for_status()
@@ -197,6 +203,8 @@ def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbos
     Returns:
         bool: True if media is ready, False if timeout reached
     """
+    import httpx
+
     max_attempts = timeout // interval
 
     if verbose:
@@ -258,10 +266,31 @@ def reconstruct_image_from_dict(img_data):
     """
     Reconstruct an Image object from dictionary data.
 
-    Handles both base64-encoded content (from database) and regular image data (url/filepath).
+    Handles media references (from external storage), base64-encoded content (from database),
+    and regular image data (url/filepath).
     """
     try:
         if isinstance(img_data, dict):
+            # Media reference takes precedence over inline content
+            if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
+                ref_data = img_data["media_reference"]
+                if "storage_key" in ref_data:
+                    from agno.media.reference import MediaReference
+
+                    ref = MediaReference.from_dict(ref_data)
+                    return Image(
+                        url=img_data.get("url") or ref.url,
+                        filepath=img_data.get("filepath"),
+                        id=img_data.get("id"),
+                        mime_type=img_data.get("mime_type"),
+                        format=img_data.get("format"),
+                        detail=img_data.get("detail"),
+                        original_prompt=img_data.get("original_prompt"),
+                        revised_prompt=img_data.get("revised_prompt"),
+                        alt_text=img_data.get("alt_text"),
+                        metadata=img_data.get("metadata"),
+                        media_reference=ref,
+                    )
             # If content is base64 string, decode it back to bytes
             if "content" in img_data and isinstance(img_data["content"], str):
                 return Image.from_base64(
@@ -287,10 +316,34 @@ def reconstruct_video_from_dict(vid_data):
     """
     Reconstruct a Video object from dictionary data.
 
-    Handles both base64-encoded content (from database) and regular video data (url/filepath).
+    Handles media references (from external storage), base64-encoded content (from database),
+    and regular video data (url/filepath).
     """
     try:
         if isinstance(vid_data, dict):
+            # Media reference takes precedence over inline content
+            if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
+                ref_data = vid_data["media_reference"]
+                if "storage_key" in ref_data:
+                    from agno.media.reference import MediaReference
+
+                    ref = MediaReference.from_dict(ref_data)
+                    return Video(
+                        url=vid_data.get("url") or ref.url,
+                        filepath=vid_data.get("filepath"),
+                        id=vid_data.get("id"),
+                        mime_type=vid_data.get("mime_type"),
+                        format=vid_data.get("format"),
+                        duration=vid_data.get("duration"),
+                        width=vid_data.get("width"),
+                        height=vid_data.get("height"),
+                        fps=vid_data.get("fps"),
+                        eta=vid_data.get("eta"),
+                        original_prompt=vid_data.get("original_prompt"),
+                        revised_prompt=vid_data.get("revised_prompt"),
+                        metadata=vid_data.get("metadata"),
+                        media_reference=ref,
+                    )
             # If content is base64 string, decode it back to bytes
             if "content" in vid_data and isinstance(vid_data["content"], str):
                 return Video.from_base64(
@@ -312,10 +365,32 @@ def reconstruct_audio_from_dict(aud_data):
     """
     Reconstruct an Audio object from dictionary data.
 
-    Handles both base64-encoded content (from database) and regular audio data (url/filepath).
+    Handles media references (from external storage), base64-encoded content (from database),
+    and regular audio data (url/filepath).
     """
     try:
         if isinstance(aud_data, dict):
+            # Media reference takes precedence over inline content
+            if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
+                ref_data = aud_data["media_reference"]
+                if "storage_key" in ref_data:
+                    from agno.media.reference import MediaReference
+
+                    ref = MediaReference.from_dict(ref_data)
+                    return Audio(
+                        url=aud_data.get("url") or ref.url,
+                        filepath=aud_data.get("filepath"),
+                        id=aud_data.get("id"),
+                        mime_type=aud_data.get("mime_type"),
+                        format=aud_data.get("format"),
+                        duration=aud_data.get("duration"),
+                        sample_rate=aud_data.get("sample_rate", 24000),
+                        channels=aud_data.get("channels", 1),
+                        transcript=aud_data.get("transcript"),
+                        expires_at=aud_data.get("expires_at"),
+                        metadata=aud_data.get("metadata"),
+                        media_reference=ref,
+                    )
             # If content is base64 string, decode it back to bytes
             if "content" in aud_data and isinstance(aud_data["content"], str):
                 return Audio.from_base64(
@@ -340,10 +415,31 @@ def reconstruct_file_from_dict(file_data):
     """
     Reconstruct a File object from dictionary data.
 
-    Handles both base64-encoded content (from database) and regular file data (url/filepath).
+    Handles media references (from external storage), base64-encoded content (from database),
+    and regular file data (url/filepath).
     """
     try:
         if isinstance(file_data, dict):
+            # Media reference takes precedence over inline content
+            if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
+                ref_data = file_data["media_reference"]
+                if "storage_key" in ref_data:
+                    from agno.media.reference import MediaReference
+
+                    ref = MediaReference.from_dict(ref_data)
+                    return File(
+                        url=file_data.get("url") or ref.url,
+                        filepath=file_data.get("filepath"),
+                        id=file_data.get("id"),
+                        mime_type=file_data.get("mime_type"),
+                        file_type=file_data.get("file_type"),
+                        filename=file_data.get("filename"),
+                        size=file_data.get("size"),
+                        format=file_data.get("format"),
+                        name=file_data.get("name"),
+                        metadata=file_data.get("metadata"),
+                        media_reference=ref,
+                    )
             # If content is base64 string, decode it back to bytes
             if "content" in file_data and isinstance(file_data["content"], str):
                 file_obj = File.from_base64(
@@ -426,3 +522,13 @@ def reconstruct_response_audio(audio: Optional[dict]) -> Optional[Audio]:
     if not audio:
         return None
     return reconstruct_audio_from_dict(audio)
+
+
+def __getattr__(name: str) -> Any:
+    # ``agno.utils.media.httpx`` stays resolvable for callers that patch it,
+    # without the module paying for the httpx import when nothing downloads.
+    if name == "httpx":
+        import httpx
+
+        return httpx
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

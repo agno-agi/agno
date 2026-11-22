@@ -227,32 +227,34 @@ def test_vertexai_prepare_request_kwargs_signature_matches_parent():
 
 
 # =============================================================================
-# temperature / top_p / top_k: zero values must not be silently dropped
+# temperature / top_p / top_k: zero values must not be silently dropped.
+# They ride in extra_body because anthropic 1.0.0 stopped declaring them on the
+# request methods, so a zero being dropped now means a zero missing from there.
 # =============================================================================
 
 
 def test_anthropic_temperature_zero_included():
-    """temperature=0.0 must appear in request params (falsy-check regression)."""
+    """temperature=0.0 must survive into the request, in extra_body (falsy-check regression)."""
     model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0)
     params = model.get_request_params()
-    assert "temperature" in params
-    assert params["temperature"] == 0.0
+    assert "temperature" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["temperature"] == 0.0
 
 
 def test_anthropic_top_p_zero_included():
-    """top_p=0.0 must appear in request params (falsy-check regression)."""
+    """top_p=0.0 must survive into the request, in extra_body (falsy-check regression)."""
     model = AnthropicClaude(id="claude-haiku-4-5-20251001", top_p=0.0)
     params = model.get_request_params()
-    assert "top_p" in params
-    assert params["top_p"] == 0.0
+    assert "top_p" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_p"] == 0.0
 
 
 def test_anthropic_top_k_zero_included():
-    """top_k=0 must appear in request params (falsy-check regression)."""
+    """top_k=0 must survive into the request, in extra_body (falsy-check regression)."""
     model = AnthropicClaude(id="claude-haiku-4-5-20251001", top_k=0)
     params = model.get_request_params()
-    assert "top_k" in params
-    assert params["top_k"] == 0
+    assert "top_k" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_k"] == 0
 
 
 def test_anthropic_temperature_none_excluded():
@@ -260,6 +262,7 @@ def test_anthropic_temperature_none_excluded():
     model = AnthropicClaude(id="claude-haiku-4-5-20251001")
     params = model.get_request_params()
     assert "temperature" not in params
+    assert "extra_body" not in params
 
 
 def test_anthropic_top_p_none_excluded():
@@ -267,6 +270,7 @@ def test_anthropic_top_p_none_excluded():
     model = AnthropicClaude(id="claude-haiku-4-5-20251001")
     params = model.get_request_params()
     assert "top_p" not in params
+    assert "extra_body" not in params
 
 
 def test_anthropic_top_k_none_excluded():
@@ -274,55 +278,56 @@ def test_anthropic_top_k_none_excluded():
     model = AnthropicClaude(id="claude-haiku-4-5-20251001")
     params = model.get_request_params()
     assert "top_k" not in params
+    assert "extra_body" not in params
 
 
 def test_anthropic_positive_temperature_included():
-    """Positive temperature is still forwarded correctly."""
+    """Positive temperature is still forwarded correctly, in extra_body."""
     model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.7)
     params = model.get_request_params()
-    assert params["temperature"] == 0.7
+    assert params["extra_body"]["temperature"] == 0.7
 
 
 def test_anthropic_all_sampling_params_zero():
-    """All three sampling params at zero must all appear in request params."""
+    """All three sampling params at zero must all survive into extra_body."""
     model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0, top_p=0.0, top_k=0)
     params = model.get_request_params()
-    assert params["temperature"] == 0.0
-    assert params["top_p"] == 0.0
-    assert params["top_k"] == 0
+    assert params["extra_body"]["temperature"] == 0.0
+    assert params["extra_body"]["top_p"] == 0.0
+    assert params["extra_body"]["top_k"] == 0
 
 
 def test_aws_temperature_zero_included():
-    """AWS Claude: temperature=0.0 must appear in request params."""
+    """AWS Claude: temperature=0.0 must survive into the request, in extra_body."""
     pytest.importorskip("boto3")
     from agno.models.aws.claude import Claude as AwsClaude
 
     model = AwsClaude(temperature=0.0)
     params = model.get_request_params()
-    assert "temperature" in params
-    assert params["temperature"] == 0.0
+    assert "temperature" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["temperature"] == 0.0
 
 
 def test_aws_top_p_zero_included():
-    """AWS Claude: top_p=0.0 must appear in request params."""
+    """AWS Claude: top_p=0.0 must survive into the request, in extra_body."""
     pytest.importorskip("boto3")
     from agno.models.aws.claude import Claude as AwsClaude
 
     model = AwsClaude(top_p=0.0)
     params = model.get_request_params()
-    assert "top_p" in params
-    assert params["top_p"] == 0.0
+    assert "top_p" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_p"] == 0.0
 
 
 def test_aws_top_k_zero_included():
-    """AWS Claude: top_k=0 must appear in request params."""
+    """AWS Claude: top_k=0 must survive into the request, in extra_body."""
     pytest.importorskip("boto3")
     from agno.models.aws.claude import Claude as AwsClaude
 
     model = AwsClaude(top_k=0)
     params = model.get_request_params()
-    assert "top_k" in params
-    assert params["top_k"] == 0
+    assert "top_k" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_k"] == 0
 
 
 def test_aws_temperature_none_excluded():
@@ -333,30 +338,31 @@ def test_aws_temperature_none_excluded():
     model = AwsClaude()
     params = model.get_request_params()
     assert "temperature" not in params
+    assert "extra_body" not in params
 
 
 def test_vertexai_temperature_zero_included():
-    """VertexAI Claude: temperature=0.0 must appear in request params."""
+    """VertexAI Claude: temperature=0.0 must survive into the request, in extra_body."""
     model = VertexAIClaude(temperature=0.0)
     params = model.get_request_params()
-    assert "temperature" in params
-    assert params["temperature"] == 0.0
+    assert "temperature" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["temperature"] == 0.0
 
 
 def test_vertexai_top_p_zero_included():
-    """VertexAI Claude: top_p=0.0 must appear in request params."""
+    """VertexAI Claude: top_p=0.0 must survive into the request, in extra_body."""
     model = VertexAIClaude(top_p=0.0)
     params = model.get_request_params()
-    assert "top_p" in params
-    assert params["top_p"] == 0.0
+    assert "top_p" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_p"] == 0.0
 
 
 def test_vertexai_top_k_zero_included():
-    """VertexAI Claude: top_k=0 must appear in request params."""
+    """VertexAI Claude: top_k=0 must survive into the request, in extra_body."""
     model = VertexAIClaude(top_k=0)
     params = model.get_request_params()
-    assert "top_k" in params
-    assert params["top_k"] == 0
+    assert "top_k" not in params, "sampling params travel in extra_body"
+    assert params["extra_body"]["top_k"] == 0
 
 
 def test_vertexai_temperature_none_excluded():
@@ -364,3 +370,4 @@ def test_vertexai_temperature_none_excluded():
     model = VertexAIClaude()
     params = model.get_request_params()
     assert "temperature" not in params
+    assert "extra_body" not in params

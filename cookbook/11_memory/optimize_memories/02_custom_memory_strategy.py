@@ -64,13 +64,13 @@ user_id = "user3"
 # Create Agent and Memory Manager
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     update_memory_on_run=True,
 )
 
 memory_manager = MemoryManager(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
 )
 

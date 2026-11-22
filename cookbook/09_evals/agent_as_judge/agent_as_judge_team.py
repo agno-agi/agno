@@ -24,16 +24,16 @@ db = SqliteDb(db_file="tmp/agent_as_judge_team.db")
 researcher = Agent(
     name="Researcher",
     role="Research and gather information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 writer = Agent(
     name="Writer",
     role="Write clear and concise summaries",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     members=[researcher, writer],
     instructions=["First research the topic thoroughly, then write a clear summary."],
     db=db,
@@ -67,6 +67,6 @@ if __name__ == "__main__":
     eval_runs = db.get_eval_runs()
     print(f"Total evaluations stored: {len(eval_runs)}")
     if eval_runs:
-        latest = eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Team: {research_team.name}")

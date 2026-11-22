@@ -237,7 +237,7 @@ def test_extract_final_text_prefers_outputs_over_steps():
 
 def test_resolved_agent_uses_custom_agent_name_when_set():
     base = AntigravityAgent(name="T", api_key="dummy")
-    assert base._resolved_agent() == "antigravity-preview-05-2026"
+    assert base._resolved_agent() == "antigravity-preview-09-2026"
 
     custom = AntigravityAgent(name="T", api_key="dummy", custom_agent_name="my-bot")
     assert custom._resolved_agent() == "my-bot"
@@ -310,7 +310,7 @@ def test_ensure_custom_agent_posts_agent_definition():
     assert captured[0]["url"].endswith("/agents")
     posted = captured[0]["body"]
     assert posted["name"] == "my-bot"
-    assert posted["base_agent"] == "antigravity-preview-05-2026"
+    assert posted["base_agent"] == "antigravity-preview-09-2026"
     assert posted["instructions"] == "be terse"
     assert posted["description"] == "desc"
     assert posted["base_environment"] == {
@@ -400,6 +400,22 @@ def test_from_agent_directory_builds_sources_with_correct_targets():
     assert "/.agents/skills/haiku/SKILL.md" in targets
     # All inline
     assert all(s["type"] == "inline" for s in agent.sources)
+
+
+def test_from_agent_directory_reads_non_ascii_files_as_utf8(cp1252_default_encoding):
+    with tempfile.TemporaryDirectory() as d:
+        agent_dir = Path(d)
+        (agent_dir / "agent.yaml").write_text(
+            "id: my-bot\nbase_agent: antigravity-preview-05-2026\ndescription: café bot\n", encoding="utf-8"
+        )
+        (agent_dir / "AGENTS.md").write_text("café instructions", encoding="utf-8")
+        (agent_dir / "workspace").mkdir()
+        (agent_dir / "workspace" / "about.txt").write_text("café content", encoding="utf-8")
+        agent = AntigravityAgent.from_agent_directory(d, api_key="dummy", register=False)
+
+    assert agent.custom_agent_description == "café bot"
+    assert agent.custom_agent_instructions == "café instructions"
+    assert agent.sources == [{"type": "inline", "content": "café content", "target": "/about.txt"}]
 
 
 def _symlink_or_skip(link: Path, target: Path) -> None:

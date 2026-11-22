@@ -113,6 +113,6 @@ scorer -> grid -> learning_zone() -> to_sft_jsonl wiring was exercised end-to-en
 with a stub model (6 tasks, k=2, 12 scored — sound). The live model run was NOT
 performed here because no OPENAI_API_KEY was available. Run it with a key to
 produce the authentic grid (with duration + cost) for the screenshot:
-`.venvs/demo/bin/python cookbook/environments/_07_support_triage.py`
+`.venvs/demo/bin/python cookbook/environments/_00_quickstart/_07_support_triage.py`
 
 ---

@@ -3,7 +3,7 @@ Dispatch Studio-built components from a runner-only Agent
 =========================================================
 
 StudioRunnerTools is the dispatch half of the Studio: list the components in
-the platform database and run one by id. It carries no create/edit/delete
+the platform database and run one by id. It carries no create/edit/archive
 surface, so a router or team lead can hand work to built components without
 holding the Studio's mutation tools. Runs execute as the current user, keep
 one session per component per conversation, and relay PAUSED results.
@@ -13,6 +13,7 @@ Run: .venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_runner_dispatc
 Try: ask the dispatcher to run the same component twice and compare session ids
 """
 
+import json
 from pathlib import Path
 
 from agno.agent import Agent
@@ -43,11 +44,19 @@ registry = Registry(
 )
 
 builder = StudioTools(registry=registry, db=db, default_model_id="gpt-5.5")
-builder.create_agent(
-    name="Haiku Writer",
-    instructions="Answer with a single haiku.",
-    model_id="gpt-5.5",
+# Creates are drafts by default and dispatch only resolves the published
+# version, so publish=True makes the component runnable immediately. Every
+# StudioTools call returns a StudioResult envelope: read data on success.
+created = json.loads(
+    builder.create_agent(
+        name="Haiku Writer",
+        instructions="Answer with a single haiku.",
+        model_id="gpt-5.5",
+        publish=True,
+    )
 )
+if not created["ok"]:
+    raise RuntimeError(f"create_agent failed: {created['error']['code']}")
 
 # ---------------------------------------------------------------------------
 # Run it from a runner-only Agent

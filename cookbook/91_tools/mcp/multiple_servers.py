@@ -1,16 +1,18 @@
 """
 This example demonstrates how to use multiple MCP servers in a single agent.
 
+Each server gets its own MCPTools instance; pass them all to the agent.
+
 Prerequisites:
-- Set the environment variable "ACCUWEATHER_API_KEY" for the weather MCP tools.
-- You can get the API key from the AccuWeather website: https://developer.accuweather.com/
+- Set the environment variable "BRAVE_API_KEY" for the Brave search MCP tools.
+- You can get the API key from the Brave website: https://brave.com/search/api/
 """
 
 import asyncio
 from os import getenv
 
 from agno.agent import Agent
-from agno.tools.mcp import MultiMCPTools
+from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -18,30 +20,31 @@ from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    # Initialize the MCP tools
-    mcp_tools = MultiMCPTools(
-        [
-            "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @modelcontextprotocol/server-brave-search",
-        ],
-        env={
-            "BRAVE_API_KEY": getenv("BRAVE_API_KEY"),
-        },
+    # Initialize one MCPTools instance per server
+    airbnb_tools = MCPTools(
+        command="npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
+        timeout_seconds=30,
+    )
+    search_tools = MCPTools(
+        command="npx -y @modelcontextprotocol/server-brave-search",
+        env={"BRAVE_API_KEY": getenv("BRAVE_API_KEY")},
         timeout_seconds=30,
     )
 
     # Connect to the MCP servers
-    await mcp_tools.connect()
+    await airbnb_tools.connect()
+    await search_tools.connect()
 
     # Use the MCP tools with an Agent
     agent = Agent(
-        tools=[mcp_tools],
+        tools=[airbnb_tools, search_tools],
         markdown=True,
     )
     await agent.aprint_response(message)
 
-    # Close the MCP connection
-    await mcp_tools.close()
+    # Close the MCP connections
+    await airbnb_tools.close()
+    await search_tools.close()
 
 
 # Example usage

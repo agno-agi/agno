@@ -22,14 +22,14 @@ john_doe_id = "john_doe@example.com"
 # Create Memory Manager and Agent
 # ---------------------------------------------------------------------------
 memory_manager_full = MemoryManager(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=memory_db,
     add_memories=True,
     update_memories=True,
 )
 
 agent_full = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     memory_manager=memory_manager_full,
     enable_agentic_memory=True,
     db=memory_db,

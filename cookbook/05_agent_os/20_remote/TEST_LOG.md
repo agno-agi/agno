@@ -10,6 +10,13 @@ were recorded. The shared demo environment was not modified. The Google ADK
 server ran in an isolated `uv` environment that resolved `google-adk==2.5.0`,
 `a2a-sdk==0.3.26`, and `uvicorn==0.51.0`.
 
+`servers/a2a_server.py` and `04_remote_as_team_member.py` were run again live
+on 2026-10-10 and on 2026-10-30 for the move to A2A v1.0, with the worktree's
+development environment (`a2a-sdk==1.2.2`). The entries that use the Google
+ADK server (`servers/adk_server.py`, `03_remote_via_a2a.py` and
+`05_gateway.py`) keep their earlier record: no Google API key was available on
+2026-10-10.
+
 ### servers/agentos_server.py
 
 **Status:** PASS
@@ -33,12 +40,15 @@ and an authorized config request returned HTTP 200.
 
 **Test mode:** LIVE
 
-**Description:** Started the Agno A2A REST backend on port 7781 and exercised it
-through direct A2A and gateway requests.
+**Description:** Started the Agno A2A backend on port 7781 and exercised it
+through a direct A2A request and `04_remote_as_team_member.py`.
 
-**Result:** `GET /health` returned `ok`. The entity-scoped Agent card returned
-`A2A Assistant`, the expected message-stream URL, and
-`capabilities.streaming=true`. Live calculator requests returned 42 and 21.
+**Result:** On 2026-10-30, `GET /health` returned `ok`. The entity-scoped Agent
+card returned `A2A Assistant`, version `1.0.0`, the endpoint
+`http://127.0.0.1:7781/a2a/agents/a2a-assistant` under protocol versions 1.0
+and 0.3, and `capabilities.streaming=true`. A direct `A2AClient` calculator
+request (task `105e876e-a782-404e-8113-73bc8dc74603`) completed and returned
+42, and the server answered as the A2A member of `04_remote_as_team_member.py`.
 
 ---
 
@@ -109,11 +119,12 @@ Google ADK JSON-RPC `RemoteAgent` calls.
 
 **Test mode:** LIVE
 
-**Description:** Ran one local Team with native AgentOS and A2A REST
+**Description:** Ran one local Team with native AgentOS and A2A
 `RemoteAgent` members in broadcast mode.
 
-**Result:** Team run `a86c5c37-87be-48e3-ac58-980740cc0507` retained exactly
-two member responses, synthesized their answers, and returned 96.
+**Result:** On 2026-10-30, team run `750451fd-6da4-4792-8599-c38eaad9eb95`
+retained exactly two member responses, synthesized their answers, and returned
+96.
 
 ---
 

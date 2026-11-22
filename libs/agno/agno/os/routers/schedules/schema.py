@@ -1,6 +1,7 @@
 """Pydantic request/response models for the schedule API."""
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -10,7 +11,11 @@ _NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 ._-]*$")
 
 class ScheduleCreate(BaseModel):
     name: str = Field(..., max_length=255)
-    cron_expr: str = Field(..., max_length=128)
+    cron_expr: str = Field(
+        default="",
+        max_length=128,
+        description="An empty or omitted cron makes the schedule on demand; it runs only through trigger.",
+    )
     endpoint: str = Field(..., max_length=512)
     method: str = Field(default="POST", max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
@@ -42,12 +47,19 @@ class ScheduleCreate(BaseModel):
             raise ValueError("Endpoint must start with '/'")
         if "://" in v:
             raise ValueError("Endpoint must be a path, not a full URL")
+        # A control character makes the URL unsendable, so the schedule would fail on every trigger.
+        if any(c.isspace() or unicodedata.category(c) == "Cc" for c in v):
+            raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
 
 class ScheduleUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=255)
-    cron_expr: Optional[str] = Field(default=None, max_length=128)
+    cron_expr: Optional[str] = Field(
+        default=None,
+        max_length=128,
+        description="An empty cron makes the schedule on demand; it runs only through trigger. Omit to keep the current cron.",
+    )
     endpoint: Optional[str] = Field(default=None, max_length=512)
     method: Optional[str] = Field(default=None, max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
@@ -81,6 +93,8 @@ class ScheduleUpdate(BaseModel):
                 raise ValueError("Endpoint must start with '/'")
             if "://" in v:
                 raise ValueError("Endpoint must be a path, not a full URL")
+            if any(c.isspace() or unicodedata.category(c) == "Cc" for c in v):
+                raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
     @model_validator(mode="after")
@@ -104,20 +118,43 @@ class ScheduleUpdate(BaseModel):
 
 class ScheduleResponse(BaseModel):
     id: str
+    # ``None`` is an unowned (system) schedule, which the executor fires unscoped.
+    user_id: Optional[str] = None
     name: str
     description: Optional[str] = None
     method: str
     endpoint: str
     payload: Optional[Dict[str, Any]] = None
-    cron_expr: str
+    cron_expr: Optional[str] = None
     timezone: str
     timeout_seconds: int
     max_retries: int
     retry_delay_seconds: int
     enabled: bool
     next_run_at: Optional[int] = None
+    # Control-plane provenance: which plane manages the row ("studio" for
+    # builder-created schedules), the exact component it targets, and - when
+    # the system disabled it - why (for example "target_archived:agent:x").
+    managed_by: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    disabled_reason: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+
+    @field_validator("cron_expr", mode="before")
+    @classmethod
+    def public_cron(cls, value: Optional[str]) -> Optional[str]:
+        from agno.scheduler.cron import is_on_demand
+
+        return None if value is None or is_on_demand(value) else value
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def hide_authorization(cls, value: Any) -> Any:
+        from agno.run.authorization import public_payload
+
+        return public_payload(value)
 
 
 class ScheduleStateResponse(BaseModel):
@@ -133,6 +170,8 @@ class ScheduleStateResponse(BaseModel):
 class ScheduleRunResponse(BaseModel):
     id: str
     schedule_id: str
+    # Execution identity: the caller for manual Company runs, otherwise the schedule owner.
+    user_id: Optional[str] = None
     attempt: int
     triggered_at: Optional[int] = None
     completed_at: Optional[int] = None

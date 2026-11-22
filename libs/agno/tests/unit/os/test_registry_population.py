@@ -151,6 +151,54 @@ class TestPopulateRegistryManagers:
 
 
 # =============================================================================
+# Learning machines folded from code-defined components
+# =============================================================================
+
+
+class TestPopulateRegistryLearning:
+    """A named LearningMachine on a code-defined agent or team is a registry
+    resource: its stored config references it by name, so the registry the
+    AgentOS resolves through must hold it, the way agent knowledge is mirrored.
+    True, None and unnamed (inline) machines are not folded."""
+
+    def test_named_machine_on_agent_and_team_is_folded(self):
+        from agno.learn import LearningMachine
+        from agno.team import Team
+
+        agent_brain = LearningMachine(name="support-brain", user_memory=True)
+        team_brain = LearningMachine(name="crew-brain", entity_memory=True)
+        agent = Agent(name="A1", id="a1", learning=agent_brain, telemetry=False)
+        team = Team(name="T1", id="t1", members=[Agent(name="M", id="m")], learning=team_brain, telemetry=False)
+
+        os = AgentOS(agents=[agent], teams=[team], telemetry=False)
+
+        assert os.registry.get_learning("support-brain") is agent_brain
+        assert os.registry.get_learning("crew-brain") is team_brain
+        assert os.registry.get_learning_names() == {"support-brain", "crew-brain"}
+
+    def test_default_and_inline_machines_are_not_folded(self):
+        from agno.learn import LearningMachine
+
+        agents = [
+            Agent(name="A1", id="a1", learning=True, telemetry=False),
+            Agent(name="A2", id="a2", learning=LearningMachine(user_memory=True), telemetry=False),
+            Agent(name="A3", id="a3", telemetry=False),
+        ]
+        os = AgentOS(agents=agents, telemetry=False)
+        assert os.registry.learning == []
+
+    def test_preexisting_registry_machine_is_kept_and_not_duplicated(self):
+        from agno.learn import LearningMachine
+
+        declared = LearningMachine(name="support-brain", user_memory=True)
+        agent = Agent(name="A1", id="a1", learning=declared, telemetry=False)
+        registry = Registry(learning=[declared])
+
+        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+        assert os.registry.learning == [declared]
+
+
+# =============================================================================
 # _populate_registry_knowledge()
 # =============================================================================
 

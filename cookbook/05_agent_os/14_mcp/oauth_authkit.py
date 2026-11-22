@@ -46,7 +46,7 @@ agent_os = AgentOS(
     description="AgentOS using WorkOS AuthKit for MCP OAuth.",
     db=db,
     agents=[authkit_agent],
-    mcp_server=True,
+    mcp=True,
     mcp_auth=mcp_auth,
 )
 app = agent_os.get_app()

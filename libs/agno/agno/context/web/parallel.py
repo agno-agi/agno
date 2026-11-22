@@ -31,9 +31,13 @@ class ParallelBackend(ContextBackend):
     in `parallel-web` >= 1.0, not the pre-1.0 `client.beta.*` endpoints.
     """
 
+    extractor_id = "parallel"
+    fetch_batch_limit = 20  # the extract API takes up to 20 URLs per request
+
     def __init__(self, *, api_key: str | None = None) -> None:
         self.api_key: str = api_key if api_key else getenv("PARALLEL_API_KEY", "")
         self._client: Any = None
+        self._sync_client: Any = None
 
     def status(self) -> Status:
         if not self.api_key:
@@ -49,6 +53,82 @@ class ParallelBackend(ContextBackend):
 
             self._client = AsyncParallel(api_key=self.api_key)
         return self._client
+
+    def _get_sync_client(self) -> Any:
+        if self._sync_client is None:
+            from parallel import Parallel  # type: ignore[import-not-found]
+
+            self._sync_client = Parallel(api_key=self.api_key)
+        return self._sync_client
+
+    # ------------------------------------------------------------------
+    # Page fetching (knowledge readers fetch through this)
+    # ------------------------------------------------------------------
+
+    def _pages_from_extract(self, urls: list[str], result: Any) -> list:
+        from agno.knowledge.reader.page_fetcher import FetchedPage
+
+        by_url: dict[str, Any] = {}
+        for entry in getattr(result, "results", None) or []:
+            entry_url = getattr(entry, "url", None)
+            if entry_url:
+                by_url[entry_url] = entry
+        pages = []
+        for url in urls:
+            entry = by_url.get(url)
+            content = None
+            title = None
+            if entry is not None:
+                content = getattr(entry, "full_content", None) or "\n".join(getattr(entry, "excerpts", None) or [])
+                title = getattr(entry, "title", None)
+            if content:
+                pages.append(FetchedPage(url=url, content=content, title=title, extractor=self.extractor_id))
+            else:
+                pages.append(FetchedPage(url=url, error="empty", extractor=self.extractor_id))
+        return pages
+
+    @staticmethod
+    def _raise_if_rate_limited(e: Exception) -> None:
+        from agno.knowledge.reader.page_fetcher import RateLimited, rate_limit_from_text
+
+        status_code = getattr(e, "status_code", None)
+        if status_code == 429 or rate_limit_from_text(str(e)):
+            retry_after: float | None = None
+            headers = getattr(getattr(e, "response", None), "headers", None)
+            if headers is not None:
+                try:
+                    retry_after = float(headers.get("retry-after"))
+                except (TypeError, ValueError):
+                    retry_after = None
+            raise RateLimited(str(e), retry_after=retry_after) from e
+
+    def fetch_many(self, urls: list[str], *, max_chars: int = _MAX_EXTRACT_CHARS) -> list:
+        from agno.knowledge.reader.page_fetcher import FetchedPage
+
+        try:
+            result = self._get_sync_client().extract(
+                urls=urls,
+                advanced_settings={"full_content": {"max_chars_per_result": max_chars}},
+            )
+        except Exception as e:
+            self._raise_if_rate_limited(e)
+            log_error(f"parallel extract failed for {len(urls)} urls: {e}")
+            return [FetchedPage(url=url, error=f"{type(e).__name__}: {e}", extractor=self.extractor_id) for url in urls]
+        return self._pages_from_extract(urls, result)
+
+    async def afetch_many(self, urls: list[str], *, max_chars: int = _MAX_EXTRACT_CHARS) -> list:
+        from agno.knowledge.reader.page_fetcher import FetchedPage
+
+        try:
+            result = await self._get_client().extract(
+                urls=urls,
+                advanced_settings={"full_content": {"max_chars_per_result": max_chars}},
+            )
+        except Exception as e:
+            self._raise_if_rate_limited(e)
+            log_error(f"parallel extract failed for {len(urls)} urls: {e}")
+            return [FetchedPage(url=url, error=f"{type(e).__name__}: {e}", extractor=self.extractor_id) for url in urls]
+        return self._pages_from_extract(urls, result)
 
     def get_tools(self) -> list:
         backend = self
