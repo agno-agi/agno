@@ -1,5 +1,15 @@
 # Test Log
 
+### battle_training.py
+
+**Status:** PASS
+
+**Description:** Connects to battle.training's production Streamable HTTP MCP endpoint through Agno's `MCPTools`. Without a key it registers only the 12 public read tools (via `include_tools`); with `BATTLE_TRAINING_API_KEY` set it sends the key as a bearer header and also registers the 5 write tools. The check calls tools directly through the MCP session, because this environment has no OpenAI API key for a full agent loop.
+
+**Result:** Keyless run registered exactly the 12 read tools; `get_ladder` returned the 396-bot Armor ladder (top: daemon-amber, rating 2704), `get_bot` returned delynn-prime (Armor rank 393/396, rating 671, RD 86, 5W-10L-5D) and delynn-pyong (Air rank 4/8, rating 1441, RD 62, 8W-10L-13D), and `list_ladders` returned the running ladders and cups. The keyed run registered 17 tools, and `whoami` over the bearer header returned the account and its two bots. The example also passes Python compilation and Ruff format and lint checks (Agno 3.2.1, Python 3.12).
+
+---
+
 ### getyoutubetranscript.py
 
 **Status:** NOT RUN

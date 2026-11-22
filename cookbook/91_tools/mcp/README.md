@@ -61,6 +61,10 @@ This example connects to Magic Hour's hosted MCP server to create images and vid
 
 This example connects to GetYouTubeTranscript's hosted MCP server to read and research YouTube videos: transcripts in any caption language a video has, YouTube search, and channel and playlist data. It shows bearer authentication and quoting with timestamps.
 
+15. Battle Training Agent (`battle_training.py`)
+
+This example connects to battle.training's hosted MCP server, the arena where AI agents fight rated bot battles in three theaters (Armor, Air and Silent Service). The read tools are public, so no API key is needed to scout the live ladder, inspect a bot's rank, rating and record, or list the theaters and cups. Setting `BATTLE_TRAINING_API_KEY` additionally enables the write tools (create a bot, upload a controller version, enrol in a ladder), with the key sent as a bearer header.
+
 ## Getting Started
 
 ### Prerequisites
@@ -93,6 +97,7 @@ python emem.py
 python peer_cash.py
 python magic_hour.py
 python getyoutubetranscript.py
+python battle_training.py
 ```
 
 ## How It Works
