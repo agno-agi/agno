@@ -25,6 +25,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
@@ -268,7 +269,7 @@ def create_knowledge_search_tool(
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
     def get_chat_history(num_chats: Optional[int] = None) -> str:
-        """Use this function to get the chat history between the user and agent.
+        """Use this function to get the chat history between the user and agent, oldest first.
 
         Args:
             num_chats: The number of chats to return.
@@ -284,21 +285,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
             - To get all chats, use num_chats=None.
             - To get the first chat, use num_chats=None and pick the first message.
         """
-        import json
-
-        history: List[Dict[str, Any]] = []
-        all_chats = session.get_messages()
-
-        if len(all_chats) == 0:
-            return json.dumps([])
-
-        for chat in all_chats:  # type: ignore
-            history.append(chat.to_dict())  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats)
 
     return get_chat_history
 

@@ -70,6 +70,7 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
     get_run_response_kwarg,
@@ -185,7 +186,7 @@ def _get_update_user_memory_function(
 def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: bool = False):
     def get_chat_history(num_chats: Optional[int] = None) -> str:
         """
-        Use this function to get the team chat history in reverse chronological order.
+        Use this function to get the team chat history, oldest first.
         Leave the num_chats parameter blank to get the entire chat history.
         Example:
             - To get the last chat, use num_chats=1
@@ -194,29 +195,17 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
 
         Args:
             num_chats: The number of chats to return.
-                Each chat contains 2 messages. One from the team and one from the user.
+                Each chat contains 2 messages. One from the user and one from the team.
                 Default: None
 
         Returns:
             str: A JSON string containing a list of dictionaries representing the team chat history.
         """
-        import json
-
-        all_chats = session.get_messages(team_id=team.id)
-
-        if len(all_chats) == 0:
-            return ""
-
-        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats, team_id=team.id)
 
     async def aget_chat_history(num_chats: Optional[int] = None) -> str:
         """
-        Use this function to get the team chat history in reverse chronological order.
+        Use this function to get the team chat history, oldest first.
         Leave the num_chats parameter blank to get the entire chat history.
         Example:
             - To get the last chat, use num_chats=1
@@ -225,25 +214,13 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
 
         Args:
             num_chats: The number of chats to return.
-                Each chat contains 2 messages. One from the team and one from the user.
+                Each chat contains 2 messages. One from the user and one from the team.
                 Default: None
 
         Returns:
             str: A JSON string containing a list of dictionaries representing the team chat history.
         """
-        import json
-
-        all_chats = session.get_messages(team_id=team.id)
-
-        if len(all_chats) == 0:
-            return ""
-
-        history: List[Dict[str, Any]] = [chat.to_dict() for chat in all_chats]  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats, team_id=team.id)
 
     if async_mode:
         get_chat_history_func = aget_chat_history
