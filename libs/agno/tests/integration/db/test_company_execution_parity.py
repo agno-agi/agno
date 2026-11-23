@@ -4064,6 +4064,51 @@ async def test_live_run_refuses_task_delete(system, status, archived):
 
 
 @pytest.mark.asyncio
+async def test_bulk_task_delete_keeps_a_task_with_a_live_run(system):
+    client, _, worker, _, _ = system
+    live = await accepted(client)
+    idle = await accepted(client)
+    path = f"/company/tasks/{live['id']}"
+    run_id = (await client.post(path + "/runs")).json()["run_id"]
+    claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert claimed["id"] == run_id
+    before = (await client.get(path)).json()
+    response = await client.request("DELETE", "/company/tasks", json={"task_ids": [live["id"], idle["id"]]})
+    assert response.status_code == 200, response.text
+    detail = f"Cancel the run with POST /company/runs/{run_id}/cancel, then delete the Task"
+    assert response.json() == {
+        "results": [
+            {"id": live["id"], "status_code": 409, "detail": detail},
+            {"id": idle["id"], "status_code": 204, "detail": None},
+        ]
+    }
+    assert (await client.get(path)).json() == before
+    assert (await client.get(f"/company/tasks/{idle['id']}", params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_bulk_task_delete_stops_at_an_unverifiable_run(system, monkeypatch):
+    client, _, worker, _, _ = system
+    idle = await accepted(client)
+    ticketed = await accepted(client)
+    path = f"/company/tasks/{ticketed['id']}"
+    assert (await client.post(path + "/runs")).status_code == 202
+    before = (await client.get(path)).json()
+
+    async def unreadable(*args, **kwargs):
+        raise RuntimeError("Injected job read failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(worker.store, "get_job", unreadable)
+        body = {"task_ids": [idle["id"], ticketed["id"]]}
+        response = await client.request("DELETE", "/company/tasks", json=body)
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Could not verify the Task run; retry the request"
+    assert (await client.get(f"/company/tasks/{idle['id']}", params={"include_deleted": True})).status_code == 404
+    assert (await client.get(path)).json() == before
+
+
+@pytest.mark.asyncio
 async def test_queued_task_delete_removes_it_and_the_worker_refuses_the_run(system):
     client, _, worker, _, _ = system
     value = await accepted(client)

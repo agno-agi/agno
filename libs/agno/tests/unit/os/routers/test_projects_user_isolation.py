@@ -135,6 +135,20 @@ def test_permanent_delete_requires_admin(make_client):
     assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
+def test_bulk_delete_requires_admin(make_client):
+    c = make_client(True)
+    project_id = create(c, "alice")
+    path = "/company/projects/" + project_id
+    body = {"project_ids": [project_id]}
+    assert c.request("DELETE", "/company/projects", json=body, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    response = c.request("DELETE", "/company/projects", json=body, headers=admin)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"results": [{"id": project_id, "status_code": 204, "detail": None}]}
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
+
+
 @pytest.mark.parametrize("isolation", [False, True])
 def test_scopes_apply_to_every_route(make_client, isolation):
     c = make_client(isolation)

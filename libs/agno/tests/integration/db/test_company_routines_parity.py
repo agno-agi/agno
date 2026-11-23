@@ -734,3 +734,45 @@ async def test_executing_routine_run_blocks_product_delete_which_then_removes_ro
         assert (await _call(db, "get_schedule_runs", schedule_id))[1] == 0
     response = await client.get("/company/routines", params={"include_deleted": True})
     assert response.json()["meta"]["total_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_product_delete_reports_an_executing_routine_run(system):
+    client, db, _, _, _ = system
+    executing = await create_routine(client)
+    finished = await create_routine(client)
+    blocked = executing["payload"]["metadata"]["product_id"]
+    free = finished["payload"]["metadata"]["product_id"]
+    now = int(time.time())
+    for schedule_id, run_id in ((executing["id"], "executing"), (finished["id"], "finished")):
+        await _call(
+            db,
+            "create_schedule_run",
+            dict(
+                id=run_id,
+                schedule_id=schedule_id,
+                attempt=1,
+                triggered_at=now,
+                status="running" if run_id == "executing" else "success",
+                run_id=run_id + "-run",
+                created_at=now,
+            ),
+        )
+    response = await client.request("DELETE", "/company/products", json={"product_ids": [blocked, free]})
+    assert response.status_code == 200, response.text
+    detail = {
+        "message": "Cannot delete with executing Routine runs",
+        "tasks": [],
+        "routines": [{"id": executing["id"], "name": executing["name"]}],
+    }
+    assert response.json() == {
+        "results": [
+            {"id": blocked, "status_code": 409, "detail": detail},
+            {"id": free, "status_code": 204, "detail": None},
+        ]
+    }
+    assert (await client.get("/company/products/" + blocked)).status_code == 200
+    assert await _call(db, "get_schedule", executing["id"]) is not None
+    assert (await client.get("/company/products/" + free, params={"include_deleted": True})).status_code == 404
+    assert await _call(db, "get_schedule", finished["id"]) is None
+    assert (await _call(db, "get_schedule_runs", finished["id"]))[1] == 0
