@@ -792,6 +792,9 @@ class _ExecutorAuthorization(RunAuthorization):
         if self.acceptance is not None and resource in {"agents", "teams", "workflows"} and action == "run":
             await self.acceptance.arequire(resource, action, resource_id)
 
+    def holds_admin_scope(self) -> bool:
+        return self.original.holds_admin_scope() if self.original is not None else False
+
     def snapshot(self) -> Dict[str, Any]:
         snapshot = {
             **super().snapshot(),

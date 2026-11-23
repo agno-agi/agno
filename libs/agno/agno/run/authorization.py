@@ -57,6 +57,12 @@ class RunAuthorization:
             permission = f"{resource}:{resource_id}:{action}" if resource_id else scopes[0]
             raise PermissionError(f"Permission required: {permission}")
 
+    def holds_admin_scope(self) -> bool:
+        """Whether an authoritative scope (a service account's or a token's) grants admin."""
+        if not (self.service_account or self.provider.enforces_token_scopes):
+            return False
+        return (self.context.admin_scope or "agent_os:admin") in self.context.scopes
+
     def snapshot(self) -> Dict[str, Any]:
         from dataclasses import asdict
 
@@ -104,6 +110,10 @@ class InterfaceAuthorization(RunAuthorization):
             await self.caller.arequire(resource, action, resource_id)
         if self.interface is not None:
             await self.interface.arequire(resource, action, resource_id)
+
+    def holds_admin_scope(self) -> bool:
+        # The interface's account limits the caller's admin as it limits every other permission
+        return super().holds_admin_scope() and (self.interface is None or self.interface.holds_admin_scope())
 
     def snapshot(self) -> Dict[str, Any]:
         snapshot = self.caller.snapshot() if self.caller is not None else super().snapshot()

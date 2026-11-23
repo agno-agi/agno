@@ -20,10 +20,14 @@ _SERVICE_ACCOUNT_MESSAGE = "Sorry, this app's service account is missing, revoke
 _SLACK_UNAVAILABLE_MESSAGE = "Sorry, Slack could not be reached to check your account. Please try again later."
 _DIRECTORY_UNAVAILABLE_MESSAGE = "Sorry, the user directory is unavailable. Please try again later."
 _DISABLED_MESSAGE = "Sorry, your account on this AgentOS is disabled."
-_PERMISSION_MESSAGE = "Sorry, you don't have permission to run this. Required scope(s): {scope}"
+# Backticks keep Slack from reading :name: in a scope as an emoji code
+_PERMISSION_MESSAGE = "Sorry, you don't have permission to run this. Required scope(s): `{scope}`"
+_SERVICE_ACCOUNT_PERMISSION_MESSAGE = (
+    "Sorry, this app's service account doesn't have permission to run this. Required scope(s): `{scope}`"
+)
 _PERMISSIONS_UNAVAILABLE_MESSAGE = "Sorry, your permissions could not be checked. Please try again later."
 _BOT_SERVICE_ACCOUNT_MESSAGE = "Sorry, this bot's service account is missing, revoked or expired."
-_BOT_PERMISSION_MESSAGE = "Sorry, this bot doesn't have permission to run this. Required scope(s): {scope}"
+_BOT_PERMISSION_MESSAGE = "Sorry, this bot doesn't have permission to run this. Required scope(s): `{scope}`"
 
 
 def resolve_token(token: Optional[str] = None) -> str:
@@ -115,14 +119,17 @@ async def can_stop(ctx: "SlackContext", user: str, event_context: "EventContext"
 
 
 async def started_by_app(ctx: "SlackContext", event_context: "EventContext", client: Any = None) -> bool:
-    """Whether another app started the run: its owner is a bot user the bot answers as an app."""
-    if not (ctx.respond_to_other_apps and ctx.company is None and event_context.owner):
+    """Whether another app started the run: it runs as an app's service account, or its owner is a bot user."""
+    if not ctx.respond_to_other_apps or ctx.company is not None:
         return False
-    # A webhook's run is owned by its bot id, which users.info cannot look up, so it stays undecidable
+    # The run's stored user names the app's account even for a webhook, whose bot id users.info cannot look up
+    mapped = ctx.users is not None and not ctx.senders_authorized and event_context.owner in ctx.users
+    if not mapped and event_context.user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
+        return True
     if not event_context.owner.startswith(("U", "W")):
         return False
-    await ctx.lookup_cache.user_identity(client or ctx.web(), event_context.owner)
-    return bool((ctx.lookup_cache.member(event_context.owner) or {}).get("is_bot"))
+    member = await ctx.lookup_cache.member(client or ctx.web(), event_context.owner)
+    return bool((member or {}).get("is_bot"))
 
 
 async def admin_of_app_run(
@@ -262,17 +269,18 @@ async def is_other_app(ctx: "SlackContext", client: Any, user: str, bot_id: str)
     if not user:
         return True
     # A user-token post carries a person's user id with the bot id
-    await ctx.lookup_cache.user_identity(client, user)
-    member = ctx.lookup_cache.member(user)
+    member = await ctx.lookup_cache.member(client, user)
     if member is None:
         raise LookupError()
     return bool(member.get("is_bot"))
 
 
-async def member_principal(ctx: "SlackContext", client: Any, user: str, team_id: Optional[str]) -> Optional[str]:
+async def member_principal(
+    ctx: "SlackContext", client: Any, user: str, team_id: Optional[str], member: Optional[Dict[str, Any]] = None
+) -> Optional[str]:
     """A Slack member's user: their confirmed email under resolve_user_identity, else slack:{workspace}:{id}."""
-    await ctx.lookup_cache.user_identity(client, user)
-    member = ctx.lookup_cache.member(user)
+    if member is None:
+        member = await ctx.lookup_cache.member(client, user)
     if member is None:
         raise LookupError()
     workspace = member.get("team_id") or team_id
@@ -282,8 +290,9 @@ async def member_principal(ctx: "SlackContext", client: Any, user: str, team_id:
     external = bool(member.get("is_stranger")) or (
         bool(team_id) and workspace != team_id and not (isinstance(teams, list) and team_id in teams)
     )
-    # A deactivated account or another organization's member is refused, as another issuer's token is over HTTP
-    if member.get("deleted") or external:
+    # A deactivated account or another organization's member is refused, as another issuer's token is over HTTP,
+    # and a bot user is never a directory user
+    if member.get("deleted") or member.get("is_bot") or external:
         return None
     # Only a full member's own confirmed email names their existing user; a guest's never does
     email = confirmed_email(member)
@@ -300,15 +309,17 @@ async def app_principal(ctx: "SlackContext", client: Any, event: Dict[str, Any])
     app_id = event.get("app_id") or (event.get("bot_profile") or {}).get("app_id")
     bot_id = event.get("bot_id") or ""
     if not app_id and bot_id:
-        await ctx.lookup_cache.bot_identity(client, bot_id)
-        bot = ctx.lookup_cache.bot(bot_id)
+        bot = await ctx.lookup_cache.bot(client, bot_id)
         if bot is None:
             raise LookupError()
         app_id = bot.get("app_id")
     app_id = app_id or bot_id
     # allowed_apps= names the service account; the app runs as its sa: principal, as with a PAT
     name = (ctx.allowed_apps or {}).get(app_id)
-    return get_principal(name) if name else None
+    if not name:
+        log_debug(f"Slack app {app_id} is not in allowed_apps=")
+        return None
+    return get_principal(name)
 
 
 async def provision_sender(
@@ -375,16 +386,16 @@ async def authorize_sender(ctx: "SlackContext", event_context: "EventContext", c
     """Run a message as its sender's directory user, created on their first message; that user's roles decide."""
     thread_ts = event_context.thread_ts
     user = event_context.owner
-    try:
-        principal = await member_principal(ctx, client, event_context.owner, event_context.team_id)
-    except LookupError:
+    # Read once, so the record that names the user also decides whether they start disabled as a guest
+    member = await ctx.lookup_cache.member(client, event_context.owner)
+    if member is None:
         return await refuse_unidentified(ctx, event_context, client, user)
+    principal = await member_principal(ctx, client, event_context.owner, event_context.team_id, member=member)
     if principal is None:
         await refuse(ctx, event_context, client, user, _NOT_A_MEMBER_MESSAGE, thread_ts)
         return False
     # The run is the sender's from here, so no later step can leave it under an id they only claim
     event_context.user_id = principal
-    member = ctx.lookup_cache.member(event_context.owner) or {}
     claims: Dict[str, Any] = {}
     # The confirmed email labels the user in /users; it names the user only under resolve_user_identity
     if confirmed_email(member):
@@ -482,7 +493,8 @@ async def authorize_service_account(
     try:
         await authority.arequire(ctx.resource, "run", ctx.entity_id)
     except PermissionError as e:
-        message, reason = refusal(e)
+        _, reason = refusal(e)
+        message = _SERVICE_ACCOUNT_PERMISSION_MESSAGE.format(scope=str(e).removeprefix("Permission required: "))
         await refuse(ctx, event_context, client, user, message, thread_ts)
         await arecord_slack_decision(
             ctx,
@@ -494,12 +506,15 @@ async def authorize_service_account(
             scopes=authority.context.scopes,
         )
         return False
+    event_context.authority = authority
+    # Recorded as allowed only once the bot's own account allows it too
+    if not await cap_to_bot(ctx, event_context, client, user, thread_ts, action):
+        return False
     if record_allowed:
         await arecord_slack_decision(
             ctx, principal, allowed=True, action=action, run_id=run_id, scopes=authority.context.scopes
         )
-    event_context.authority = authority
-    return await cap_to_bot(ctx, event_context, client, user, thread_ts, action)
+    return True
 
 
 async def bot_service_account(ctx: "SlackContext", client: Any) -> str:
@@ -509,11 +524,29 @@ async def bot_service_account(ctx: "SlackContext", client: Any) -> str:
     # The bot's app id is resolved as another app's is, from its bot id through the cached bots.info
     app_id = None
     if ctx.bot_id:
-        await ctx.lookup_cache.bot_identity(client, ctx.bot_id)
-        app_id = (ctx.lookup_cache.bot(ctx.bot_id) or {}).get("app_id")
+        app_id = (await ctx.lookup_cache.bot(client, ctx.bot_id) or {}).get("app_id")
     if not app_id:
         raise LookupError()
     return f"slack-{app_id.lower()}"
+
+
+async def refuse_capped(
+    ctx: "SlackContext",
+    event_context: "EventContext",
+    client: Any,
+    user: Optional[str],
+    text: str,
+    thread_ts: Optional[str],
+) -> None:
+    """Refuse a run the bot's own account does not allow; an app answered unchecked is told in the thread."""
+    event = event_context.event
+    if user is not None and user == event_context.owner and event.get("bot_id"):
+        try:
+            if await is_other_app(ctx, client, event.get("user") or "", event["bot_id"]):
+                user = None
+        except LookupError:
+            log_debug("Slack could not say whether a refused sender is an app")
+    await refuse(ctx, event_context, client, user, text, thread_ts)
 
 
 async def cap_to_bot(
@@ -538,29 +571,38 @@ async def cap_to_bot(
         # A failed bots.info is already logged; only a bot with no bot id is not
         if not ctx.bot_id:
             log_warning("Slack lookup failed for this bot's app id")
-        await refuse(ctx, event_context, client, user, _BOT_SERVICE_ACCOUNT_MESSAGE, thread_ts)
+        await refuse_capped(ctx, event_context, client, user, _BOT_SERVICE_ACCOUNT_MESSAGE, thread_ts)
+        # The account has no name yet, so the denial is recorded for the run's user
+        await arecord_slack_decision(
+            ctx, event_context.user_id, allowed=False, action=action, run_id=run_id, reason="service_account_unknown"
+        )
         return False
     principal = get_principal(name)
     try:
         interface = await resolve_service_account_authorization(ctx, principal)
     except Exception:
-        await refuse(ctx, event_context, client, user, _PERMISSIONS_UNAVAILABLE_MESSAGE, thread_ts)
+        await refuse_capped(ctx, event_context, client, user, _PERMISSIONS_UNAVAILABLE_MESSAGE, thread_ts)
         await arecord_slack_decision(
             ctx, principal, allowed=False, action=action, run_id=run_id, reason="provider_error"
         )
         return False
+    failing_key = f"service_account:{name}"
     if interface is None:
-        await refuse(ctx, event_context, client, user, _BOT_SERVICE_ACCOUNT_MESSAGE, thread_ts)
+        if failing_key not in ctx.failing:
+            log_warning(f"Slack service account '{name}' is missing, revoked or expired, so every message is refused")
+        ctx.failing.add(failing_key)
+        await refuse_capped(ctx, event_context, client, user, _BOT_SERVICE_ACCOUNT_MESSAGE, thread_ts)
         await arecord_slack_decision(
             ctx, principal, allowed=False, action=action, run_id=run_id, reason="service_account_invalid"
         )
         return False
+    ctx.failing.discard(failing_key)
     try:
         await interface.arequire(ctx.resource, "run", ctx.entity_id)
     except PermissionError as e:
         text = _BOT_PERMISSION_MESSAGE.format(scope=str(e).removeprefix("Permission required: "))
         _, reason = refusal(e)
-        await refuse(ctx, event_context, client, user, text, thread_ts)
+        await refuse_capped(ctx, event_context, client, user, text, thread_ts)
         await arecord_slack_decision(
             ctx,
             principal,
@@ -571,7 +613,11 @@ async def cap_to_bot(
             scopes=interface.context.scopes,
         )
         return False
-    if event_context.authority is None:
+    # A parked run's authority is already capped, so a later decision replaces the cap instead of adding one
+    caller = event_context.authority
+    if isinstance(caller, InterfaceAuthorization):
+        caller = caller.caller
+    if caller is None:
         # A run that is otherwise unchecked is checked against the bot's account alone, still as its sender
         event_context.authority = InterfaceAuthorization(
             interface.provider,
@@ -580,7 +626,7 @@ async def cap_to_bot(
             interface=interface,
         )
     else:
-        event_context.authority = InterfaceAuthorization.wrap(event_context.authority, interface)
+        event_context.authority = InterfaceAuthorization.wrap(caller, interface)
     return True
 
 
@@ -652,6 +698,9 @@ async def authorize_run(
             ctx, principal, allowed=False, action=action, run_id=run_id, reason="provider_error"
         )
         return False
+    # Recorded as allowed only once the bot's own account allows it too
+    if not await cap_to_bot(ctx, event_context, client, user, thread_ts, action):
+        return False
     if record_allowed:
         await arecord_slack_decision(ctx, principal, allowed=True, action=action, run_id=run_id)
-    return await cap_to_bot(ctx, event_context, client, user, thread_ts, action)
+    return True

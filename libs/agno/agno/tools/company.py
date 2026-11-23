@@ -67,12 +67,8 @@ def _scoped_user(run_context, user_isolation):
     """The owner a Company read or write is limited to: None leaves it unscoped."""
     user = _identity(run_context)
     authority = _authority(run_context)
-    if authority is not None:
-        ctx = authority.context
-        if (authority.service_account or authority.provider.enforces_token_scopes) and (
-            (ctx.admin_scope or "agent_os:admin") in ctx.scopes
-        ):
-            return None
+    if authority is not None and authority.holds_admin_scope():
+        return None
     if user_isolation or (isinstance(user, str) and user.startswith("sa:")):
         if not user:
             if isinstance(authority, _RoutineAuthorization) and authority.original is None:

@@ -296,17 +296,21 @@ class LookupCache:
 
     LOOKUP_TTL_SECONDS: float = 600.0
     LOOKUP_MAX_ENTRIES: int = 4096
+    # A member's status (deactivated, guest, external) decides who may run, so it is read again sooner
+    MEMBER_TTL_SECONDS: float = 60.0
 
     def __init__(self) -> None:
         self._entries: "OrderedDict[str, Tuple[float, Any]]" = OrderedDict()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str, max_age: Optional[float] = None) -> Optional[Any]:
         now = time.monotonic()
         expired = [k for k, (ts, _) in self._entries.items() if now - ts > self.LOOKUP_TTL_SECONDS]
         for k in expired:
             del self._entries[k]
         entry = self._entries.get(key)
-        return entry[1] if entry is not None else None
+        if entry is None or (max_age is not None and now - entry[0] > max_age):
+            return None
+        return entry[1]
 
     def set(self, key: str, value: Any) -> None:
         self._entries[key] = (time.monotonic(), value)
@@ -330,6 +334,14 @@ class LookupCache:
         cached = self.get(key)
         if cached is not None:
             return cached
+        identity, _ = await self._lookup_user(async_client, slack_user_id, errors)
+        return identity
+
+    async def _lookup_user(
+        self, async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+    ) -> Tuple[Tuple[str, Optional[str]], Optional[Dict[str, Any]]]:
+        """Call users.info once and cache the identity and the record it returned."""
+        key = f"user:{slack_user_id}"
         members: Dict[str, Any] = {}
         resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors, members)
         # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
@@ -337,11 +349,14 @@ class LookupCache:
             self.set(key, (resolved_user_id, display_name))
         if slack_user_id in members:
             self.set(f"user_record:{slack_user_id}", members[slack_user_id])
-        return resolved_user_id, display_name
+        return (resolved_user_id, display_name), members.get(slack_user_id)
 
-    def member(self, slack_user_id: str) -> Optional[Dict[str, Any]]:
-        """The users.info record of the last successful user_identity lookup, while it is cached."""
-        return self.get(f"user_record:{slack_user_id}")
+    async def member(self, async_client: Any, slack_user_id: str) -> Optional[Dict[str, Any]]:
+        """A user's users.info record, at most MEMBER_TTL_SECONDS old; None when Slack cannot be asked."""
+        record = self.get(f"user_record:{slack_user_id}", max_age=self.MEMBER_TTL_SECONDS)
+        if record is None:
+            _, record = await self._lookup_user(async_client, slack_user_id)
+        return record
 
     async def bot_identity(
         self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None
@@ -350,17 +365,28 @@ class LookupCache:
         cached = self.get(key)
         if cached is not None:
             return cached
+        identity, _ = await self._lookup_bot(async_client, bot_id, errors)
+        return identity
+
+    async def _lookup_bot(
+        self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None
+    ) -> Tuple[Tuple[str, Optional[str]], Optional[Dict[str, Any]]]:
+        """Call bots.info once and cache the identity and the record it returned."""
+        key = f"bot:{bot_id}"
         bots: Dict[str, Any] = {}
         resolved_id, name = await resolve_slack_bot(async_client, bot_id, errors, bots)
         if name:
             self.set(key, (resolved_id, name))
         if bot_id in bots:
             self.set(f"bot_record:{bot_id}", bots[bot_id])
-        return resolved_id, name
+        return (resolved_id, name), bots.get(bot_id)
 
-    def bot(self, bot_id: str) -> Optional[Dict[str, Any]]:
-        """The bots.info record of the last successful bot_identity lookup, while it is cached."""
-        return self.get(f"bot_record:{bot_id}")
+    async def bot(self, async_client: Any, bot_id: str) -> Optional[Dict[str, Any]]:
+        """A bot's bots.info record; None when Slack cannot be asked."""
+        record = self.get(f"bot_record:{bot_id}")
+        if record is None:
+            _, record = await self._lookup_bot(async_client, bot_id)
+        return record
 
     async def sender_name(self, async_client: Any, user_id: str, bot_id: str) -> Optional[str]:
         # A user-token post carries both ids; the human is the sender, as for the run's owner

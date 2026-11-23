@@ -662,6 +662,27 @@ class TestWhoMayDecide:
         assert _ephemerals(client) == ([] if decides else [refusal])
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("clicker, decides", [("U_ADMIN", True), ("U_MEMBER", False)], ids=["admin", "member"])
+    @pytest.mark.parametrize("owner", ["B_HOOK", None], ids=["webhook", "card-without-owner"])
+    async def test_admin_decides_a_service_account_run_whoever_owns_the_card(self, tmp_path, owner, clicker, decides):
+        app = _directory_app(tmp_path, {"member": ["agents:agent-1:run"], "admin": ["agent_os:admin"]})
+        make_service_account(app, "reviewbot", ["agents:agent-1:run"])
+        await app.state.role_store.aassign("slack:T123:U_ADMIN", "admin")
+        entity = _make_entity(_paused_run([_make_requirement()], user_id="sa:reviewbot"))
+        ctx = make_ctx(
+            agent=entity, authorize_senders=True, respond_to_other_apps=True, allowed_apps={"A_APP": "reviewbot"}
+        ).bind(app)
+        client = make_async_client_mock()
+        client.users_info = AsyncMock(side_effect=_users_info)
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), user=clicker, owner=owner), client, ctx)
+
+        assert len(fake.calls) == (1 if decides else 0)
+        assert _ephemerals(client) == ([] if decides else [hitl._APP_RUN_MESSAGE])
+
+    @pytest.mark.asyncio
     async def test_app_run_without_authorization_names_no_admin(self, tmp_path):
         app = _directory_app(tmp_path)
         make_service_account(app, "reviewbot", ["agents:agent-1:run"])

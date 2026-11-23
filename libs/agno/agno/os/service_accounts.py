@@ -315,6 +315,27 @@ class ServiceAccountVerifier:
         self._limiter.record_failure(key)
         return ServiceAccountVerification(status=VerificationStatus.INVALID)
 
+    def get_by_name(self, name: str) -> Optional[ServiceAccount]:
+        """Sync variant of aget_by_name, for a sync database."""
+        if isinstance(self.db, AsyncBaseDb):
+            raise TypeError("Use aget_by_name with an asynchronous database")
+        try:
+            row = self.db.get_service_account_by_name(name)
+        except NotImplementedError:
+            log_warning("The configured database does not support service accounts")
+            raise
+        except Exception as e:
+            log_error(f"Service account lookup failed: {e}")
+            raise
+        account = ServiceAccount.from_dict(row) if row is not None else None
+        if account is not None and not (account.is_revoked() or account.is_expired()):
+            if self._last_used_write_due(account):
+                try:
+                    self.db.update_service_account(account.id, return_record=False, last_used_at=int(time.time()))
+                except Exception as e:
+                    log_warning(f"Could not update last_used_at for service account '{account.name}': {e}")
+        return account
+
     async def aget_by_name(self, name: str) -> Optional[ServiceAccount]:
         """Look a service account up by name, as verify() reads by token; raises when the database cannot answer."""
         try:
@@ -334,18 +355,24 @@ class ServiceAccountVerifier:
             await self._maybe_touch_last_used(account)
         return account
 
-    async def _maybe_touch_last_used(self, account: ServiceAccount) -> None:
+    def _last_used_write_due(self, account: ServiceAccount) -> bool:
+        """Claim the account's next last_used_at write, at most one per interval."""
         # Throttle on the monotonic clock (immune to wall-clock steps that could otherwise
         # suppress writes indefinitely); persist the wall-clock time as the actual value.
         now_monotonic = time.monotonic()
         last_write = self._last_used_writes.get(account.id)
         if last_write is not None and now_monotonic - last_write < self.last_used_write_interval:
             self._last_used_writes.move_to_end(account.id)
-            return
+            return False
         self._last_used_writes[account.id] = now_monotonic
         self._last_used_writes.move_to_end(account.id)
         while len(self._last_used_writes) > self.last_used_max_entries:
             self._last_used_writes.popitem(last=False)
+        return True
+
+    async def _maybe_touch_last_used(self, account: ServiceAccount) -> None:
+        if not self._last_used_write_due(account):
+            return
         wall_now = int(time.time())
         try:
             if isinstance(self.db, AsyncBaseDb):
