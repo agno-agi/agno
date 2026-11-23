@@ -265,12 +265,14 @@ def test_interface_service_account_still_caps_restored_company_authorities():
 
 
 def test_scheduled_target_is_capped_by_the_interface_service_account(tmp_path):
+    allowed = Agent(id="allowed", model=ScriptedModel())
+    restricted = Agent(id="restricted", model=ScriptedModel())
     os = AgentOS(
         id="test",
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
         telemetry=False,
         authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test"),
-        agents=[Agent(id=agent_id, model=ScriptedModel()) for agent_id in ("allowed", "restricted")],
+        agents=[allowed, restricted],
         internal_service_token="internal-service-token",
     )
     client = TestClient(os.get_app())

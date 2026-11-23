@@ -316,3 +316,46 @@ async def test_task_status_filter_refuses_an_unknown_status(tmp_path, use_async)
         else:
             tools.list_company_tasks(status="waiting")
     db.close()
+
+
+def _account_authority(name, scopes):
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+    from agno.run.authorization import RunAuthorization
+
+    context = AuthorizationContext(principal_id=f"sa:{name}", scopes=scopes)
+    return RunAuthorization(ScopeAuthorizationProvider(), context, service_account=True)
+
+
+@pytest.mark.parametrize("bot_admin", [False, True])
+@pytest.mark.parametrize("wrapper", ["run", "task", "routine", "restored"])
+def test_interface_account_caps_the_admin_exemption_from_owner_scoping(tmp_path, wrapper, bot_admin):
+    from types import SimpleNamespace
+
+    from agno.company.execution import _ExecutorAuthorization
+    from agno.company.routines import _RoutineAuthorization
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import InterfaceAuthorization
+
+    db = SqliteDb(db_file=str(tmp_path / "scope.db"))
+    manager = CompanyManager(db)
+    product = manager.create(name="Bob", user_id="bob")
+    app_account = _account_authority("app", ["agent_os:admin"])
+    bot_scopes = ["agent_os:admin"] if bot_admin else ["projects:write"]
+    authority = InterfaceAuthorization.wrap(app_account, _account_authority("bot", bot_scopes))
+    if wrapper == "task":
+        authority = _ExecutorAuthorization(authority, task_id="task")
+    elif wrapper == "routine":
+        authority = _RoutineAuthorization(authority)
+    elif wrapper == "restored":
+        app = SimpleNamespace(state=SimpleNamespace())
+        authority = restore_authorization(app, _ExecutorAuthorization(authority, task_id="task").snapshot())
+    run_context = RunContext(run_id="r", session_id="s", user_id="sa:app")
+    run_context.authorization = authority
+    scoped = CompanyTools(db)._scoped_user(run_context)
+    assert scoped == (None if bot_admin else "sa:app")
+    if not bot_admin:
+        # Another user's Product is out of reach, as for the app's account without admin
+        with pytest.raises(LookupError):
+            manager.create_project(product_id=product["id"], name="x", user_id="sa:app", scoped_user_id=scoped)
+    db.close()

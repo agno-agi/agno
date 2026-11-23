@@ -1,6 +1,6 @@
 """authorize_senders runs an agent, team or workflow as each Slack sender's AgentOS directory user."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -643,3 +643,189 @@ async def test_bot_service_account_caps_a_users_mapped_run_as_the_mapped_user(tm
     run_event, _ = await _send(ctx)
     # Without authorization only the bot's account decides, still for the user users= maps the sender to
     assert run_event.call_args.args[0].authority.context.principal_id == "alice"
+
+
+def _actions(app):
+    """The audited (actor, action) decisions, oldest first."""
+    events = app.state.service_account_verifier.db.read_authz_audit_events(decisions=True)
+    return [(event["actor"], event["action"]) for event in reversed(events)]
+
+
+@pytest.mark.asyncio
+async def test_bot_user_without_a_bot_id_is_never_a_directory_user(tmp_path):
+    app = _app(tmp_path)
+    ctx = make_ctx(authorize_senders=True, respond_to_other_apps=True).bind(app)
+    run_event, _ = await _send(ctx, member=_member(is_bot=True))
+    assert not run_event.called
+    assert await app.state.user_store.acount() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["missing", "no-scope", "unknown-app"])
+@pytest.mark.parametrize("sender", ["person", "app"])
+async def test_run_the_bot_account_refuses_is_audited_as_denied_only(tmp_path, sender, account):
+    app = _app(tmp_path, audit=True)
+    make_service_account(app, "reviewbot", ["agents:agent-1:run"])
+    if account == "no-scope":
+        make_service_account(app, "slack-a0self", ["agents:agent-1:read"])
+    ctx = make_ctx(
+        authorize_senders=True, respond_to_other_apps=True, allowed_apps={"A_OK": "reviewbot"}, service_account=True
+    ).bind(app)
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    client = make_async_client_mock()
+    client.bots_info = AsyncMock(return_value={"ok": True, "bot": {"id": "B_SELF", "app_id": "A0SELF", "name": "s"}})
+    if account == "unknown-app":
+        client.bots_info = AsyncMock(side_effect=RuntimeError("ratelimited"))
+    event = {} if sender == "person" else {"user": "", "bot_id": "B_OTHER", "app_id": "A_OK"}
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(**event), client, ctx)
+    assert not run_event.called
+    # With its app unknown the bot has no account to name, so the denial is the sender's
+    sender_id = SENDER if sender == "person" else "sa:reviewbot"
+    actor = sender_id if account == "unknown-app" else "sa:slack-a0self"
+    assert _actions(app) == [(actor, "access.denied")]
+
+
+@pytest.mark.asyncio
+async def test_run_the_bot_account_allows_is_audited_once(tmp_path):
+    app = _app(tmp_path, audit=True)
+    make_service_account(app, "slack-bot", ["agents:agent-1:run"])
+    run_event, _ = await _send(make_ctx(authorize_senders=True, service_account="slack-bot").bind(app))
+    assert run_event.called and _actions(app) == [(SENDER, "access.allowed")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["missing", "no-scope", "unknown-app"])
+async def test_unchecked_app_the_bot_account_refuses_is_told_in_the_thread(tmp_path, account):
+    app = _app(tmp_path)
+    if account == "no-scope":
+        make_service_account(app, "slack-bot", ["agents:agent-1:read"])
+    ctx = make_ctx(respond_to_other_apps=True, service_account=True if account == "unknown-app" else "slack-bot")
+    ctx = ctx.bind(app)
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    client = make_async_client_mock()
+    client.users_info = AsyncMock(return_value=_member(id="U_APP", is_bot=True))
+    client.bots_info = AsyncMock(side_effect=RuntimeError("ratelimited"))
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(user="U_APP", bot_id="B_OTHER", app_id="A_OTHER"), client, ctx)
+    assert not run_event.called and not client.chat_postEphemeral.called
+    assert client.chat_postMessage.call_args.kwargs["text"].startswith("Sorry, this bot")
+
+
+@pytest.mark.asyncio
+async def test_person_posting_through_a_user_token_is_refused_privately(tmp_path):
+    app = _app(tmp_path)
+    ctx = make_ctx(respond_to_other_apps=True, service_account="slack-bot").bind(app)
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    run_event, client = await _send(ctx, member=_member(), bot_id="B_OTHER", app_id="A_OTHER")
+    assert not run_event.called and _ephemeral(client) == security._BOT_SERVICE_ACCOUNT_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_app_whose_account_lacks_run_is_not_addressed_as_a_person(tmp_path):
+    app = _app(tmp_path)
+    make_service_account(app, "reviewbot", ["agents:agent-1:read"])
+    ctx = make_ctx(respond_to_other_apps=True, allowed_apps={"A_OK": "reviewbot"}).bind(app)
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    _, client = await _send(ctx, user="", bot_id="B_OTHER", app_id="A_OK")
+    text = client.chat_postMessage.call_args.kwargs["text"]
+    # Backticks keep Slack from reading :agent-1: as an emoji code
+    assert "this app's service account" in text and text.endswith("`agents:agent-1:run`")
+
+
+def test_permission_refusals_show_the_scope_as_code():
+    for template in (security._PERMISSION_MESSAGE, security._BOT_PERMISSION_MESSAGE):
+        assert template.endswith("`{scope}`")
+
+
+@pytest.mark.asyncio
+async def test_unlisted_app_id_is_logged(tmp_path):
+    ctx = make_ctx(respond_to_other_apps=True, allowed_apps={"A_OK": "reviewbot"}).bind(_app(tmp_path))
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    with patch.object(security, "log_debug") as debug:
+        await _send(ctx, user="", bot_id="B_OTHER", app_id="A_UNLISTED")
+    assert any("A_UNLISTED" in call.args[0] for call in debug.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_missing_bot_account_is_named_once_until_it_works(tmp_path):
+    app = _app(tmp_path)
+    ctx = make_ctx(authorize_senders=True, service_account="slack-bot").bind(app)
+    with patch.object(security, "log_warning") as warning:
+        for n in (1, 2):
+            await _send(ctx, ts=f"1700000000.00010{n}", event_id=f"Ev{n}")
+        assert sum("slack-bot" in call.args[0] for call in warning.call_args_list) == 1
+        make_service_account(app, "slack-bot", ["agents:agent-1:run"])
+        run_event, _ = await _send(ctx, ts="1700000000.000103", event_id="Ev3")
+        assert run_event.called
+        db = app.state.service_account_verifier.db
+        db.update_service_account(db.get_service_account_by_name("slack-bot")["id"], revoked_at=1)
+        await _send(ctx, ts="1700000000.000104", event_id="Ev4")
+    assert sum("slack-bot" in call.args[0] for call in warning.call_args_list) == 2
+
+
+@pytest.mark.asyncio
+async def test_member_status_is_refreshed_within_a_minute(tmp_path):
+    from agno.os.interfaces.slack import helpers
+
+    ctx = make_ctx(authorize_senders=True, resolve_user_identity=True).bind(_app(tmp_path))
+    clock = Mock()
+    clock.monotonic.return_value = 1000.0
+    with patch.object(helpers, "time", clock):
+        run_event, _ = await _send(ctx, member=_member(is_email_confirmed=True))
+        assert run_event.called
+        clock.monotonic.return_value = 1061.0
+        # The identity is still cached, but the account was deactivated since
+        run_event, client = await _send(
+            ctx, member=_member(is_email_confirmed=True, deleted=True), ts="1700000000.000200", event_id="Ev2"
+        )
+    assert not run_event.called and _ephemeral(client) == security._NOT_A_MEMBER_MESSAGE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record", ["user_record:U123", "bot_record:B_HOOK"])
+async def test_record_that_expires_before_its_identity_is_read_again(tmp_path, record):
+    app = _app(tmp_path)
+    make_service_account(app, "reviewbot", ["agents:agent-1:run"])
+    ctx = make_ctx(authorize_senders=True, respond_to_other_apps=True, allowed_apps={"A_OK": "reviewbot"}).bind(app)
+    ctx.bot_id, ctx.bot_user_id = "B_SELF", "U_SELF"
+    client = make_async_client_mock()
+    client.bots_info = AsyncMock(return_value={"ok": True, "bot": {"id": "B_HOOK", "app_id": "A_OK", "name": "hook"}})
+    event = {} if record.startswith("user") else {"user": "", "bot_id": "B_HOOK", "subtype": "bot_message"}
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(**event), client, ctx)
+        assert ctx.lookup_cache._entries.pop(record)
+        await handle_message(make_event_body(ts="1700000000.000200", event_id="Ev2", **event), client, ctx)
+    assert run_event.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_guest_whose_record_expires_mid_message_still_starts_disabled(tmp_path):
+    app = _app(tmp_path)
+    ctx = make_ctx(authorize_senders=True).bind(app)
+    real = security.member_principal
+
+    async def expire(*args, **kwargs):
+        principal = await real(*args, **kwargs)
+        ctx.lookup_cache._entries.pop("user_record:U123", None)
+        return principal
+
+    with patch.object(security, "member_principal", expire):
+        run_event, _ = await _send(ctx, member=_member(is_restricted=True))
+    assert not run_event.called and (await app.state.user_store.aget(SENDER))["disabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_repeated_decisions_cap_a_run_once(tmp_path):
+    app = _app(tmp_path)
+    make_service_account(app, "slack-bot", ["agents:agent-1:run"])
+    ctx = make_ctx(service_account="slack-bot").bind(app)
+    run = make_event_context(entity_id="agent-1")
+    for _ in range(3):
+        assert await security.authorize_unmapped(ctx, run, make_async_client_mock(), "U1")
+    assert run.authority.caller is None
+    # A caller with a check of its own is kept, under one cap
+    caller = run.authority.interface
+    run.authority = InterfaceAuthorization.wrap(caller, caller)
+    assert await security.authorize_unmapped(ctx, run, make_async_client_mock(), "U1")
+    assert run.authority.caller is caller
