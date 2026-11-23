@@ -2,13 +2,16 @@ import copy
 import json
 import logging
 import math
+from pathlib import PurePath
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
 from agno.db.base import AsyncBaseDb
 from agno.exceptions import AgnoError
+from agno.knowledge.chunking.strategy import ChunkingStrategyType
 from agno.knowledge.content import Content, FileData
+from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
@@ -1755,6 +1758,16 @@ async def process_content(
                 content.reader = reader
             else:
                 log_debug(f"Could not resolve reader with id: {reader_id}")
+        if chunker and content.reader is None:
+            if isinstance(content.file_data, FileData) and content.file_data.type:
+                reader_hint = content.file_data.type
+                if content.file_data.filename:
+                    ext = PurePath(content.file_data.filename).suffix.lower()
+                    if ext:
+                        reader_hint = ext
+                content.reader = knowledge._select_reader(reader_hint)
+            elif isinstance(content.file_data, str):
+                content.reader = knowledge.text_reader
         if chunker and content.reader:
             # The reader belongs to the knowledge base - either a custom reader from
             # `Knowledge(readers=...)` or a default one it has already resolved - so
@@ -1762,7 +1775,16 @@ async def process_content(
             # that uses the same reader. Give this run its own shallow copy; the
             # chunking strategy is replaced on the copy, never on the shared reader.
             content.reader = copy.copy(content.reader)
-            content.reader.set_chunking_strategy_from_string(chunker, chunk_size=chunk_size, overlap=chunk_overlap)
+            chunker_kwargs: Dict[str, Any] = {}
+            if chunker.strip() == ChunkingStrategyType.SEMANTIC_CHUNKER.value:
+                kb_embedder = (
+                    getattr(knowledge.vector_db, "embedder", None) if knowledge.vector_db is not None else None
+                )
+                if isinstance(kb_embedder, (Embedder, str)):
+                    chunker_kwargs["embedder"] = kb_embedder
+            content.reader.set_chunking_strategy_from_string(
+                chunker, chunk_size=chunk_size, overlap=chunk_overlap, **chunker_kwargs
+            )
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
