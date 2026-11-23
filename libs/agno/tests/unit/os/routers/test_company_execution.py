@@ -273,8 +273,10 @@ def test_bulk_task_delete_stops_at_an_unverifiable_run(system, monkeypatch):
     client, db, os, queue = system
     _, idle = accepted(client)
     ticketed_path, ticketed = accepted(client)
+    _, later = accepted(client)
     assert client.post(ticketed_path + "/runs", headers=headers()).status_code == 202
     before = db.get_task(ticketed["id"])
+    later_before = db.get_task(later["id"])
 
     async def unreadable(*args, **kwargs):
         raise RuntimeError("Injected job read failure")
@@ -283,13 +285,15 @@ def test_bulk_task_delete_stops_at_an_unverifiable_run(system, monkeypatch):
     response = client.request(
         "DELETE",
         "/company/tasks",
-        json={"task_ids": [idle["id"], ticketed["id"]]},
+        json={"task_ids": [idle["id"], ticketed["id"], later["id"]]},
         headers=headers(scopes=["agent_os:admin"]),
     )
     assert response.status_code == 503, response.text
     assert response.json()["detail"] == "Could not verify the Task run; retry the request"
     assert db.get_task(idle["id"], include_deleted=True) is None
     assert db.get_task(ticketed["id"]) == before
+    # The request stops at the unreadable run, so the Task after it is never reached.
+    assert db.get_task(later["id"]) == later_before
 
 
 def test_python_acceptance_also_validates_registry(tmp_path):
