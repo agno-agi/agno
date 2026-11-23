@@ -11,7 +11,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
-    BulkDeleteResponse,
+    BulkResponse,
     ProjectBulkDelete,
     ProjectCreate,
     ProjectResponse,
@@ -165,11 +165,11 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             raise HTTPException(status_code=404, detail="Project not found")
         raise HTTPException(status_code=409, detail="Project was restored during delete; repeat DELETE")
 
-    @router.delete("/projects", response_model=BulkDeleteResponse)
+    @router.delete("/projects", response_model=BulkResponse)
     async def delete_projects(body: ProjectBulkDelete, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
-        from agno.os.routers.company.tasks import _delete_each
+        from agno.os.routers.company.tasks import _apply_each
 
-        return await _delete_each(body.project_ids, delete_project)
+        return await _apply_each(body.project_ids, delete_project)
 
     @router.post("/projects/{project_id}/archive", response_model=ProjectResponse)
     async def archive_project(

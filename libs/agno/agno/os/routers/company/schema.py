@@ -271,15 +271,15 @@ class ProductBulkDelete(BaseModel):
     product_ids: List[str] = Field(..., min_length=1)
 
 
-class BulkDeleteResult(BaseModel):
+class BulkResult(BaseModel):
     id: str
     status_code: int
-    # The single DELETE's detail: a message, or for a Project or Product refusal the Tasks and Routines that block it.
+    # The single route's detail: a message, or for a Project or Product refusal the Tasks and Routines that block it.
     detail: Optional[Union[str, Dict[str, Any]]] = None
 
 
-class BulkDeleteResponse(BaseModel):
-    results: List[BulkDeleteResult]
+class BulkResponse(BaseModel):
+    results: List[BulkResult]
 
 
 class WikiWrite(BaseModel):

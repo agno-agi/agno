@@ -12,7 +12,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
-    BulkDeleteResponse,
+    BulkResponse,
     TaskBulkDelete,
     TaskCreate,
     TaskResponse,
@@ -26,13 +26,13 @@ from agno.os.settings import AgnoAPISettings
 from agno.registry._reserved import MINI_AGENT_ID
 
 
-async def _delete_each(ids: List[str], delete: Callable[[str], Awaitable[Any]]) -> Dict[str, Any]:
-    """Run a single-record DELETE for each id in turn and report each answer; a 5xx ends the request."""
+async def _apply_each(ids: List[str], route: Callable[[str], Awaitable[Any]]) -> Dict[str, Any]:
+    """Call a single-record route for each id in turn and report each answer; a 5xx ends the request."""
     results: List[Dict[str, Any]] = []
-    # A repeated id is deleted once, at its first position.
+    # A repeated id is handled once, at its first position.
     for record_id in dict.fromkeys(ids):
         try:
-            response = await delete(record_id)
+            response = await route(record_id)
         except HTTPException as exc:
             # A 5xx is about the database or run store, not this record, so the ids after it would fail the same way.
             if exc.status_code >= 500:
@@ -40,11 +40,13 @@ async def _delete_each(ids: List[str], delete: Callable[[str], Awaitable[Any]]) 
             results.append({"id": record_id, "status_code": exc.status_code, "detail": exc.detail})
             continue
         if isinstance(response, JSONResponse):
-            # A refusal that lists the Tasks or Routines blocking the delete.
+            # A refusal that lists the Tasks or Routines blocking the action.
             detail = json.loads(bytes(response.body))["detail"]
             results.append({"id": record_id, "status_code": response.status_code, "detail": detail})
         else:
-            results.append({"id": record_id, "status_code": 204, "detail": None})
+            # A route that returns the record answers 200; one that returns nothing answers 204.
+            status_code = 200 if isinstance(response, dict) else 204
+            results.append({"id": record_id, "status_code": status_code, "detail": None})
     return {"results": results}
 
 
@@ -335,11 +337,11 @@ def get_tasks_router(
             raise HTTPException(status_code=404, detail="Task not found")
         raise HTTPException(status_code=409, detail="Task was restored during delete; repeat DELETE")
 
-    @router.delete("/tasks", response_model=BulkDeleteResponse)
+    @router.delete("/tasks", response_model=BulkResponse)
     async def delete_tasks(
         body: TaskBulkDelete, request: Request, _: bool = Depends(auth_dependency)
     ) -> Dict[str, Any]:
-        return await _delete_each(body.task_ids, lambda task_id: delete_task(task_id, request))
+        return await _apply_each(body.task_ids, lambda task_id: delete_task(task_id, request))
 
     @router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
     async def archive_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
