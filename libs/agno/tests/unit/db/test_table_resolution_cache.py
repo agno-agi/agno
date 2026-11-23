@@ -423,3 +423,65 @@ def test_absent_table_read_probe_does_not_take_resolve_lock(db):
     finally:
         if acquired:
             db._resolve_lock.release()
+
+
+def test_sqlite_failed_table_creation_can_be_retried(tmp_path):
+    """A failed CREATE TABLE on file-backed SqliteDb must unregister the table from MetaData."""
+    from unittest.mock import patch
+
+    from sqlalchemy.schema import Table
+
+    s_db = SqliteDb(db_file=str(tmp_path / "retry.db"))
+    orig_create = Table.create
+    attempts = {"retry_table": 0}
+
+    def create_once(table, *args, **kwargs):
+        if table.name == "retry_table":
+            attempts["retry_table"] += 1
+            if attempts["retry_table"] == 1:
+                raise OSError("temporary DDL outage")
+        return orig_create(table, *args, **kwargs)
+
+    with patch.object(Table, "create", create_once):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            s_db._get_or_create_table("retry_table", "knowledge", True)
+
+        table = s_db._get_or_create_table("retry_table", "knowledge", True)
+
+    assert table.name == "retry_table"
+    assert attempts["retry_table"] == 2
+    assert s_db.table_exists("retry_table") is True
+
+
+@pytest.mark.asyncio
+async def test_async_sqlite_failed_table_creation_can_be_retried(tmp_path):
+    """A failed CREATE TABLE on file-backed AsyncSqliteDb must unregister the table from MetaData."""
+    from unittest.mock import patch
+
+    from sqlalchemy.schema import Table
+
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    adb = AsyncSqliteDb(db_file=str(tmp_path / "retry_async.db"))
+    orig_create = Table.create
+    attempts = {"retry_table": 0}
+
+    def create_once(table, *args, **kwargs):
+        if table.name == "retry_table":
+            attempts["retry_table"] += 1
+            if attempts["retry_table"] == 1:
+                raise OSError("temporary DDL outage")
+        return orig_create(table, *args, **kwargs)
+
+    try:
+        with patch.object(Table, "create", create_once):
+            with pytest.raises(OSError, match="temporary DDL outage"):
+                await adb._get_or_create_table("retry_table", "knowledge", True)
+
+            table = await adb._get_or_create_table("retry_table", "knowledge", True)
+
+        assert table.name == "retry_table"
+        assert attempts["retry_table"] == 2
+        assert await adb.table_exists("retry_table") is True
+    finally:
+        await adb.db_engine.dispose()

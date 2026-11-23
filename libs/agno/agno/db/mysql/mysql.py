@@ -380,6 +380,8 @@ class MySQLDb(BaseDb):
             return table
 
         except Exception as e:
+            # Unregister the failed Table so a retry isn't rejected as "already defined".
+            self._invalidate_table_cache(table_name)
             log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
