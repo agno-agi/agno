@@ -5,7 +5,7 @@ Dynamic Tools
 Dynamic Tools.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -16,7 +16,7 @@ def get_runtime_tools(run_context: RunContext):
     """Return tools dynamically based on session state."""
 
     def get_time() -> str:
-        return datetime.utcnow().isoformat()
+        return datetime.now(timezone.utc).isoformat()
 
     def get_project() -> str:
         project = (run_context.session_state or {}).get("project", "unknown")

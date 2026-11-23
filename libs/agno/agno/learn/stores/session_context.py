@@ -29,12 +29,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import build_learning_id, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -228,6 +228,10 @@ class SessionContextStore(LearningStore):
             </session_context_guidelines>
             </session_context>\
         """)
+
+    def instructions(self) -> str:
+        """Session context is system-managed (ALWAYS-only, no tools): no guidance."""
+        return ""
 
     def get_tools(self, **kwargs) -> List[Callable]:
         """Session context has no agent tools (system-managed only)."""
@@ -560,12 +564,13 @@ class SessionContextStore(LearningStore):
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate learning model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.context_updated = True
@@ -629,12 +634,13 @@ class SessionContextStore(LearningStore):
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
-        if run_metrics is not None and response.response_usage is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
+        # Accumulate learning model metrics, for every model call of the tool loop
+        from agno.metrics import ModelType, accumulate_tool_loop_metrics
 
-            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+        accumulate_tool_loop_metrics(messages_for_model[2:], model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.context_updated = True
@@ -649,7 +655,7 @@ class SessionContextStore(LearningStore):
 
     def _build_context_id(self, session_id: str) -> str:
         """Build a unique context ID."""
-        return f"session_context_{session_id}"
+        return cast(str, build_learning_id("session_context", session_id=session_id))
 
     def _format_context(self, context: Any) -> str:
         """Format context data for display in agent prompt."""
@@ -872,10 +878,13 @@ class SessionContextStore(LearningStore):
 
                 func = Function.from_callable(tool, strict=True)
                 func.strict = True
+                # The save result is not consumed, so avoid a second model call for confirmation.
+                if func.name == "save_session_context":
+                    func.stop_after_tool_call = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 
@@ -966,7 +975,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -1015,7 +1024,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]
@@ -1107,7 +1116,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -1156,7 +1165,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]

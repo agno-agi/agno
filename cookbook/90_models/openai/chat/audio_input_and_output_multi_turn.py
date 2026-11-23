@@ -26,7 +26,7 @@ wav_data = response.content
 # Provide the agent with the audio file and audio configuration and get result as text + audio
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-4o-audio-preview",
+        id="gpt-audio",
         modalities=["text", "audio"],
         audio={"voice": "alloy", "format": "wav"},
     ),

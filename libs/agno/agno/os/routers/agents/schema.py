@@ -1,9 +1,15 @@
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+if TYPE_CHECKING:
+    from agno.agent.factory import AgentFactory
+
 from agno.agent import Agent
+from agno.agent._init import has_filesystem
 from agno.models.message import Message
 from agno.os.schema import ModelResponse
 from agno.os.utils import (
@@ -19,8 +25,10 @@ class AgentResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     db_id: Optional[str] = None
+    filesystem: bool = False
     description: Optional[str] = None
     role: Optional[str] = None
+    is_factory: bool = False
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -35,9 +43,47 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    factory_input_schema: Optional[Dict[str, Any]] = None  # JSON Schema for factory_input
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+    sandboxed: bool = False
+
+    @classmethod
+    def from_factory(cls, factory: AgentFactory) -> AgentResponse:
+        """Create an AgentResponse from an AgentFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
+
+    @classmethod
+    def from_harness_agent(cls, agent: Any) -> "AgentResponse":
+        """A harness agent (Claude Code, Codex) as a team member or workflow step, shown the way the
+        agents route shows it."""
+        from agno.os.schema import AgentSummaryResponse
+
+        summary = AgentSummaryResponse.from_agent(agent)
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=agent.description,
+            role=agent.role,
+            metadata=summary.metadata or {"sdk": agent.sdk},
+            sandboxed=summary.sandboxed,
+        )
 
     @classmethod
     async def from_agent(
@@ -73,10 +119,6 @@ class AgentResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "read_chat_history": False,
             "search_knowledge": True,
@@ -140,7 +182,12 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -158,8 +205,6 @@ class AgentResponse(BaseModel):
             "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
             "cache_session": agent.cache_session,
         }
-
-        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
@@ -177,7 +222,6 @@ class AgentResponse(BaseModel):
             memory_info = {
                 "enable_agentic_memory": agent.enable_agentic_memory,
                 "update_memory_on_run": agent.update_memory_on_run,
-                "enable_user_memories": agent.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": agent.metadata,
                 "memory_table": agent.db.memory_table_name if agent.db and agent.update_memory_on_run else None,
             }
@@ -190,10 +234,8 @@ class AgentResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": agent.reasoning,
+            "reasoning": agent.reasoning_model is not None,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
-            "reasoning_min_steps": agent.reasoning_min_steps,
-            "reasoning_max_steps": agent.reasoning_max_steps,
         }
 
         if agent.reasoning_model:
@@ -281,6 +323,7 @@ class AgentResponse(BaseModel):
             id=agent.id,
             name=agent.name,
             db_id=agent.db.id if agent.db else None,
+            filesystem=has_filesystem(agent),
             description=agent.description,
             role=agent.role,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,

@@ -46,6 +46,8 @@ def vector_db(mock_session, mock_embedder, mock_table):
         assert hasattr(db, "table")
         assert isinstance(db.table, MagicMock)
 
+        db._owner_field_exists = True
+
         yield db
 
 
@@ -78,6 +80,37 @@ def test_initialization(mock_session):
 
     with pytest.raises(ValueError):
         Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=None)
+
+
+def test_vector_dimension_matches_embedder(mock_session):
+    """The table must be created with the embedder's dimension, not a hardcoded value."""
+    embedder = MagicMock()
+    embedder.dimensions = 1536
+
+    with patch("agno.vectordb.cassandra.cassandra.AgnoMetadataVectorCassandraTable") as mock_table_cls:
+        Cassandra(
+            table_name="test_vectors",
+            keyspace="test_vectordb",
+            embedder=embedder,
+            session=mock_session,
+        )
+
+    _, called_kwargs = mock_table_cls.call_args
+    assert called_kwargs["vector_dimension"] == 1536
+
+
+def test_missing_embedder_dimensions_raises(mock_session):
+    """A clear error must be raised when the embedder does not expose a dimension."""
+    embedder = MagicMock()
+    embedder.dimensions = None
+
+    with pytest.raises(ValueError):
+        Cassandra(
+            table_name="test_vectors",
+            keyspace="test_vectordb",
+            embedder=embedder,
+            session=mock_session,
+        )
 
 
 def test_insert_and_search(vector_db, mock_table):

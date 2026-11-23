@@ -5,6 +5,8 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompactionCompletedEvent,
+    CompactionStartedEvent,
     CompressionCompletedEvent,
     CompressionStartedEvent,
     FollowupsCompletedEvent,
@@ -123,6 +125,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -149,6 +152,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -183,6 +187,21 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
     )
+
+
+def error_type_of(exc: BaseException) -> str:
+    """The stable identity of an exception for an error event's error_type field.
+
+    Agno's typed exceptions carry a snake_case slug in `.type` (e.g.
+    "model_provider_error"), which the guardrail handlers already emit; every other
+    exception is identified by its Python class name. The field therefore mixes both
+    vocabularies deliberately: it promises stability per failure class -- what
+    same-error detection (e.g. the rollout error-storm stop) needs -- not a taxonomy.
+    """
+    slug = getattr(exc, "type", None)
+    if isinstance(slug, str) and slug:
+        return slug
+    return type(exc).__name__
 
 
 def create_team_run_error_event(
@@ -230,6 +249,7 @@ def create_team_run_cancelled_event(from_run_response: TeamRunOutput, reason: st
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -265,6 +285,7 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -595,6 +616,7 @@ def create_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -611,6 +633,7 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -947,6 +970,36 @@ def create_compression_completed_event(
         tool_results_compressed=tool_results_compressed,
         original_size=original_size,
         compressed_size=compressed_size,
+    )
+
+
+def create_compaction_started_event(
+    from_run_response: RunOutput,
+) -> CompactionStartedEvent:
+    return CompactionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_compaction_completed_event(
+    from_run_response: RunOutput,
+    messages_compacted: Optional[int] = None,
+    tokens_before: Optional[int] = None,
+    tokens_after: Optional[int] = None,
+    archived: Optional[bool] = None,
+) -> CompactionCompletedEvent:
+    return CompactionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_compacted=messages_compacted,
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        archived=archived,
     )
 
 

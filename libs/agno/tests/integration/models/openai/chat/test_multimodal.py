@@ -37,7 +37,7 @@ def test_audio_input_bytes():
 
     # Provide the agent with the audio file and get result as text
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
+        model=OpenAIChat(id="gpt-audio", modalities=["text"]),
         markdown=True,
         telemetry=False,
     )
@@ -48,7 +48,7 @@ def test_audio_input_bytes():
 
 def test_audio_input_url():
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
+        model=OpenAIChat(id="gpt-audio", modalities=["text"]),
         markdown=True,
         telemetry=False,
     )
@@ -67,7 +67,7 @@ def test_audio_tokens():
 
     agent = Agent(
         model=OpenAIChat(
-            id="gpt-4o-audio-preview",
+            id="gpt-audio",
             modalities=["text", "audio"],
             audio={"voice": "alloy", "format": "wav"},
         ),

@@ -7,6 +7,7 @@ Demonstrates using workflow session state in a `Condition` evaluator and executo
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -15,22 +16,26 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 # Define Session-State Functions
 # ---------------------------------------------------------------------------
-def check_user_has_context(step_input: StepInput, session_state: dict) -> bool:
+def check_user_has_context(step_input: StepInput, run_context: RunContext) -> bool:
     print("\n=== Evaluating Condition ===")
-    print(f"User ID: {session_state.get('current_user_id')}")
-    print(f"Session ID: {session_state.get('current_session_id')}")
-    print(f"Has been greeted: {session_state.get('has_been_greeted', False)}")
+    print(f"User ID: {run_context.session_state.get('current_user_id')}")
+    print(f"Session ID: {run_context.session_state.get('current_session_id')}")
+    print(
+        f"Has been greeted: {run_context.session_state.get('has_been_greeted', False)}"
+    )
 
-    return session_state.get("has_been_greeted", False)
+    return run_context.session_state.get("has_been_greeted", False)
 
 
-def mark_user_as_greeted(step_input: StepInput, session_state: dict) -> StepOutput:
+def mark_user_as_greeted(step_input: StepInput, run_context: RunContext) -> StepOutput:
     print("\n=== Marking User as Greeted ===")
-    session_state["has_been_greeted"] = True
-    session_state["greeting_count"] = session_state.get("greeting_count", 0) + 1
+    run_context.session_state["has_been_greeted"] = True
+    run_context.session_state["greeting_count"] = (
+        run_context.session_state.get("greeting_count", 0) + 1
+    )
 
     return StepOutput(
-        content=f"User has been greeted. Total greetings: {session_state['greeting_count']}"
+        content=f"User has been greeted. Total greetings: {run_context.session_state['greeting_count']}"
     )
 
 
@@ -60,10 +65,10 @@ workflow = Workflow(
         Condition(
             name="Check If New User",
             description="Check if this is a new user who needs greeting",
-            evaluator=lambda step_input, session_state: (
+            evaluator=lambda step_input, run_context: (
                 not check_user_has_context(
                     step_input,
-                    session_state,
+                    run_context,
                 )
             ),
             steps=[

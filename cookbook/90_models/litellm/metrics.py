@@ -17,7 +17,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=LiteLLM(
-        id="gpt-4o",
+        id="gpt-5.6-luna",
     ),
     tools=[YFinanceTools()],
     markdown=True,

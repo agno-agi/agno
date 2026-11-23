@@ -12,7 +12,7 @@ from agno.tools.duckdb import DuckDbTools
 
 duckdb_tools = DuckDbTools()
 duckdb_tools.create_table_from_path(
-    path="https://phidata-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
+    path="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
     table="movies",
 )
 

@@ -3,12 +3,14 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from agno.exceptions import PathSecurityError
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import is_safe_path, read_file_safe, run_script
+from agno.skills.utils import read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class Skills:
@@ -45,7 +47,7 @@ class Skills:
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
-                log_warning(f"Error loading skills from {loader}: {e}")
+                log_warning(f"Error loading skills from {loader}: {str(e)}")
 
         log_debug(f"Loaded {len(self._skills)} total skills")
 
@@ -198,7 +200,8 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                },
+                ensure_ascii=False,
             )
 
         return json.dumps(
@@ -208,10 +211,11 @@ class Skills:
                 "instructions": skill.instructions,
                 "available_scripts": skill.scripts,
                 "available_references": skill.references,
-            }
+            },
+            ensure_ascii=False,
         )
 
-    def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
+    def _get_skill_reference(self, skill_name: str, reference_path: Optional[str] = None) -> str:
         """Load a reference document from a skill.
 
         Args:
@@ -228,7 +232,18 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                },
+                ensure_ascii=False,
+            )
+
+        if not reference_path:
+            return json.dumps(
+                {
+                    "error": f"A reference_path is required to read a reference from skill '{skill_name}'",
+                    "skill_name": skill_name,
+                    "available_references": skill.references,
+                },
+                ensure_ascii=False,
             )
 
         if reference_path not in skill.references:
@@ -236,21 +251,22 @@ class Skills:
                 {
                     "error": f"Reference '{reference_path}' not found in skill '{skill_name}'",
                     "available_references": skill.references,
-                }
+                },
+                ensure_ascii=False,
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
-        if not is_safe_path(refs_dir, reference_path):
+        try:
+            ref_file = safe_join_relative_path(refs_dir, reference_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid reference path: '{reference_path}'",
                     "skill_name": skill_name,
-                }
+                },
+                ensure_ascii=False,
             )
-
-        # Load the reference file
-        ref_file = refs_dir / reference_path
         try:
             content = read_file_safe(ref_file)
             return json.dumps(
@@ -258,7 +274,8 @@ class Skills:
                     "skill_name": skill_name,
                     "reference_path": reference_path,
                     "content": content,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             return json.dumps(
@@ -266,13 +283,14 @@ class Skills:
                     "error": f"Error reading reference file: {e}",
                     "skill_name": skill_name,
                     "reference_path": reference_path,
-                }
+                },
+                ensure_ascii=False,
             )
 
     def _get_skill_script(
         self,
         skill_name: str,
-        script_path: str,
+        script_path: Optional[str] = None,
         execute: bool = False,
         args: Optional[List[str]] = None,
         timeout: int = 30,
@@ -296,7 +314,18 @@ class Skills:
                 {
                     "error": f"Skill '{skill_name}' not found",
                     "available_skills": available,
-                }
+                },
+                ensure_ascii=False,
+            )
+
+        if not script_path:
+            return json.dumps(
+                {
+                    "error": f"A script_path is required to read a script from skill '{skill_name}'",
+                    "skill_name": skill_name,
+                    "available_scripts": skill.scripts,
+                },
+                ensure_ascii=False,
             )
 
         if script_path not in skill.scripts:
@@ -304,20 +333,22 @@ class Skills:
                 {
                     "error": f"Script '{script_path}' not found in skill '{skill_name}'",
                     "available_scripts": skill.scripts,
-                }
+                },
+                ensure_ascii=False,
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
-        if not is_safe_path(scripts_dir, script_path):
+        try:
+            script_file = safe_join_relative_path(scripts_dir, script_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid script path: '{script_path}'",
                     "skill_name": skill_name,
-                }
+                },
+                ensure_ascii=False,
             )
-
-        script_file = scripts_dir / script_path
 
         if not execute:
             # Read mode: return script content
@@ -328,7 +359,8 @@ class Skills:
                         "skill_name": skill_name,
                         "script_path": script_path,
                         "content": content,
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             except Exception as e:
                 return json.dumps(
@@ -336,7 +368,8 @@ class Skills:
                         "error": f"Error reading script file: {e}",
                         "skill_name": skill_name,
                         "script_path": script_path,
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
         # Execute mode: run the script
@@ -354,7 +387,8 @@ class Skills:
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "returncode": result.returncode,
-                }
+                },
+                ensure_ascii=False,
             )
         except subprocess.TimeoutExpired:
             return json.dumps(
@@ -362,7 +396,8 @@ class Skills:
                     "error": f"Script execution timed out after {timeout} seconds",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                },
+                ensure_ascii=False,
             )
         except FileNotFoundError as e:
             return json.dumps(
@@ -370,7 +405,8 @@ class Skills:
                     "error": f"Interpreter or script not found: {e}",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             return json.dumps(
@@ -378,5 +414,6 @@ class Skills:
                     "error": f"Error executing script: {e}",
                     "skill_name": skill_name,
                     "script_path": script_path,
-                }
+                },
+                ensure_ascii=False,
             )

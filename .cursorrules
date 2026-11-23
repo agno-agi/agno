@@ -13,10 +13,10 @@ Documentation:
 Basic Agent (start here):
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="You are a helpful assistant",
     markdown=True,
 )
@@ -28,7 +28,7 @@ Agent with Tools:
 from agno.tools.websearch import WebSearchTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[WebSearchTools()],
     instructions="Search the web for information",
 )
@@ -71,18 +71,18 @@ from agno.team.team import Team
 
 web_agent = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[WebSearchTools()],
 )
 
 writer_agent = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
 )
 
 team = Team(
     members=[web_agent, writer_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="Research and write articles",
 )
 ```
@@ -125,7 +125,7 @@ knowledge = Knowledge(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     knowledge=knowledge,
     search_knowledge=True,  # Critical: enables agentic RAG
     instructions="Use knowledge base, cite sources"
@@ -135,7 +135,7 @@ agent = Agent(
 Chat History:
 ```python
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=SqliteDb(db_file="tmp/agents.db"),
     user_id="user-123",
     add_history_to_context=True,  # Adds previous messages
@@ -152,7 +152,7 @@ class Result(BaseModel):
     findings: list[str]
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     output_schema=Result,
 )
 result: Result = agent.run(query).content

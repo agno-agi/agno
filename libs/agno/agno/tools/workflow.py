@@ -92,7 +92,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording workflow thought: {e}")
+            log_error(f"Error recording workflow thought: {str(e)}")
             return f"Error recording workflow thought: {e}"
 
     async def async_think(self, run_context: RunContext, thought: str) -> str:
@@ -121,7 +121,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording workflow thought: {e}")
+            log_error(f"Error recording workflow thought: {str(e)}")
             return f"Error recording workflow thought: {e}"
 
     def run_workflow(
@@ -161,7 +161,7 @@ class WorkflowTools(Toolkit):
             return json.dumps(result.to_dict(), indent=2)
 
         except Exception as e:
-            log_error(f"Error running workflow: {e}")
+            log_error(f"Error running workflow: {str(e)}")
             return f"Error running workflow: {e}"
 
     async def async_run_workflow(
@@ -172,8 +172,7 @@ class WorkflowTools(Toolkit):
         """Use this tool to execute the workflow with the specified inputs and parameters.
         After thinking through the requirements, use this tool to run the workflow with appropriate inputs.
         Args:
-            input_data: The input data for the workflow (use a `str` for a simple input)
-            additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
+            input: The input data for the workflow.
         """
         if isinstance(input, dict):
             input = RunWorkflowInput.model_validate(input)
@@ -201,7 +200,7 @@ class WorkflowTools(Toolkit):
             return json.dumps(result.to_dict(), indent=2)
 
         except Exception as e:
-            log_error(f"Error running workflow: {e}")
+            log_error(f"Error running workflow: {str(e)}")
             return f"Error running workflow: {e}"
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -229,7 +228,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording workflow analysis: {e}")
+            log_error(f"Error recording workflow analysis: {str(e)}")
             return f"Error recording workflow analysis: {e}"
 
     async def async_analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -257,7 +256,7 @@ class WorkflowTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording workflow analysis: {e}")
+            log_error(f"Error recording workflow analysis: {str(e)}")
             return f"Error recording workflow analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

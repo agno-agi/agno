@@ -6,6 +6,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
+from agno.media import Image
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
@@ -18,24 +19,25 @@ class OpenRouter(OpenAILike):
     A class for using models hosted on OpenRouter.
 
     Attributes:
-        id (str): The model id. Defaults to "gpt-4o".
+        id (str): The model id. Defaults to "gpt-5.4-mini".
         name (str): The model name. Defaults to "OpenRouter".
         provider (str): The provider name. Defaults to "OpenRouter".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://openrouter.ai/api/v1".
-        max_tokens (int): The maximum number of tokens. Defaults to 1024.
+        max_tokens (Optional[int]): The maximum number of tokens. Defaults to None, so the
+            parameter is omitted and the routed model's own output limit applies.
         fallback_models (Optional[List[str]]): List of fallback model IDs to use if the primary model
             fails due to rate limits, timeouts, or unavailability. OpenRouter will automatically try
             these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
     """
 
-    id: str = "gpt-4o"
+    id: str = "gpt-5.4-mini"
     name: str = "OpenRouter"
     provider: str = "OpenRouter"
 
     api_key: Optional[str] = None
     base_url: str = "https://openrouter.ai/api/v1"
-    max_tokens: int = 1024
+    max_tokens: Optional[int] = None
     models: Optional[List[str]] = None  # Dynamic model routing https://openrouter.ai/docs/features/model-routing
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -71,7 +73,10 @@ class OpenRouter(OpenAILike):
         """
         # Get base request params from parent class
         request_params = super().get_request_params(
-            response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # Add fallback models to extra_body if specified
@@ -96,6 +101,29 @@ class OpenRouter(OpenAILike):
 
         return message_dict
 
+    def _add_openrouter_images(self, extra: Optional[Any], model_response: ModelResponse) -> None:
+        """Append generated images from OpenRouter's ``model_extra["images"]`` to model_response.
+
+        OpenRouter returns generated images as data URLs under the assistant message's
+        (and streamed delta's) ``images`` field, e.g.
+        ``{"image_url": {"url": "data:image/png;base64,..."}}``.
+        """
+        if not isinstance(extra, dict) or not isinstance(extra.get("images"), list):
+            return
+        for item in extra["images"]:
+            image_url = item.get("image_url") if isinstance(item, dict) else None
+            url = image_url.get("url") if isinstance(image_url, dict) else None
+            # Only data URLs are expected here. Skip remote URLs rather than fetch a
+            # provider-controlled address server-side (SSRF risk via Image.get_content_bytes).
+            if not url or not url.startswith("data:"):
+                continue
+            header, _, payload = url.partition(",")
+            mime_type = header[len("data:") :].split(";")[0] or None
+            image = Image.from_base64(payload, mime_type=mime_type)
+            if model_response.images is None:
+                model_response.images = []
+            model_response.images.append(image)
+
     def _parse_provider_response(
         self,
         response: ChatCompletion,
@@ -116,6 +144,9 @@ class OpenRouter(OpenAILike):
                         model_response.provider_data = {}
                     model_response.provider_data["reasoning_details"] = extra["reasoning_details"]
 
+            # Generated images arrive under model_extra["images"] (buffered response)
+            self._add_openrouter_images(getattr(response_message, "model_extra", None), model_response)
+
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
@@ -127,5 +158,8 @@ class OpenRouter(OpenAILike):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data["reasoning_details"] = choice_delta.reasoning_details
+
+            # Streamed generated images arrive under delta.images (same shape as buffered)
+            self._add_openrouter_images(getattr(choice_delta, "model_extra", None), model_response)
 
         return model_response

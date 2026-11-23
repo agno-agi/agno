@@ -75,7 +75,6 @@ agent = Agent(
     input_schema=HotelSearch,
     output_schema=HotelSearchResult,
     parser_model=OpenAIChat("gpt-5.2"),
-    debug_mode=True,
     debug_level=2,
 )
 

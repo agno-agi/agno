@@ -6,25 +6,45 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, List, Optional, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
+from agno.utils.path_safety import safe_join_relative_path
 
 
 @functools.lru_cache(maxsize=None)
 def _warn_coding_tools() -> None:
-    logger.warning("CodingTools can run arbitrary shell commands, please provide human supervision.")
+    logger.warning(
+        "CodingTools run_shell executes arbitrary shell commands. Provide human supervision "
+        "and never expose it to untrusted input; restrict_to_base_dir is not a security sandbox."
+    )
 
 
 class CodingTools(Toolkit):
     """A minimal, powerful toolkit for coding agents.
 
-    Provides four core tools (read, edit, write, shell) and three optional
-    exploration tools (grep, find, ls). With these primitives, an agent can
+    Provides three core tools (read, edit, write) plus opt-in shell (run_shell)
+    and exploration tools (grep, find, ls). With these primitives, an agent can
     perform any file operation, run tests, use git, install packages, search
     codebases, and more.
 
     Inspired by the Pi coding agent's philosophy: a small number of composable
     tools is more powerful than many specialized ones.
+
+    Security:
+        run_shell executes commands through the system shell and is disabled by
+        default. Enable it only for agents you supervise, and never expose it to
+        untrusted or third-party input.
+
+        ``restrict_to_base_dir`` reduces accidental damage: it confines file
+        tools to base_dir and, for run_shell, runs commands without a shell
+        (so chaining, redirection, substitution, and globbing are inert) behind
+        a command allowlist. It is NOT a security sandbox. Any allowlisted
+        interpreter (python, pip, git, ...) can read arbitrary files, dump the
+        process environment, or reach the network, so a determined caller can
+        escape the restriction. To run shell against untrusted input, execute it
+        in a real sandbox (separate process or container with a scrubbed
+        environment, no network, and a read-only mount) instead.
     """
 
     DEFAULT_ALLOWED_COMMANDS: List[str] = [
@@ -127,7 +147,7 @@ class CodingTools(Toolkit):
         enable_read_file: bool = True,
         enable_edit_file: bool = True,
         enable_write_file: bool = True,
-        enable_run_shell: bool = True,
+        enable_run_shell: bool = False,
         enable_grep: bool = False,
         enable_find: bool = False,
         enable_ls: bool = False,
@@ -141,14 +161,20 @@ class CodingTools(Toolkit):
 
         Args:
             base_dir: Root directory for file operations. Defaults to cwd.
-            restrict_to_base_dir: If True, file and shell operations cannot escape base_dir.
+            restrict_to_base_dir: If True, confine file tools to base_dir and run
+                run_shell commands without a shell behind a command allowlist (so
+                chaining, redirection, substitution, and globbing are inert). This
+                limits accidental damage but is not a security sandbox: an allowlisted
+                interpreter can still escape it. Do not rely on it for untrusted input.
+                If False, run_shell runs the raw string through the system shell.
             max_lines: Maximum lines to return before truncating (default 2000).
             max_bytes: Maximum bytes to return before truncating (default 50KB).
             shell_timeout: Timeout in seconds for shell commands (default 120).
             enable_read_file: Enable the read_file tool.
             enable_edit_file: Enable the edit_file tool.
             enable_write_file: Enable the write_file tool.
-            enable_run_shell: Enable the run_shell tool.
+            enable_run_shell: Enable the run_shell tool. Disabled by default because it
+                executes arbitrary shell commands; enable it only under human supervision.
             enable_grep: Enable the grep tool (disabled by default).
             enable_find: Enable the find tool (disabled by default).
             enable_ls: Enable the ls tool (disabled by default).
@@ -245,38 +271,103 @@ class CodingTools(Toolkit):
                 pass
         self._temp_files.clear()
 
-    # Shell operators that enable command chaining or substitution
-    _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    # Control operators that chain, background, or redirect commands. In restricted
+    # mode commands run without a shell (shell=False), so these never take effect;
+    # shlex leaves an unquoted operator as its own token, which we reject with a
+    # clear "unsupported" message while quoted uses (e.g. -m "A & B") pass untouched.
+    _UNSUPPORTED_OPERATOR_TOKENS: set = {"&&", "||", ";", "|", "&", "<", ">", ">>"}
+
+    # Interpreters that can execute arbitrary inline code, bypassing the allowlist
+    # and path checks. Matched by basename prefix (python, python3, python3.12, ...).
+    _CODE_EXEC_INTERPRETER_PREFIXES: tuple = ("python",)
+
+    # CPython short options that execute arbitrary inline code (-c cmd, -m module).
+    _CODE_EXEC_SHORT_OPTS: set = {"c", "m"}
+
+    # CPython short options that consume the rest of the token as their argument, so
+    # a following 'c'/'m' is a value, not the code-exec flag (e.g. -W c, -X c).
+    _ARG_TAKING_SHORT_OPTS: set = {"W", "X", "Q"}
+
+    def _has_interpreter_code_exec(self, args: List[str]) -> bool:
+        """Detect inline code execution in a Python interpreter's arguments.
+
+        Handles attached and clustered short options the way CPython does, e.g.
+        ``-c``, ``-c'code'``, ``-mmod``, ``-Ic 'code'``. Option parsing stops at
+        the first non-option argument (the script path), and short options that
+        take a value (-W, -X, -Q) consume the remainder of their token, so a 'c'
+        or 'm' appearing as such a value is not treated as code execution.
+        """
+        for token in args:
+            if token == "-":  # program read from stdin
+                return True
+            if not token.startswith("-"):
+                # First positional is the script path; CPython stops parsing options here.
+                break
+            if token.startswith("--"):
+                # No CPython long option executes inline code.
+                continue
+            for ch in token[1:]:
+                if ch in self._CODE_EXEC_SHORT_OPTS:
+                    return True
+                if ch in self._ARG_TAKING_SHORT_OPTS:
+                    # Remainder of this token is the option's argument, not more flags.
+                    break
+        return False
 
     def _check_command(self, command: str) -> Optional[str]:
-        """Check if a shell command is safe to execute.
+        """Validate a command for restricted mode, returning an error message or None.
 
-        When restrict_to_base_dir is True, this method:
-        1. Blocks shell metacharacters that enable chaining/substitution.
+        In restricted mode the command is executed without a shell (see run_shell),
+        so this validates the shlex-tokenized command that will actually run:
+        1. Rejects control operators (|, &&, ;, redirects) as unsupported, since a
+           shell-less run would treat them as literal arguments, not chaining.
         2. Validates the command name against the allowed_commands list (if set).
-        3. Checks that path-like tokens don't escape the base directory.
+        3. Blocks inline code-execution flags on interpreters (e.g. python3 -c).
+        4. Checks that path-like tokens don't escape the base directory.
 
-        Returns an error message if a violation is found, None if safe.
+        Allowlist and operator rejection are harm reduction, not a security sandbox;
+        running without a shell is what actually neutralizes chaining/substitution.
         """
         if not self.restrict_to_base_dir:
             return None
-
-        # Block shell operators that enable chaining/substitution
-        for pattern in self._DANGEROUS_PATTERNS:
-            if pattern in command:
-                return f"Error: Shell operator '{pattern}' is not allowed in restricted mode."
 
         try:
             tokens = shlex.split(command)
         except ValueError:
             return "Error: Could not parse shell command."
 
+        # Reject control operators to give a clear error instead of a confusing literal
+        # run (shell=False already makes them inert). shlex leaves an unquoted operator
+        # as its own token while keeping it inside a larger quoted argument, so
+        # `git commit -m "A & B"` passes. Known limitation: an argument that is exactly
+        # an operator (e.g. `echo '&'`) also becomes a bare token and is rejected; that
+        # is harmless over-rejection, and detecting it would require full quote tracking.
+        for token in tokens:
+            if token in self._UNSUPPORTED_OPERATOR_TOKENS:
+                return (
+                    f"Error: Shell operator '{token}' is not supported in restricted mode. "
+                    "Run separate commands, or set restrict_to_base_dir=False for a full "
+                    "shell (trusted, supervised use only)."
+                )
+
         # Validate command against allowlist
+        cmd_base = Path(tokens[0]).name if tokens else ""  # Handle /usr/bin/python -> python
         if self.allowed_commands is not None and tokens:
-            cmd = tokens[0]
-            cmd_base = Path(cmd).name  # Handle /usr/bin/python -> python
             if cmd_base not in self.allowed_commands:
                 return f"Error: Command '{cmd_base}' is not in the allowed commands list."
+
+        # Block inline code execution via an interpreter, which would otherwise run
+        # arbitrary code past the allowlist and path checks (e.g. python3 -c "...").
+        # This is harm reduction, not a boundary: an interpreter can still escape by
+        # running a script file. Do not expose run_shell to untrusted input.
+        if cmd_base.startswith(self._CODE_EXEC_INTERPRETER_PREFIXES):
+            if self._has_interpreter_code_exec(tokens[1:]):
+                return (
+                    "Error: Inline code execution (-c/-m or reading from stdin) is not "
+                    "allowed in restricted mode. Run a script file instead. Setting "
+                    "restrict_to_base_dir=False lifts all checks and should only be used "
+                    "for trusted, supervised execution."
+                )
 
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)
@@ -377,7 +468,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return f"Error reading file: {e}"
 
     def edit_file(self, file_path: str, old_text: str, new_text: str) -> str:
@@ -461,7 +552,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error editing file: {e}")
+            log_error(f"Error editing file: {str(e)}")
             return f"Error editing file: {e}"
 
     def write_file(self, file_path: str, contents: str) -> str:
@@ -491,18 +582,21 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error writing file: {e}")
+            log_error(f"Error writing file: {str(e)}")
             return f"Error writing file: {e}"
 
     def run_shell(self, command: str, timeout: Optional[int] = None) -> str:
-        """Execute a shell command and return its output.
+        """Execute a command and return its output.
 
-        Runs the command as a string via the system shell. Output (stdout + stderr)
-        is truncated if it exceeds the configured limits. When output is truncated,
-        the full output is saved to a temporary file and its path is included in
-        the response.
+        In restricted mode the command is tokenized and run WITHOUT a shell, so
+        chaining, redirection, command substitution, and globbing have no effect;
+        this is what makes the allowlist meaningful. When restrict_to_base_dir is
+        False the raw string is run through the system shell instead (full power,
+        for trusted and supervised use only). Output (stdout + stderr) is truncated
+        if it exceeds the configured limits, with the full output saved to a temp
+        file whose path is included in the response.
 
-        :param command: The shell command to execute as a single string.
+        :param command: The command to execute as a single string.
         :param timeout: Timeout in seconds. Defaults to the toolkit's shell_timeout.
         :return: Command output (stdout and stderr combined), or an error message.
         """
@@ -510,16 +604,30 @@ class CodingTools(Toolkit):
             _warn_coding_tools()
             log_info(f"Running shell command: {command}")
 
-            # Check for path escapes in command
-            path_error = self._check_command(command)
-            if path_error:
-                return path_error
+            # Validate against the restricted-mode policy (allowlist, operators, paths).
+            command_error = self._check_command(command)
+            if command_error:
+                return command_error
 
             effective_timeout = timeout if timeout is not None else self.shell_timeout
 
+            # Restricted mode runs without a shell so operators cannot chain or
+            # substitute; unrestricted mode keeps full shell semantics by request.
+            if self.restrict_to_base_dir:
+                try:
+                    args: Union[str, List[str]] = shlex.split(command)
+                except ValueError:
+                    return "Error: Could not parse shell command."
+                if not args:
+                    return "Error: Empty command."
+                use_shell = False
+            else:
+                args = command
+                use_shell = True
+
             result = subprocess.run(
-                command,
-                shell=True,
+                args,
+                shell=use_shell,
                 capture_output=True,
                 text=True,
                 timeout=effective_timeout,
@@ -554,8 +662,11 @@ class CodingTools(Toolkit):
         except subprocess.TimeoutExpired:
             effective_timeout = timeout if timeout is not None else self.shell_timeout
             return f"Error: Command timed out after {effective_timeout} seconds"
+        except FileNotFoundError:
+            # Raised in restricted mode (shell=False) when the executable is missing.
+            return f"Error: Command not found: {command}"
         except Exception as e:
-            log_error(f"Error running shell command: {e}")
+            log_error(f"Error running shell command: {str(e)}")
             return f"Error running shell command: {e}"
 
     def grep(
@@ -645,7 +756,7 @@ class CodingTools(Toolkit):
         except FileNotFoundError:
             return "Error: grep command not found. Install grep to use this tool."
         except Exception as e:
-            log_error(f"Error running grep: {e}")
+            log_error(f"Error running grep: {str(e)}")
             return f"Error running grep: {e}"
 
     def find(self, pattern: str, path: Optional[str] = None, limit: int = 500) -> str:
@@ -681,9 +792,11 @@ class CodingTools(Toolkit):
             for match in resolved_path.glob(pattern):
                 try:
                     rel_path = match.relative_to(self.base_dir)
+                    if self.restrict_to_base_dir:
+                        safe_join_relative_path(self.base_dir, rel_path.as_posix())
                     suffix = "/" if match.is_dir() else ""
-                    matches.append(str(rel_path) + suffix)
-                except ValueError:
+                    matches.append(rel_path.as_posix() + suffix)
+                except (ValueError, PathSecurityError):
                     continue  # Skip paths outside base_dir
 
                 if len(matches) >= limit:
@@ -701,7 +814,7 @@ class CodingTools(Toolkit):
             return result + footer
 
         except Exception as e:
-            log_error(f"Error finding files: {e}")
+            log_error(f"Error finding files: {str(e)}")
             return f"Error finding files: {e}"
 
     def ls(self, path: Optional[str] = None, limit: int = 500) -> str:
@@ -731,6 +844,11 @@ class CodingTools(Toolkit):
 
             entries = []
             for entry in sorted(resolved_path.iterdir(), key=lambda p: p.name.lower()):
+                if self.restrict_to_base_dir:
+                    try:
+                        safe_join_relative_path(self.base_dir, entry.relative_to(self.base_dir).as_posix())
+                    except (ValueError, PathSecurityError):
+                        continue
                 suffix = "/" if entry.is_dir() else ""
                 entries.append(entry.name + suffix)
                 if len(entries) >= limit:
@@ -749,5 +867,5 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {path or '.'}"
         except Exception as e:
-            log_error(f"Error listing directory: {e}")
+            log_error(f"Error listing directory: {str(e)}")
             return f"Error listing directory: {e}"

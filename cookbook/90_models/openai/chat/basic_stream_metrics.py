@@ -14,7 +14,7 @@ from agno.db.in_memory import InMemoryDb
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=OpenAIChat(id="gpt-4o"), db=InMemoryDb(), markdown=True)
+agent = Agent(model=OpenAIChat(id="gpt-5.6-luna"), db=InMemoryDb(), markdown=True)
 
 # Get the response in a variable
 # run_response: Iterator[RunOutputEvent] = agent.run("Share a 2 sentence horror story", stream=True)

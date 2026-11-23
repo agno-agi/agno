@@ -3,7 +3,7 @@ import math
 from typing import Callable, List
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class CalculatorTools(Toolkit):
@@ -78,7 +78,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         if b == 0:
-            logger.error("Attempt to divide by zero")
+            log_error("Attempt to divide by zero")
             return json.dumps({"operation": "division", "error": "Division by zero is undefined"})
         try:
             result = a / b
@@ -111,7 +111,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         if n < 0:
-            logger.error("Attempt to calculate factorial of a negative number")
+            log_error("Attempt to calculate factorial of a negative number")
             return json.dumps({"operation": "factorial", "error": "Factorial of a negative number is undefined"})
         result = math.factorial(n)
         log_debug(f"Calculating factorial of {n} to get {result}")
@@ -143,7 +143,7 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         if n < 0:
-            logger.error("Attempt to calculate square root of a negative number")
+            log_error("Attempt to calculate square root of a negative number")
             return json.dumps({"operation": "square_root", "error": "Square root of a negative number is undefined"})
 
         result = math.sqrt(n)

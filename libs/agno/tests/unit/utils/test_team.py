@@ -126,3 +126,33 @@ def test_get_member_id():
     # Team with only UUID id (no name) -> use the UUID id
     inner_team = Team(id=str(uuid.uuid4()), members=[member])
     assert get_member_id(inner_team) == inner_team.id
+
+    # Agent with snake_case id -> id is preserved as-is, not converted to kebab-case
+    member = Agent(name="Billing Agent", id="billing_agent")
+    assert get_member_id(member) == "billing_agent"
+
+    # Team with snake_case id -> id is preserved as-is, not converted to kebab-case
+    inner_team = Team(name="Billing Team", id="billing_team", members=[member])
+    assert get_member_id(inner_team) == "billing_team"
+
+
+def test_find_member_by_id_matches_persisted_agent_id():
+    from agno.run.agent import RunOutput
+    from agno.team._tools import _find_member_by_id
+
+    # A member run is persisted with agent_id = member.id verbatim, so a member with a
+    # snake_case id must be found by its persisted agent_id (otherwise _scrub_member_responses
+    # silently skips per-member storage scrubbing).
+    member = Agent(name="Billing Agent", id="billing_agent")
+    team = Team(name="Help Desk", members=[member])
+    result = _find_member_by_id(team, RunOutput(agent_id=member.id).agent_id)
+    assert result is not None
+    assert result[1] is member
+
+    # The same holds recursively for a nested sub-team member
+    nested_member = Agent(name="Refund Specialist", id="refund_specialist")
+    sub_team = Team(name="Finance", id="finance_team", members=[nested_member])
+    root = Team(name="Company", members=[sub_team])
+    nested_result = root._find_member_by_id(RunOutput(agent_id=nested_member.id).agent_id)
+    assert nested_result is not None
+    assert nested_result[1] is nested_member

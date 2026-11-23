@@ -6,9 +6,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 
 from pydantic import BaseModel
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -36,6 +36,11 @@ class LiteLLM(Model):
     id: str = "gpt-4o"
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
+
+    # LiteLLM fronts many providers; structured-output support is off by default
+    # (some providers reject response_format) and enabled per instance when supported.
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = False
 
     api_key: Optional[str] = None
     api_base: Optional[str] = None
@@ -197,7 +202,11 @@ class LiteLLM(Model):
 
         return formatted_messages
 
-    def get_request_params(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -223,6 +232,10 @@ class LiteLLM(Model):
         if tools:
             base_params["tools"] = tools
             base_params["tool_choice"] = "auto"
+
+        # Forward the output schema only for providers that support it; LiteLLM adapts it per provider
+        if self.supports_native_structured_outputs or self.supports_json_schema_outputs:
+            base_params["response_format"] = response_format
 
         # Handle metadata via extra_body as per LiteLLM docs
         if self.metadata:
@@ -253,7 +266,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -276,7 +289,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
@@ -299,7 +312,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -322,7 +335,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
@@ -339,7 +352,7 @@ class LiteLLM(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error in streaming response: {e}")
+            log_error(f"Error in streaming response: {str(e)}")
             raise
 
     def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
@@ -522,6 +535,10 @@ class LiteLLM(Model):
             metrics.output_tokens = response_usage.get("completion_tokens") or 0
             if (prompt_details := response_usage.get("prompt_tokens_details")) and isinstance(prompt_details, dict):
                 metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+                # LiteLLM names the cache write `cache_write_tokens` and mirrors it to `cache_creation_tokens`
+                metrics.cache_write_tokens = (
+                    prompt_details.get("cache_write_tokens") or prompt_details.get("cache_creation_tokens") or 0
+                )
                 metrics.audio_input_tokens = prompt_details.get("audio_tokens", 0) or 0
             if (completion_details := response_usage.get("completion_tokens_details")) and isinstance(
                 completion_details, dict
@@ -533,12 +550,18 @@ class LiteLLM(Model):
             metrics.output_tokens = response_usage.completion_tokens or 0
             if prompt_details := getattr(response_usage, "prompt_tokens_details", None):
                 metrics.cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                metrics.cache_write_tokens = (
+                    getattr(prompt_details, "cache_write_tokens", None)
+                    or getattr(prompt_details, "cache_creation_tokens", None)
+                    or 0
+                )
                 metrics.audio_input_tokens = getattr(prompt_details, "audio_tokens", 0) or 0
             if completion_details := getattr(response_usage, "completion_tokens_details", None):
                 metrics.reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0
                 metrics.audio_output_tokens = getattr(completion_details, "audio_tokens", 0) or 0
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
 
         return metrics
 

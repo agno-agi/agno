@@ -1,6 +1,6 @@
 """Supabase MCP Agent - Showcase Supabase MCP Capabilities
 
-This example demonstrates how to use the Supabase MCP server to create create projects, database schemas, edge functions, and more.
+This example demonstrates how to use the Supabase MCP server to create projects, database schemas, edge functions, and more.
 
 Setup:
 1. Install Python dependencies:
@@ -17,7 +17,7 @@ import os
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from agno.tools.reasoning import ReasoningTools
 from agno.utils.log import log_error, log_exception, log_info
@@ -56,7 +56,7 @@ async def run_agent(task: str) -> None:
                 9. Retrieve and print the project URL (`get_project_url`) and anon key (`get_anon_key`).
             """)
             agent = Agent(
-                model=OpenAIChat(id="o4-mini"),
+                model=OpenAIResponses(id="gpt-5.6-terra"),
                 instructions=instructions,
                 tools=[mcp, ReasoningTools(add_instructions=True)],
                 markdown=True,

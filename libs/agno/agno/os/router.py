@@ -1,17 +1,39 @@
+import asyncio
 import json
-from typing import TYPE_CHECKING, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Request,
+    Response,
     WebSocket,
 )
 
+from agno import __version__ as agno_version
+from agno.agent.factory import AgentFactory
 from agno.exceptions import RemoteServerUnavailableError
-from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.auth import (
+    aprovision_user_with_default_role,
+    get_authentication_dependency,
+    get_effective_auth_mode,
+    validate_websocket_token,
+    verify_websocket_service_account,
+)
 from agno.os.managers import websocket_manager
-from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
+from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_principal, resolve_expected_audience
+from agno.os.middleware.user_scope import (
+    INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
+    WORKFLOW_ID_REQUIRED_RECONNECT,
+    get_scoped_user_id,
+)
+from agno.os.routers.workflows.router import (
+    WebSocketAuthContext,
+    handle_workflow_continue_via_websocket,
+    handle_workflow_subscription,
+    handle_workflow_via_websocket,
+)
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -19,14 +41,27 @@ from agno.os.schema import (
     InfoResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
+    McpInfo,
     Model,
     NotFoundResponse,
+    QueueCapabilities,
     TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
+    _extract_model,
 )
+from agno.os.scopes import (
+    AgentOSScope,
+    get_default_scope_mappings,
+    get_required_scopes_for_route,
+)
+from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
+from agno.os.service_accounts import VerificationStatus
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import resolve_ws_jwt_config
+from agno.registry._reserved import _listed
+from agno.team.factory import TeamFactory
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
@@ -41,7 +76,7 @@ def get_base_router(
     Create the base FastAPI router with comprehensive OpenAPI documentation.
 
     This router provides endpoints for:
-    - Core system operations (health, config, models)
+    - Core system operations (config)
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
@@ -82,7 +117,10 @@ def get_base_router(
                         "example": {
                             "id": "demo",
                             "description": "Example AgentOS configuration",
-                            "available_models": [],
+                            "available_models": [
+                                {"id": "gpt-4", "provider": "openai"},
+                                {"id": "claude-3-sonnet", "provider": "anthropic"},
+                            ],
                             "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
                             "session": {
                                 "dbs": [
@@ -140,22 +178,23 @@ def get_base_router(
             }
         },
     )
-    async def config() -> ConfigResponse:
+    async def config(request: Request) -> ConfigResponse:
+        agents_in_scope = _listed(os.agents)
+        teams_in_scope = list(os.teams or [])
+        workflows_in_scope = list(os.workflows or [])
+        if getattr(request.state, "authorization_enabled", False):
+            # The roster is filtered by the same provider the list routes use: config:read
+            # admits the caller to the OS description, not to every component's name and
+            # description. A caller granted one agent sees that agent here, as on /agents.
+            from agno.os.auth import afilter_resources_by_access
+
+            agents_in_scope = await afilter_resources_by_access(request, agents_in_scope, "agents")
+            teams_in_scope = await afilter_resources_by_access(request, teams_in_scope, "teams")
+            workflows_in_scope = await afilter_resources_by_access(request, workflows_in_scope, "workflows")
         try:
-            agent_summaries = []
-            if os.agents:
-                for agent in os.agents:
-                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
-
-            team_summaries = []
-            if os.teams:
-                for team in os.teams:
-                    team_summaries.append(TeamSummaryResponse.from_team(team))
-
-            workflow_summaries = []
-            if os.workflows:
-                for workflow in os.workflows:
-                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+            agent_summaries = [AgentSummaryResponse.from_agent(a) for a in agents_in_scope]
+            team_summaries = [TeamSummaryResponse.from_team(t) for t in teams_in_scope]
+            workflow_summaries = [WorkflowSummaryResponse.from_workflow(w) for w in workflows_in_scope]
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,
@@ -165,12 +204,19 @@ def get_base_router(
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
             description=os.description,
-            available_models=os.config.available_models if os.config else [],
+            available_models=_collect_unique_models(os),
             os_database=os.db.id if os.db else None,
             databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
+            manifest=os.config.manifest if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
+            learning=os._get_learning_config(),
+            company=os._get_company_config(),
+            filesystem=os._get_filesystem_config(
+                user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
+                agents=agents_in_scope,
+            ),
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
@@ -178,62 +224,43 @@ def get_base_router(
             teams=team_summaries,
             workflows=workflow_summaries,
             traces=os._get_traces_config(),
+            queue=QueueCapabilities(
+                durable=bool(os.queue is not None and os.queue.durable),
+                queue_per_session=bool(
+                    os.queue is not None
+                    and os.queue.durable
+                    and getattr(
+                        getattr(request.app.state, "queue_worker", None),
+                        "queue_per_session",
+                        os.queue.queue_per_session,
+                    )
+                ),
+            ),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
             ],
         )
 
-    @router.get(
-        "/models",
-        response_model=List[Model],
-        response_model_exclude_none=True,
-        tags=["Core"],
-        operation_id="get_models",
-        summary="Get Available Models",
-        description=(
-            "Retrieve a list of all unique models currently used by agents and teams in this OS instance. "
-            "This includes the model ID and provider information for each model."
-        ),
-        responses={
-            200: {
-                "description": "List of models retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": [
-                            {"id": "gpt-4", "provider": "openai"},
-                            {"id": "claude-3-sonnet", "provider": "anthropic"},
-                        ]
-                    }
-                },
-            }
-        },
-    )
-    async def get_models() -> List[Model]:
-        """Return the list of all models used by agents and teams in the contextual OS"""
-        unique_models = {}
-
-        # Collect models from local agents
-        if os.agents:
-            for agent in os.agents:
-                model = cast(Model, agent.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        # Collect models from local teams
-        if os.teams:
-            for team in os.teams:
-                model = cast(Model, team.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        return list(unique_models.values())
-
     return router
+
+
+def _collect_unique_models(os: "AgentOS") -> List[Model]:
+    """Return unique (id, provider) models in use across agents and teams."""
+    unique_models: dict = {}
+    for agent in os.agents or []:
+        if isinstance(agent, AgentFactory):
+            continue
+        model = _extract_model(agent)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
+    for team in os.teams or []:
+        if isinstance(team, TeamFactory):
+            continue
+        model = _extract_model(team)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
+    return list(unique_models.values())
 
 
 def get_info_router(os: "AgentOS") -> APIRouter:
@@ -249,14 +276,61 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         description="Return lightweight, unauthenticated metadata about this AgentOS instance.",
         response_model=InfoResponse,
     )
-    async def get_info() -> InfoResponse:
+    async def get_info(request: Request, response: Response) -> InfoResponse:
+        policy = getattr(request.app.state, "public_route_policy", None)
+        public_selection = None
+        if (
+            policy is not None
+            and policy.authenticated_api
+            and getattr(request.state, "_agno_verified_api_jwt", None) is not _VERIFIED_API_JWT
+        ):
+            public_selection = policy.selected
+            response.headers["Vary"] = "Authorization"
+        mcp_enabled = bool(os.mcp)
+        mcp_oauth = None
+        if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
+            from agno.os.mcp_auth import describe_mcp_auth
+            from agno.os.schema import McpOAuthInfo
+
+            provider = os._get_mcp_auth_provider()
+            if provider is not None:
+                mcp_oauth = McpOAuthInfo(**describe_mcp_auth(provider))
+        # The transport path is configurable, so report the one this deployment actually
+        # serves -- a client builds the card and tool-runner URLs from it.
+        mcp_config = getattr(os, "mcp_config", None)
+        mcp_path = (mcp_config.path if mcp_config is not None else None) or "/mcp"
+        # The runner is served only when the MCP server is on AND it is not switched off.
+        mcp_tool_run_endpoint = mcp_enabled and (mcp_config is None or mcp_config.tool_run_endpoint)
         return InfoResponse(
-            agent_count=len(os.agents or []),
-            team_count=len(os.teams or []),
-            workflow_count=len(os.workflows or []),
+            os_id=os.id or "Unnamed OS",
+            name=os.name,
+            os_version=os.version or "1.0.0",
+            agno_version=agno_version,
+            agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
+            team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
+            workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
+            mcp=McpInfo(
+                enabled=mcp_enabled,
+                path=mcp_path if mcp_enabled else None,
+                oauth=mcp_oauth,
+                tool_run_endpoint=mcp_tool_run_endpoint,
+            ),
+            auth_mode=get_effective_auth_mode(
+                settings=os.settings,
+                authorization=os.authorization,
+                app=request.app,
+            ),
+            # The effective flag get_app() recorded: the top-level user_isolation switch OR'd with
+            # the legacy AuthorizationConfig(user_isolation=...). A client reads it with auth_mode to
+            # know whether it has to name the user itself (see the field description).
+            user_isolation=bool(getattr(request.app.state, "user_isolation_enabled", False)),
         )
 
     return router
+
+
+PUBLIC_WS_AUTH_TIMEOUT = 10.0
+PUBLIC_WS_MAX_AUTH_ATTEMPTS = 5
 
 
 def get_websocket_router(
@@ -266,6 +340,11 @@ def get_websocket_router(
     """
     Create WebSocket router without HTTP authentication dependencies.
     WebSocket endpoints handle authentication internally via message-based auth.
+
+    Supports both JWT and legacy (os_security_key) authentication.
+    When JWT is configured (via authorization=True on AgentOS), tokens are
+    validated using the JWTValidator stored on app.state. Scopes from the
+    JWT are enforced before workflow execution.
     """
     ws_router = APIRouter()
 
@@ -275,35 +354,376 @@ def get_websocket_router(
     )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        requires_auth = bool(settings.os_security_key)
+        # Check if JWT validator is configured (set by AgentOS when authorization=True
+        # or, for the manual app.add_middleware(JWTMiddleware, ...) path, resolved
+        # lazily from app.user_middleware so the FIRST WebSocket connection cannot
+        # see requires_auth=False before any HTTP request has been handled).
+        ws_jwt_config = resolve_ws_jwt_config(websocket.app)
+        jwt_validator: Optional[JWTValidator] = ws_jwt_config.get("validator")
+        ws_verify_audience: bool = ws_jwt_config.get("verify_audience", False)
+        ws_audience = ws_jwt_config.get("audience")
+        ws_admin_scope: str = ws_jwt_config.get("admin_scope") or AgentOSScope.ADMIN.value
+        ws_user_isolation_enabled: bool = bool(ws_jwt_config.get("user_isolation", False))
+        # Derive the scope required to run a workflow from the shared scope-mapping table
+        # (same source REST and MCP use) instead of hardcoding "workflows:run" here, so a
+        # change to the mapping applies to the WebSocket surface automatically.
+        ws_workflow_run_scopes: List[str] = get_required_scopes_for_route(
+            get_default_scope_mappings(), "POST", "/workflows/_/runs"
+        )
+        # Resolve the authorization provider once for this connection. With no provider
+        # configured this is the default ScopeAuthorizationProvider, whose
+        # authorize_route is a thin wrapper over has_required_scopes — so the WS gate
+        # stays byte-identical to v2.7. A managed-role / custom provider enforces its
+        # model at the same three points (start / reconnect / continue) instead.
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        ws_authorization_provider = resolve_authorization_provider(websocket.app)
+
+        def ws_is_service_account() -> bool:
+            # Decided from the authenticated principal, not a flag set at PAT login: a socket
+            # can re-authenticate, and a flag left over from a PAT would let a later JWT be
+            # decided on its raw token scopes under a managed-roles plane. A JWT cannot carry
+            # an ``sa:`` subject (reserved principals are refused at login).
+            from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+
+            uid = websocket_user_context.get("user_id")
+            return isinstance(uid, str) and uid.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
+        async def ws_authorize_workflow(workflow_id: Optional[str]) -> bool:
+            """Route-gate a workflow WS action through the provider, mirroring the REST
+            POST /workflows/{id}/runs gate (same required scopes, same resource ctx).
+
+            Awaits the provider's async path so the decision -- and its audit write -- stay off
+            the event loop and work against an async database, like the REST gate."""
+            ctx = AuthorizationContext(
+                principal_id=websocket_user_context.get("user_id"),
+                scopes=list(websocket_user_context.get("scopes", []) or []),
+                claims=websocket_user_context.get("payload") or {},
+                resource_type="workflows",
+                resource_id=workflow_id,
+                action="run",
+                admin_scope=ws_admin_scope,
+            )
+            # A service-account PAT's scopes are its ACL; it has no subject in a managed store,
+            # so the configured provider would deny every PAT. REST evaluates PATs with the
+            # scope provider (auth._provider_for); the WebSocket does the same.
+            provider = ws_authorization_provider
+            if ws_is_service_account():
+                from agno.os.auth import _default_authorization_provider
+
+                provider = _default_authorization_provider()
+            allowed = await provider.aauthorize_route(ctx, ws_workflow_run_scopes)
+            # Same access trail the REST gate writes to: the equivalent
+            # POST /workflows/{id}/runs decision is recorded, so the streaming
+            # transport must not be a blind spot in the audit.
+            from agno.os.authz.audit import arecord_decision
+
+            await arecord_decision(
+                websocket.app,
+                allowed=allowed,
+                target=f"WS /workflows/{workflow_id or '_'}/runs",
+                principal=ctx.principal_id,
+                required_scopes=ws_workflow_run_scopes,
+                scopes=ctx.scopes,
+                claims=ctx.claims,
+                reason=None if allowed else "ws_workflow_denied",
+            )
+            return allowed
+
+        jwt_auth_enabled = jwt_validator is not None
+        # auth_required is True when JWTMiddleware is configured, even if the
+        # validator could not be constructed (e.g. bad JWKS path). This prevents
+        # silently falling through to unauthenticated mode on misconfiguration.
+        jwt_auth_required = bool(ws_jwt_config.get("auth_required", False))
+
+        # Determine auth requirements - JWT takes precedence over legacy
+        requires_auth = jwt_auth_enabled or jwt_auth_required or bool(settings.os_security_key)
+
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        public_authenticated = websocket.scope.get("_agno_public_ws_authenticated")
+        auth_deadline = asyncio.get_running_loop().time() + PUBLIC_WS_AUTH_TIMEOUT
+        auth_attempts = 0
+
+        # Store user context from the authenticated identity (JWT or service account)
+        websocket_user_context: Dict[str, Any] = {}
+
+        def scope_enforcement_active() -> bool:
+            # JWT deployments always enforce scopes. Service-account identities do
+            # too -- their scopes are first-party ACL data, enforced in every
+            # deployment mode (same rule as REST and MCP). Security-key auth
+            # attaches no scopes and retains full access.
+            return jwt_auth_enabled or "scopes" in websocket_user_context
+
+        from agno.os.auth import token_scopes_are_authoritative
+
+        # Resolved once per connection: does a token's `scopes` claim carry authorization
+        # weight on this OS? (See agno.os.auth.token_scopes_are_authoritative.)
+        ws_token_scopes_authoritative = token_scopes_are_authoritative(websocket.app)
+
+        def ws_is_admin() -> bool:
+            # A token's admin scope confers WS admin only when scopes are authoritative
+            # (a scope plane), or for a service-account/PAT (always scope-enforced). Under
+            # a managed-roles/ReBAC plane a raw JWT admin scope is ignored elsewhere, so it
+            # must NOT skip the per-action provider gate or drop run-ownership here either.
+            scopes = websocket_user_context.get("scopes", []) or []
+            if ws_admin_scope not in scopes:
+                return False
+            return ws_is_service_account() or ws_token_scopes_authoritative
+
+        async def ws_user_disabled_now() -> bool:
+            # Re-check the directory kill-switch for THIS action. The connect-time check is
+            # not enough: the socket is long-lived and multi-request, so a user disabled
+            # (revoked) AFTER they authenticated must still be denied on their next
+            # privileged action. On a directory error, honour user_directory_fail_closed.
+            # Awaited so the check works against an async directory too.
+            store = getattr(getattr(websocket.app, "state", None), "user_store", None)
+            uid = websocket_user_context.get("user_id")
+            if store is None or not uid:
+                return False
+            try:
+                return bool(await store.ais_disabled(uid))
+            except Exception as e:
+                fail_closed = bool(getattr(websocket.app.state, "user_directory_fail_closed", False))
+                logger.warning(
+                    f"user directory check failed for {uid!r}: {e} (failing {'closed' if fail_closed else 'open'})"
+                )
+                return fail_closed
+
+        async def _ws_run_continuation_blocked_reason(run_id: Optional[str]) -> Optional[str]:
+            # Approval gate for the WS continue path, mirroring the REST /continue
+            # dependency. A SimpleNamespace shim carries the WS auth context so the shared
+            # decision -- including its provider-aware admin (approvals:write) bypass --
+            # resolves exactly as it does on REST/MCP.
+            from types import SimpleNamespace
+
+            from agno.os.auth import run_continuation_blocked_reason
+
+            scopes = list(websocket_user_context.get("scopes", []) or [])
+            shim = SimpleNamespace(
+                state=SimpleNamespace(
+                    user_id=websocket_user_context.get("user_id"),
+                    scopes=scopes,
+                    claims=websocket_user_context.get("payload") or {},
+                    admin_scope=ws_admin_scope,
+                    authorization_enabled=scope_enforcement_active(),
+                ),
+                app=websocket.app,
+            )
+            return await run_continuation_blocked_reason(
+                getattr(os, "db", None),
+                run_id,
+                authorization_enabled=scope_enforcement_active(),
+                user_scopes=scopes,
+                request=shim,
+            )
 
         try:
             while True:
-                data = await websocket.receive_text()
+                if public_authenticated is not None and requires_auth:
+                    if websocket_manager.is_authenticated(websocket):
+                        public_authenticated()
+                        public_authenticated = None
+                        data = await websocket.receive_text()
+                    else:
+                        if auth_attempts >= PUBLIC_WS_MAX_AUTH_ATTEMPTS:
+                            await websocket.close(code=1008)
+                            return
+                        # A fixed deadline prevents ping/auth messages from extending
+                        # the lifetime of an unauthenticated public connection.
+                        remaining = auth_deadline - asyncio.get_running_loop().time()
+                        try:
+                            data = await asyncio.wait_for(websocket.receive_text(), timeout=remaining)
+                        except asyncio.TimeoutError:
+                            await websocket.close(code=1008)
+                            return
+                else:
+                    data = await websocket.receive_text()
                 message = json.loads(data)
                 action = message.get("action")
 
                 # Handle authentication first
                 if action == "authenticate":
+                    if public_authenticated is not None:
+                        auth_attempts += 1
                     token = message.get("token")
                     if not token:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
                         continue
 
-                    if validate_websocket_token(token, settings):
+                    if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+                        # Service-account PATs are opaque first-party credentials --
+                        # never decoded as JWTs (mirroring the REST middleware's
+                        # prefix dispatch) and verified fail-closed in every
+                        # deployment mode.
+                        client_key = websocket.client.host if websocket.client else None
+                        verification = await verify_websocket_service_account(
+                            token, websocket.app, client_key=client_key
+                        )
+                        account = verification.account if verification is not None and verification.ok else None
+                        if account is not None:
+                            # Attach the account identity so the same RBAC and
+                            # attribution gates that police JWTs apply to PATs.
+                            websocket_user_context["user_id"] = account.principal
+                            websocket_user_context["scopes"] = list(account.scopes)
+                            # Drop the claims of any JWT this socket authenticated with before,
+                            # so no gate reads another identity's claims for the PAT.
+                            websocket_user_context.pop("payload", None)
+                            await websocket_manager.authenticate_websocket(websocket)
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "authenticated",
+                                        "message": "Service account authentication successful.",
+                                        "user_id": account.principal,
+                                    }
+                                )
+                            )
+                        else:
+                            error_msg = "Invalid or expired service account token"
+                            if verification is not None and verification.status == VerificationStatus.THROTTLED:
+                                error_msg = "Too many failed authentication attempts"
+                            elif verification is not None and verification.status == VerificationStatus.UNAVAILABLE:
+                                error_msg = "Authentication is temporarily unavailable"
+                            await websocket.send_text(json.dumps({"event": "auth_error", "error": error_msg}))
+                        continue
+
+                    if jwt_auth_required and not jwt_auth_enabled:
+                        # JWTMiddleware is configured but the validator could
+                        # not be constructed (e.g. bad JWKS path). Reject
+                        # rather than silently falling through to legacy auth.
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "auth_error",
+                                    "error": "JWT authentication is misconfigured on the server",
+                                    "error_type": "server_error",
+                                }
+                            )
+                        )
+                        continue
+                    elif jwt_auth_enabled and jwt_validator:
+                        # Use JWT validator for token validation. Honour the
+                        # configured audience so verify_audience=True applies to
+                        # WebSocket tokens, not just HTTP requests.
+                        try:
+                            expected_audience = resolve_expected_audience(
+                                verify_audience=ws_verify_audience,
+                                audience=ws_audience,
+                                os_id=getattr(websocket.app.state, "agent_os_id", None),
+                            )
+                            payload = jwt_validator.validate_token(token, expected_audience)
+                            claims = jwt_validator.extract_claims(payload)
+
+                            # A JWT must not claim a reserved principal (a service account's
+                            # sa:... or the scheduler) as its subject; mirrors the HTTP
+                            # middleware so WS run attribution/ownership cannot be spoofed.
+                            if is_reserved_principal(claims.get("user_id")):
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "event": "auth_error",
+                                            "error": "Invalid token subject",
+                                            "error_type": "invalid_token",
+                                        }
+                                    )
+                                )
+                                continue
+
+                            # User directory kill-switch: enforce the disabled flag
+                            # at WS connect, mirroring the HTTP middleware. A disabled
+                            # user is rejected even with a valid token. (HTTP enforces
+                            # this per-request; the WebSocket enforces it at connect.)
+                            user_store = getattr(getattr(websocket.app, "state", None), "user_store", None)
+                            ws_user_id = claims.get("user_id")
+                            if user_store is not None and ws_user_id:
+                                try:
+                                    if getattr(websocket.app.state, "user_auto_provision", False):
+                                        provisioned = await aprovision_user_with_default_role(
+                                            user_store,
+                                            getattr(websocket.app.state, "role_store", None),
+                                            ws_user_id,
+                                            payload,
+                                            email_claim=getattr(websocket.app.state, "user_email_claim", "email"),
+                                            name_claim=getattr(websocket.app.state, "user_name_claim", "name"),
+                                        )
+                                        ws_disabled = (
+                                            bool(provisioned.get("disabled")) if provisioned is not None else False
+                                        )
+                                    else:
+                                        ws_disabled = await user_store.ais_disabled(ws_user_id)
+                                except Exception as e:  # directory unreachable: honour configured policy
+                                    fail_closed = bool(
+                                        getattr(websocket.app.state, "user_directory_fail_closed", False)
+                                    )
+                                    logger.warning(
+                                        f"user directory check failed for {ws_user_id!r}: {e} "
+                                        f"(failing {'closed' if fail_closed else 'open'})"
+                                    )
+                                    if fail_closed:
+                                        await websocket.send_text(
+                                            json.dumps(
+                                                {
+                                                    "event": "auth_error",
+                                                    "error": "User directory unavailable",
+                                                    "error_type": "server_error",
+                                                }
+                                            )
+                                        )
+                                        continue
+                                    ws_disabled = False
+                                if ws_disabled:
+                                    logger.warning(f"Disabled user denied on WebSocket: {ws_user_id}")
+                                    await websocket.send_text(
+                                        json.dumps(
+                                            {
+                                                "event": "auth_error",
+                                                "error": "User is disabled",
+                                                "error_type": "user_disabled",
+                                            }
+                                        )
+                                    )
+                                    continue
+
+                            await websocket_manager.authenticate_websocket(websocket)
+
+                            # Store user context from JWT
+                            websocket_user_context["user_id"] = claims["user_id"]
+                            websocket_user_context["scopes"] = claims["scopes"]
+                            websocket_user_context["payload"] = payload
+
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "authenticated",
+                                        "message": "JWT authentication successful.",
+                                        "user_id": claims["user_id"],
+                                    }
+                                )
+                            )
+                        except Exception as e:
+                            error_msg = str(e) if str(e) else "Invalid token"
+                            error_type = "expired" if "expired" in error_msg.lower() else "invalid_token"
+                            await websocket.send_text(
+                                json.dumps({"event": "auth_error", "error": error_msg, "error_type": error_type})
+                            )
+                        continue
+                    elif validate_websocket_token(token, settings):
+                        # Legacy os_security_key authentication
                         await websocket_manager.authenticate_websocket(websocket)
                     else:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                        continue
+                    continue
 
                 # Check authentication for all other actions (only when required)
                 elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    auth_type = "JWT" if (jwt_auth_enabled or jwt_auth_required) else "bearer token"
                     await websocket.send_text(
                         json.dumps(
                             {
                                 "event": "auth_required",
-                                "error": "Authentication required. Send authenticate action with valid token.",
+                                "error": f"Authentication required. Send authenticate action with valid {auth_type}.",
                             }
                         )
                     )
@@ -314,21 +734,165 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
-                    # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os)
+                    # Enforce workflow-level RBAC whenever scope enforcement is
+                    # active (JWT auth, or a service-account identity).
+                    # Check RBAC unconditionally — do not skip when workflow_id
+                    # is absent, otherwise an unauthenticated-scope caller can
+                    # bypass the permission gate by omitting workflow_id and
+                    # letting the downstream handler reject it *after* any
+                    # side-effects.
+                    workflow_id = message.get("workflow_id")
+                    if scope_enforcement_active():
+                        if await ws_user_disabled_now():
+                            await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
+                            continue
+                        if not await ws_authorize_workflow(workflow_id):
+                            await websocket.send_text(
+                                json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
+                            )
+                            continue
+
+                    # Force user_id from the authenticated identity (JWT sub or
+                    # service-account principal) for non-admin callers so the
+                    # client cannot attribute a run to another user by spoofing
+                    # the field.
+                    auth_user_id = websocket_user_context.get("user_id")
+                    is_admin = ws_is_admin()
+                    if is_admin:
+                        if auth_user_id:
+                            message.setdefault("user_id", auth_user_id)
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
+
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=scope_enforcement_active(),
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 elif action == "reconnect":
-                    # Subscribe/reconnect to an existing workflow run
-                    await handle_workflow_subscription(websocket, message, os)
+                    # Force user_id from the authenticated identity for non-admins
+                    # so reconnecting cannot read another user's run events by
+                    # swapping user_id.
+                    auth_user_id = websocket_user_context.get("user_id")
+                    is_admin = ws_is_admin()
+                    if is_admin:
+                        if auth_user_id:
+                            message.setdefault("user_id", auth_user_id)
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
+
+                    # Enforce workflow-level RBAC at reconnect just like
+                    # start-workflow does. RBAC fires whenever JWT auth is on
+                    # (independent of user isolation) so a token with no
+                    # workflows:run can't subscribe to a buffered run by
+                    # guessing its run_id. The workflow_id requirement, by
+                    # contrast, only matters when user isolation is enabled —
+                    # that's when the downstream session/component check
+                    # actually uses it.
+                    workflow_id_for_reconnect = message.get("workflow_id")
+                    if scope_enforcement_active() and await ws_user_disabled_now():
+                        await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
+                        continue
+                    if scope_enforcement_active() and not is_admin:
+                        if ws_user_isolation_enabled and not workflow_id_for_reconnect:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "error",
+                                        "error": WORKFLOW_ID_REQUIRED_RECONNECT,
+                                    }
+                                )
+                            )
+                            continue
+
+                        if not await ws_authorize_workflow(workflow_id_for_reconnect):
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "error",
+                                        "error": INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
+                                    }
+                                )
+                            )
+                            continue
+
+                    # Pass auth context out-of-band so the handler doesn't
+                    # have to read internal flags out of the client message.
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=scope_enforcement_active(),
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_subscription(websocket, message, os, ws_auth=ws_auth)
+
+                elif action == "continue-workflow":
+                    # Enforce workflow-level RBAC, mirroring start-workflow.
+                    workflow_id = message.get("workflow_id")
+                    if scope_enforcement_active():
+                        if await ws_user_disabled_now():
+                            await websocket.send_text(json.dumps({"event": "error", "error": "User is disabled"}))
+                            continue
+                        if not await ws_authorize_workflow(workflow_id):
+                            await websocket.send_text(
+                                json.dumps(
+                                    {"event": "error", "error": "Insufficient permissions to continue this workflow"}
+                                )
+                            )
+                            continue
+
+                        # Same admin-approval gate the REST /continue route and the MCP
+                        # continue_run tool enforce: a run paused on an admin-required
+                        # approval must not be self-continued by its initiator over WS.
+                        blocked = await _ws_run_continuation_blocked_reason(message.get("run_id"))
+                        if blocked:
+                            await websocket.send_text(json.dumps({"event": "error", "error": blocked}))
+                            continue
+
+                    # Force user_id from the authenticated identity for non-admin
+                    # callers so the client cannot continue another user's paused
+                    # run by spoofing the field.
+                    auth_user_id = websocket_user_context.get("user_id")
+                    is_admin = ws_is_admin()
+                    if is_admin:
+                        if auth_user_id:
+                            message.setdefault("user_id", auth_user_id)
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value is never an identity, so overwrite it
+                        # even when the token carries no subject: get_scoped_user_id_for_ws then
+                        # scopes on nothing rather than on a caller-chosen value.
+                        message["user_id"] = auth_user_id
+
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=scope_enforcement_active(),
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_continue_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
 
         except Exception as e:
             if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
+                logger.exception("WebSocket error")
         finally:
-            # Clean up the websocket connection
+            # Clean up the websocket connection and any live tail pump
+            from agno.os.routers.workflows.router import cancel_subscription_pump
+
+            await cancel_subscription_pump(websocket)
             await websocket_manager.disconnect_websocket(websocket)
 
+    setattr(workflow_websocket_endpoint, "_agno_authenticated_workflow_socket", True)
     return ws_router

@@ -2,9 +2,10 @@ import json
 import re
 from os import getenv
 from typing import Any, List, Optional
+from urllib.parse import quote_plus
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     import requests
@@ -25,6 +26,7 @@ class ZendeskTools(Toolkit):
         company_name: Optional[str] = None,
         enable_search_zendesk: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -43,13 +45,13 @@ class ZendeskTools(Toolkit):
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
 
         if not self.username or not self.password or not self.company_name:
-            logger.error("Username, password, or company name not provided.")
+            log_error("Username, password, or company name not provided.")
 
         tools: List[Any] = []
         if all or enable_search_zendesk:
             tools.append(self.search_zendesk)
 
-        super().__init__(name="zendesk_tools", tools=tools, **kwargs)
+        super().__init__(name="zendesk_tools", tools=tools, timeout=timeout, **kwargs)
 
     def search_zendesk(self, search_string: str) -> str:
         """
@@ -71,9 +73,9 @@ class ZendeskTools(Toolkit):
         log_debug(f"Searching Zendesk for: {search_string}")
 
         auth = (self.username, self.password)
-        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"
+        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={quote_plus(search_string)}"
         try:
-            response = requests.get(url, auth=auth)
+            response = requests.get(url, auth=auth, timeout=self.timeout)
             response.raise_for_status()
             clean = re.compile("<.*?>")
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]

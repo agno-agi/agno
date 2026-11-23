@@ -237,3 +237,64 @@ def test_search_tool_response(firecrawl_tools, mock_firecrawl):
     assert result_data["query"] == "test query"
     assert result_data["results"] == ["result1", "result2"]
     mock_firecrawl.search.assert_called_once_with("test query", limit=10)
+
+
+def test_crawl_website_with_constructor_limit(firecrawl_tools, mock_firecrawl):
+    """Test that the toolkit's limit reaches the client when no argument is passed."""
+    firecrawl_tools.limit = 3
+    mock_response = Mock()
+    mock_response.model_dump.return_value = {"status": "success"}
+    mock_firecrawl.crawl.return_value = mock_response
+
+    firecrawl_tools.crawl_website("https://example.com")
+
+    mock_firecrawl.crawl.assert_called_once_with("https://example.com", limit=3, poll_interval=30)
+
+
+def test_crawl_website_explicit_limit_overrides_constructor(firecrawl_tools, mock_firecrawl):
+    """Test that an explicit limit argument wins over the toolkit's limit."""
+    mock_response = Mock()
+    mock_response.model_dump.return_value = {"status": "success"}
+    mock_firecrawl.crawl.return_value = mock_response
+
+    firecrawl_tools.crawl_website("https://example.com", limit=5)
+
+    mock_firecrawl.crawl.assert_called_once_with("https://example.com", limit=5, poll_interval=30)
+
+
+def test_search_web_explicit_limit_overrides_constructor(firecrawl_tools, mock_firecrawl):
+    """Test that an explicit limit argument wins over the toolkit's limit."""
+    mock_response = Mock()
+    mock_response.success = True
+    mock_response.data = {"results": ["result1"]}
+    mock_firecrawl.search.return_value = mock_response
+
+    firecrawl_tools.search_web("test query", limit=7)
+
+    mock_firecrawl.search.assert_called_once_with("test query", limit=7)
+
+
+def test_search_web_explicit_limit_overrides_search_params(firecrawl_tools, mock_firecrawl):
+    """Test that an explicit limit argument wins over a search_params limit key."""
+    firecrawl_tools.search_params = {"limit": 99}
+    mock_response = Mock()
+    mock_response.success = True
+    mock_response.data = {"results": ["result1"]}
+    mock_firecrawl.search.return_value = mock_response
+
+    firecrawl_tools.search_web("test query", limit=7)
+
+    mock_firecrawl.search.assert_called_once_with("test query", limit=7)
+
+
+def test_search_web_search_params_limit_without_call_arg(firecrawl_tools, mock_firecrawl):
+    """Test that a search_params limit key still beats the toolkit's limit."""
+    firecrawl_tools.search_params = {"limit": 99}
+    mock_response = Mock()
+    mock_response.success = True
+    mock_response.data = {"results": ["result1"]}
+    mock_firecrawl.search.return_value = mock_response
+
+    firecrawl_tools.search_web("test query")
+
+    mock_firecrawl.search.assert_called_once_with("test query", limit=99)

@@ -120,5 +120,5 @@ class NebiusTools(Toolkit):
             return ToolResult(content="Failed to generate image: No content received from API.")
 
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
             return ToolResult(content=f"Failed to generate image: {e}")

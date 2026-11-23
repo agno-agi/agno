@@ -13,11 +13,26 @@ from agno.session.summary import SessionSummary
 
 
 def create_session_with_runs(shared_db, session_id: str, runs: list[RunOutput]) -> AgentSession:
-    """Helper function to create and store a session with runs in the database"""
+    """Helper function to create and store a session with runs in the database.
+
+    Under v3 storage, ``upsert_session`` writes only the session row and runs
+    are persisted independently via ``upsert_run``. This helper does both so
+    tests exercising the full session + runs shape can rely on the returned
+    session being fully populated.
+    """
     agent_session = AgentSession(session_id=session_id, agent_id="test_agent", runs=runs, created_at=int(time()))
 
-    # Store the session in the database
+    # Store the session row in the database
     shared_db.upsert_session(session=agent_session)
+
+    # Persist each run individually (v3 contract)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session_id,
+            user_id=agent_session.user_id,
+            run_index=idx,
+        )
 
     # Retrieve it back to ensure it's properly persisted
     return shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
@@ -671,6 +686,38 @@ def test_from_dict_basic(shared_db):
     assert agent_session.metadata == {"meta_key": "meta_value"}
     assert len(agent_session.runs) == 1
     assert agent_session.runs[0].run_id == "run1"
+
+
+def test_from_dict_empty_runs(shared_db):
+    """Test that from_dict handles an empty runs list without raising IndexError"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session_data = {
+        "session_id": session_id,
+        "agent_id": "test_agent",
+        "runs": [],
+    }
+
+    # Should not raise IndexError when indexing runs[0]
+    agent_session = AgentSession.from_dict(session_data)
+
+    assert agent_session is not None
+    assert agent_session.session_id == session_id
+    assert agent_session.runs == []
+
+
+def test_to_dict_from_dict_round_trip_empty_runs(shared_db):
+    """Round-tripping a session with no runs should not raise"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session = AgentSession(session_id=session_id, agent_id="test_agent", runs=[])
+
+    # Previously raised IndexError: list index out of range
+    restored = AgentSession.from_dict(session.to_dict())
+
+    assert restored is not None
+    assert restored.session_id == session_id
+    assert restored.runs == []
 
 
 def test_from_dict_missing_session_id(shared_db):

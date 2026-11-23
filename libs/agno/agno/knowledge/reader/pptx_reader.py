@@ -12,8 +12,28 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from pptx import Presentation  # type: ignore
+    from pptx.shapes.group import GroupShape  # type: ignore
 except ImportError:
     raise ImportError("The `python-pptx` package is not installed. Please install it via `pip install python-pptx`.")
+
+
+def _shape_texts(shapes: Any) -> List[str]:
+    """Collect the text of every shape, descending into groups.
+
+    A group holds its children in `.shapes` and has no `.text` of its own, so a
+    flat pass over `slide.shapes` drops every text box inside it. The group is
+    matched by type because `.shape_type` raises NotImplementedError on shapes
+    python-pptx cannot name.
+    """
+    texts: List[str] = []
+    for shape in shapes:
+        if isinstance(shape, GroupShape):
+            texts.extend(_shape_texts(shape.shapes))
+            continue
+        text = getattr(shape, "text", "")
+        if text and text.strip():
+            texts.append(text.strip())
+    return texts
 
 
 class PPTXReader(Reader):
@@ -53,7 +73,9 @@ class PPTXReader(Reader):
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 presentation = Presentation(file)
-                doc_name = name or getattr(file, "name", "pptx_file").split(".")[0]
+                # Native temporary streams may expose an integer descriptor or None as their name.
+                stream_name = getattr(file, "name", None)
+                doc_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "pptx_file")
 
             # Extract text from all slides
             slide_texts = []
@@ -61,10 +83,7 @@ class PPTXReader(Reader):
                 slide_text = f"Slide {slide_number}:\n"
 
                 # Extract text from shapes that contain text
-                text_content = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        text_content.append(shape.text.strip())
+                text_content = _shape_texts(slide.shapes)
 
                 if text_content:
                     slide_text += "\n".join(text_content)
@@ -91,7 +110,7 @@ class PPTXReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -99,5 +118,5 @@ class PPTXReader(Reader):
         try:
             return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []

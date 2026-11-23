@@ -4,7 +4,7 @@ pytest.importorskip("anthropic")
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.team.team import Team
 
 
@@ -88,7 +88,7 @@ def test_default_model():
 
     team.initialize_team()
 
-    assert isinstance(team.model, OpenAIChat)
-    assert team.model.id == "gpt-4o"
-    assert isinstance(agent.model, OpenAIChat)
-    assert agent.model.id == "gpt-4o"
+    assert isinstance(team.model, OpenAIResponses)
+    assert team.model.id == "gpt-5.4"
+    assert isinstance(agent.model, OpenAIResponses)
+    assert agent.model.id == "gpt-5.4"

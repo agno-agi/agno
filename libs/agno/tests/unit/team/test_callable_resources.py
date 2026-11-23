@@ -514,3 +514,120 @@ class TestTeamDeepCopyCallableFactories:
         team = _make_team(members=agents)
         copy = team.deep_copy()
         assert isinstance(copy.members, list)
+
+    def test_deep_copy_no_warning_on_callable_tools(self):
+        """Regression: Team.deep_copy() must not iterate a callable tools factory."""
+        import logging
+
+        def tools_factory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=tools_factory, cache_callables=False)
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = team.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        assert copied.tools is tools_factory
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+
+    def test_deep_copy_with_member_using_callable_tools(self):
+        """Regression: a Team member Agent with callable tools should not warn during deep_copy."""
+        import logging
+
+        def member_tools_factory():
+            return [_dummy_tool]
+
+        member = Agent(name="member", tools=member_tools_factory, cache_callables=False)
+        team = _make_team(members=[member])
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = team.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+        assert copied.members[0].tools is member_tools_factory
+
+    def test_deep_copy_callable_tools_still_resolves(self):
+        """After deep_copy, the tools factory must still resolve to the expected list."""
+        sentinel = _dummy_tool
+
+        def tools_factory():
+            return [sentinel]
+
+        team = _make_team(tools=tools_factory, cache_callables=False)
+        copy = team.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_tools(copy, ctx)
+        assert ctx.tools == [sentinel]
+
+    def test_deep_copy_callable_members_still_resolves(self):
+        """After deep_copy, the members factory must still resolve to the expected list."""
+        agent = Agent(name="m")
+
+        def members_factory():
+            return [agent]
+
+        team = _make_team(members=members_factory, cache_callables=False)
+        copy = team.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_members(copy, ctx)
+        assert ctx.members == [agent]
+
+    def test_deep_copy_async_tools_factory_preserved(self):
+        """An `async def` factory on team.tools must be shared by reference."""
+
+        async def afactory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=afactory)
+        copy = team.deep_copy()
+        assert copy.tools is afactory
+
+    def test_deep_copy_partial_tools_factory_preserved(self):
+        """A functools.partial team tools factory must be shared by reference."""
+        from functools import partial
+
+        def _fac(extra):
+            return [_dummy_tool]
+
+        pf = partial(_fac, extra=1)
+        team = _make_team(tools=pf)
+        copy = team.deep_copy()
+        assert copy.tools is pf
+
+    def test_deep_copy_callable_instance_tools_factory_preserved(self):
+        """A callable class instance as team.tools must be shared by reference."""
+
+        class Factory:
+            def __call__(self):
+                return [_dummy_tool]
+
+        inst = Factory()
+        team = _make_team(tools=inst)
+        copy = team.deep_copy()
+        assert copy.tools is inst

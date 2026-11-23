@@ -5,6 +5,10 @@ Changes:
 - Drop the redundant uq_session_id UNIQUE constraint
 """
 
+# PEP 604 unions below are evaluated lazily under this import: without it,
+# `str | None` annotations break at import time on Python 3.9
+from __future__ import annotations
+
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.utils.log import log_error, log_info, log_warning
@@ -41,7 +45,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"{db_type} does not require schema migrations")
         return False
     except Exception as e:
-        log_error(f"Error running migration v2.5.0 for {db_type} on table {table_name}: {e}")
+        log_error(f"Error running migration v2.5.0 for {db_type} on table {table_name}: {str(e)}")
         raise
 
 
@@ -69,7 +73,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"{db_type} does not require schema migrations")
         return False
     except Exception as e:
-        log_error(f"Error running migration v2.5.0 for {db_type} on table {table_name}: {e}")
+        log_error(f"Error running migration v2.5.0 for {db_type} on table {table_name}: {str(e)}")
         raise
 
 
@@ -98,7 +102,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"Revert not implemented for {db_type}")
         return False
     except Exception as e:
-        log_error(f"Error reverting migration v2.5.0 for {db_type} on table {table_name}: {e}")
+        log_error(f"Error reverting migration v2.5.0 for {db_type} on table {table_name}: {str(e)}")
         raise
 
 
@@ -125,7 +129,7 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             log_info(f"Revert not implemented for {db_type}")
         return False
     except Exception as e:
-        log_error(f"Error reverting migration v2.5.0 for {db_type} on table {table_name} asynchronously: {e}")
+        log_error(f"Error reverting migration v2.5.0 for {db_type} on table {table_name} asynchronously: {str(e)}")
         raise
 
 

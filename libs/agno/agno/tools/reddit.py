@@ -3,7 +3,7 @@ from os import getenv
 from typing import Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 try:
     import praw  # type: ignore
@@ -20,8 +20,15 @@ class RedditTools(Toolkit):
         user_agent: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        allowed_subreddits: Optional[List[str]] = None,
         **kwargs,
     ):
+        if isinstance(allowed_subreddits, str):
+            raise TypeError("allowed_subreddits must be a list of subreddit names, not a string")
+        self.allowed_subreddits = (
+            [subreddit.lower() for subreddit in allowed_subreddits] if allowed_subreddits else None
+        )
+
         if reddit_instance is not None:
             log_info("Using provided Reddit instance")
             self.reddit = reddit_instance
@@ -77,20 +84,31 @@ class RedditTools(Toolkit):
             bool: True if user is authenticated, False otherwise
         """
         if not self.reddit:
-            logger.error("Reddit client not initialized")
+            log_error("Reddit client not initialized")
             return False
 
         if not all([self.username, self.password]):
-            logger.error("User authentication required. Please provide username and password.")
+            log_error("User authentication required. Please provide username and password.")
             return False
 
         try:
             # Verify authentication by checking if we can get the authenticated user
             self.reddit.user.me()
             return True
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.exception("Authentication error")
             return False
+
+    def _validate_allowed_subreddit(self, subreddit: str) -> Optional[str]:
+        if self.allowed_subreddits is None:
+            return None
+
+        if subreddit.lower() in self.allowed_subreddits:
+            return None
+
+        error_msg = f"Error: r/{subreddit} is not in the allowed_subreddits scope"
+        log_error(error_msg)
+        return error_msg
 
     def get_user_info(self, username: str) -> str:
         """Get information about a Reddit user."""
@@ -251,6 +269,10 @@ class RedditTools(Toolkit):
             return "User authentication required for posting. Please provide username and password."
 
         try:
+            scope_error = self._validate_allowed_subreddit(subreddit)
+            if scope_error:
+                return scope_error
+
             log_info(f"Creating post in r/{subreddit}")
 
             subreddit_obj = self.reddit.subreddit(subreddit)
@@ -304,11 +326,11 @@ class RedditTools(Toolkit):
             str: JSON string containing information about the created reply.
         """
         if not self.reddit:
-            logger.error("Reddit instance not initialized")
+            log_error("Reddit instance not initialized")
             return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
-            logger.error("User authentication failed")
+            log_error("User authentication failed")
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
@@ -324,7 +346,7 @@ class RedditTools(Toolkit):
             # Verify post exists
             if not self._check_post_exists(post_id):
                 error_msg = f"Post with ID {post_id} does not exist or is not accessible"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
 
             # Get the submission object
@@ -337,8 +359,12 @@ class RedditTools(Toolkit):
             # If subreddit was provided, verify we're in the right place
             if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Post ID belongs to r/{submission.subreddit.display_name}, not r/{subreddit}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
+
+            scope_error = self._validate_allowed_subreddit(submission.subreddit.display_name)
+            if scope_error:
+                return scope_error
 
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
@@ -364,12 +390,12 @@ class RedditTools(Toolkit):
             # Handle specific Reddit API errors
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
@@ -387,11 +413,11 @@ class RedditTools(Toolkit):
             str: JSON string containing information about the created reply.
         """
         if not self.reddit:
-            logger.error("Reddit instance not initialized")
+            log_error("Reddit instance not initialized")
             return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
-            logger.error("User authentication failed")
+            log_error("User authentication failed")
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
@@ -411,8 +437,12 @@ class RedditTools(Toolkit):
             # If subreddit was provided, verify we're in the right place
             if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
+
+            scope_error = self._validate_allowed_subreddit(comment.subreddit.display_name)
+            if scope_error:
+                return scope_error
 
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
@@ -438,12 +468,12 @@ class RedditTools(Toolkit):
             # Handle specific Reddit API errors
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def _check_post_exists(self, post_id: str) -> bool:
@@ -462,6 +492,6 @@ class RedditTools(Toolkit):
             _ = submission.title
             _ = submission.author
             return True
-        except Exception as e:
-            logger.error(f"Error checking post existence: {str(e)}")
+        except Exception:
+            logger.exception("Error checking post existence")
             return False

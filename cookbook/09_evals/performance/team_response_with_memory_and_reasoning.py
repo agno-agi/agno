@@ -1010,7 +1010,7 @@ This comprehensive guide provides a starting point for discovering all that {cit
 # ---------------------------------------------------------------------------
 weather_agent = Agent(
     id="weather_agent",
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_weather],
@@ -1024,7 +1024,7 @@ weather_agent = Agent(
 
 activities_agent = Agent(
     id="activities_agent",
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_activities],
@@ -1037,7 +1037,7 @@ activities_agent = Agent(
 )
 
 team = Team(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     members=[weather_agent, activities_agent],
     tools=[ReasoningTools(add_instructions=True)],
     instructions="Be concise, reply with one sentence.",
@@ -1099,7 +1099,6 @@ team_response_with_memory_impact = PerformanceEval(
     num_iterations=5,
     warmup_runs=0,
     measure_runtime=False,
-    debug_mode=True,
     memory_growth_tracking=True,
     top_n_memory_allocations=10,
 )

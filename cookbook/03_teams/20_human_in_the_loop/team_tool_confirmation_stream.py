@@ -11,7 +11,7 @@ no member agent pause to confuse it with.
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.team.team import Team
@@ -21,7 +21,7 @@ from agno.utils import pprint
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
-db = SqliteDb(db_file="tmp/team_hitl_stream.db")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ def approve_deployment(environment: str, service: str) -> str:
 research_agent = Agent(
     name="Research Agent",
     role="Researches deployment readiness",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     db=db,
 )
 
@@ -55,8 +55,9 @@ research_agent = Agent(
 team = Team(
     name="Release Team",
     members=[research_agent],
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[approve_deployment],
+    instructions="You manage releases. Use the approve_deployment tool to deploy services. Call it immediately when asked to deploy.",
     db=db,
 )
 

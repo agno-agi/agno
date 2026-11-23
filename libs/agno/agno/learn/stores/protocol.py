@@ -76,16 +76,26 @@ class LearningStore(Protocol):
         ...
 
     def build_context(self, data: Any) -> str:
-        """Build context string for agent prompts.
+        """Build the DATA context string for agent prompts.
 
-        Formats the recalled data into a string that can be
-        injected into the agent's system prompt.
+        Formats the recalled data into a string that can be injected into the
+        agent's system prompt. Data only - the how-to-use guidance lives in
+        instructions().
 
         Args:
             data: Data returned from recall().
 
         Returns:
             Formatted context string, or empty string if no data.
+        """
+        ...
+
+    def instructions(self) -> str:
+        """The agent-facing guidance for this store.
+
+        How and when to use the store's tools, mode-aware. Guidance only - the
+        recalled data lives in build_context(). Returns an empty string when the
+        store has nothing to instruct (e.g. no tools exposed).
         """
         ...
 

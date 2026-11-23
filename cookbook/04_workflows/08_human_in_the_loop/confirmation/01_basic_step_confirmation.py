@@ -10,27 +10,27 @@ before executing a step. The user can either:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
-from agno.workflow import OnReject
+from agno.models.openai import OpenAIResponses
+from agno.workflow import HumanReview, OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Create agents for each step
 fetch_agent = Agent(
     name="Fetcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You fetch and summarize data. Return a brief summary of what data you would fetch.",
 )
 
 process_agent = Agent(
     name="Processor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You process data. Describe what processing you would do on the input.",
 )
 
 save_agent = Agent(
     name="Saver",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You save results. Confirm that you would save the processed data.",
 )
 
@@ -49,9 +49,11 @@ workflow = Workflow(
         Step(
             name="process_data",
             agent=process_agent,
-            requires_confirmation=True,
-            confirmation_message="About to process sensitive data. Confirm?",
-            on_reject=OnReject.skip,  # If rejected, skip this step and continue with save_results
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="About to process sensitive data. Confirm?",
+                on_reject=OnReject.skip,  # If rejected, skip this step and continue with save_results
+            ),
         ),
         Step(
             name="save_results",

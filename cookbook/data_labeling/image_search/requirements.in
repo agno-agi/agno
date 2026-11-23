@@ -1,0 +1,9 @@
+agno[os]
+fastapi[standard]
+google-genai
+httpx
+pgvector
+psycopg[binary]
+pydantic
+rich
+sqlalchemy

@@ -5,7 +5,7 @@ Redis Vector DB
 Demonstrates Redis-backed knowledge with sync and async flows.
 
 To get started, either set `REDIS_URL`, or start local Redis with:
-`./cookbook/scripts/run_redis.sh`
+`docker run --name my-redis -p 6379:6379 -d redis`
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import os
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.redis import RedisVectorDb
+from agno.vectordb.redis import RedisDb
 from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ from agno.vectordb.search import SearchType
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 INDEX_NAME = os.getenv("REDIS_INDEX", "agno_cookbook_vectors")
 
-vector_db = RedisVectorDb(
+vector_db = RedisDb(
     index_name=INDEX_NAME,
     redis_url=REDIS_URL,
     search_type=SearchType.vector,

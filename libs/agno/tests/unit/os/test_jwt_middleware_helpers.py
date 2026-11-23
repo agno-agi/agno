@@ -41,6 +41,7 @@ def test_returns_expected_default_routes():
 
     assert "/" in excluded
     assert "/health" in excluded
+    assert "/info" in excluded
     assert "/docs" in excluded
     assert "/redoc" in excluded
     assert "/openapi.json" in excluded
@@ -138,11 +139,12 @@ def test_excludes_default_routes():
         algorithm="HS256",
     )
 
+    assert middleware._is_route_excluded("/") is True
     assert middleware._is_route_excluded("/health") is True
+    assert middleware._is_route_excluded("/info") is True
     assert middleware._is_route_excluded("/docs") is True
     assert middleware._is_route_excluded("/redoc") is True
     assert middleware._is_route_excluded("/openapi.json") is True
-    assert middleware._is_route_excluded("/") is True
 
 
 def test_does_not_exclude_protected_routes():
@@ -258,7 +260,7 @@ def test_returns_scopes_for_sessions(middleware_with_auth):
 def test_returns_scopes_for_config(middleware_with_auth):
     """Test scopes for config endpoint."""
     scopes = middleware_with_auth._get_required_scopes("GET", "/config")
-    assert "system:read" in scopes
+    assert "config:read" in scopes
 
 
 def test_returns_scopes_for_traces(middleware_with_auth):
@@ -379,16 +381,16 @@ def test_custom_cookie_name_in_message():
     assert "custom_auth_token" in message
 
 
-def test_allows_all_when_no_origins_configured(middleware):
-    """Test that all origins are allowed when cors_allowed_origins is None."""
-    assert middleware._is_origin_allowed("http://localhost:3000", None) is True
-    assert middleware._is_origin_allowed("https://example.com", None) is True
+def test_reflects_nothing_when_no_origins_configured(middleware):
+    """With no allow-list, an error response reflects no Origin: echoing any origin with
+    Allow-Credentials would let any site read an authenticated failure's body."""
+    assert middleware._is_origin_allowed("http://localhost:3000", None) is False
+    assert middleware._is_origin_allowed("https://example.com", None) is False
 
 
-def test_allows_all_when_empty_origins_list(middleware):
-    """Test that all origins are allowed when cors_allowed_origins is empty."""
-    assert middleware._is_origin_allowed("http://localhost:3000", []) is True
-    assert middleware._is_origin_allowed("https://example.com", []) is True
+def test_reflects_nothing_when_empty_origins_list(middleware):
+    assert middleware._is_origin_allowed("http://localhost:3000", []) is False
+    assert middleware._is_origin_allowed("https://example.com", []) is False
 
 
 def test_allows_configured_origin(middleware):
@@ -415,8 +417,9 @@ def test_case_sensitive_origin_matching(middleware):
     assert middleware._is_origin_allowed("HTTP://LOCALHOST:3000", allowed_origins) is False
 
 
-def test_raises_error_without_verification_key():
-    """Test that middleware raises error when no verification key provided."""
+def test_raises_error_without_any_credential_source():
+    """No credential source at all (no JWT key, no security key, no verifier) is a
+    silent authorize-everyone footgun; the middleware must refuse to construct."""
     with pytest.raises(ValueError) as exc_info:
         JWTMiddleware(
             app=None,
@@ -424,7 +427,15 @@ def test_raises_error_without_verification_key():
             algorithm="HS256",
         )
 
-    assert "at least one jwt verification key or jwks file is required" in str(exc_info.value).lower()
+    assert "at least one credential source" in str(exc_info.value).lower()
+
+
+def test_security_key_only_is_a_valid_credential_source():
+    """The middleware doubles as the security-key auth layer: a security_key alone,
+    with no JWT source, is a valid construction (JWT stays inert)."""
+    middleware = JWTMiddleware(app=None, security_key="s3cret")
+    assert middleware.validator is None
+    assert middleware.security_key == "s3cret"
 
 
 def test_authorization_enabled_implicitly_with_scope_mappings():
@@ -548,3 +559,404 @@ def test_token_source_configuration():
 
     assert middleware.token_source == TokenSource.COOKIE
     assert middleware.cookie_name == "my_jwt"
+
+
+# --- user_isolation opt-in flag ---
+
+
+def test_user_isolation_defaults_false():
+    """The opt-in flag must default to False so manual setups stay
+    backwards-compatible with the pre-isolation behavior."""
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert mw.user_isolation is False
+
+
+def test_user_isolation_respects_constructor_arg():
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_isolation=True,
+    )
+    assert mw.user_isolation is True
+
+
+class _FakeState:
+    """Stand-in for Starlette's request.state — supports attribute set/get."""
+
+    def __init__(self):
+        self.__dict__["_attrs"] = {}
+
+    def __setattr__(self, key, value):
+        self._attrs[key] = value
+
+    def __getattr__(self, key):
+        try:
+            return self._attrs[key]
+        except KeyError as e:
+            raise AttributeError(key) from e
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sets_user_isolation_enabled_on_request_state():
+    """Once the middleware processes a JWT, request.state should carry the
+    flag so downstream helpers (get_scoped_user_id, resolve_db_and_scope)
+    can short-circuit when isolation is off."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import jwt
+
+    secret = "user-isolation-flag-test-secret"
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[secret],
+        algorithm="HS256",
+        user_isolation=True,
+        excluded_route_paths=[],
+    )
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/some/path")
+    request.method = "GET"
+    request.headers = {
+        "Authorization": f"Bearer {jwt.encode({'sub': 'u', 'scopes': [], 'exp': datetime.now(UTC) + timedelta(minutes=5)}, secret, algorithm='HS256')}",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert request.state.user_isolation_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_keeps_user_isolation_false_when_disabled():
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import jwt
+
+    secret = "off-by-default-secret"
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[secret],
+        algorithm="HS256",
+        excluded_route_paths=[],
+    )
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/some/path")
+    request.method = "GET"
+    request.headers = {
+        "Authorization": f"Bearer {jwt.encode({'sub': 'u', 'scopes': [], 'exp': datetime.now(UTC) + timedelta(minutes=5)}, secret, algorithm='HS256')}",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert request.state.user_isolation_enabled is False
+
+
+# -- F1: authorization=True must have a JWT source (fail closed) ------------------------
+
+
+def test_authorization_true_without_jwt_source_raises_even_with_security_key():
+    """authorization=True with no JWT key would silently serve an OPEN instance (JWT and
+    anonymous requests fall through); a security_key does not make it enforceable."""
+    with pytest.raises(ValueError, match="authorization=True requires a JWT verification source"):
+        JWTMiddleware(app=None, authorization=True, security_key="a-security-key")
+
+
+def test_authorization_true_without_jwt_source_raises_even_with_service_account_verifier():
+    """A service-account verifier (a db) must not mask a missing JWT key: PAT scopes are
+    enforced independently, but JWT/anonymous requests would still be open."""
+    from unittest.mock import MagicMock
+
+    with pytest.raises(ValueError, match="authorization=True requires a JWT verification source"):
+        JWTMiddleware(app=None, authorization=True, service_account_verifier=MagicMock())
+
+
+def test_authorization_true_with_jwt_source_is_accepted():
+    mw = JWTMiddleware(app=None, authorization=True, verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert mw.authorization is True
+
+
+# -- C1: a JWT may not claim a reserved (sa: / __scheduler__) principal -----------------
+
+
+def test_is_reserved_principal_matches_reserved_namespaces():
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    assert is_reserved_principal("sa:claude-code")
+    assert is_reserved_principal("sa:")
+    assert is_reserved_principal("__scheduler__")
+    assert not is_reserved_principal("alice")
+    assert not is_reserved_principal("user@example.com")
+    assert not is_reserved_principal("scheduler")
+    assert not is_reserved_principal(None)
+    assert not is_reserved_principal(123)
+
+
+def test_resolve_expected_audience():
+    """The single source of the audience-fallback rule shared by REST, /mcp, and WS.
+
+    verify_audience off => no check; on => configured audience, else the AgentOS id. The
+    third case is the invariant that once drifted (enforced on REST but not /mcp).
+    """
+    from agno.os.middleware.jwt import resolve_expected_audience
+
+    # verify_audience off: never checked, regardless of audience/os_id.
+    assert resolve_expected_audience(verify_audience=False, audience="a", os_id="os-1") is None
+    # on + explicit audience: the audience wins.
+    assert resolve_expected_audience(verify_audience=True, audience="a", os_id="os-1") == "a"
+    # on + no audience: fall back to the AgentOS id (the drift-bug guard).
+    assert resolve_expected_audience(verify_audience=True, audience=None, os_id="os-1") == "os-1"
+    # on + neither: nothing to check against.
+    assert resolve_expected_audience(verify_audience=True, audience=None, os_id=None) is None
+
+
+def _bearer_request(sub, secret, path="/agents"):
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import jwt as jwtlib
+
+    token = jwtlib.encode(
+        {"sub": sub, "scopes": [], "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        secret,
+        algorithm="HS256",
+    )
+    request = MagicMock()
+    request.url = SimpleNamespace(path=path)
+    request.method = "GET"
+    request.headers = {"Authorization": f"Bearer {token}", "origin": None}
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+    return request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserved_sub", ["sa:claude-code", "__scheduler__"])
+async def test_dispatch_rejects_jwt_claiming_reserved_principal(reserved_sub):
+    """A valid-signature JWT whose subject impersonates a service account or the scheduler
+    is rejected 401 before it is trusted — never passed through with the spoofed user_id."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "reserved-principal-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request(reserved_sub, secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    response = await mw.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+    assert getattr(request.state, "authenticated", False) is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_allows_normal_subject():
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "normal-subject-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request("alice", secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+    assert request.state.user_id == "alice"
+
+
+# -- C4: the mount short-circuit trusts only this middleware's private marker -----------
+
+
+def _no_token_request(path="/agents"):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path=path)
+    request.method = "GET"
+    request.headers = {"origin": None}  # no Authorization
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+    return request
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_trust_public_authenticated_flag():
+    """A different middleware setting the public request.state.authenticated must NOT let
+    a request skip AuthMiddleware: with a JWT source configured and no token, it 401s."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=[])
+    request = _no_token_request()
+    request.state.authenticated = True  # spoofed by an unrelated middleware
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    response = await mw.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_short_circuits_on_private_marker():
+    """The private marker set by an outer AuthMiddleware instance short-circuits re-verification."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
+
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=[])
+    request = _no_token_request()
+    setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sets_private_marker_on_success():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
+
+    secret = "marker-on-success-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request("alice", secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert getattr(request.state, _AUTH_COMPLETE_ATTR, False) is True
+
+
+class TestIssuerPinning:
+    """``Authorization(issuer=...)`` must actually reject foreign issuers.
+
+    A valid signature says the token was minted by SOMEONE holding a trusted key, not
+    by the issuer you meant to trust: a deployment verifying several keys (multi-IdP,
+    or a JWKS with more than one signer) accepts tokens from any of them. Pinning the
+    ``iss`` claim is what makes that a rejection -- and it was previously accepted
+    silently as an unknown kwarg and never enforced.
+    """
+
+    GOOD = "https://acme.example-idp.com/"
+    EVIL = "https://evil.example/"
+
+    def _validator(self, issuer=None):
+        from agno.os.middleware.jwt import JWTValidator
+
+        return JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=issuer)
+
+    def _token(self, **claims):
+        from datetime import UTC, datetime, timedelta
+
+        import jwt as pyjwt
+
+        payload = {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1), **claims}
+        return pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    def test_matching_issuer_is_accepted(self):
+        payload = self._validator(issuer=self.GOOD).validate_token(self._token(iss=self.GOOD))
+        assert payload["sub"] == "u"
+
+    def test_foreign_issuer_is_rejected(self):
+        import jwt as pyjwt
+
+        with pytest.raises(pyjwt.InvalidIssuerError):
+            self._validator(issuer=self.GOOD).validate_token(self._token(iss=self.EVIL))
+
+    def test_missing_issuer_claim_is_rejected_when_pinned(self):
+        import jwt as pyjwt
+
+        with pytest.raises(pyjwt.InvalidTokenError):
+            self._validator(issuer=self.GOOD).validate_token(self._token())
+
+    def test_issuer_is_not_checked_when_unpinned(self):
+        """Default stays permissive so existing deployments are unaffected."""
+        payload = self._validator().validate_token(self._token(iss=self.EVIL))
+        assert payload["sub"] == "u"
+
+    def test_issuer_reaches_middleware_kwargs(self):
+        """Regression: the pinned issuer must actually reach the middleware. It lives on the
+        Authorization object (the released AuthorizationConfig has no such field, and pydantic
+        would silently drop an unknown kwarg), so the builder takes it explicitly."""
+        from agno.os.authz import Authorization
+        from agno.os.config import AuthorizationConfig
+        from agno.os.middleware.jwt import build_jwt_middleware_kwargs
+
+        authz = Authorization(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
+        assert authz.issuer == self.GOOD
+        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256")
+        assert build_jwt_middleware_kwargs(config, authorization=True, issuer=authz.issuer)["issuer"] == self.GOOD
+        assert "issuer" not in build_jwt_middleware_kwargs(config, authorization=True)  # unpinned by default
+
+
+class TestCreateDevToken:
+    """``create_dev_token`` mints a signed JWT the real validator accepts, carrying the claims
+    ``auto_provision`` needs -- the honest local path (same pipeline as production, dev key)."""
+
+    def test_the_real_validator_accepts_it_with_its_claims(self):
+        from agno.os.auth import create_dev_token
+        from agno.os.middleware.jwt import JWTValidator
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, email="a@co", name="Alice", scopes=["agents:read"])
+        payload = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256").validate_token(tok)
+        assert payload["sub"] == "alice"
+        assert payload["email"] == "a@co" and payload["name"] == "Alice"
+        assert "agents:read" in payload["scopes"]
+
+    def test_audience_and_standard_claims_are_stamped(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, audience="os-1")
+        payload = pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"], audience="os-1")
+        assert payload["aud"] == "os-1" and payload["sub"] == "alice"
+        assert "exp" in payload and "iat" in payload and "jti" in payload
+
+    def test_a_wrong_key_does_not_verify(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET)
+        with pytest.raises(pyjwt.InvalidSignatureError):
+            pyjwt.decode(tok, "a-completely-different-secret-key-padding-xxxx", algorithms=["HS256"])
+
+    def test_expired_token_is_rejected(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, expires_in=-10)
+        with pytest.raises(pyjwt.ExpiredSignatureError):
+            pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"])
+
+    def test_exported_from_agno_os(self):
+        from agno.os import create_dev_token as exported
+
+        assert callable(exported)

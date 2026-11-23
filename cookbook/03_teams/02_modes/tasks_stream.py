@@ -75,14 +75,14 @@ def main():
     researcher = Agent(
         name="Researcher",
         role="Research specialist",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         instructions="You research topics and provide information.",
     )
 
     writer = Agent(
         name="Writer",
         role="Content writer",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         instructions="You write content based on research.",
     )
 
@@ -90,7 +90,7 @@ def main():
     team = Team(
         name="Content Team",
         mode=TeamMode.tasks,
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         members=[researcher, writer],
         instructions=[
             "You are a content creation team leader.",

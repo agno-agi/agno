@@ -81,7 +81,7 @@ def data_class_tool(name: str, age: int, city: str):
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         dict_tool,
         list_tool,
@@ -168,7 +168,7 @@ if __name__ == "__main__":
         return CustomTool(name=name, age=age, city=city)
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             dict_tool,
             list_tool,

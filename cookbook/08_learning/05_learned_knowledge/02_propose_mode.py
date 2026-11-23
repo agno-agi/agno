@@ -39,7 +39,7 @@ knowledge = Knowledge(
 )
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=(
         "When you discover a valuable insight, propose saving it. "

@@ -1294,9 +1294,7 @@ def test_sync_async_id_consistency(mock_embedder):
         ]
         for doc in docs_async:
             doc.embedding = mock_embedding
-        asyncio.get_event_loop().run_until_complete(
-            db_async.async_insert(content_hash=content_hash, documents=docs_async)
-        )
+        asyncio.run(db_async.async_insert(content_hash=content_hash, documents=docs_async))
         async_ids = sorted(db_async._collection.get()["ids"])
         db_async.drop()
 
@@ -1481,3 +1479,57 @@ def test_no_batch_size_no_batching_logs(chroma_db, caplog):
     assert not batch_log_found, "Expected no batch log messages, but found batch related logs"
 
     assert chroma_db.get_count() == num_documents
+
+
+@pytest.mark.asyncio
+async def test_async_insert_runs_batch_on_worker_thread(chroma_db, sample_documents):
+    """Ensure async_insert offloads the synchronous ChromaDB batch to a worker thread."""
+    from threading import get_ident
+
+    for doc in sample_documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    main_thread_id = get_ident()
+    batch_thread_ids: List[int] = []
+    original_batch = ChromaDb._batch_operation
+
+    def _record_batch(self, *args, **kwargs):
+        batch_thread_ids.append(get_ident())
+        return original_batch(self, *args, **kwargs)
+
+    with patch.object(ChromaDb, "_batch_operation", _record_batch):
+        await chroma_db.async_insert(content_hash="test_hash", documents=sample_documents)
+
+    assert batch_thread_ids, "expected _batch_operation to be invoked"
+    for thread_id in batch_thread_ids:
+        assert thread_id != main_thread_id, (
+            "_batch_operation ran on the asyncio main thread; the synchronous ChromaDB "
+            "batch must be offloaded so the event loop stays responsive during async_insert"
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_runs_batch_on_worker_thread(chroma_db, sample_documents):
+    """Ensure async_upsert offloads the synchronous ChromaDB batch to a worker thread."""
+    from threading import get_ident
+
+    for doc in sample_documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    main_thread_id = get_ident()
+    batch_thread_ids: List[int] = []
+    original_batch = ChromaDb._batch_operation
+
+    def _record_batch(self, *args, **kwargs):
+        batch_thread_ids.append(get_ident())
+        return original_batch(self, *args, **kwargs)
+
+    with patch.object(ChromaDb, "_batch_operation", _record_batch):
+        await chroma_db.async_upsert(content_hash="test_hash", documents=sample_documents)
+
+    assert batch_thread_ids, "expected _batch_operation to be invoked"
+    for thread_id in batch_thread_ids:
+        assert thread_id != main_thread_id, (
+            "_batch_operation ran on the asyncio main thread; the synchronous ChromaDB "
+            "batch must be offloaded so the event loop stays responsive during async_upsert"
+        )

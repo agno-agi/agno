@@ -5,18 +5,26 @@ from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error, log_info
+
+try:
+    import wikipedia
+    from wikipedia.exceptions import DisambiguationError
+except ImportError:
+    raise ImportError("The `wikipedia` package is not installed. Please install it via `pip install wikipedia`.")
 
 
 class WikipediaTools(Toolkit):
     def __init__(
         self,
         knowledge: Optional[Knowledge] = None,
+        auto_suggest: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
 
+        self.auto_suggest = auto_suggest
         self.knowledge: Optional[Knowledge] = knowledge
         if self.knowledge is not None and isinstance(self.knowledge, Knowledge):
             tools.append(self.search_wikipedia_and_update_knowledge_base)
@@ -40,7 +48,7 @@ class WikipediaTools(Toolkit):
         log_debug(f"Adding to knowledge: {topic}")
         self.knowledge.insert(
             topics=[topic],
-            reader=WikipediaReader(),
+            reader=WikipediaReader(auto_suggest=self.auto_suggest),
         )
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)
@@ -52,12 +60,12 @@ class WikipediaTools(Toolkit):
         :param query: The query to search for.
         :return: Relevant documents from wikipedia.
         """
-        try:
-            import wikipedia  # noqa: F401
-        except ImportError:
-            raise ImportError(
-                "The `wikipedia` package is not installed. Please install it via `pip install wikipedia`."
-            )
-
         log_info(f"Searching wikipedia for: {query}")
-        return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        try:
+            content = wikipedia.summary(query, auto_suggest=self.auto_suggest)
+            return json.dumps(Document(name=query, content=content).to_dict())
+        except DisambiguationError as e:
+            return json.dumps({"disambiguation": query, "options": e.options})
+        except Exception as e:
+            log_error(f"Error searching Wikipedia for '{query}': {e}")
+            return json.dumps({"error": str(e)})

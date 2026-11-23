@@ -11,12 +11,14 @@ Tests cover:
 
 import pytest
 
+from agno.filters import from_dict
 from agno.os.routers.traces.schemas import (
     TRACE_FILTER_SCHEMA,
     FilterFieldSchema,
     FilterSchemaResponse,
     TraceSearchRequest,
 )
+from agno.os.routers.traces.traces import _apply_user_scope_to_filter
 
 
 class TestTraceSearchRequestModel:
@@ -330,3 +332,48 @@ class TestTraceFilterSchema:
         for field in TRACE_FILTER_SCHEMA.fields:
             if field.type != "enum":
                 assert field.values is None, f"Non-enum field '{field.key}' should not have values"
+
+
+class TestApplyUserScopeToFilter:
+    """Regression tests for scoped (non-admin) filtered trace search."""
+
+    def _time_filter(self) -> dict:
+        return {
+            "op": "AND",
+            "conditions": [
+                {"op": "GTE", "key": "start_time", "value": "2026-01-01T00:00:00"},
+                {"op": "LTE", "key": "end_time", "value": "2026-06-01T00:00:00"},
+            ],
+        }
+
+    def test_scoped_with_filter_wraps_with_conditions_key(self):
+        """Scoped user + supplied filter -> wrapper uses 'conditions'"""
+        wrapper = _apply_user_scope_to_filter(self._time_filter(), "scoped@user.com")
+
+        assert wrapper["op"] == "AND"
+        assert "conditions" in wrapper
+        user_clause, inner = wrapper["conditions"]
+        assert user_clause == {"op": "EQ", "key": "user_id", "value": "scoped@user.com"}
+        assert inner == self._time_filter()
+
+    def test_scoped_with_filter_survives_converter(self):
+        """The wrapped filter round-trips through from_dict"""
+        wrapper = _apply_user_scope_to_filter(self._time_filter(), "scoped@user.com")
+        from_dict(wrapper)
+
+    def test_scoped_without_filter_uses_bare_user_clause(self):
+        """Scoped user with no filter -> bare EQ user_id clause, no AND wrapper."""
+        result = _apply_user_scope_to_filter(None, "scoped@user.com")
+
+        assert result == {"op": "EQ", "key": "user_id", "value": "scoped@user.com"}
+        from_dict(result)
+
+    def test_admin_with_filter_passes_through_unchanged(self):
+        """Admin / unscoped caller (effective_user_id None) -> raw filter, no user clause."""
+        original = self._time_filter()
+
+        assert _apply_user_scope_to_filter(original, None) == original
+
+    def test_admin_without_filter_returns_none(self):
+        """Admin / unscoped caller with no filter -> still no filter."""
+        assert _apply_user_scope_to_filter(None, None) is None

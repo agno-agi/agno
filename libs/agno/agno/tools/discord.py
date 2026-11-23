@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class DiscordTools(Toolkit):
@@ -20,11 +20,12 @@ class DiscordTools(Toolkit):
         enable_list_channels: bool = True,
         enable_delete_message: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
-            logger.error("Discord bot token is required")
+            log_error("Discord bot token is required")
             raise ValueError("Discord bot token is required")
 
         self.base_url = "https://discord.com/api/v10"
@@ -45,12 +46,12 @@ class DiscordTools(Toolkit):
         if enable_delete_message or all:
             tools.append(self.delete_message)
 
-        super().__init__(name="discord", tools=tools, **kwargs)
+        super().__init__(name="discord", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a request to Discord API."""
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data)
+        response = requests.request(method, url, headers=self.headers, json=data, timeout=self.timeout)
         response.raise_for_status()
         return response.json() if response.text else {}
 
@@ -70,7 +71,7 @@ class DiscordTools(Toolkit):
             self._make_request("POST", f"/channels/{channel_id}/messages", data)
             return f"Message sent successfully to channel {channel_id}"
         except Exception as e:
-            logger.error(f"Error sending message: {e}")
+            logger.exception("Error sending message")
             return f"Error sending message: {str(e)}"
 
     def get_channel_info(self, channel_id: str) -> str:
@@ -87,7 +88,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/channels/{channel_id}")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error getting channel info: {e}")
+            logger.exception("Error getting channel info")
             return f"Error getting channel info: {str(e)}"
 
     def list_channels(self, guild_id: str) -> str:
@@ -104,7 +105,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/guilds/{guild_id}/channels")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error listing channels: {e}")
+            logger.exception("Error listing channels")
             return f"Error listing channels: {str(e)}"
 
     def get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
@@ -122,7 +123,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error getting messages: {e}")
+            logger.exception("Error getting messages")
             return f"Error getting messages: {str(e)}"
 
     def delete_message(self, channel_id: str, message_id: str) -> str:
@@ -140,7 +141,7 @@ class DiscordTools(Toolkit):
             self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
             return f"Message {message_id} deleted successfully from channel {channel_id}"
         except Exception as e:
-            logger.error(f"Error deleting message: {e}")
+            logger.exception("Error deleting message")
             return f"Error deleting message: {str(e)}"
 
     @staticmethod

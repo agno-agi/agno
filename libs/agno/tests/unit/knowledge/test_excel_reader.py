@@ -2048,3 +2048,17 @@ def test_excel_reader_xls_encoding_parameter_passed_to_xlrd(tmp_path: Path):
     assert len(docs) == 1
     assert "name" in docs[0].content
     assert "test" in docs[0].content
+
+
+def test_default_chunking_strategy_is_not_shared_between_instances():
+    """Each ExcelReader() created without an explicit chunking_strategy must
+    get its own RowChunking instance, not a shared mutable default
+    constructed once at import time."""
+    reader_a = ExcelReader()
+    reader_b = ExcelReader()
+
+    assert reader_a.chunking_strategy is not reader_b.chunking_strategy
+
+    reader_a.chunking_strategy.skip_header = True
+
+    assert reader_b.chunking_strategy.skip_header is False

@@ -8,7 +8,7 @@ from agno.media import Audio, Image, Video
 from agno.models.response import FileType
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 try:
     import requests
@@ -46,6 +46,7 @@ class ModelsLabTools(Toolkit):
         model_id: Optional[str] = None,
         width: int = 512,
         height: int = 512,
+        timeout: int = 120,
         **kwargs,
     ):
         file_type_str = file_type.value.upper()
@@ -61,12 +62,12 @@ class ModelsLabTools(Toolkit):
         self.api_key = api_key or getenv("MODELS_LAB_API_KEY")
 
         if not self.api_key:
-            logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
+            log_error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
         tools: List[Any] = []
         tools.append(self.generate_media)
 
-        super().__init__(name="models_labs", tools=tools, **kwargs)
+        super().__init__(name="models_labs", tools=tools, timeout=timeout, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
@@ -142,12 +143,17 @@ class ModelsLabTools(Toolkit):
         time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
         log_info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
 
+        deadline = time.monotonic() + time_to_wait
         for seconds_waited in range(time_to_wait):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
                 fetch_response = requests.post(
                     f"{self.fetch_url}/{media_id}",
                     json={"key": self.api_key},
                     headers={"Content-Type": "application/json"},
+                    timeout=min(self.timeout, remaining),
                 )
                 fetch_result = fetch_response.json()
 
@@ -157,7 +163,7 @@ class ModelsLabTools(Toolkit):
                 time.sleep(1)
 
             except RequestException as e:
-                logger.warning(f"Error during fetch attempt {seconds_waited}: {e}")
+                log_warning(f"Error during fetch attempt {seconds_waited}: {str(e)}")
 
         return False
 
@@ -171,19 +177,19 @@ class ModelsLabTools(Toolkit):
             headers = {"Content-Type": "application/json"}
 
             log_debug(f"Generating {self.file_type.value} for prompt: {prompt}")
-            response = requests.post(self.url, data=payload, headers=headers)
+            response = requests.post(self.url, data=payload, headers=headers, timeout=self.timeout)
             response.raise_for_status()
 
             result = response.json()
 
             status = result.get("status")
             if status == "error":
-                logger.error(f"Error in response: {result.get('message')}")
+                log_error(f"Error in response: {result.get('message')}")
                 return ToolResult(content=f"Error: {result.get('message')}")
 
             if "error" in result:
                 error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return ToolResult(content=f"Error: {result['error']}")
 
             eta = result.get("eta")
@@ -228,9 +234,9 @@ class ModelsLabTools(Toolkit):
 
         except RequestException as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return ToolResult(content=f"Error: {error_msg}")
         except Exception as e:
             error_msg = f"Unexpected error while generating {self.file_type.value}: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return ToolResult(content=f"Error: {error_msg}")

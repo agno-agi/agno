@@ -2,7 +2,7 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 
 try:
     from trafilatura import (
@@ -18,9 +18,10 @@ try:
         from trafilatura.spider import focused_crawler
 
         SPIDER_AVAILABLE = True
-    except ImportError:
+    except ImportError as e:
         SPIDER_AVAILABLE = False
-        logger.warning("Trafilatura spider module not available. Web crawling functionality will be disabled.")
+        log_warning(f"Trafilatura spider module not available. Web crawling functionality will be disabled.: {str(e)}")
+
 
 except ImportError:
     raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")
@@ -177,7 +178,7 @@ class TrafilaturaTools(Toolkit):
             return result
 
         except Exception as e:
-            logger.warning(f"Error extracting text from {url}: {e}")
+            log_warning(f"Error extracting text from {url}: {str(e)}")
             return f"Error extracting text from {url}: {e}"
 
     def extract_metadata_only(
@@ -225,7 +226,7 @@ class TrafilaturaTools(Toolkit):
                 return "\n".join(f"{key}: {value}" for key, value in metadata_dict.items())
 
         except Exception as e:
-            logger.warning(f"Error extracting metadata from {url}: {e}")
+            log_warning(f"Error extracting metadata from {url}: {str(e)}")
             return f"Error extracting metadata from {url}: {e}"
 
     def crawl_website(
@@ -300,7 +301,7 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(crawl_results, indent=2, default=str)
 
         except Exception as e:
-            logger.warning(f"Error crawling website {homepage_url}: {e}")
+            log_warning(f"Error crawling website {homepage_url}: {str(e)}")
             return f"Error crawling website {homepage_url}: {e}"
 
     def html_to_text(
@@ -329,7 +330,7 @@ class TrafilaturaTools(Toolkit):
             return result if result else "Error: Could not extract text from HTML content"
 
         except Exception as e:
-            logger.warning(f"Error converting HTML to text: {e}")
+            log_warning(f"Error converting HTML to text: {str(e)}")
             return f"Error converting HTML to text: {e}"
 
     def extract_batch(
@@ -384,5 +385,5 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(batch_results, indent=2, default=str)
 
         except Exception as e:
-            logger.warning(f"Error in batch extraction: {e}")
+            log_warning(f"Error in batch extraction: {str(e)}")
             return f"Error in batch extraction: {e}"

@@ -17,9 +17,15 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 # Create Agents
 # ---------------------------------------------------------------------------
-step_a = Agent(name="step_a", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step A")
-step_b = Agent(name="step_b", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step B")
-step_c = Agent(name="step_c", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step C")
+step_a = Agent(
+    name="step_a", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step A"
+)
+step_b = Agent(
+    name="step_b", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step B"
+)
+step_c = Agent(
+    name="step_c", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step C"
+)
 
 
 # ---------------------------------------------------------------------------

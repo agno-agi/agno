@@ -2,28 +2,42 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics
 from agno.models.base import Model, RetryableModelProviderError
-from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
+from agno.utils.gemini import (
+    format_function_definitions,
+    format_image_for_message,
+    inject_agno_client_header,
+    prepare_response_schema,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
+
+_FUNCTION_RESPONSE_MEDIA_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/plain",
+}
 
 try:
     from google import genai
@@ -34,12 +48,14 @@ try:
         DynamicRetrievalConfig,
         FileSearch,
         FunctionCallingConfigMode,
+        FunctionResponsePart,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -78,7 +94,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-2.0-flash-001"
+    id: str = "gemini-3.7-flash"
     name: str = "Gemini"
     provider: str = "Google"
 
@@ -196,6 +212,17 @@ class Gemini(Model):
         if self.client_params:
             client_params.update(self.client_params)
 
+        if not vertexai and not getenv("GOOGLE_GENAI_API_VERSION"):
+            http_options = client_params.get("http_options")
+            if http_options is None or isinstance(http_options, dict):
+                options = dict(http_options or {})
+                options["api_version"] = options.get("api_version") or "v1beta"
+                client_params["http_options"] = options
+            elif isinstance(http_options, HttpOptions) and http_options.api_version is None:
+                client_params["http_options"] = http_options.model_copy(update={"api_version": "v1beta"})
+
+        client_params = inject_agno_client_header(client_params)
+
         self.client = genai.Client(**client_params)
         return self.client
 
@@ -238,6 +265,20 @@ class Gemini(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
+    @staticmethod
+    def _format_unexpected_error_message(error: Exception) -> str:
+        """Return a loggable message for a generic provider exception.
+
+        - If ``str(error)`` is non-empty, pass it through unchanged. This keeps
+          existing log/error semantics intact for the common case (rate limits,
+          timeouts with a message, API error strings, etc).
+        - If ``str(error)`` is empty, fall back to the exception class name so
+          the log/ ``ModelProviderError`` still contains a debuggable token
+          instead of an empty string (the original bug).
+        """
+        error_message = str(error).strip()
+        return error_message or type(error).__name__
+
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
 
@@ -267,17 +308,21 @@ class Gemini(Model):
         # User provides their own generation config
         if self.generation_config is not None:
             if isinstance(self.generation_config, GenerateContentConfig):
-                config = self.generation_config.model_dump()
+                config = self.generation_config.model_dump(exclude_none=True)
             else:
-                config = self.generation_config
+                # Copy so the caller's dict isn't modified by the updates below
+                config = dict(self.generation_config)
         else:
             config = {}
 
         if self.generative_model_kwargs:
             config.update(self.generative_model_kwargs)
 
-        config.update(
-            {
+        # Only fields that are set override the config: unset fields default to None
+        # and would otherwise erase values the user passed in generation_config.
+        model_config = {
+            k: v
+            for k, v in {
                 "safety_settings": self.safety_settings,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
@@ -291,8 +336,10 @@ class Gemini(Model):
                 "response_modalities": self.response_modalities,
                 "speech_config": self.speech_config,
                 "cached_content": self.cached_content,
-            }
-        )
+            }.items()
+            if v is not None
+        }
+        config.update(model_config)
 
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
@@ -444,7 +491,7 @@ class Gemini(Model):
                 )
                 total = response.total_tokens or 0
             except Exception as e:
-                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {str(e)}")
                 return super().count_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction (not supported by Google AI Studio API)
@@ -496,7 +543,7 @@ class Gemini(Model):
                 )
                 total = response.total_tokens or 0
             except Exception as e:
-                log_warning(f"Gemini count_tokens API failed: {e}. Falling back to tiktoken-based estimation.")
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {str(e)}")
                 return await super().acount_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction
@@ -551,7 +598,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -567,8 +614,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
         self,
@@ -605,7 +653,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -621,8 +669,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
         self,
@@ -664,7 +713,7 @@ class Gemini(Model):
             return model_response
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -680,8 +729,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
         self,
@@ -721,7 +771,7 @@ class Gemini(Model):
             assistant_message.metrics.stop_timer()
 
         except (ClientError, ServerError) as e:
-            log_error(f"Error from Gemini API: {e}")
+            log_error(f"Error from Gemini API: {str(e)}")
             error_message = str(e)
             if hasattr(e, "response"):
                 if hasattr(e.response, "text"):
@@ -737,8 +787,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
@@ -757,6 +808,9 @@ class Gemini(Model):
         system_message = None
 
         for message in messages:
+            is_tool_result = (
+                message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None
+            )
             role = message.role
             if role in ["system", "developer"]:
                 system_message = message.content
@@ -798,9 +852,15 @@ class Gemini(Model):
             # Individual tool result message (canonical format)
             elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
                 tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                media_parts, fallback_media_parts = self._format_tool_result_media(message)
                 message_parts.append(
-                    Part.from_function_response(name=message.tool_name, response={"result": tc_content})
+                    Part.from_function_response(
+                        name=message.tool_name,
+                        response={"result": tc_content},
+                        parts=media_parts or None,
+                    )
                 )
+                message_parts.extend(fallback_media_parts)
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -809,7 +869,7 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts = [part]
 
-            if role == "user" and message.tool_calls is None:
+            if role == "user" and message.tool_calls is None and not is_tool_result:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -828,17 +888,19 @@ class Gemini(Model):
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded videos carry a File
+                                gemini_video = cast(GeminiFile, video.content)
                                 # Google recommends that if using a single video, place the text prompt after the video.
-                                if video.content.uri and video.content.mime_type:
+                                if gemini_video.uri and gemini_video.mime_type:
                                     message_parts.insert(
-                                        0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
+                                        0, Part.from_uri(file_uri=gemini_video.uri, mime_type=gemini_video.mime_type)
                                     )
                             else:
                                 video_file = self._format_video_for_message(video)
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)
                     except Exception as e:
-                        log_warning(f"Failed to load video from {message.videos}: {e}")
+                        log_warning(f"Failed to load video from {message.videos}: {str(e)}")
                         continue
 
                 # Add audio to the message for the model
@@ -846,13 +908,15 @@ class Gemini(Model):
                     try:
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded audio carries a File
+                                gemini_audio = cast(GeminiFile, audio_snippet.content)
                                 # Google recommends that if using a single audio file, place the text prompt after the audio file.
-                                if audio_snippet.content.uri and audio_snippet.content.mime_type:
+                                if gemini_audio.uri and gemini_audio.mime_type:
                                     message_parts.insert(
                                         0,
                                         Part.from_uri(
-                                            file_uri=audio_snippet.content.uri,
-                                            mime_type=audio_snippet.content.mime_type,
+                                            file_uri=gemini_audio.uri,
+                                            mime_type=gemini_audio.mime_type,
                                         ),
                                     )
                             else:
@@ -860,7 +924,7 @@ class Gemini(Model):
                                 if audio_content:
                                     message_parts.append(audio_content)
                     except Exception as e:
-                        log_warning(f"Failed to load audio from {message.audio}: {e}")
+                        log_warning(f"Failed to load audio from {message.audio}: {str(e)}")
                         continue
 
                 # Add files to the message for the model
@@ -889,17 +953,95 @@ class Gemini(Model):
 
         return merged, system_message
 
+    def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
+        if not self._supports_multimodal_function_responses():
+            return None
+
+        if (
+            part.inline_data is not None
+            and part.inline_data.data is not None
+            and part.inline_data.mime_type is not None
+            and part.inline_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_bytes(
+                data=part.inline_data.data,
+                mime_type=part.inline_data.mime_type,
+            )
+        if (
+            self.vertexai
+            and part.file_data is not None
+            and part.file_data.file_uri is not None
+            and part.file_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_uri(
+                file_uri=part.file_data.file_uri,
+                mime_type=part.file_data.mime_type,
+            )
+        return None
+
+    def _supports_multimodal_function_responses(self) -> bool:
+        model_version = re.search(r"(?:^|/)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id)
+        return model_version is not None and int(model_version.group(1)) >= 3
+
+    def _format_tool_result_media(self, message: Message) -> tuple[List[FunctionResponsePart], List[Part]]:
+        media_parts: List[FunctionResponsePart] = []
+        fallback_media_parts: List[Part] = []
+
+        def add_media_part(part: Part) -> None:
+            response_part = self._to_function_response_part(part)
+            if response_part is not None:
+                media_parts.append(response_part)
+            else:
+                fallback_media_parts.append(part)
+
+        if message.images is not None:
+            for image in message.images:
+                if image.content is not None and isinstance(image.content, GeminiFile):
+                    if image.content.uri and image.content.mime_type:  # type: ignore[attr-defined]
+                        add_media_part(
+                            Part.from_uri(
+                                file_uri=image.content.uri,  # type: ignore[attr-defined]
+                                mime_type=image.content.mime_type,  # type: ignore[attr-defined]
+                            )
+                        )
+                else:
+                    image_content = format_image_for_message(image)
+                    if image_content:
+                        add_media_part(Part.from_bytes(**image_content))
+
+        if message.videos is not None:
+            for video in message.videos:
+                video_part = self._format_video_for_message(video)
+                if video_part is not None:
+                    add_media_part(video_part)
+
+        if message.audio is not None:
+            for audio in message.audio:
+                audio_part = self._format_audio_for_message(audio)
+                if isinstance(audio_part, Part):
+                    add_media_part(audio_part)
+                elif isinstance(audio_part, GeminiFile) and audio_part.uri and audio_part.mime_type:
+                    add_media_part(Part.from_uri(file_uri=audio_part.uri, mime_type=audio_part.mime_type))
+
+        if message.files is not None:
+            for file in message.files:
+                file_part = self._format_file_for_message(file)
+                if file_part is not None:
+                    add_media_part(file_part)
+
+        return media_parts, fallback_media_parts
+
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
+        mime_type = get_mime_type(audio, "audio/mp3")
+
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
-            mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
             return Part.from_bytes(mime_type=mime_type, data=audio.content)
 
         # Case 2: Audio is an url
         elif audio.url is not None:
             audio_bytes = audio.get_content_bytes()  # type: ignore
             if audio_bytes is not None:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
             else:
                 log_warning(f"Failed to download audio from {audio}")
@@ -916,7 +1058,7 @@ class Gemini(Model):
                 if remote_file_name:
                     existing_audio_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                log_warning(f"Error getting file {remote_file_name}: {e}")
+                log_warning(f"Error getting file {remote_file_name}: {str(e)}")
 
             if existing_audio_upload and existing_audio_upload.state and existing_audio_upload.state.name == "SUCCESS":
                 audio_file = existing_audio_upload
@@ -928,7 +1070,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -946,7 +1088,6 @@ class Gemini(Model):
                     return None
 
             if audio_file.uri:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_uri(file_uri=audio_file.uri, mime_type=mime_type)
             return None
         else:
@@ -954,9 +1095,10 @@ class Gemini(Model):
             return None
 
     def _format_video_for_message(self, video: Video) -> Optional[Part]:
+        mime_type = get_mime_type(video, "video/mp4")
+
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
-            mime_type = f"video/{video.format}" if video.format else "video/mp4"
             return Part.from_bytes(mime_type=mime_type, data=video.content)
         # Case 2: Video is stored locally
         elif video.filepath is not None:
@@ -969,7 +1111,7 @@ class Gemini(Model):
                 if remote_file_name:
                     existing_video_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                log_warning(f"Error getting file {remote_file_name}: {e}")
+                log_warning(f"Error getting file {remote_file_name}: {str(e)}")
 
             if existing_video_upload and existing_video_upload.state and existing_video_upload.state.name == "SUCCESS":
                 video_file = existing_video_upload
@@ -981,7 +1123,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -999,12 +1141,10 @@ class Gemini(Model):
                     return None
 
             if video_file.uri:
-                mime_type = f"video/{video.format}" if video.format else "video/mp4"
                 return Part.from_uri(file_uri=video_file.uri, mime_type=mime_type)
             return None
         # Case 3: Video is a URL
         elif video.url is not None:
-            mime_type = f"video/{video.format}" if video.format else "video/webm"
             return Part.from_uri(
                 file_uri=video.url,
                 mime_type=mime_type,
@@ -1059,7 +1199,7 @@ class Gemini(Model):
                         if clean_file_name:
                             remote_file = self.get_client().files.get(name=clean_file_name)
                     except Exception as e:
-                        log_warning(f"Error getting file {clean_file_name}: {e}")
+                        log_warning(f"Error getting file {clean_file_name}: {str(e)}")
 
                     if (
                         remote_file
@@ -1489,12 +1629,16 @@ class Gemini(Model):
 
         return metrics
 
-    def create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+    def create_file_search_store(
+        self, display_name: Optional[str] = None, embedding_model: Optional[str] = None
+    ) -> Any:
         """
         Create a new File Search store.
 
         Args:
             display_name: Optional display name for the store
+            embedding_model: Optional embedding model to use (e.g., "models/gemini-embedding-2").
+                Use "models/gemini-embedding-2" to enable multimodal (image) file search.
 
         Returns:
             FileSearchStore: The created File Search store object
@@ -1502,19 +1646,27 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if embedding_model:
+            config["embedding_model"] = embedding_model
 
         try:
             store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
-            log_error(f"Error creating File Search store: {e}")
+            log_error(f"Error creating File Search store: {str(e)}")
             raise
 
-    async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+    async def async_create_file_search_store(
+        self, display_name: Optional[str] = None, embedding_model: Optional[str] = None
+    ) -> Any:
         """
+        Async version of create_file_search_store.
+
         Args:
             display_name: Optional display name for the store
+            embedding_model: Optional embedding model to use (e.g., "models/gemini-embedding-2").
+                Use "models/gemini-embedding-2" to enable multimodal (image) file search.
 
         Returns:
             FileSearchStore: The created File Search store object
@@ -1522,13 +1674,15 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if embedding_model:
+            config["embedding_model"] = embedding_model
 
         try:
             store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
-            log_error(f"Error creating File Search store: {e}")
+            log_error(f"Error creating File Search store: {str(e)}")
             raise
 
     def list_file_search_stores(self, page_size: int = 100) -> List[Any]:
@@ -1548,7 +1702,7 @@ class Gemini(Model):
             log_debug(f"Found {len(stores)} File Search stores")
             return stores
         except Exception as e:
-            log_error(f"Error listing File Search stores: {e}")
+            log_error(f"Error listing File Search stores: {str(e)}")
             raise
 
     async def async_list_file_search_stores(self, page_size: int = 100) -> List[Any]:
@@ -1568,7 +1722,7 @@ class Gemini(Model):
             log_debug(f"Found {len(stores)} File Search stores")
             return stores
         except Exception as e:
-            log_error(f"Error listing File Search stores: {e}")
+            log_error(f"Error listing File Search stores: {str(e)}")
             raise
 
     def get_file_search_store(self, name: str) -> Any:
@@ -1586,7 +1740,7 @@ class Gemini(Model):
             log_debug(f"Retrieved File Search store: {name}")
             return store
         except Exception as e:
-            log_error(f"Error getting File Search store {name}: {e}")
+            log_error(f"Error getting File Search store {name}: {str(e)}")
             raise
 
     async def async_get_file_search_store(self, name: str) -> Any:
@@ -1602,7 +1756,7 @@ class Gemini(Model):
             log_debug(f"Retrieved File Search store: {name}")
             return store
         except Exception as e:
-            log_error(f"Error getting File Search store {name}: {e}")
+            log_error(f"Error getting File Search store {name}: {str(e)}")
             raise
 
     def delete_file_search_store(self, name: str, force: bool = False) -> None:
@@ -1617,7 +1771,7 @@ class Gemini(Model):
             self.get_client().file_search_stores.delete(name=name, config={"force": force})
             log_info(f"Deleted File Search store: {name}")
         except Exception as e:
-            log_error(f"Error deleting File Search store {name}: {e}")
+            log_error(f"Error deleting File Search store {name}: {str(e)}")
             raise
 
     async def async_delete_file_search_store(self, name: str, force: bool = True) -> None:
@@ -1632,7 +1786,7 @@ class Gemini(Model):
             await self.get_client().aio.file_search_stores.delete(name=name, config={"force": force})
             log_info(f"Deleted File Search store: {name}")
         except Exception as e:
-            log_error(f"Error deleting File Search store {name}: {e}")
+            log_error(f"Error deleting File Search store {name}: {str(e)}")
             raise
 
     def wait_for_operation(self, operation: Operation, poll_interval: int = 5, max_wait: int = 600) -> Operation:
@@ -1693,16 +1847,22 @@ class Gemini(Model):
         file_path: Union[str, Path],
         store_name: str,
         display_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
         chunking_config: Optional[Dict[str, Any]] = None,
         custom_metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
         Upload a file directly to a File Search store.
 
+        Supports image uploads (image/jpeg, image/png) when the store is created
+        with the "models/gemini-embedding-2" embedding model for multimodal search.
+
         Args:
             file_path: Path to the file to upload
             store_name: Name of the File Search store
             display_name: Optional display name for the file (will be visible in citations)
+            mime_type: Optional MIME type of the file (e.g., "image/jpeg", "image/png", "application/pdf").
+                If not provided, the MIME type will be inferred from the file extension.
             chunking_config: Optional chunking configuration
                 Example: {
                     "white_space_config": {
@@ -1727,6 +1887,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if mime_type:
+            config["mime_type"] = mime_type
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1742,7 +1904,7 @@ class Gemini(Model):
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception as e:
-            log_error(f"Error uploading file to File Search store: {e}")
+            log_error(f"Error uploading file to File Search store: {str(e)}")
             raise
 
     async def async_upload_to_file_search_store(
@@ -1750,14 +1912,22 @@ class Gemini(Model):
         file_path: Union[str, Path],
         store_name: str,
         display_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
         chunking_config: Optional[Dict[str, Any]] = None,
         custom_metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
+        Async version of upload_to_file_search_store.
+
+        Supports image uploads (image/jpeg, image/png) when the store is created
+        with the "models/gemini-embedding-2" embedding model for multimodal search.
+
         Args:
             file_path: Path to the file to upload
             store_name: Name of the File Search store
             display_name: Optional display name for the file
+            mime_type: Optional MIME type of the file (e.g., "image/jpeg", "image/png", "application/pdf").
+                If not provided, the MIME type will be inferred from the file extension.
             chunking_config: Optional chunking configuration
             custom_metadata: Optional custom metadata
 
@@ -1772,6 +1942,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if mime_type:
+            config["mime_type"] = mime_type
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1787,7 +1959,7 @@ class Gemini(Model):
             log_info(f"Upload initiated for {file_path.name}")
             return operation
         except Exception as e:
-            log_error(f"Error uploading file to File Search store: {e}")
+            log_error(f"Error uploading file to File Search store: {str(e)}")
             raise
 
     def import_file_to_store(
@@ -1825,7 +1997,7 @@ class Gemini(Model):
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception as e:
-            log_error(f"Error importing file to File Search store: {e}")
+            log_error(f"Error importing file to File Search store: {str(e)}")
             raise
 
     async def async_import_file_to_store(
@@ -1861,7 +2033,7 @@ class Gemini(Model):
             log_info(f"Import initiated for {file_name}")
             return operation
         except Exception as e:
-            log_error(f"Error importing file to File Search store: {e}")
+            log_error(f"Error importing file to File Search store: {str(e)}")
             raise
 
     def list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
@@ -1882,7 +2054,7 @@ class Gemini(Model):
             log_debug(f"Found {len(documents)} documents in store {store_name}")
             return documents
         except Exception as e:
-            log_error(f"Error listing documents in store {store_name}: {e}")
+            log_error(f"Error listing documents in store {store_name}: {str(e)}")
             raise
 
     async def async_list_documents(self, store_name: str, page_size: int = 20) -> List[Any]:
@@ -1906,7 +2078,7 @@ class Gemini(Model):
             log_debug(f"Found {len(documents)} documents in store {store_name}")
             return documents
         except Exception as e:
-            log_error(f"Error listing documents in store {store_name}: {e}")
+            log_error(f"Error listing documents in store {store_name}: {str(e)}")
             raise
 
     def get_document(self, document_name: str) -> Any:
@@ -1925,7 +2097,7 @@ class Gemini(Model):
             log_debug(f"Retrieved document: {document_name}")
             return doc
         except Exception as e:
-            log_error(f"Error getting document {document_name}: {e}")
+            log_error(f"Error getting document {document_name}: {str(e)}")
             raise
 
     async def async_get_document(self, document_name: str) -> Any:
@@ -1943,7 +2115,7 @@ class Gemini(Model):
             log_debug(f"Retrieved document: {document_name}")
             return doc
         except Exception as e:
-            log_error(f"Error getting document {document_name}: {e}")
+            log_error(f"Error getting document {document_name}: {str(e)}")
             raise
 
     def delete_document(self, document_name: str) -> None:
@@ -1955,7 +2127,7 @@ class Gemini(Model):
 
         Example:
             ```python
-            model = Gemini(id="gemini-2.5-flash")
+            model = Gemini(id="gemini-3.7-flash")
             model.delete_document("fileSearchStores/store-123/documents/doc-456")
             ```
         """
@@ -1963,7 +2135,7 @@ class Gemini(Model):
             self.get_client().file_search_stores.documents.delete(name=document_name)
             log_info(f"Deleted document: {document_name}")
         except Exception as e:
-            log_error(f"Error deleting document {document_name}: {e}")
+            log_error(f"Error deleting document {document_name}: {str(e)}")
             raise
 
     async def async_delete_document(self, document_name: str) -> None:
@@ -1977,5 +2149,47 @@ class Gemini(Model):
             await self.get_client().aio.file_search_stores.documents.delete(name=document_name)
             log_info(f"Deleted document: {document_name}")
         except Exception as e:
-            log_error(f"Error deleting document {document_name}: {e}")
+            log_error(f"Error deleting document {document_name}: {str(e)}")
+            raise
+
+    def download_blob(self, media_id: str) -> Any:
+        """
+        Download a media blob cited by Gemini File Search (multimodal).
+
+        When using multimodal file search with image uploads, the grounding metadata
+        may include a media_id for cited images. Use this method to download the
+        cited image content.
+
+        Args:
+            media_id: The media_id from grounding metadata
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
+
+        Returns:
+            The blob content returned by the SDK
+        """
+        try:
+            result = self.get_client().file_search_stores.download_media(media_id=media_id)
+            log_info(f"Downloaded blob: {media_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error downloading blob {media_id}: {str(e)}")
+            raise
+
+    async def async_download_blob(self, media_id: str) -> Any:
+        """
+        Async version of download_blob.
+
+        Args:
+            media_id: The media_id from grounding metadata
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
+
+        Returns:
+            The blob content returned by the SDK
+        """
+        try:
+            result = await self.get_client().aio.file_search_stores.download_media(media_id=media_id)
+            log_info(f"Downloaded blob: {media_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error downloading blob {media_id}: {str(e)}")
             raise

@@ -185,7 +185,7 @@ project_store = ProjectContextStore(
 
 # Plug into LearningMachine via custom_stores
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     learning=LearningMachine(
         custom_stores={
             "project": project_store,

@@ -111,13 +111,13 @@ def mock_credentials():
 @pytest.fixture
 def tools(mock_credentials, mock_slides_service, mock_drive_service):
     with (
-        patch("agno.tools.google.slides.build"),
+        patch("googleapiclient.discovery.build"),
         patch("agno.tools.google.slides.authenticate", lambda func: func),
     ):
         toolkit = GoogleSlidesTools(creds=mock_credentials)
         toolkit.slides_service = mock_slides_service
         toolkit.drive_service = mock_drive_service
-        toolkit.service = mock_slides_service
+        toolkit._service = mock_slides_service
         return toolkit
 
 

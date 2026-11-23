@@ -3,7 +3,9 @@
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, Mock, patch
+from zoneinfo import ZoneInfoNotFoundError
 
 import pytest
 from google.oauth2.credentials import Credentials
@@ -29,13 +31,12 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_tools(mock_credentials, mock_calendar_service):
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
-        tools = GoogleCalendarTools()
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools = GoogleCalendarTools(creds=mock_credentials)
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -43,17 +44,17 @@ def calendar_tools(mock_credentials, mock_calendar_service):
 def calendar_tools_all(mock_credentials, mock_calendar_service):
     """Instance with ALL tools enabled including write tools."""
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(
+            creds=mock_credentials,
             quick_add_event=True,
             move_event=True,
             respond_to_event=True,
         )
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -142,12 +143,12 @@ class TestGoogleCalendarToolsInitialization:
             service_account_path="/path/to/key.json",
             delegated_user="user@example.com",
         )
-        assert tools.service_account_path == "/path/to/key.json"
-        assert tools.delegated_user == "user@example.com"
+        assert tools._auth.service_account_path == "/path/to/key.json"
+        assert tools._auth.delegated_user == "user@example.com"
 
     def test_init_login_hint(self):
         tools = GoogleCalendarTools(login_hint="user@example.com")
-        assert tools.login_hint == "user@example.com"
+        assert tools._auth.login_hint == "user@example.com"
 
 
 class TestBackwardCompat:
@@ -175,7 +176,7 @@ class TestBackwardCompat:
 class TestScopeValidation:
     def test_default_scopes(self):
         tools = GoogleCalendarTools()
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_read_only_tools_get_default_scopes(self):
         tools = GoogleCalendarTools(
@@ -183,7 +184,7 @@ class TestScopeValidation:
             update_event=False,
             delete_event=False,
         )
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_custom_scopes_write_validated(self):
         with pytest.raises(ValueError, match="required for write operations"):
@@ -233,7 +234,7 @@ class TestListEvents:
 
         result = calendar_tools.list_events(limit=2)
         result_data = json.loads(result)
-        assert result_data == mock_events
+        assert result_data["events"] == mock_events
 
     def test_list_events_no_events(self, calendar_tools, mock_calendar_service):
         mock_calendar_service.events().list().execute.return_value = {"items": []}
@@ -245,7 +246,15 @@ class TestListEvents:
         mock_events = [{"id": "1", "summary": "Test Event"}]
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
         result = calendar_tools.list_events(start_date="2025-07-19T10:00:00")
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2025-07-19T10:00:00.000000Z"
+
+    def test_list_events_with_timezone_aware_start_date(self, calendar_tools, mock_calendar_service):
+        mock_events = [{"id": "1", "summary": "Test Event"}]
+        mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
+        result = calendar_tools.list_events(start_date="2026-07-01T10:00:00+02:00")
+        assert json.loads(result)["events"] == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2026-07-01T08:00:00.000000Z"
 
     def test_list_events_invalid_date_format(self, calendar_tools):
         result = calendar_tools.list_events(start_date="invalid-date")
@@ -329,6 +338,29 @@ class TestCreateEvent:
         )
         assert "error" in json.loads(result)
 
+    def test_create_event_timezone_aware_preserves_offset(self, calendar_tools, mock_calendar_service):
+        mock_calendar_service.events().insert().execute.return_value = {"id": "test_id"}
+        calendar_tools.create_event(
+            start_date="2026-07-01T10:00:00+02:00",
+            end_date="2026-07-01T11:00:00+02:00",
+            title="Test Event",
+            timezone="UTC",
+        )
+        body = mock_calendar_service.events().insert.call_args.kwargs["body"]
+        assert body["start"]["dateTime"] == "2026-07-01T10:00:00+02:00"
+        assert body["end"]["dateTime"] == "2026-07-01T11:00:00+02:00"
+
+    def test_create_event_naive_datetime_left_for_timezone(self, calendar_tools, mock_calendar_service):
+        mock_calendar_service.events().insert().execute.return_value = {"id": "test_id"}
+        calendar_tools.create_event(
+            start_date="2026-07-01T10:00:00",
+            end_date="2026-07-01T11:00:00",
+            title="Test Event",
+            timezone="America/New_York",
+        )
+        body = mock_calendar_service.events().insert.call_args.kwargs["body"]
+        assert body["start"] == {"dateTime": "2026-07-01T10:00:00", "timeZone": "America/New_York"}
+
 
 class TestUpdateEvent:
     def test_update_event_success(self, calendar_tools, mock_calendar_service):
@@ -362,6 +394,43 @@ class TestUpdateEvent:
             event_id="test_id", start_date="2025-07-19T14:00:00", end_date="2025-07-19T15:00:00"
         )
         assert "error" not in json.loads(result)
+
+    def test_update_event_timezone_aware_preserves_offset(self, calendar_tools, mock_calendar_service):
+        existing_event = {
+            "id": "test_id",
+            "summary": "Test Event",
+            "start": {"dateTime": "2025-07-19T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2025-07-19T11:00:00", "timeZone": "UTC"},
+        }
+        mock_calendar_service.events().get().execute.return_value = existing_event
+        mock_calendar_service.events().update().execute.return_value = existing_event
+
+        calendar_tools.update_event(
+            event_id="test_id", start_date="2026-07-01T10:00:00+02:00", end_date="2026-07-01T11:00:00+02:00"
+        )
+        body = mock_calendar_service.events().update.call_args.kwargs["body"]
+        assert body["start"]["dateTime"] == "2026-07-01T10:00:00+02:00"
+        assert body["end"]["dateTime"] == "2026-07-01T11:00:00+02:00"
+
+    def test_update_event_naive_datetime_left_for_timezone(self, calendar_tools, mock_calendar_service):
+        existing_event = {
+            "id": "test_id",
+            "summary": "Test Event",
+            "start": {"dateTime": "2025-07-19T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2025-07-19T11:00:00", "timeZone": "UTC"},
+        }
+        mock_calendar_service.events().get().execute.return_value = existing_event
+        mock_calendar_service.events().update().execute.return_value = existing_event
+
+        calendar_tools.update_event(
+            event_id="test_id",
+            start_date="2026-07-01T10:00:00",
+            end_date="2026-07-01T11:00:00",
+            timezone="America/New_York",
+        )
+        body = mock_calendar_service.events().update.call_args.kwargs["body"]
+        assert body["start"] == {"dateTime": "2026-07-01T10:00:00", "timeZone": "America/New_York"}
+        assert body["end"] == {"dateTime": "2026-07-01T11:00:00", "timeZone": "America/New_York"}
 
 
 class TestDeleteEvent:
@@ -397,6 +466,48 @@ class TestFetchAllEvents:
 
 
 class TestFindAvailableSlots:
+    @pytest.mark.parametrize(
+        ("duration_minutes", "end_hour", "expected_last_end", "expected_count"),
+        [
+            (30, 17, "17:00:00", 16),
+            (45, 17, "16:45:00", 15),
+            (60, 17, "17:00:00", 15),
+            (480, 17, "17:00:00", 1),
+            (481, 17, None, 0),
+            (1500, 17, None, 0),
+            (45, 18, "17:45:00", 17),
+        ],
+    )
+    @patch.object(GoogleCalendarTools, "fetch_all_events")
+    @patch.object(GoogleCalendarTools, "_get_working_hours")
+    def test_available_slots_end_within_working_hours(
+        self,
+        mock_working_hours,
+        mock_fetch,
+        calendar_tools,
+        duration_minutes,
+        end_hour,
+        expected_last_end,
+        expected_count,
+    ):
+        mock_working_hours.return_value = json.dumps(
+            {"start_hour": 9, "end_hour": end_hour, "timezone": "UTC", "locale": "en"}
+        )
+        mock_fetch.return_value = json.dumps([])
+
+        result = json.loads(
+            calendar_tools.find_available_slots("2026-10-02", "2026-10-02", duration_minutes=duration_minutes)
+        )
+
+        slots = result["available_slots"]
+        assert len(slots) == expected_count
+        if expected_last_end is not None:
+            assert slots[-1]["end"] == f"2026-10-02T{expected_last_end}+00:00"
+        for slot in slots:
+            start = datetime.fromisoformat(slot["start"])
+            end = datetime.fromisoformat(slot["end"])
+            assert end <= start.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+
     @patch.object(GoogleCalendarTools, "fetch_all_events")
     @patch.object(GoogleCalendarTools, "_get_working_hours")
     def test_find_available_slots_success(self, mock_working_hours, mock_fetch, calendar_tools):
@@ -445,11 +556,187 @@ class TestFindAvailableSlots:
         assert result_data["events_analyzed"] == 0
         assert len(result_data["available_slots"]) >= 10
 
+    @patch.object(GoogleCalendarTools, "_get_working_hours")
+    def test_find_available_slots_single_day_queries_working_hours(
+        self, mock_working_hours, calendar_tools, mock_calendar_service
+    ):
+        mock_working_hours.return_value = json.dumps(
+            {"start_hour": 9, "end_hour": 17, "timezone": "UTC", "locale": "en"}
+        )
+        mock_calendar_service.events().list().execute.return_value = {"items": []}
+
+        calendar_tools.find_available_slots(start_date="2026-10-02", end_date="2026-10-02", duration_minutes=60)
+
+        params = mock_calendar_service.events().list.call_args.kwargs
+        assert params["timeMin"] == "2026-10-02T09:00:00+00:00"
+        assert params["timeMax"] == "2026-10-02T17:00:00+00:00"
+
+    @patch.object(GoogleCalendarTools, "_get_working_hours")
+    def test_find_available_slots_blocks_busy_event_on_last_day(
+        self, mock_working_hours, calendar_tools, mock_calendar_service
+    ):
+        mock_working_hours.return_value = json.dumps(
+            {"start_hour": 9, "end_hour": 17, "timezone": "UTC", "locale": "en"}
+        )
+        busy_event = {
+            "start": {"dateTime": "2026-10-02T14:00:00+00:00"},
+            "end": {"dateTime": "2026-10-02T15:00:00+00:00"},
+        }
+
+        def execute_list_request():
+            params = mock_calendar_service.events().list.call_args.kwargs
+            time_min = datetime.fromisoformat(params["timeMin"])
+            time_max = datetime.fromisoformat(params["timeMax"])
+            event_start = datetime.fromisoformat(busy_event["start"]["dateTime"])
+            event_end = datetime.fromisoformat(busy_event["end"]["dateTime"])
+            if event_end > time_min and event_start < time_max:
+                return {"items": [busy_event]}
+            return {"items": []}
+
+        mock_calendar_service.events().list().execute.side_effect = execute_list_request
+
+        result = json.loads(calendar_tools.find_available_slots("2026-10-01", "2026-10-02", duration_minutes=60))
+
+        assert result["events_analyzed"] == 1
+        assert "2026-10-02T14:00:00+00:00" not in [slot["start"] for slot in result["available_slots"]]
+
     def test_find_available_slots_invalid_date(self, calendar_tools):
         result = calendar_tools.find_available_slots(
             start_date="invalid-date", end_date="2025-07-19", duration_minutes=60
         )
         assert "error" in json.loads(result)
+
+    @staticmethod
+    def _find_slots(calendar_tools, tz, start, end, *, hours=(9, 17), duration=30, events=None):
+        working_hours = json.dumps({"start_hour": hours[0], "end_hour": hours[1], "timezone": tz, "locale": "en"})
+        with (
+            patch.object(GoogleCalendarTools, "_get_working_hours", return_value=working_hours),
+            patch.object(GoogleCalendarTools, "fetch_all_events", return_value=json.dumps(events or [])) as mock_fetch,
+        ):
+            result = json.loads(calendar_tools.find_available_slots(start, end, duration))
+        return result, mock_fetch
+
+    @pytest.mark.parametrize(
+        ("tz", "offset"),
+        [
+            ("UTC", "+00:00"),
+            ("Asia/Kolkata", "+05:30"),
+            ("Asia/Kathmandu", "+05:45"),
+            ("America/Los_Angeles", "-07:00"),
+            ("Pacific/Auckland", "+13:00"),
+        ],
+    )
+    def test_find_available_slots_uses_user_timezone(self, calendar_tools, tz, offset):
+        result, _ = self._find_slots(calendar_tools, tz, "2026-10-27", "2026-10-27")
+
+        slots = result["available_slots"]
+        assert result["timezone"] == tz
+        assert len(slots) == 16
+        assert slots[0]["start"] == f"2026-10-27T09:00:00{offset}"
+        assert slots[-1]["end"] == f"2026-10-27T17:00:00{offset}"
+
+    def test_find_available_slots_local_day_can_start_on_previous_utc_day(self, calendar_tools):
+        result, _ = self._find_slots(calendar_tools, "Pacific/Auckland", "2026-10-26", "2026-10-26")
+
+        first = result["available_slots"][0]["start"]
+        assert first == "2026-10-26T09:00:00+13:00"
+        assert datetime.fromisoformat(first).astimezone(timezone.utc).weekday() == 6
+
+    def test_find_available_slots_fetches_scanned_local_window(self, calendar_tools):
+        result, mock_fetch = self._find_slots(calendar_tools, "Asia/Kolkata", "2026-10-27", "2026-10-28")
+
+        mock_fetch.assert_called_once_with(start_date="2026-10-27T09:00:00+05:30", end_date="2026-10-28T17:00:00+05:30")
+        assert result["available_slots"][-1]["end"] == "2026-10-28T17:00:00+05:30"
+
+    def test_find_available_slots_busy_event_in_other_offset(self, calendar_tools):
+        # 06:30-07:30 at -04:00 is 16:00-17:00 in Asia/Kolkata
+        events = [
+            {"start": {"dateTime": "2026-10-27T06:30:00-04:00"}, "end": {"dateTime": "2026-10-27T07:30:00-04:00"}}
+        ]
+
+        result, _ = self._find_slots(
+            calendar_tools, "Asia/Kolkata", "2026-10-27", "2026-10-27", duration=60, events=events
+        )
+
+        starts = [slot["start"] for slot in result["available_slots"]]
+        assert result["events_analyzed"] == 1
+        assert "2026-10-27T15:00:00+05:30" in starts
+        assert "2026-10-27T15:30:00+05:30" not in starts
+        assert "2026-10-27T16:00:00+05:30" not in starts
+
+    def test_find_available_slots_offset_changes_between_days(self, calendar_tools):
+        # US daylight saving ends on Sunday 2026-11-01; Friday is -07:00 and Monday is -08:00
+        result, mock_fetch = self._find_slots(calendar_tools, "America/Los_Angeles", "2026-10-30", "2026-11-02")
+
+        starts = [slot["start"] for slot in result["available_slots"]]
+        assert starts[0] == "2026-10-30T09:00:00-07:00"
+        assert "2026-11-02T09:00:00-08:00" in starts
+        assert not any(start.startswith(("2026-10-31", "2026-11-01")) for start in starts)
+        mock_fetch.assert_called_once_with(start_date="2026-10-30T09:00:00-07:00", end_date="2026-11-02T17:00:00-08:00")
+
+    def test_find_available_slots_skips_nonexistent_local_times(self, calendar_tools):
+        # Israel springs forward 02:00 -> 03:00 on Friday 2026-03-27, so 02:xx does not exist
+        result, _ = self._find_slots(
+            calendar_tools, "Asia/Jerusalem", "2026-03-27", "2026-03-27", hours=(1, 5), duration=60
+        )
+
+        slots = result["available_slots"]
+        assert [slot["start"] for slot in slots] == [
+            "2026-03-27T01:00:00+02:00",
+            "2026-03-27T01:30:00+02:00",
+            "2026-03-27T03:00:00+03:00",
+            "2026-03-27T03:30:00+03:00",
+            "2026-03-27T04:00:00+03:00",
+        ]
+        assert slots[0]["end"] == "2026-03-27T03:00:00+03:00"
+
+    @pytest.mark.parametrize(
+        ("start", "end", "first_slot"),
+        [
+            # 23:00 at -04:00 is already Tuesday 08:30 in Asia/Kolkata
+            ("2026-10-26T23:00:00-04:00", "2026-10-26T23:00:00-04:00", "2026-10-27T09:00:00+05:30"),
+            # no offset: the wall-clock date is taken as-is
+            ("2026-10-27T15:30:00", "2026-10-27T15:30:00", "2026-10-27T09:00:00+05:30"),
+        ],
+    )
+    def test_find_available_slots_timestamp_uses_user_local_date(self, calendar_tools, start, end, first_slot):
+        result, _ = self._find_slots(calendar_tools, "Asia/Kolkata", start, end)
+
+        assert result["available_slots"][0]["start"] == first_slot
+
+    def test_find_available_slots_timestamp_on_user_weekend(self, calendar_tools):
+        # Friday 20:00 at -07:00 is Saturday 08:30 in Asia/Kolkata
+        result, _ = self._find_slots(
+            calendar_tools, "Asia/Kolkata", "2026-10-30T20:00:00-07:00", "2026-10-30T20:00:00-07:00"
+        )
+
+        assert result["available_slots"] == []
+
+    def test_find_available_slots_unknown_timezone_falls_back_to_utc(self, calendar_tools):
+        with patch("agno.tools.google.calendar.log_warning") as mock_warning:
+            result, _ = self._find_slots(calendar_tools, "Not/AZone", "2026-10-27", "2026-10-27")
+
+        mock_warning.assert_called_once()
+        assert "Could not load timezone 'Not/AZone'" in mock_warning.call_args.args[0]
+        assert "using UTC" in mock_warning.call_args.args[0]
+        assert result["timezone"] == "UTC"
+        assert result["available_slots"][0]["start"] == "2026-10-27T09:00:00+00:00"
+        assert all(slot["end"].endswith("+00:00") for slot in result["available_slots"])
+
+    def test_find_available_slots_without_timezone_database(self, calendar_tools):
+        # Windows without the tzdata package cannot resolve any zone, not even "UTC"
+        with (
+            patch("agno.tools.google.calendar.ZoneInfo", side_effect=ZoneInfoNotFoundError("no tzdata")),
+            patch("agno.tools.google.calendar.log_warning") as mock_warning,
+        ):
+            result, _ = self._find_slots(calendar_tools, "Asia/Kolkata", "2026-10-27", "2026-10-27")
+
+        mock_warning.assert_called_once()
+        assert "Could not load timezone 'Asia/Kolkata'" in mock_warning.call_args.args[0]
+        assert "using UTC" in mock_warning.call_args.args[0]
+        assert result["timezone"] == "UTC"
+        assert result["available_slots"][0]["start"] == "2026-10-27T09:00:00+00:00"
+        assert all(slot["end"].endswith("+00:00") for slot in result["available_slots"])
 
 
 class TestListCalendars:
@@ -560,7 +847,7 @@ class TestSearchEvents:
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
 
         result = calendar_tools.search_events(query="standup")
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
 
     def test_search_no_results(self, calendar_tools, mock_calendar_service):
         mock_calendar_service.events().list().execute.return_value = {"items": []}
@@ -577,7 +864,7 @@ class TestSearchEvents:
             start_date="2025-07-01T00:00:00",
             end_date="2025-07-31T23:59:59",
         )
-        assert json.loads(result) == mock_events
+        assert json.loads(result)["events"] == mock_events
 
 
 class TestMoveEvent:

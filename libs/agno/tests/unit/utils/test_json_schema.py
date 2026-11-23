@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.utils.json_schema import (
     get_json_schema,
@@ -103,13 +103,74 @@ def test_get_json_schema_for_arg_collections():
     list_schema = get_json_schema_for_arg(List[str])
     assert list_schema == {"type": "array", "items": {"type": "string"}}
 
-    # Test dict type
+    # Test Dict[str, int] - typed dict
     dict_schema = get_json_schema_for_arg(Dict[str, int])
     assert dict_schema == {
         "type": "object",
         "propertyNames": {"type": "string"},
         "additionalProperties": {"type": "integer"},
     }
+
+
+def test_get_json_schema_for_arg_bare_dict():
+    """Test that bare dict allows arbitrary key-value pairs (issue #7175)."""
+    # Bare dict should allow any properties
+    bare_dict_schema = get_json_schema_for_arg(dict)
+    assert bare_dict_schema == {"type": "object", "additionalProperties": True}
+
+    # List of bare dicts
+    list_dict_schema = get_json_schema_for_arg(List[dict])
+    assert list_dict_schema == {
+        "type": "array",
+        "items": {"type": "object", "additionalProperties": True},
+    }
+
+    # Optional[dict] should have anyOf with the correct dict schema
+    optional_dict_schema = get_json_schema_for_arg(Optional[dict])
+    assert "anyOf" in optional_dict_schema
+    dict_variant = next(s for s in optional_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Union[dict, str] should have dict with correct schema
+    union_dict_schema = get_json_schema_for_arg(Union[dict, str])
+    assert "anyOf" in union_dict_schema
+    dict_variant = next(s for s in union_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Lowercase generic (Python 3.9+): list[dict]
+    list_dict_lower = get_json_schema_for_arg(list[dict])
+    assert list_dict_lower["type"] == "array"
+    assert list_dict_lower["items"].get("additionalProperties") is True
+
+
+def test_get_json_schema_bare_dict_in_function():
+    """Test bare dict as a function parameter generates correct schema."""
+    type_hints = {"data": dict}
+    param_descriptions = {"data": "Arbitrary key-value pairs"}
+
+    schema = get_json_schema(type_hints, param_descriptions)
+
+    assert schema["type"] == "object"
+    assert "properties" in schema
+    assert "data" in schema["properties"]
+
+    data_schema = schema["properties"]["data"]
+    assert data_schema["type"] == "object"
+    assert data_schema["additionalProperties"] is True
+    assert data_schema["description"] == "Arbitrary key-value pairs"
+
+
+def test_get_json_schema_typed_dict_unchanged():
+    """Ensure typed Dict[K, V] still works correctly (regression test)."""
+    # Dict[str, int] should use typed additionalProperties
+    typed_dict = get_json_schema_for_arg(Dict[str, int])
+    assert typed_dict["type"] == "object"
+    assert typed_dict["additionalProperties"] == {"type": "integer"}
+
+    # Lowercase dict[str, int] should work the same
+    typed_dict_lower = get_json_schema_for_arg(dict[str, int])
+    assert typed_dict_lower["type"] == "object"
+    assert typed_dict_lower["additionalProperties"] == {"type": "integer"}
 
 
 def test_get_json_schema_for_arg_union():
@@ -199,6 +260,24 @@ def test_get_json_schema_with_dataclass():
     assert user_schema["properties"]["age"]["type"] == "integer"
     assert user_schema["properties"]["is_active"]["type"] == "boolean"
     assert user_schema["properties"]["tags"]["type"] == "array"
+
+
+def test_get_json_schema_dataclass_optional_field_without_type():
+    """A dataclass field whose Optional members lack a "type" key (e.g. a mixed-type
+    Literal yields {"enum": [...]}) must not crash schema generation with KeyError."""
+
+    @dataclass
+    class MixedLiteralDataclass:
+        mode: Optional[Literal[1, "a"]] = None
+
+    # Direct call previously raised KeyError: 'type'
+    arg_schema = get_json_schema_for_arg(MixedLiteralDataclass)
+    assert arg_schema["type"] == "object"
+    assert "mode" in arg_schema["properties"]
+
+    # And the parameter must survive instead of being silently dropped
+    schema = get_json_schema({"cfg": MixedLiteralDataclass})
+    assert "cfg" in schema["properties"]
 
 
 def test_get_json_schema_strict():
@@ -373,3 +452,32 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+def test_get_json_schema_for_arg_annotated():
+    """Annotated[T, ...] must unwrap to T instead of the empty-object stub (#10857)."""
+    schema = get_json_schema_for_arg(Annotated[int, Field(ge=0)])
+    assert schema == {"type": "integer"}
+
+    schema = get_json_schema_for_arg(Annotated[str, Field(min_length=1)])
+    assert schema == {"type": "string"}
+
+    nested = get_json_schema_for_arg(list[Annotated[int, Field(ge=0)]])
+    assert nested == {"type": "array", "items": {"type": "integer"}}
+
+
+def test_get_json_schema_dataclass_annotated_fields():
+    """Dataclass fields keep Annotated (get_type_hints is not used); must not become {}."""
+
+    @dataclass
+    class Point:
+        x: Annotated[int, Field(ge=0)]
+        y: Annotated[int, Field(ge=0)]
+
+    arg_schema = get_json_schema_for_arg(Point)
+    assert arg_schema["properties"]["x"] == {"type": "integer"}
+    assert arg_schema["properties"]["y"] == {"type": "integer"}
+
+    schema = get_json_schema({"p": Point})
+    assert schema["properties"]["p"]["properties"]["x"] == {"type": "integer"}
+    assert schema["properties"]["p"]["properties"]["y"] == {"type": "integer"}

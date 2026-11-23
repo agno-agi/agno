@@ -57,7 +57,6 @@ interaction_team = Team(
         "Then, use your report agent to write a report from the web research.",
     ],
     show_members_responses=True,
-    debug_mode=True,
 )
 
 # ---------------------------------------------------------------------------

@@ -30,8 +30,8 @@ def _get_tiktoken_encoding(model_id: str):
             return tiktoken.encoding_for_model(model_id)
         except KeyError:
             return tiktoken.get_encoding("o200k_base")
-    except ImportError:
-        log_warning("tiktoken not installed. Please install it using `pip install tiktoken`.")
+    except ImportError as e:
+        log_warning(f"tiktoken not installed. Please install it using `pip install tiktoken`.: {str(e)}")
         return None
 
 
@@ -55,8 +55,8 @@ def _get_hf_tokenizer(model_id: str):
             return Tokenizer.from_pretrained("Xenova/c4ai-command-r-v01-tokenizer")
 
         return None
-    except ImportError:
-        log_warning("tokenizers not installed. Please install it using `pip install tokenizers`.")
+    except ImportError as e:
+        log_warning(f"tokenizers not installed. Please install it using `pip install tokenizers`.: {str(e)}")
         return None
     except Exception:
         return None
@@ -204,12 +204,16 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
         return f"{{\n{_format_object_parameters(props, indent + 2)}\n}}"
     elif type_name in ["integer", "number"]:
         if "enum" in props:
-            return " | ".join([f'"{item}"' for item in props["enum"]])
+            # Numeric enums map to TypeScript numeric literal unions (e.g. 1 | 2 | 3), not quoted strings
+            return " | ".join([str(item) for item in props["enum"]])
         return "number"
     elif type_name == "boolean":
         return "boolean"
     elif type_name == "null":
         return "null"
+    elif "enum" in props:
+        # Untyped enums (e.g. mixed-type Literals) still map to a literal union; quote strings, leave numbers bare
+        return " | ".join([f'"{item}"' if isinstance(item, str) else str(item) for item in props["enum"]])
     else:
         # Default to "any" for unknown types
         return "any"

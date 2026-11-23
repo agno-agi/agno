@@ -1,17 +1,18 @@
+from copy import copy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union, get_args
 
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, CancellationStage, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -50,10 +51,10 @@ class TeamRunInput:
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            return json.dumps(self.input_content.to_dict())
+            return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
         elif isinstance(self.input_content, list):
             try:
-                return json.dumps(self.to_dict().get("input_content"))
+                return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
             except Exception:
                 return str(self.input_content)
         else:
@@ -202,6 +203,8 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -275,6 +278,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -324,6 +328,18 @@ class RunPausedEvent(BaseTeamRunEvent):
         if not self.requirements:
             return []
         return [req for req in self.requirements if not req.is_resolved()]
+
+    @property
+    def tools_awaiting_external_execution(self):
+        return [t for t in self.tools if t.external_execution_required] if self.tools else []
+
+    @property
+    def tools_requiring_confirmation(self):
+        return [t for t in self.tools if t.requires_confirmation] if self.tools else []
+
+    @property
+    def tools_requiring_user_input(self):
+        return [t for t in self.tools if t.requires_user_input] if self.tools else []
 
 
 @dataclass
@@ -423,6 +439,7 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
 
 
 @dataclass
@@ -633,6 +650,8 @@ TeamRunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,
@@ -661,6 +680,11 @@ TeamRunOutputEvent = Union[
     TaskUpdatedEvent,
     CustomEvent,
 ]
+
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(TeamRunOutputEvent)) per streamed chunk is measurable on the
+# hot event-dispatch path.
+TEAM_RUN_OUTPUT_EVENT_TYPES = get_args(TeamRunOutputEvent)
 
 # Map event string to dataclass for team events
 TEAM_RUN_EVENT_TYPE_REGISTRY = {
@@ -768,9 +792,35 @@ class TeamRunOutput:
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
 
     status: RunStatus = RunStatus.running
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
+    # For a CANCELLED run, where it was when cancelled (see CancellationStage).
+    # None on runs written before the field existed and on shutdown
+    # interrupts: consumers treat None as unknown.
+    cancellation_stage: Optional[CancellationStage] = None
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
+
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries workflow-step parentage
+    # for team-as-workflow-member); see the corresponding fields on RunOutput.
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this team run was originally
+    # created in (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this team
+    # run was regenerated from.
+    regenerated_from: Optional[str] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -791,33 +841,42 @@ class TeamRunOutput:
     def is_cancelled(self):
         return self.status == RunStatus.cancelled
 
+    # Fields hand-serialized in to_dict below; nulled on a shallow copy before
+    # asdict so their (deep, expensive) recursive serialization never runs.
+    # member_responses and input are the heaviest: they nest full member run
+    # outputs that asdict used to serialize once only to be overwritten.
+    _HAND_SERIALIZED_FIELDS = (
+        "messages",
+        "metrics",
+        "status",
+        "tools",
+        "metadata",
+        "images",
+        "videos",
+        "audio",
+        "files",
+        "response_audio",
+        "citations",
+        "events",
+        "additional_input",
+        "reasoning_steps",
+        "reasoning_messages",
+        "references",
+        "requirements",
+        "followups",
+        "member_responses",
+        "input",
+    )
+
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "messages",
-                "metrics",
-                "status",
-                "tools",
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "citations",
-                "events",
-                "additional_input",
-                "reasoning_steps",
-                "reasoning_messages",
-                "references",
-                "requirements",
-                "followups",
-            ]
-        }
+        light_copy = copy(self)
+        for field_name in self._HAND_SERIALIZED_FIELDS:
+            setattr(light_copy, field_name, None)
+        if light_copy.content and isinstance(light_copy.content, BaseModel):
+            # Re-serialized below via model_dump under the same truthiness
+            # condition; asdict would deep-copy it here for nothing
+            light_copy.content = None
+        _dict = {k: v for k, v in asdict(light_copy).items() if v is not None}
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
@@ -826,6 +885,9 @@ class TeamRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.cancellation_stage is not None:
+            _dict["cancellation_stage"] = getattr(self.cancellation_stage, "value", self.cancellation_stage)
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -849,22 +911,29 @@ class TeamRunOutput:
             _dict["followups"] = self.followups
 
         if self.images is not None:
-            _dict["images"] = [img.to_dict() for img in self.images]
+            _dict["images"] = [img.to_dict() if isinstance(img, Image) else img for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() if isinstance(vid, Video) else vid for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.to_dict() for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() if isinstance(aud, Audio) else aud for aud in self.audio]
 
         if self.files is not None:
-            _dict["files"] = [file.to_dict() for file in self.files]
+            _dict["files"] = [file.to_dict() if isinstance(file, File) else file for file in self.files]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            if isinstance(self.response_audio, Audio):
+                _dict["response_audio"] = self.response_audio.to_dict()
+            else:
+                _dict["response_audio"] = self.response_audio
 
-        if self.member_responses:
-            _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+        # An empty list still serializes as [] (the field defaults to [], and
+        # consumers of the serialized form have always seen the key present)
+        if self.member_responses is not None:
+            _dict["member_responses"] = [
+                response.to_dict() if hasattr(response, "to_dict") else response for response in self.member_responses
+            ]
 
         if self.citations is not None:
             if isinstance(self.citations, Citations):
@@ -896,8 +965,8 @@ class TeamRunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:
@@ -969,14 +1038,23 @@ class TeamRunOutput:
             input_obj = TeamRunInput.from_dict(input_data)
 
         metrics = data.pop("metrics", None)
-        if metrics:
-            metrics = RunMetrics.from_dict(metrics)
+        metrics = RunMetrics.from_dict(metrics) if metrics else None
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
+
+        if "cancellation_stage" in data:
+            data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
+        # Stored runs carry the status as its string value; readers expect the enum, so a value
+        # that is not one of ours is left as is rather than rejected.
+        if isinstance(data.get("status"), str):
+            try:
+                data["status"] = RunStatus(data["status"])
+            except ValueError:
+                pass
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
@@ -1012,6 +1090,7 @@ class TeamRunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)
 
     def add_member_run(self, run_response: Union["TeamRunOutput", RunOutput]) -> None:

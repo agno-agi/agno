@@ -1,13 +1,17 @@
 """
-1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
+Example showing how to use Redis as the database for a team.
+
+Run: `uv pip install ddgs` to install the dependency
 
 We can start Redis locally using docker:
 1. Start Redis container
-docker run --name my-redis -p 6379:6379 -d redis
+`docker run --name my-redis -p 6379:6379 -d redis`
 
 2. Verify container is running
-docker ps
+`docker ps`
+
+3. Run the file
+`python cookbook/06_storage/redis/redis_for_team.py`
 """
 
 from typing import List
@@ -37,14 +41,14 @@ class Article(BaseModel):
 
 hn_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
 )
 
 web_searcher = Agent(
     name="Web Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     role="Searches the web for information on a topic",
     tools=[WebSearchTools()],
     add_datetime_to_context=True,
@@ -53,7 +57,7 @@ web_searcher = Agent(
 
 hn_team = Team(
     name="HackerNews Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     members=[hn_researcher, web_searcher],
     db=db,
     instructions=[

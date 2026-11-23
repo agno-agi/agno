@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 
 
@@ -29,36 +29,36 @@ class BookSchema(BaseModel):
     year: int = Field(..., description="Publication year")
 
 
+# JSON schema dicts using the OpenAI Responses API format (text.format).
+# This is different from the Chat Completions API format — the Responses
+# API expects {type, name, schema} at the top level, not a nested
+# {type, json_schema: {name, schema}} wrapper.
 person_json_schema = {
     "type": "json_schema",
-    "json_schema": {
-        "name": "PersonInfo",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Person's full name"},
-                "age": {"type": "integer", "description": "Person's age"},
-            },
-            "required": ["name", "age"],
-            "additionalProperties": False,
+    "name": "PersonInfo",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Person's full name"},
+            "age": {"type": "integer", "description": "Person's age"},
         },
+        "required": ["name", "age"],
+        "additionalProperties": False,
     },
 }
 
 book_json_schema = {
     "type": "json_schema",
-    "json_schema": {
-        "name": "BookInfo",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string", "description": "Book title"},
-                "author": {"type": "string", "description": "Author name"},
-                "year": {"type": "integer", "description": "Publication year"},
-            },
-            "required": ["title", "author", "year"],
-            "additionalProperties": False,
+    "name": "BookInfo",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "Book title"},
+            "author": {"type": "string", "description": "Author name"},
+            "year": {"type": "integer", "description": "Publication year"},
         },
+        "required": ["title", "author", "year"],
+        "additionalProperties": False,
     },
 }
 
@@ -68,7 +68,7 @@ def test_team_run_with_output_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -99,7 +99,7 @@ async def test_team_arun_with_output_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -129,7 +129,7 @@ def test_team_run_without_default_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -159,7 +159,7 @@ async def test_team_arun_without_default_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -188,7 +188,7 @@ def test_team_multiple_calls_in_sequence():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -228,7 +228,7 @@ async def test_team_multiple_async_calls_in_sequence():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -267,7 +267,7 @@ def test_team_run_streaming_with_output_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -302,7 +302,7 @@ async def test_team_arun_streaming_with_output_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -336,13 +336,13 @@ def test_team_run_with_parser_model():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
         name="TestTeam",
         members=[agent1],
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        parser_model=OpenAIResponses(id="gpt-5.4"),
         output_schema=PersonSchema,
         markdown=False,
     )
@@ -367,13 +367,13 @@ def test_team_run_streaming_with_parser_model():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
         name="TestTeam",
         members=[agent1],
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        parser_model=OpenAIResponses(id="gpt-5.4"),
         output_schema=PersonSchema,
         markdown=False,
     )
@@ -403,13 +403,13 @@ async def test_team_arun_with_parser_model():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
         name="TestTeam",
         members=[agent1],
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        parser_model=OpenAIResponses(id="gpt-5.4"),
         output_schema=PersonSchema,
         markdown=False,
     )
@@ -435,13 +435,13 @@ async def test_team_arun_streaming_with_parser_model():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
         name="TestTeam",
         members=[agent1],
-        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        parser_model=OpenAIResponses(id="gpt-5.4"),
         output_schema=PersonSchema,
         markdown=False,
     )
@@ -470,7 +470,7 @@ def test_team_run_with_json_mode():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -501,7 +501,7 @@ def test_team_run_with_default():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -530,7 +530,7 @@ def test_team_run_streaming_without_default_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -564,7 +564,7 @@ async def test_team_arun_streaming_without_default_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -597,7 +597,7 @@ def test_team_run_streaming_with_json_mode():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -633,7 +633,7 @@ async def test_team_arun_with_json_mode():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -665,7 +665,7 @@ async def test_team_arun_streaming_with_json_mode():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -701,7 +701,7 @@ async def test_team_arun_with_default():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -730,7 +730,7 @@ def test_team_run_with_json_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -757,7 +757,7 @@ async def test_team_arun_with_json_schema():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -783,7 +783,7 @@ def test_team_run_with_json_schema_override():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -814,7 +814,7 @@ async def test_team_arun_with_json_schema_override():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -842,7 +842,7 @@ def test_team_run_json_schema_without_default():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -860,7 +860,6 @@ def test_team_run_json_schema_without_default():
     )
 
     assert isinstance(response.content, dict)
-    # Model may return data directly or wrapped in a schema-like structure
     content = response.content
     if "properties" in content and isinstance(content["properties"], dict) and "name" not in content:
         content = content["properties"]
@@ -875,7 +874,7 @@ async def test_team_arun_json_schema_without_default():
     agent1 = Agent(
         name="Agent1",
         role="Information provider",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     team = Team(
@@ -893,7 +892,6 @@ async def test_team_arun_json_schema_without_default():
     )
 
     assert isinstance(response.content, dict)
-    # Model may return data directly or wrapped in a schema-like structure
     content = response.content
     if "properties" in content and isinstance(content["properties"], dict) and "name" not in content:
         content = content["properties"]

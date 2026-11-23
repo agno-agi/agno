@@ -39,7 +39,9 @@ class DocxReader(Reader):
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
-        return [ContentType.DOCX, ContentType.DOC]
+        # .doc is deliberately absent: python-docx reads the Open XML package only, and a
+        # legacy OLE2 .doc fails to open, so advertising it offers a format that never reads.
+        return [ContentType.DOCX]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""
@@ -53,7 +55,9 @@ class DocxReader(Reader):
             else:
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
                 docx_document = DocxDocument(file)
-                doc_name = name or getattr(file, "name", "docx_file").split(".")[0]
+                # Native temporary streams may expose an integer descriptor or None as their name.
+                stream_name = getattr(file, "name", None)
+                doc_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "docx_file")
 
             doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
 
@@ -72,7 +76,7 @@ class DocxReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -80,5 +84,5 @@ class DocxReader(Reader):
         try:
             return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []

@@ -7,7 +7,7 @@ incorrect accumulation of cumulative token counts in streaming responses.
 
 from typing import Optional
 
-from agno.models.metrics import MessageMetrics
+from agno.metrics import MessageMetrics
 from agno.models.perplexity.perplexity import Perplexity
 
 
@@ -107,6 +107,7 @@ def test_perplexity_get_metrics_with_details():
     assert metrics.audio_input_tokens == 10
     assert metrics.cache_read_tokens == 500
     assert metrics.audio_output_tokens == 5
+    assert metrics.audio_total_tokens == 15
     assert metrics.reasoning_tokens == 100
 
 

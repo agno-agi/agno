@@ -21,7 +21,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # Useful for finding recent news, updates, or time-sensitive information
 
 weekly_search_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             timelimit="w",  # Results from past week only
@@ -38,7 +38,7 @@ weekly_search_agent = Agent(
 # Useful for localized results based on user's region
 
 us_region_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             region="us-en",  # US English results
@@ -56,7 +56,7 @@ us_region_agent = Agent(
 
 # API backend - uses DuckDuckGo's API
 api_backend_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             backend="api",
@@ -68,7 +68,7 @@ api_backend_agent = Agent(
 
 # HTML backend - parses HTML results
 html_backend_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             backend="html",
@@ -80,7 +80,7 @@ html_backend_agent = Agent(
 
 # Lite backend - lightweight parsing
 lite_backend_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             backend="lite",
@@ -96,7 +96,7 @@ lite_backend_agent = Agent(
 # Combine all parameters for maximum control over search behavior
 
 fully_configured_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             timelimit="w",  # Results from past week
@@ -119,7 +119,7 @@ fully_configured_agent = Agent(
 # ---------------------------------------------------------------------------
 
 eu_monthly_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             timelimit="m",  # Results from past month
@@ -137,7 +137,7 @@ eu_monthly_agent = Agent(
 # Perfect for finding breaking news and today's updates
 
 daily_news_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         DuckDuckGoTools(
             timelimit="d",  # Results from past day only

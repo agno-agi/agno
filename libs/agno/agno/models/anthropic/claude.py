@@ -2,24 +2,29 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, NoReturn, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
+    _validate_cache_ttl_order,
+    build_system_blocks,
     format_messages,
     format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
+    route_thinking_budget_to_adaptive,
+    serialize_content_blocks,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -68,6 +73,26 @@ except ImportError as e:
     ) from e
 
 
+class SystemPromptBlock(BaseModel):
+    """A block of system prompt content with Anthropic cache control metadata.
+
+    Used with ``Claude.system_prompt_blocks`` to split the system prompt into
+    independently-cacheable segments. ``cache=True`` adds ``cache_control`` to
+    this block; ``cache=False`` leaves it uncached. This decision is made per
+    block and is independent of the model-level ``cache_system_prompt`` flag,
+    which only controls whether the agent-built system message gets cached.
+    That separation lets you leave the agent-built block uncached while still
+    caching selected custom blocks (or vice versa).
+
+    ``ttl`` overrides the model-level ``extended_cache_time`` flag for that
+    block only.
+    """
+
+    text: str
+    cache: bool = True
+    ttl: Optional[Literal["5m", "1h"]] = None
+
+
 @dataclass
 class Claude(Model):
     """
@@ -102,7 +127,7 @@ class Claude(Model):
         "claude-opus-4-0",
     }
 
-    id: str = "claude-sonnet-4-5-20250929"
+    id: str = "claude-sonnet-5-5"
     name: str = "Claude"
     provider: str = "Anthropic"
 
@@ -116,6 +141,14 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
+    cache_tools: bool = False
+    # Optional multi-block system prompt with per-block cache control.
+    # Appended after the agent-built system message in the Anthropic ``system``
+    # array. See SystemPromptBlock for cache/ttl semantics. May be a list, or a
+    # zero-arg callable returning a list — the callable is evaluated on every
+    # request, which is how you inject dynamic per-request content into a
+    # cached system prompt without reinstantiating the model or agent.
+    system_prompt_blocks: Optional[Union[List[SystemPromptBlock], Callable[[], List[SystemPromptBlock]]]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -125,6 +158,11 @@ class Claude(Model):
     skills: Optional[List[Dict[str, str]]] = (
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
+
+    # Whether to attach citations to document blocks.
+    # Defaults to True. Automatically suppressed when structured output is active
+    # because Anthropic rejects citations + output_format together.
+    citations: bool = True
 
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
@@ -154,9 +192,11 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Auto-enable trailing user message for models that don't support prefill
+        # Auto-enable trailing user message for models that don't support prefill. Prefill is also
+        # rejected while thinking is on, on every model: a history ending in an assistant turn (a
+        # resumed run, or a response truncated inside its thinking) must be followed by a user turn.
         if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
+            self.append_trailing_user_message = not supports_prefill(self.id) or self._thinking_enabled()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -228,6 +268,15 @@ class Claude(Model):
                         return True
 
         return False
+
+    def _thinking_enabled(self) -> bool:
+        """Return True when the request will run with thinking on.
+
+        ``request_params`` are applied last in ``get_request_params`` and override the ``thinking``
+        field, so a thinking config supplied there decides.
+        """
+        thinking = (self.request_params or {}).get("thinking", self.thinking)
+        return isinstance(thinking, dict) and thinking.get("type") != "disabled"
 
     def _validate_thinking_support(self) -> None:
         """
@@ -327,6 +376,20 @@ class Claude(Model):
 
         return None
 
+    def _output_format_enabled(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> bool:
+        """Return True when this request will send Anthropic's ``output_format`` param.
+
+        Anthropic rejects ``citations`` + ``output_format`` with a 400, so document
+        citations must be suppressed whenever this returns True. Delegates to
+        ``_build_output_format`` so the two can never disagree — in particular,
+        ``response_format={"type": "json_object"}`` builds nothing and therefore
+        does not trigger the conflict.
+        """
+        return self._build_output_format(response_format) is not None
+
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -360,45 +423,37 @@ class Claude(Model):
 
     def get_client(self) -> AnthropicClient:
         """
-        Returns an instance of the Anthropic client.
+        Returns an instance of the Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.client and not self.client.is_closed():
             return self.client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = AnthropicClient(**_client_params)
         return self.client
 
     def get_async_client(self) -> AsyncAnthropicClient:
         """
-        Returns an instance of the async Anthropic client.
+        Returns an instance of the async Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
@@ -421,6 +476,7 @@ class Claude(Model):
                 "top_k": self.top_k,
                 "cache_system_prompt": self.cache_system_prompt,
                 "extended_cache_time": self.extended_cache_time,
+                "cache_tools": self.cache_tools,
                 "betas": self.betas,
             }
         )
@@ -438,6 +494,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -445,8 +502,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -464,6 +522,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -471,8 +530,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -498,13 +558,13 @@ class Claude(Model):
             _request_params["thinking"] = self.thinking
         if self.output_config:
             _request_params["output_config"] = self.output_config
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
             _request_params["stop_sequences"] = self.stop_sequences
-        if self.top_p:
+        if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.top_k:
+        if self.top_k is not None:
             _request_params["top_k"] = self.top_k
 
         # Build betas list - include existing betas and add new one if needed
@@ -531,7 +591,8 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        return _request_params
+        route_thinking_budget_to_adaptive(_request_params, model_id=self.id)
+        return route_sampling_params_to_extra_body(_request_params, model_id=self.id)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
@@ -545,6 +606,47 @@ class Claude(Model):
             if container_id:
                 return container_id
         return None
+
+    def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
+        """Tag the last tool with cache_control when cache_tools is enabled."""
+        if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
+            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+
+    def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
+        """Assemble the Anthropic ``system`` array.
+
+        Agent-built ``system_message`` becomes the first block (cached per
+        ``cache_system_prompt``). Model-level ``system_prompt_blocks`` are
+        appended after, each with its own cache/ttl. This ordering matches
+        Anthropic's prefix-cache semantics: stable content first, dynamic
+        per-request content later.
+
+        Used by both ``_prepare_request_kwargs`` and ``count_tokens`` so the
+        two paths cannot diverge.
+
+        Raises ``ValueError`` if the assembled order would violate Anthropic's
+        mixed-TTL rule (a 1h cache_control block cannot appear after a 5m one).
+        """
+        blocks: List[Dict[str, Any]] = []
+        if system_message:
+            blocks.extend(
+                build_system_blocks(
+                    system_message,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        user_blocks = self.system_prompt_blocks() if callable(self.system_prompt_blocks) else self.system_prompt_blocks
+        if user_blocks:
+            blocks.extend(
+                build_system_blocks(
+                    user_blocks,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        _validate_cache_ttl_order(blocks)
+        return blocks
 
     def _prepare_request_kwargs(
         self,
@@ -578,16 +680,9 @@ class Claude(Model):
             container_id = self._extract_container_id_from_messages(messages)
             if container_id:
                 request_kwargs["container"] = {**request_kwargs["container"], "id": container_id}
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Add code execution tool if skills are enabled
         if self.skills:
@@ -602,10 +697,20 @@ class Claude(Model):
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
-        # Build output_format if response_format is provided
+        self._apply_cache_tools(request_kwargs)
+
+        # Structured output travels inside output_config. anthropic 1.0.0 dropped the
+        # older output_format parameter from create() on both the stable and the beta
+        # endpoint, where passing it raises TypeError before the request is ever sent.
+        # Merge rather than assign, so a caller who set output_config for effort keeps
+        # it -- and build a new dict, because get_request_params() returns a shallow
+        # copy whose output_config value is still the model's own object.
         output_format = self._build_output_format(response_format)
         if output_format:
-            request_kwargs["output_format"] = output_format
+            request_kwargs["output_config"] = {
+                **(request_kwargs.get("output_config") or {}),
+                "format": output_format,
+            }
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
@@ -618,13 +723,13 @@ class Claude(Model):
         Always raises — never returns normally.
         """
         if isinstance(e, APIConnectionError):
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
@@ -632,7 +737,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error(f"Unexpected error calling Claude API: {str(e)}")
+        log_error(f"Unexpected error calling Claude API: {e}")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
@@ -654,6 +759,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -713,6 +819,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -763,6 +870,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -821,6 +929,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -901,11 +1010,11 @@ class Claude(Model):
                                 model_response.parsed = response_format.model_validate(parsed_data)
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
                             except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
+                                log_warning(f"Failed to parse JSON from structured output: {str(e)}")
                             except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
+                                log_warning(f"Failed to validate structured output against schema: {str(e)}")
                             except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                                log_warning(f"Unexpected error parsing structured output: {str(e)}")
 
                     # Capture citations from the response
                     if block.citations is not None:
@@ -930,17 +1039,20 @@ class Claude(Model):
                     model_response.reasoning_content = block.thinking
                     model_response.provider_data = model_response.provider_data or {}
                     model_response.provider_data["signature"] = block.signature
-                elif block.type == "redacted_thinking":
-                    model_response.redacted_reasoning_content = block.data
+                elif block.type in ("redacted_thinking", "redacted_reasoning_content"):
+                    model_response.redacted_reasoning_content = getattr(block, "data", None)
                 elif block.type not in ("tool_use",):
                     # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # thinking/redacted_thinking already handled by elif branches above;
-                    # streaming path uses ("thinking", "redacted_thinking", "tool_use") tuple instead.
-                    # tool_use is handled separately below via stop_reason check.
+                    # thinking / redacted variants handled above; tool_use extracted via stop_reason below.
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
+
+            # Keep the response's content blocks verbatim and in order so history replay can echo
+            # the turn back exactly; the convenience fields above are lossy views of these blocks.
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["content_blocks"] = serialize_content_blocks(response.content)
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -949,9 +1061,7 @@ class Claude(Model):
                     tool_name = block.name
                     tool_input = block.input
 
-                    function_def = {"name": tool_name}
-                    if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                    function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                     model_response.extra = model_response.extra or {}
 
@@ -1016,20 +1126,23 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
-        Parse the Claude streaming response into ModelProviderResponse objects.
+        Parse the Claude streaming response into ModelResponse objects.
 
         Args:
             response: Raw response chunk from Anthropic
             response_format: Optional response format for structured output parsing
 
         Returns:
-            ModelResponse: Iterator of parsed response data
+            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
         if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
-            if response.content_block.type == "redacted_reasoning_content":
-                model_response.redacted_reasoning_content = response.content_block.data
+            # The Anthropic SDK emits "redacted_thinking" for these blocks; accept the legacy
+            # "redacted_reasoning_content" spelling too in case it appears via a rehydrated event.
+            block_type = getattr(response.content_block, "type", None)
+            if block_type in ("redacted_thinking", "redacted_reasoning_content"):
+                model_response.redacted_reasoning_content = getattr(response.content_block, "data", None)
 
         if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
@@ -1049,9 +1162,7 @@ class Claude(Model):
                 tool_name = tool_use.name  # type: ignore
                 tool_input = tool_use.input  # type: ignore
 
-                function_def = {"name": tool_name}
-                if tool_input:
-                    function_def["arguments"] = json.dumps(tool_input)
+                function_def = {"name": tool_name, "arguments": json.dumps(tool_input)}
 
                 model_response.extra = model_response.extra or {}
 
@@ -1081,7 +1192,12 @@ class Claude(Model):
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
+                elif block.type not in (
+                    "thinking",
+                    "redacted_thinking",
+                    "redacted_reasoning_content",
+                    "tool_use",
+                ):
                     # Preserve all non-text/thinking/tool_use blocks for history
                     server_tool_blocks.append(block.model_dump())
 
@@ -1106,6 +1222,14 @@ class Claude(Model):
                     model_response.provider_data = {}
                 model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
 
+            # Keep the final content blocks verbatim and in order so history replay can echo the
+            # turn back exactly; the streamed deltas above are lossy views of these blocks.
+            content_blocks = serialize_content_blocks(response.message.content)  # type: ignore
+            if content_blocks:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["content_blocks"] = content_blocks
+
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication
             # The content was already streamed via ContentBlockDeltaEvent chunks
@@ -1122,11 +1246,11 @@ class Claude(Model):
                         model_response.parsed = response_format.model_validate(parsed_data)
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
+                        log_warning(f"Failed to parse JSON from structured output in stream: {str(e)}")
                     except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
+                        log_warning(f"Failed to validate structured output against schema in stream: {str(e)}")
                     except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                        log_warning(f"Unexpected error parsing structured output in stream: {str(e)}")
 
             # Capture context management information if present
             if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
@@ -1177,7 +1301,7 @@ class Claude(Model):
             ):
                 model_response.content = response.delta.text
         except Exception as e:
-            log_error(f"Error parsing Beta response: {e}")
+            log_error(f"Error parsing Beta response: {str(e)}")
 
         return model_response
 

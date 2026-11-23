@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from rich.console import Group
 from rich.json import JSON
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
@@ -21,6 +20,8 @@ from agno.utils.response import create_panel, create_paused_run_output_panel, es
 from agno.utils.timer import Timer
 
 if TYPE_CHECKING:
+    from rich.markdown import Markdown
+
     from agno.agent.agent import Agent
 
 
@@ -50,6 +51,8 @@ def print_response_stream(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
+    from rich.markdown import Markdown
+
     _response_content: str = ""
     _response_reasoning_content: str = ""
     response_content_batch: Union[str, JSON, Markdown] = ""
@@ -133,17 +136,17 @@ def print_response_stream(
                                     response_event.content.model_dump_json(exclude_none=True), indent=2
                                 )
                             except Exception as e:
-                                log_warning(f"Failed to convert response to JSON: {e}")
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
                         elif agent.output_schema is not None and isinstance(response_event.content, dict):
                             try:
                                 response_content_batch = JSON(json.dumps(response_event.content), indent=2)  # type: ignore
                             except Exception as e:
-                                log_warning(f"Failed to convert response to JSON: {e}")
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
                         else:
                             try:
                                 response_content_batch = JSON(json.dumps(response_event.content), indent=4)
                             except Exception as e:
-                                log_warning(f"Failed to convert response to JSON: {e}")
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += response_event.reasoning_content  # type: ignore
 
@@ -255,6 +258,8 @@ async def aprint_response_stream(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
+    from rich.markdown import Markdown
+
     _response_content: str = ""
     _response_reasoning_content: str = ""
     reasoning_steps: List[ReasoningStep] = []
@@ -336,17 +341,17 @@ async def aprint_response_stream(
                         try:
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     elif agent.output_schema is not None and isinstance(resp.content, dict):
                         try:
                             response_content_batch = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(resp.content), indent=4)
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
 
@@ -435,7 +440,7 @@ async def aprint_response_stream(
 
 
 def build_panels_stream(
-    response_content: Union[str, JSON, Markdown],
+    response_content: "Union[str, JSON, Markdown]",
     response_event: RunOutputEvent,
     response_timer: Timer,
     response_reasoning_content_buffer: str,
@@ -445,6 +450,8 @@ def build_panels_stream(
     accumulated_tool_calls: Optional[List] = None,
     compression_manager: Optional[Any] = None,
 ):
+    from rich.markdown import Markdown
+
     panels = []
 
     if len(reasoning_steps) > 0 and show_reasoning:
@@ -794,6 +801,8 @@ def build_panels(
     markdown: bool = False,
     compression_manager: Optional[Any] = None,
 ):
+    from rich.markdown import Markdown
+
     panels = []
 
     reasoning_steps = []
@@ -875,17 +884,17 @@ def build_panels(
             try:
                 response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
         elif output_schema is not None and isinstance(run_response.content, dict):
             try:
                 response_content_batch = JSON(json.dumps(run_response.content), indent=2)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
         else:
             try:
                 response_content_batch = JSON(json.dumps(run_response.content), indent=4)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
 
     # Create panel for response
     response_panel = create_panel(

@@ -24,7 +24,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
+        model=Fireworks(id="accounts/fireworks/models/gpt-oss-120b"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -52,7 +52,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
+        model=Fireworks(id="accounts/fireworks/models/gpt-oss-120b"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )

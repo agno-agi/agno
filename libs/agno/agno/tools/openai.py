@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -18,6 +18,35 @@ except (ModuleNotFoundError, ImportError):
 OpenAIVoice = Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 OpenAITTSModel = Literal["tts-1", "tts-1-hd"]
 OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+_GPT_IMAGE_QUALITIES = ["auto", "low", "medium", "high"]
+_FIXED_GPT_IMAGE_SIZES = ["auto", "1024x1024", "1536x1024", "1024x1536"]
+# Sizes and qualities each known image model accepts. Models not listed here are passed through unchecked.
+# gpt-image-2 takes custom resolutions, so its sizes are left for the API to validate.
+IMAGE_MODEL_OPTIONS: Dict[str, Dict[str, List[str]]] = {
+    "gpt-image-2": {"qualities": _GPT_IMAGE_QUALITIES},
+    "gpt-image-1.5": {"sizes": _FIXED_GPT_IMAGE_SIZES, "qualities": _GPT_IMAGE_QUALITIES},
+    "gpt-image-1-mini": {"sizes": _FIXED_GPT_IMAGE_SIZES, "qualities": _GPT_IMAGE_QUALITIES},
+}
+
+
+STYLE_DEPRECATION = (
+    "The image style option is deprecated and ignored: OpenAI image models reject the style parameter. "
+    "It will be removed in a future release."
+)
+
+
+def validate_image_options(model: Optional[str], n: int, size: Optional[str], quality: Optional[str]) -> None:
+    """Raise ValueError for an image count, size or quality the model does not accept."""
+    if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+        raise ValueError("Invalid number of images. Please provide a positive integer.")
+    options = IMAGE_MODEL_OPTIONS.get(model or "")
+    if options is None:
+        return
+    sizes = options.get("sizes")
+    if size is not None and sizes is not None and size not in sizes:
+        raise ValueError(f"Invalid size for {model}. Please choose from {', '.join(sizes)}.")
+    if quality is not None and quality not in options["qualities"]:
+        raise ValueError(f"Invalid quality for {model}. Please choose from {', '.join(options['qualities'])}.")
 
 
 class OpenAITools(Toolkit):
@@ -33,10 +62,11 @@ class OpenAITools(Toolkit):
         text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
         text_to_speech_model (OpenAITTSModel): Model to use for TTS. Default is "tts-1".
         text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
-        image_model (str, optional): Model to use for image generation. Default is "dall-e-3".
+        image_model (str, optional): Model to use for image generation. Default is "gpt-image-2".
         image_quality (str, optional): Quality setting for image generation.
-        image_size (str, optional): Size setting for image generation.
-        image_style (str, optional): Style setting for image generation.
+        image_size (str, optional): Size setting for image generation, e.g. "1024x1024" or "auto". gpt-image-2 also accepts custom resolutions.
+        image_style (str, optional): Deprecated and ignored; image models reject the style parameter.
+        image_n (int): Number of images to generate per call. Default is 1.
     """
 
     def __init__(
@@ -50,10 +80,11 @@ class OpenAITools(Toolkit):
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
-        image_model: Optional[str] = "dall-e-3",
+        image_model: Optional[str] = "gpt-image-2",
         image_quality: Optional[str] = None,
-        image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
+        image_size: Optional[str] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
+        image_n: int = 1,
         **kwargs,
     ):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
@@ -69,6 +100,11 @@ class OpenAITools(Toolkit):
         self.image_quality = image_quality
         self.image_style = image_style
         self.image_size = image_size
+        self.image_n = image_n
+        if all or enable_image_generation:
+            validate_image_options(image_model, image_n, image_size, image_quality)
+            if image_style is not None:
+                log_warning(STYLE_DEPRECATION)
 
         tools: List[Any] = []
         if all or enable_transcription:
@@ -87,13 +123,12 @@ class OpenAITools(Toolkit):
         """
         log_debug(f"Transcribing audio from {audio_path}")
         try:
-            audio_file = open(audio_path, "rb")
-
-            transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
-                model=self.transcription_model,
-                file=audio_file,
-                response_format="text",
-            )
+            with open(audio_path, "rb") as audio_file:
+                transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
+                    model=self.transcription_model,
+                    file=audio_file,
+                    response_format="text",
+                )
         except Exception as e:  # type: ignore[return]
             log_error(f"Failed to transcribe audio: {str(e)}")
             return f"Failed to transcribe audio: {str(e)}"
@@ -113,57 +148,45 @@ class OpenAITools(Toolkit):
             import base64
 
             extra_params = {
+                "n": self.image_n,
                 "size": self.image_size,
                 "quality": self.image_quality,
-                "style": self.image_style,
             }
             extra_params = {k: v for k, v in extra_params.items() if v is not None}
 
-            # gpt-image-1 by default outputs a base64 encoded image but other models do not
-            # so we add a response_format parameter to have consistent output.
-            if self.image_model and self.image_model.startswith("gpt-image"):
-                response = OpenAIClient(api_key=self.api_key).images.generate(
-                    model=self.image_model,
-                    prompt=prompt,
-                    **extra_params,  # type: ignore
-                )
-            else:
-                response = OpenAIClient(api_key=self.api_key).images.generate(
-                    model=self.image_model,
-                    prompt=prompt,
-                    response_format="b64_json",
-                    **extra_params,  # type: ignore
-                )
-            data = None
-            if hasattr(response, "data") and response.data:
-                data = response.data[0]
-            if data is None:
+            # Image models return base64 only and reject response_format and style, so neither is sent.
+            response = OpenAIClient(api_key=self.api_key).images.generate(
+                model=self.image_model,
+                prompt=prompt,
+                **extra_params,  # type: ignore
+            )
+            if not (hasattr(response, "data") and response.data):
                 log_warning("OpenAI API did not return any data.")
                 return ToolResult(content="Failed to generate image: No data received from API.")
 
-            if hasattr(data, "b64_json") and data.b64_json:
-                image_base64 = data.b64_json
-                media_id = str(uuid4())
-
-                # Decode base64 to bytes for proper storage
-                image_bytes = base64.b64decode(image_base64)
-
-                # Create ImageArtifact and return in ToolResult
-                image_artifact = Image(
-                    id=media_id,
-                    content=image_bytes,  # ← Store as bytes, not encoded string
-                    mime_type="image/png",
-                    original_prompt=prompt,
+            output_format = getattr(response, "output_format", None)
+            mime_type = f"image/{output_format}" if isinstance(output_format, str) else "image/png"
+            images: List[Image] = []
+            for data in response.data:
+                if not (hasattr(data, "b64_json") and data.b64_json):
+                    continue
+                images.append(
+                    Image(
+                        id=str(uuid4()),
+                        content=base64.b64decode(data.b64_json),
+                        mime_type=mime_type,
+                        original_prompt=prompt,
+                    )
                 )
 
-                return ToolResult(
-                    content="Image generated successfully.",
-                    images=[image_artifact],
-                )
-
-            return ToolResult(content="Failed to generate image: No content received from API.")
+            if not images:
+                return ToolResult(content="Failed to generate image: No content received from API.")
+            content = (
+                "Image generated successfully." if len(images) == 1 else f"{len(images)} images generated successfully."
+            )
+            return ToolResult(content=content, images=images)
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
             return ToolResult(content=f"Failed to generate image: {e}")
 
     def generate_speech(

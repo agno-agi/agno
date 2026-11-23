@@ -1,0 +1,33 @@
+# Test Log: suite
+
+### suite_basic.py
+
+**Status:** PASS
+
+**Description:** Runs two cases (judge + reliability on a calculator agent, judge-only on a prose answer) through the built-in suite CLI. Tested `--list`, a full run with `--json-output`, and an unknown `--tag` selector.
+
+**Result:** 2/2 cases passed with exit code 0. JSON payload written with the expected summary/cases shape. Unknown tag exited with code 2 and listed the available case names.
+
+**Re-test (2026-07-05, after the external-review fix round):** full run with `--json-output` passed 2/2 with exit code 0 and the expected payload (`tools_called: ["factorial"]`, `status: "PASS"`); the falsy-check guard rejects `expected_tool_calls=()` at construction; the `python -m agno.eval` module entry is removed.
+
+---
+
+### suite_team_scoring.py
+
+**Status:** PASS
+
+**Description:** Runs two cases against one Team whose leader delegates to a calculator member and a writer member. The first case grades a numeric-scored arithmetic answer and checks the member's `multiply` tool; the second grades a numeric-scored explanation the leader delegates to the writer member. Exercised `--list`, `--list --json-output`, `--tag smoke`, `--name`, and a full run with `--json-output`, plus the programmatic `run_cases` and `arun_cases` entry points.
+
+**Result:** 2/2 cases passed with exit code 0. Both cases carry `team_id: "assistant-team"` and `agent_id: null`. The arithmetic case's reliability saw the member's real tool (`tools_called: ["delegate_task_to_member", "multiply"]`) via `team_response=`, and both cases reported `judge_score: 10` in the payload.
+
+---
+
+### suite_session.py
+
+**Status:** PASS
+
+**Description:** Runs four cases against a booking agent whose tools read `session_state`. The first passes `session_state` and `user_id` on the case and asks for open slots. The second sets `session_id` and `user_id`, runs the first turn of the conversation in its `setup` hook, picks a slot, and deletes the session in `teardown`. The third passes no run arguments. The fourth gives a `Message` with an image (by URL) as the input, with `session_state` and `user_id`. Exercised a full run with `--json-output` and `--name books_the_chosen_slot`.
+
+**Result:** 4/4 cases passed with exit code 0 (1/1 with `--name books_the_chosen_slot`). The first case reported `tools_called: ["get_open_slots"]` in a generated `eval-offers_open_slots-<hex>` session; the second reported `session_id: "booking-1"` with `tools_called: ["create_appointment"]`; the third offered no slots; the fourth named the Golden Gate Bridge and offered both slots with `tools_called: ["get_open_slots"]`.
+
+---

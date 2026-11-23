@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.run import RunContext
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
@@ -23,21 +24,21 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     instructions="Extract key insights and content from Hackernews posts",
 )
 
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Search the web for the latest news and trends",
 )
 
 content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
@@ -46,7 +47,7 @@ content_planner = Agent(
 
 streaming_content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",
@@ -59,7 +60,7 @@ streaming_content_planner = Agent(
 # ---------------------------------------------------------------------------
 research_team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[hackernews_agent, web_agent],
     instructions="Analyze content and create comprehensive social media strategy",
 )
@@ -70,8 +71,9 @@ research_team = Team(
 # ---------------------------------------------------------------------------
 def custom_content_planning_function(
     step_input: StepInput,
-    session_state: dict,
+    run_context: RunContext,
 ) -> StepOutput:
+    session_state = run_context.session_state
     message = step_input.input
     previous_step_content = step_input.previous_step_content
 
@@ -143,7 +145,10 @@ def custom_content_planning_function(
         )
 
 
-def content_summary_function(step_input: StepInput, session_state: dict) -> StepOutput:
+def content_summary_function(
+    step_input: StepInput, run_context: RunContext
+) -> StepOutput:
+    session_state = run_context.session_state
     if "content_plans" not in session_state or not session_state["content_plans"]:
         return StepOutput(
             content="No content plans found in session state.", success=False
@@ -177,8 +182,9 @@ def content_summary_function(step_input: StepInput, session_state: dict) -> Step
 
 def custom_content_planning_function_stream(
     step_input: StepInput,
-    session_state: dict,
+    run_context: RunContext,
 ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+    session_state = run_context.session_state
     message = step_input.input
     previous_step_content = step_input.previous_step_content
 
@@ -260,8 +266,9 @@ def custom_content_planning_function_stream(
 
 def content_summary_function_stream(
     step_input: StepInput,
-    session_state: dict,
+    run_context: RunContext,
 ) -> Iterator[StepOutput]:
+    session_state = run_context.session_state
     plans = session_state["content_plans"]
 
     summary = f"""

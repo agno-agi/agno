@@ -13,6 +13,11 @@ from agno.workflow import RemoteWorkflow, Workflow
 class Whatsapp(BaseInterface):
     type = "whatsapp"
 
+    # Verifies the WhatsApp webhook signature (X-Hub-Signature-256) in its router, so it
+    # is excluded from the central auth layer.
+    authenticates_own_requests = True
+
+    agent: Optional[Union[Agent, RemoteAgent]]
     router: APIRouter
 
     def __init__(

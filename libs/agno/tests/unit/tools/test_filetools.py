@@ -1,8 +1,86 @@
 import json
+import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from agno.tools.file import FileTools
+
+
+@pytest.mark.parametrize(("start", "end"), [(-1, 1), (0, -1), (3, 1), (4, 4), (1, 8)])
+def test_replace_file_chunk_rejects_invalid_ranges_without_writing(tmp_path, start, end):
+    file_path = tmp_path / "sample.txt"
+    original = b"a\nb\nc\nd"
+    file_path.write_bytes(original)
+    tools = FileTools(base_dir=tmp_path)
+
+    result = tools.replace_file_chunk("sample.txt", start, end, "replacement")
+
+    assert result.startswith("Error patching file:")
+    assert file_path.read_bytes() == original
+
+
+def test_replace_file_chunk_replaces_inclusive_valid_range(tmp_path):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_text("a\nb\nc\nd", encoding="utf-8")
+    tools = FileTools(base_dir=tmp_path)
+
+    assert tools.replace_file_chunk("sample.txt", 1, 2, "replacement") == "sample.txt"
+    assert file_path.read_text(encoding="utf-8") == "a\nreplacement\nd"
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "line_count"),
+    [
+        ("a\nb\nc\n", "\n", 3),
+        ("", "\n", 0),
+        ("\n", "\n", 1),
+        ("a\n\n", "\n", 2),
+        ("a||b||", "||", 2),
+        ("||", "||", 1),
+        ("a|||", "||", 2),
+        ("aaa", "aa", 2),
+        ("a\nb\nc", "\n", 3),
+        ("你好\n世界\n", "\n", 2),
+    ],
+)
+def test_replace_file_chunk_rejects_ranges_past_real_lines(tmp_path, original, separator, line_count):
+    file_path = tmp_path / "sample.txt"
+    original_bytes = original.encode("utf-8")
+    file_path.write_bytes(original_bytes)
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    result = tools.replace_file_chunk("sample.txt", 0, line_count, "replacement")
+
+    assert result == f"Error patching file: end_line must be less than {line_count}"
+    assert file_path.read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "start", "end", "expected"),
+    [
+        ("a\nb\nc\n", "\n", 1, 2, "a\nreplacement\n"),
+        ("a\nb\nc\n", "\n", 0, 2, "replacement\n"),
+        ("\n", "\n", 0, 0, "replacement\n"),
+        ("a\n\n", "\n", 1, 1, "a\nreplacement\n"),
+        ("a\n\n\n", "\n", 0, 0, "replacement\n\n\n"),
+        ("a||b||", "||", 1, 1, "a||replacement||"),
+        ("a||b||||", "||", 1, 1, "a||replacement||||"),
+        ("a\nb\nc", "\n", 1, 2, "a\nreplacement"),
+        ("你好\n世界\n", "\n", 1, 1, "你好\nreplacement\n"),
+        ("a\nb||c||", "||", 1, 1, "a\nb||replacement||"),
+        ("a|||", "||", 1, 1, "a||replacement"),
+        ("aaa", "aa", 1, 1, "aareplacement"),
+    ],
+)
+def test_replace_file_chunk_preserves_real_line_boundaries(tmp_path, original, separator, start, end, expected):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(original.encode("utf-8"))
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+
+    assert tools.replace_file_chunk("sample.txt", start, end, "replacement") == "sample.txt"
+    assert file_path.read_bytes() == expected.encode("utf-8")
 
 
 def test_save_and_read_file():
@@ -19,6 +97,36 @@ def test_save_and_read_file():
         # Read it back
         read_content = file_tools.read_file(file_name="test.txt")
         assert read_content == content
+
+
+@pytest.mark.parametrize(
+    ("original", "separator", "real_lines"),
+    [
+        ("a\nb\nc\n", "\n", 3),
+        ("", "\n", 0),
+        ("\n", "\n", 1),
+        ("a\n\n", "\n", 2),
+        ("a||b||", "||", 2),
+        ("||", "||", 1),
+        ("a|||", "||", 2),
+        ("aaa", "aa", 2),
+        ("a\nb\nc", "\n", 3),
+        ("你好\n世界\n", "\n", 2),
+    ],
+)
+def test_read_file_trailing_line_separator_does_not_exceed_max_lines(tmp_path, original, separator, real_lines):
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(original.encode("utf-8"))
+    tools = FileTools(base_dir=tmp_path, line_separator=separator)
+    tools.max_file_lines = real_lines
+
+    # Reading with max_file_lines == real_lines must succeed
+    assert tools.read_file("sample.txt") == original
+
+    # Reading with max_file_lines < real_lines must return error
+    if real_lines > 0:
+        tools.max_file_lines = real_lines - 1
+        assert tools.read_file("sample.txt") == "Error reading file: file too long. Use read_file_chunk instead"
 
 
 def test_list_files_returns_relative_paths():
@@ -44,6 +152,30 @@ def test_list_files_returns_relative_paths():
             assert not file_path.startswith("/")
             assert not file_path.startswith(tmp_dir)
             assert file_path in ["file1.txt", "file2.txt", "file3.md"]
+
+
+def test_list_files_schema_exposes_directory():
+    """Test that list_files exposes its optional directory argument."""
+    file_tools = FileTools()
+    function = file_tools.functions["list_files"]
+    function.process_entrypoint()
+
+    properties = function.parameters["properties"]
+    assert properties["directory"]["type"] == "string"
+    assert "kwargs" not in properties
+    assert "directory" not in function.parameters.get("required", [])
+
+
+def test_list_files_empty_directory_falls_back_to_base_dir():
+    """Test that an empty directory string lists the base directory instead of returning nothing."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "file1.txt").write_text("content1")
+
+        assert json.loads(file_tools.list_files(directory="")) == ["file1.txt"]
+        assert file_tools.list_files(directory="") == file_tools.list_files()
 
 
 def test_search_files_returns_relative_paths():
@@ -94,6 +226,22 @@ def test_search_files_returns_relative_paths():
         assert "subdir/file3.txt" in data["files"]
 
 
+def test_search_files_does_not_return_traversal_matches_outside_base():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("outside secret")
+        file_tools = FileTools(base_dir=base_dir)
+
+        result = json.loads(file_tools.search_files(pattern="../outside/*.txt"))
+
+        assert result["matches_found"] == 0
+        assert result["files"] == []
+
+
 def test_save_and_delete_file():
     with tempfile.TemporaryDirectory() as tmpdirname:
         f = FileTools(base_dir=Path(tmpdirname), enable_delete_file=True)
@@ -129,20 +277,20 @@ def test_replace_file_chunk():
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
-def test_check_escape():
-    """Test check_escape service function"""
+def test_check_path():
+    """Test the path-containment check used by all file operations"""
     with tempfile.TemporaryDirectory() as tempdirname:
         base_dir = Path(tempdirname)
         f = FileTools(base_dir=base_dir)
-        flag, path = f.check_escape(".")
+        flag, path = f._check_path(".", base_dir)
         assert flag
         assert path.resolve() == base_dir.resolve()
-        flag, path = f.check_escape("..")
+        flag, path = f._check_path("..", base_dir)
         assert not (flag)
-        flag, path = f.check_escape("a/b/..")
+        flag, path = f._check_path("a/b/..", base_dir)
         assert flag
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
-        flag, path = f.check_escape("a/b/../../..")
+        flag, path = f._check_path("a/b/../../..", base_dir)
         assert not (flag)
 
 
@@ -164,6 +312,52 @@ def test_search_content_finds_matches():
         file_names = [m["file"] for m in data["files"]]
         assert "hello.txt" in file_names
         assert "other.py" in file_names
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_search_content_skips_symlink_targets_outside_base():
+    """Test that search_content skips symlink targets outside base_dir."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        secret = outside_dir / "secret.txt"
+        secret.write_text("outside needle")
+        try:
+            (base_dir / "linked-secret.txt").symlink_to(secret)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        file_tools = FileTools(base_dir=base_dir)
+
+        result = json.loads(file_tools.search_content(query="needle"))
+
+        assert result["matches_found"] == 0
+        assert result["files"] == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_list_files_skips_symlink_targets_outside_base():
+    """Test that list_files skips symlink targets outside base_dir."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("outside secret")
+        (base_dir / "inside.txt").write_text("inside content")
+        try:
+            (base_dir / "linked-secret.txt").symlink_to(outside_dir / "secret.txt")
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        file_tools = FileTools(base_dir=base_dir)
+
+        files = json.loads(file_tools.list_files())
+
+        assert "inside.txt" in files
+        assert "linked-secret.txt" not in files
 
 
 def test_search_content_directory_scoping():
@@ -212,3 +406,186 @@ def test_search_content_limit():
         data = json.loads(result)
 
         assert data["matches_found"] == 2
+
+
+def test_default_exclude_patterns_hide_junk():
+    """By default, .venv and similar noise dirs are excluded from results."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        tmp_sub = base_dir / "tmp"
+        tmp_sub.mkdir()
+        (tmp_sub / "foo.txt").write_text("foo")
+        venv_pkg = tmp_sub / ".venv" / "lib" / "site-packages"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "x.py").write_text("print('x')")
+
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
+        assert search_result["matches_found"] == 0
+
+        listed = json.loads(file_tools.list_files(directory="tmp"))
+        assert ".venv" not in [Path(p).name for p in listed]
+        assert "tmp/foo.txt" in listed
+
+
+def test_empty_exclude_patterns_opts_out():
+    """exclude_patterns=[] restores prior behavior: no exclusions."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=[])
+
+        venv_pkg = base_dir / ".venv" / "lib" / "site-packages"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "x.py").write_text("print('x')")
+
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
+        assert search_result["matches_found"] == 1
+        assert any(".venv" in p for p in search_result["files"])
+
+
+def test_custom_exclude_patterns():
+    """Custom patterns replace the default list."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=["node_modules"])
+
+        (base_dir / "node_modules").mkdir()
+        (base_dir / "node_modules" / "a.txt").write_text("a")
+        (base_dir / ".venv").mkdir()
+        (base_dir / ".venv" / "b.txt").write_text("b")
+
+        result = json.loads(file_tools.search_files(pattern="**/*.txt"))
+        files = result["files"]
+        assert not any("node_modules" in p for p in files)
+        assert any(".venv" in p for p in files)
+
+
+def test_exclude_patterns_match_nested_components():
+    """Patterns match on any path component, not just top-level dirs."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=[".git"])
+
+        nested = base_dir / "vendor" / "thing" / ".git"
+        nested.mkdir(parents=True)
+        (nested / "config").write_text("[core]")
+        (base_dir / "vendor" / "thing" / "readme.txt").write_text("hi")
+
+        result = json.loads(file_tools.search_files(pattern="**/*"))
+        files = result["files"]
+        assert not any(".git" in Path(p).parts for p in files)
+        assert "vendor/thing/readme.txt" in files
+
+
+def test_exclude_patterns_support_globs():
+    """Glob patterns like '*.egg-info' are honored."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=["*.egg-info"])
+
+        egg = base_dir / "foo.egg-info"
+        egg.mkdir()
+        (egg / "PKG-INFO").write_text("Name: foo")
+        (base_dir / "keep.txt").write_text("keep")
+
+        result = json.loads(file_tools.search_files(pattern="**/*"))
+        files = result["files"]
+        assert not any("egg-info" in p for p in files)
+        assert "keep.txt" in files
+
+
+def test_default_excludes_env_family():
+    """The '.env*' and '*.env' default patterns together hide both prefix
+    (.env.local) and suffix (local.env) naming conventions for env files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        # Prefix convention (Next.js / Vite / most modern web frameworks)
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.local").write_text("SECRET=2")
+        (base_dir / ".env.production").write_text("SECRET=3")
+        (base_dir / ".envrc").write_text("export FOO=bar")
+
+        # Suffix convention (Docker Compose --env-file, shell scripts)
+        (base_dir / "local.env").write_text("SECRET=4")
+        (base_dir / "prod.env").write_text("SECRET=5")
+
+        # Real code that happens to contain "env" - must stay visible
+        (base_dir / "environment.py").write_text("import os")
+        (base_dir / "env.yaml").write_text("key: value")
+        (base_dir / "keep.txt").write_text("visible")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["env.yaml", "environment.py", "keep.txt"]
+
+
+def test_default_excludes_credential_files():
+    """The default list is shared with Workspace, where it is an access boundary."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        for name in ("id_rsa", "server.pem", "credentials.json", "secrets.yaml", ".npmrc", "terraform.tfvars"):
+            (base_dir / name).write_text("SECRET=1")
+        # Ordinary source with a credential-shaped name stays visible: the patterns are
+        # deliberately not `credentials.*` / `secrets.*`.
+        for name in ("credentials.py", "secrets.py", "key.py", "keep.txt"):
+            (base_dir / name).write_text("import os")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["credentials.py", "keep.txt", "key.py", "secrets.py"]
+
+
+def test_default_excludes_keep_committed_env_templates_visible():
+    """A '!' entry exempts a component from every exclude pattern."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.production").write_text("SECRET=2")
+        (base_dir / ".env.example").write_text("OPENAI_API_KEY=")
+        (base_dir / ".env.sample").write_text("OPENAI_API_KEY=")
+        (base_dir / "example.env").write_text("OPENAI_API_KEY=")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == [".env.example", ".env.sample", "example.env"]
+
+
+def test_default_excludes_agent_scratch_and_plural_venvs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "real.py").write_text("# TODO: real work")
+        scratch = base_dir / ".context"
+        scratch.mkdir()
+        (scratch / "notes.py").write_text("# TODO: scratch")
+        venvs_pkg = base_dir / ".venvs" / "demo" / "lib"
+        venvs_pkg.mkdir(parents=True)
+        (venvs_pkg / "installed.py").write_text("# TODO: dependency")
+
+        result = json.loads(file_tools.search_content(query="TODO", limit=10))
+        file_names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert file_names == ["real.py"]
+
+
+def test_search_content_honors_exclusions():
+    """search_content should not return matches inside excluded directories."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        venv_pkg = base_dir / ".venv" / "lib"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "hit.py").write_text("# TODO: something")
+        (base_dir / "real.py").write_text("# TODO: real work")
+
+        result = json.loads(file_tools.search_content(query="TODO"))
+        file_names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert "real.py" in file_names
+        assert not any(".venv" in f for f in file_names)

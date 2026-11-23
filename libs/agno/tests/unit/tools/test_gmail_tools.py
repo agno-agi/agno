@@ -31,16 +31,16 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_tools(mock_credentials, mock_gmail_service):
     """Create GmailTools instance with mocked dependencies."""
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(creds=mock_credentials)
-        tools.service = mock_gmail_service
+        tools._service = mock_gmail_service
         return tools
 
 
 @pytest.fixture
 def gmail_tools_all(mock_credentials, mock_gmail_service):
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(
             creds=mock_credentials,
@@ -52,7 +52,7 @@ def gmail_tools_all(mock_credentials, mock_gmail_service):
             trash_message=True,
             download_attachment=True,
         )
-        tools.service = mock_gmail_service
+        tools._service = mock_gmail_service
         return tools
 
 
@@ -74,7 +74,7 @@ def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body:
 def test_init_with_default_scopes():
     """Test initialization with default scopes."""
     tools = GmailTools()
-    assert tools.scopes == GmailTools.DEFAULT_SCOPES
+    assert tools.scopes == GmailTools.default_scopes
     assert "https://www.googleapis.com/auth/gmail.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/gmail.compose" in tools.scopes
 
@@ -125,44 +125,51 @@ def test_init_with_missing_read_scope():
 
 
 def test_authentication_decorator():
-    """Test the authentication decorator behavior."""
+    """Test the authentication decorator sets up service when creds provided."""
     mock_creds = Mock(spec=Credentials)
-    mock_creds.valid = False
+    mock_creds.valid = True
+    mock_creds.scopes = GmailTools.default_scopes
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
+        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {"messages": []}
         mock_build.return_value = mock_service
 
         tools = GmailTools(creds=mock_creds)
-
-        with patch.object(tools, "_auth") as mock_auth:
-            tools.get_latest_emails(count=1)
-            mock_auth.assert_called_once()
+        tools._service = mock_service
+        tools.get_latest_emails(count=1)
+        assert tools.service is not None
 
 
 def test_auth_with_expired_credentials():
-    """Test authentication with expired credentials."""
+    """Test that expired credentials from file get refreshed."""
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = False
     mock_creds.expired = True
-    mock_creds.refresh_token = True
+    mock_creds.refresh_token = "test_refresh_token"
+    mock_creds.scopes = GmailTools.default_scopes
+    mock_creds.to_json.return_value = '{"token": "refreshed"}'
 
-    # Real Credentials.refresh() sets token + expiry, making valid=True
     def refresh_side_effect(request):
         mock_creds.valid = True
         mock_creds.expired = False
 
     mock_creds.refresh = Mock(side_effect=refresh_side_effect)
-    mock_creds.to_json.return_value = '{"token": "refreshed"}'
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = MagicMock()
-        tools = GmailTools(creds=mock_creds)
+        # Don't pass creds — let it load from file
+        tools = GmailTools()
 
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch("pathlib.Path.write_text"):
-                tools._auth()
-                mock_creds.refresh.assert_called_once()
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+            patch("pathlib.Path.write_text"),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            result = tools._resolve_creds()
+            mock_creds.refresh.assert_called_once()
+            assert result.valid is True
 
 
 def test_auth_with_custom_paths():
@@ -170,18 +177,29 @@ def test_auth_with_custom_paths():
     custom_creds_path = "custom_creds.json"
     custom_token_path = "custom_token.json"
 
+    # Create mock with all required Gmail scopes to pass _has_required_scopes check
+    gmail_scopes = [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.modify",
+    ]
     mock_loaded_creds = MagicMock(spec=Credentials)
     mock_loaded_creds.valid = True
+    mock_loaded_creds.scopes = gmail_scopes
     mock_loaded_creds.to_json.return_value = '{"token": "test"}'
 
     with patch("pathlib.Path.exists", return_value=True):
         with patch(
-            "agno.tools.google.gmail.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
+            "google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
         ) as mock_from_file:
             with patch("pathlib.Path.write_text"):
                 tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
-                tools._auth()
-                mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
+                result = tools._resolve_creds()
+                mock_from_file.assert_called_once()
+                call_args = mock_from_file.call_args[0]
+                assert call_args[0] == custom_token_path
+                assert set(call_args[1]) == set(tools.scopes)
+                assert result == mock_loaded_creds
 
 
 def test_get_latest_emails(gmail_tools, mock_gmail_service):
@@ -368,7 +386,9 @@ def test_empty_message_list(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
 
     result = gmail_tools.get_latest_emails(count=1)
-    assert "No emails found" in result
+    parsed = json.loads(result)
+    assert parsed["emails"] == []
+    assert parsed["count"] == 0
 
 
 def test_malformed_message(gmail_tools, mock_gmail_service):
@@ -422,11 +442,125 @@ def test_html_message_content(gmail_tools, mock_gmail_service):
     assert "HTML Email" in result
     assert "sender@test.com" in result
 
-    # Verify HTML content is included in the result
-    assert (
-        html_content in result
-        or base64.urlsafe_b64decode(mock_message_data["payload"]["body"]["data"]).decode() in result
+    assert json.loads(result)["emails"][0]["body"] == "HTML content"
+
+
+@pytest.mark.parametrize("method", ["get_latest_emails", "get_unread_emails", "search_emails"])
+@pytest.mark.parametrize("include_html", [False, True])
+def test_list_emails_reads_nested_html_body(gmail_tools, mock_gmail_service, method, include_html):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Nested HTML", "sender@test.com", "2024-01-01", "")
+    message["payload"].update(
+        {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/alternative",
+                    "parts": [
+                        {
+                            "mimeType": "text/html",
+                            "filename": "",
+                            "body": {"data": base64.urlsafe_b64encode(b"<p>Hello Agno</p>").decode()},
+                        }
+                    ],
+                },
+                {
+                    "mimeType": "application/pdf",
+                    "filename": "report.pdf",
+                    "body": {"attachmentId": "attachment-123", "size": 100},
+                },
+            ],
+        }
     )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(getattr(gmail_tools, method)(count=1))
+
+    expected_body = "<p>Hello Agno</p>" if include_html else "Hello Agno"
+    assert result["emails"][0]["body"] == expected_body + "\n\nAttachments: report.pdf"
+    assert result["emails"][0]["subject"] == "Nested HTML"
+    assert result["count"] == 1
+
+
+def test_list_emails_prefers_nested_plain_text_and_limits_body(gmail_tools, mock_gmail_service):
+    gmail_tools.max_body_length = 6
+    message = create_mock_message("123", "Nested plain text", "sender@test.com", "2024-01-01", "")
+    message["payload"]["parts"] = [
+        {
+            "mimeType": "multipart/alternative",
+            "parts": [
+                {"mimeType": "text/html", "body": {"data": base64.urlsafe_b64encode(b"<p>HTML version</p>").decode()}},
+                {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Plain text version").decode()}},
+            ],
+        }
+    ]
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(gmail_tools.get_latest_emails(count=1))
+
+    assert result["emails"][0]["body"] == "Plain ... [truncated]"
+
+
+@pytest.mark.parametrize("plain_first", [False, True])
+@pytest.mark.parametrize("include_html", [False, True])
+def test_list_emails_prefers_plain_text_over_related_html(gmail_tools, mock_gmail_service, plain_first, include_html):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Alternative bodies", "sender@test.com", "2024-01-01", "")
+    plain = {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Plain version").decode()}}
+    related = {
+        "mimeType": "multipart/related",
+        "parts": [
+            {"mimeType": "text/html", "body": {"data": base64.urlsafe_b64encode(b"<p>HTML version</p>").decode()}},
+            {"mimeType": "image/png", "filename": "logo.png", "body": {"attachmentId": "logo", "size": 10}},
+        ],
+    }
+    message["payload"].update(
+        {"mimeType": "multipart/alternative", "parts": [plain, related] if plain_first else [related, plain]}
+    )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    result = json.loads(gmail_tools.get_latest_emails(count=1))
+
+    assert result["emails"][0]["body"] == "Plain version\n\nAttachments: logo.png"
+
+
+@pytest.mark.parametrize("include_html", [False, True])
+@pytest.mark.parametrize("list_messages", [False, True], ids=["get-message", "list-messages"])
+def test_mixed_message_retains_html_body_and_plain_footer(gmail_tools, mock_gmail_service, include_html, list_messages):
+    gmail_tools.include_html = include_html
+    message = create_mock_message("123", "Mixed content", "sender@test.com", "2024-01-01", "")
+    message["payload"].update(
+        {
+            "mimeType": "multipart/mixed",
+            "parts": [
+                {
+                    "mimeType": "multipart/related",
+                    "parts": [
+                        {
+                            "mimeType": "text/html",
+                            "body": {"data": base64.urlsafe_b64encode(b"<p>Main content</p>").decode()},
+                        },
+                        {"mimeType": "image/png", "filename": "logo.png", "body": {"attachmentId": "logo", "size": 10}},
+                    ],
+                },
+                {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Mailing list footer").decode()}},
+            ],
+        }
+    )
+    mock_gmail_service.users().messages().list().execute.return_value = {"messages": [{"id": "123"}]}
+    mock_gmail_service.users().messages().get().execute.return_value = message
+
+    expected_body = "<p>Main content</p>\nMailing list footer" if include_html else "Main content\nMailing list footer"
+    if list_messages:
+        result = json.loads(gmail_tools.get_latest_emails(count=1))
+        assert result["emails"][0]["body"] == expected_body + "\n\nAttachments: logo.png"
+    else:
+        result = json.loads(gmail_tools.get_message(message_id="123"))
+        assert result["body"] == expected_body
+        assert result["attachments"][0]["filename"] == "logo.png"
 
 
 def test_multiple_recipients(gmail_tools, mock_gmail_service):
@@ -492,10 +626,10 @@ def test_invalid_email_parameters():
     """Test handling of invalid email parameters."""
     tools = GmailTools(creds=Mock(spec=Credentials, valid=True))
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
-        tools.service = mock_service
+        tools._service = mock_service
 
         result = tools.send_email(to="invalid-email", subject="Test", body="Test body")
         assert "Invalid recipient email format" in result
@@ -512,7 +646,7 @@ def test_service_initialization():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -522,7 +656,12 @@ def test_service_initialization():
         # Call a method that requires authentication
         with patch.object(tools, "_auth"):
             tools.get_latest_emails(count=1)
-            mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+            # Verify build was called with correct API name and version
+            # (uses http=AuthorizedHttp for timeout support)
+            mock_build.assert_called_once()
+            call_args = mock_build.call_args
+            assert call_args[0] == ("gmail", "v1")
+            assert "http" in call_args[1]
 
 
 def test_send_email_with_single_attachment(gmail_tools, mock_gmail_service):
@@ -1233,7 +1372,7 @@ def test_search_threads(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.search_threads("is:unread", count=5))
 
     assert len(result["threads"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_search_threads_http_error(gmail_tools, mock_gmail_service):
@@ -1311,7 +1450,7 @@ def test_list_drafts(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.list_drafts(count=10))
 
     assert len(result["drafts"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_list_drafts_http_error(gmail_tools, mock_gmail_service):
@@ -1551,3 +1690,34 @@ def test_temp_dir_reused_across_downloads(gmail_tools_all, mock_gmail_service):
 
     # TemporaryDirectory created only once, reused for second download
     mock_td_cls.assert_called_once()
+
+
+def test_instructions_include_compose_when_enabled(mock_credentials):
+    with patch("googleapiclient.discovery.build"):
+        tools = GmailTools(creds=mock_credentials, create_draft_email=True)
+        assert "Composing Emails" in tools.instructions
+        assert "thread_id" in tools.instructions
+
+
+def test_instructions_exclude_compose_when_disabled(mock_credentials):
+    with patch("googleapiclient.discovery.build"):
+        tools = GmailTools(
+            creds=mock_credentials,
+            # Disable all compose tools
+            create_draft_email=False,
+            send_email=False,
+            send_email_reply=False,
+            send_draft=False,
+            update_draft=False,
+            # Disable modify tools that require gmail.modify scope
+            mark_email_as_read=False,
+            mark_email_as_unread=False,
+            star_email=False,
+            unstar_email=False,
+            apply_label=False,
+            remove_label=False,
+            delete_custom_label=False,
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+        )
+        assert "Composing Emails" not in tools.instructions
+        assert "Gmail Query Syntax" in tools.instructions

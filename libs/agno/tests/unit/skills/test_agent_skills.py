@@ -271,6 +271,35 @@ def test_get_tools_returns_three_functions(mock_loader: MockSkillLoader) -> None
     assert "get_skill_script" in tool_names
 
 
+def test_get_skill_script_tool_accepts_null_path(mock_loader: MockSkillLoader) -> None:
+    """Regression: calling the tool with script_path=None must not raise.
+
+    Agno wraps every tool entrypoint with pydantic's validate_call. When
+    script_path was a required str, a model emitting script_path=null produced
+    a ValidationError at the tool boundary instead of the function's own
+    graceful JSON error. Exercise the wrapped entrypoint the same way Function
+    does and assert it returns a JSON error string.
+    """
+    skills = Skills(loaders=[mock_loader])
+    tool = next(t for t in skills.get_tools() if t.name == "get_skill_script")
+    tool.process_entrypoint()
+
+    result = json.loads(tool.entrypoint(skill_name="test-skill", script_path=None))
+    assert "error" in result
+    assert "script_path is required" in result["error"]
+
+
+def test_get_skill_reference_tool_accepts_null_path(mock_loader: MockSkillLoader) -> None:
+    """Regression: calling the tool with reference_path=None must not raise."""
+    skills = Skills(loaders=[mock_loader])
+    tool = next(t for t in skills.get_tools() if t.name == "get_skill_reference")
+    tool.process_entrypoint()
+
+    result = json.loads(tool.entrypoint(skill_name="test-skill", reference_path=None))
+    assert "error" in result
+    assert "reference_path is required" in result["error"]
+
+
 # --- Skill Instructions Tool Tests ---
 
 
@@ -285,6 +314,30 @@ def test_get_skill_instructions_success(mock_loader: MockSkillLoader) -> None:
     assert "Follow these instructions" in result["instructions"]
     assert "available_scripts" in result
     assert "available_references" in result
+
+
+def test_get_skill_instructions_preserves_non_ascii_characters(sample_skill: Skill) -> None:
+    """Test that skill instructions preserve Chinese and other non-ASCII characters."""
+    skill_with_chinese = Skill(
+        name="chinese-skill",
+        description="中文技能描述",
+        instructions="# 中文指令\n\n请按照以下步骤操作：\n1. 第一步\n2. 第二步\n3. 完成",
+        source_path="/path/to/chinese-skill",
+        scripts=["脚本.py"],
+        references=["参考文档.md"],
+    )
+    loader = MockSkillLoader([skill_with_chinese])
+    skills = Skills(loaders=[loader])
+    result_json = skills._get_skill_instructions("chinese-skill")
+    result = json.loads(result_json)
+
+    assert result["skill_name"] == "chinese-skill"
+    assert result["instructions"] == "# 中文指令\n\n请按照以下步骤操作：\n1. 第一步\n2. 第二步\n3. 完成"
+    assert result["description"] == "中文技能描述"
+    # Verify raw JSON string contains actual Chinese chars, not \uXXXX escapes
+    assert "中文指令" in result_json
+    assert "中文技能描述" in result_json
+    assert "\\u" not in result_json  # No ASCII escaping
 
 
 def test_get_skill_instructions_not_found(mock_loader: MockSkillLoader) -> None:
@@ -336,6 +389,22 @@ def test_get_skill_reference_with_real_file(temp_skill_dir: Path) -> None:
     assert "reference guide" in result["content"].lower()
 
 
+def test_get_skill_reference_missing_path(mock_loader: MockSkillLoader) -> None:
+    """Test reference retrieval returns a graceful error when reference_path is None.
+
+    Models sometimes call the tool without a reference_path. The optional
+    parameter lets that reach the graceful guard instead of raising a
+    validate_call ValidationError at the tool boundary.
+    """
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_reference("test-skill", None)
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "reference_path is required" in result["error"]
+    assert result["available_references"] == ["guide.md", "api-docs.md"]
+
+
 # --- Skill Script Tool Tests ---
 
 
@@ -372,6 +441,23 @@ def test_skill_script_read_with_real_file(temp_skill_dir: Path) -> None:
     assert result["script_path"] == "helper.py"
     assert "content" in result
     assert "Helper script" in result["content"]
+
+
+def test_skill_script_read_missing_path(mock_loader: MockSkillLoader) -> None:
+    """Test script read returns a graceful error when script_path is None.
+
+    A skill with no scripts renders ``<scripts>none</scripts>`` in the system
+    prompt, yet models occasionally still call get_skill_script without a
+    script_path. The optional parameter lets that reach the graceful guard
+    instead of raising a validate_call ValidationError at the tool boundary.
+    """
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("test-skill", None)
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "script_path is required" in result["error"]
+    assert result["available_scripts"] == ["helper.py", "runner.sh"]
 
 
 # --- Error Handling Tests ---

@@ -30,13 +30,19 @@ def copy_args_for_background(args: Dict[str, Any]) -> Dict[str, Any]:
         if key in BACKGROUND_HOOK_COPY_KEYS and value is not None:
             try:
                 copied_args[key] = deepcopy(value)
-            except Exception:
+            except Exception as e:
                 # If deepcopy fails (e.g., for non-copyable objects), use the original
-                log_warning(f"Could not deepcopy {key} for background hook, using original reference")
+                log_warning(f"Could not deepcopy {key} for background hook, using original reference: {str(e)}")
                 copied_args[key] = value
         else:
             copied_args[key] = value
     return copied_args
+
+
+def get_hook_name(hook: Callable[..., Any]) -> str:
+    """The hook's display name. Callable instances (an object with __call__) and
+    functools.partial wrappers carry no __name__, so fall back to the type name."""
+    return getattr(hook, "__name__", type(hook).__name__)
 
 
 def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
@@ -103,7 +109,7 @@ def normalize_pre_hooks(
 
                     if asyncio.iscoroutinefunction(hook):
                         raise ValueError(
-                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                            f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )
 
                 result_hooks.append(hook)
@@ -146,11 +152,35 @@ def normalize_post_hooks(
 
                     if asyncio.iscoroutinefunction(hook):
                         raise ValueError(
-                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                            f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )
 
                 result_hooks.append(hook)
     return result_hooks if result_hooks else None
+
+
+def continue_post_hooks(
+    hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]],
+    async_mode: bool = False,
+) -> Optional[List[Callable[..., Any]]]:
+    """Post-hooks for a continued run, with guardrail and eval objects converted to callables.
+
+    A component that continues a run has often never started one, so its hooks may still hold the
+    objects. If it has started one, they hold each guardrail's check for that run's mode, which a
+    continue of the other mode would skip: the guardrail is converted again for this call.
+    Function hooks pass through unchanged and the component's own list is not replaced: a continue
+    refuses no hook, and does not fix the mode that the first fresh run converts in.
+    """
+    if not hooks:
+        return hooks  # type: ignore[return-value]
+    result_hooks: List[Callable[..., Any]] = []
+    for hook in hooks:
+        if is_guardrail_hook(hook) and getattr(hook, "__name__", None) in ("check", "async_check"):  # type: ignore[arg-type]
+            hook = hook.__self__  # type: ignore[union-attr]
+        if isinstance(hook, (BaseGuardrail, BaseEval)):
+            hook = normalize_post_hooks([hook], async_mode=async_mode)[0]  # type: ignore[index]
+        result_hooks.append(hook)
+    return result_hooks
 
 
 def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict[str, Any]:
@@ -173,6 +203,6 @@ def filter_hook_args(hook: Callable[..., Any], all_args: Dict[str, Any]) -> Dict
         return filtered_args
 
     except Exception as e:
-        log_warning(f"Could not inspect hook signature, passing all arguments: {e}")
+        log_warning(f"Could not inspect hook signature, passing all arguments: {str(e)}")
         # If signature inspection fails, pass all arguments as fallback
         return all_args

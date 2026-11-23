@@ -23,7 +23,7 @@ from llama_index.core.retrievers import VectorIndexRetriever
 # Setup
 # ---------------------------------------------------------------------------
 data_dir = Path(__file__).parent.parent.parent.joinpath("wip", "data", "paul_graham")
-source_url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/docs/examples/data/paul_graham/paul_graham_essay.txt"
+source_url = "https://raw.githubusercontent.com/run-llama/llama_index/main/docs/examples/data/paul_graham/paul_graham_essay.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,6 @@ def create_agent(knowledge: Knowledge) -> Agent:
         model=OpenAIChat("gpt-5.2"),
         knowledge=knowledge,
         search_knowledge=True,
-        debug_mode=True,
     )
 
 

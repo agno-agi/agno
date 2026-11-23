@@ -51,7 +51,7 @@ if __name__ == "__main__":
     )
 
     standard_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),  # Using standard OpenAI for the agent
+        model=OpenAIChat(id="gpt-5.6-luna"),  # Using standard OpenAI for the agent
         tools=[AzureOpenAITools()],  # Using Azure OpenAI for image generation
         name="Mixed OpenAI Generator",
         description="An AI assistant that uses standard OpenAI for chat and Azure OpenAI for image generation",
@@ -60,7 +60,6 @@ if __name__ == "__main__":
             "Use the generate_image tool to create detailed visualizations of user requests.",
             "Provide creative suggestions to enhance the images if needed.",
         ],
-        debug_mode=True,
     )
 
     # Generate an image with the standard OpenAI model and Azure tools

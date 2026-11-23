@@ -2,10 +2,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
+from agno.remote.base import BaseRemote
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_debug
-from agno.utils.string import is_valid_uuid, url_safe_string
+from agno.utils.string import url_safe_string
 
 if TYPE_CHECKING:
     from agno.team.team import Team
@@ -34,23 +35,40 @@ def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
     Get the ID of a member
 
     Priority order:
-    1. If the member has an explicitly provided id, use it (UUID or not)
+    1. If the member has an explicitly provided id, use it as-is
     2. If the member has a name, convert that to a URL safe string
     3. Otherwise, return None
+
+    An explicitly provided id is used verbatim (not run through url_safe_string) so that
+    it always matches what the team leader is shown in the members prompt and what it
+    passes back when delegating tasks. Only a name, which may contain spaces or other
+    characters unsafe for tool-call arguments, is converted.
     """
+    from agno.agents.base import BaseExternalAgent
     from agno.team.team import Team
 
-    # First priority: Use the ID if explicitly provided
-    if isinstance(member, Agent) and member.id is not None:
-        url_safe_member_id = member.id if is_valid_uuid(member.id) else url_safe_string(member.id)
-    elif isinstance(member, Team) and member.id is not None:
-        url_safe_member_id = member.id if is_valid_uuid(member.id) else url_safe_string(member.id)
+    # First priority: Use the ID if explicitly provided. A harness member (Claude Code, Codex) has one too.
+    if isinstance(member, (Agent, Team, BaseExternalAgent)) and member.id is not None:
+        return member.id
     # Second priority: Use the name if available
     elif member.name is not None:
-        url_safe_member_id = url_safe_string(member.name)
+        return url_safe_string(member.name)
     else:
-        url_safe_member_id = None
-    return url_safe_member_id
+        return None
+
+
+def get_member_session_id(member: Any, session_id: str) -> str:
+    """The session a member runs in: a remote member keeps its own session on its AgentOS, apart from the team's."""
+    if isinstance(member, BaseRemote):
+        # RemoteAgent and RemoteTeam, the two remote members, each have an id
+        return f"{session_id}:{member.id}"  # type: ignore[attr-defined]
+    return session_id
+
+
+def is_remote_member_run(member_run: Any, session_id: Optional[str]) -> bool:
+    """Whether a member run is a remote member's, kept in the session get_member_session_id gives it."""
+    member_session_id = getattr(member_run, "session_id", None)
+    return member_session_id is not None and member_session_id.startswith(f"{session_id}:")
 
 
 def add_interaction_to_team_run_context(

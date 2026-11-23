@@ -8,6 +8,10 @@ class DocumentChunking(ChunkingStrategy):
     """A chunking strategy that splits text based on document structure like paragraphs and sections"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
+        # overlap must be less than chunk size
+        if overlap >= chunk_size:
+            raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
+
         self.chunk_size = chunk_size
         self.overlap = overlap
 
@@ -111,16 +115,18 @@ class DocumentChunking(ChunkingStrategy):
                     meta_data = chunk_meta_data.copy()
                     # Use the chunk's existing metadata and ID instead of stale chunk_number
                     meta_data["chunk"] = chunks[i].meta_data["chunk"]
-                    chunk_id = chunks[i].id
-                    meta_data["chunk_size"] = len(prev_text + chunks[i].content)
 
                     if prev_text:
+                        # Build the final content first, then generate the id from it.
+                        new_content = prev_text + chunks[i].content
+                        chunk_id = self._generate_chunk_id(document, meta_data["chunk"], new_content)
+                        meta_data["chunk_size"] = len(new_content)
                         overlapped_chunks.append(
                             Document(
                                 id=chunk_id,
                                 name=document.name,
                                 meta_data=meta_data,
-                                content=prev_text + chunks[i].content,
+                                content=new_content,
                             )
                         )
                     else:

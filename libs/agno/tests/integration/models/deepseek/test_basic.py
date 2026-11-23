@@ -19,7 +19,7 @@ def _assert_metrics(response: RunOutput):
 
 
 def test_basic():
-    agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True, telemetry=False)
+    agent = Agent(model=DeepSeek(id="deepseek-v4-flash"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -31,8 +31,19 @@ def test_basic():
     _assert_metrics(response)
 
 
+def test_thinking_produces_reasoning_content():
+    """V4 models run in thinking mode by default and should return reasoning_content."""
+    agent = Agent(model=DeepSeek(id="deepseek-v4-pro"), telemetry=False)
+
+    response: RunOutput = agent.run("What is 17 * 23? Think it through.")
+
+    assert response.content is not None and len(response.content) > 0
+    assert response.reasoning_content is not None and len(response.reasoning_content) > 0
+    _assert_metrics(response)
+
+
 def test_basic_stream():
-    agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True, telemetry=False)
+    agent = Agent(model=DeepSeek(id="deepseek-v4-flash"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -41,13 +52,15 @@ def test_basic_stream():
 
     responses = list(response_stream)
     assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
+    # In thinking mode the stream first delivers reasoning_content deltas (content=None),
+    # then content deltas. Ensure we still receive actual content events.
+    content_events = [response for response in responses if response.content is not None]
+    assert len(content_events) > 0
 
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True, telemetry=False)
+    agent = Agent(model=DeepSeek(id="deepseek-v4-flash"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -59,16 +72,20 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True, telemetry=False)
+    agent = Agent(model=DeepSeek(id="deepseek-v4-flash"), markdown=True, telemetry=False)
 
+    content_events = 0
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
-        assert response.content is not None
+        # In thinking mode early events carry reasoning_content (content=None).
+        if response.content is not None:
+            content_events += 1
+    assert content_events > 0
 
 
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=DeepSeek(id="deepseek-chat"),
+        model=DeepSeek(id="deepseek-v4-flash"),
         add_history_to_context=True,
         markdown=True,
         telemetry=False,
@@ -99,7 +116,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=DeepSeek(id="deepseek-chat"),
+        model=DeepSeek(id="deepseek-v4-flash"),
         output_schema=MovieScript,
         telemetry=False,
     )
@@ -120,7 +137,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=DeepSeek(id="deepseek-chat"),
+        model=DeepSeek(id="deepseek-v4-flash"),
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
@@ -137,7 +154,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=DeepSeek(id="deepseek-chat"),
+        model=DeepSeek(id="deepseek-v4-flash"),
         db=SqliteDb(db_file="tmp/deepseek/test_basic.db"),
         add_history_to_context=True,
         store_history_messages=True,

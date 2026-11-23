@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 try:
     from exa_py import Exa
@@ -29,6 +29,8 @@ class ExaTools(Toolkit):
         text_length_limit (int): Max length of text content per result. Default is 1000.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
+        livecrawl (Optional[str]): Live-crawl mode passed to Exa (e.g. "always", "fallback", "never").
+            Left unset by default, which keeps Exa's own behaviour.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
         end_crawl_date (Optional[str]): Include results crawled on/before this date (`YYYY-MM-DD`).
         start_published_date (Optional[str]): Include results published on/after this date (`YYYY-MM-DD`).
@@ -37,6 +39,14 @@ class ExaTools(Toolkit):
         category (Optional[str]): Filter results by category. Options are "company", "research paper", "news", "pdf", "github", "tweet", "personal site", "linkedin profile", "financial report".
         include_domains (Optional[List[str]]): Restrict results to these domains.
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
+        include_text (Optional[List[str]]): Require this string to be present in the page text
+            (one string, up to 5 words). Applies to search and find-similar.
+        exclude_text (Optional[List[str]]): Exclude pages whose text contains this string
+            (one string, up to 5 words). Applies to search and find-similar.
+        user_location (Optional[str]): Two-letter ISO country code of the user (e.g. "US").
+        moderation (Optional[bool]): Ask Exa to moderate search results for safety.
+        highlights (bool): Retrieve highlights - the relevant sentences of each page. Default is False.
+        subpages (Optional[int]): Number of subpages to crawl per result.
         show_results (bool): Log search results for debugging. Default is False.
         model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
         timeout (int): Maximum time in seconds to wait for API responses. Default is 30 seconds.
@@ -55,7 +65,7 @@ class ExaTools(Toolkit):
         summary: bool = False,
         api_key: Optional[str] = None,
         num_results: Optional[int] = None,
-        livecrawl: str = "always",
+        livecrawl: Optional[str] = None,
         start_crawl_date: Optional[str] = None,
         end_crawl_date: Optional[str] = None,
         start_published_date: Optional[str] = None,
@@ -64,6 +74,12 @@ class ExaTools(Toolkit):
         category: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
+        include_text: Optional[List[str]] = None,
+        exclude_text: Optional[List[str]] = None,
+        user_location: Optional[str] = None,
+        moderation: Optional[bool] = None,
+        highlights: bool = False,
+        subpages: Optional[int] = None,
         show_results: bool = False,
         model: Optional[str] = None,
         timeout: int = 30,
@@ -72,7 +88,7 @@ class ExaTools(Toolkit):
     ):
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
-            logger.error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
+            log_error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
 
         self.exa = Exa(self.api_key)
         self.show_results = show_results
@@ -83,7 +99,7 @@ class ExaTools(Toolkit):
 
         self.summary: bool = summary
         self.num_results: Optional[int] = num_results
-        self.livecrawl: str = livecrawl
+        self.livecrawl: Optional[str] = livecrawl
         self.start_crawl_date: Optional[str] = start_crawl_date
         self.end_crawl_date: Optional[str] = end_crawl_date
         self.start_published_date: Optional[str] = start_published_date
@@ -92,6 +108,12 @@ class ExaTools(Toolkit):
         self.category: Optional[str] = category
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
+        self.include_text: Optional[List[str]] = include_text
+        self.exclude_text: Optional[List[str]] = exclude_text
+        self.user_location: Optional[str] = user_location
+        self.moderation: Optional[bool] = moderation
+        self.highlights: bool = highlights
+        self.subpages: Optional[int] = subpages
         self.model: Optional[str] = model
         self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
@@ -135,6 +157,14 @@ class ExaTools(Toolkit):
                 if self.text_length_limit:
                     _text = _text[: self.text_length_limit]
                 result_dict["text"] = _text
+            # Summaries are requested (and billed) whenever summary=True; without this
+            # they are parsed out of the response and never reach the model.
+            summary = getattr(result, "summary", None)
+            if summary:
+                result_dict["summary"] = summary
+            highlights = getattr(result, "highlights", None)
+            if highlights:
+                result_dict["highlights"] = highlights
             exa_results_parsed.append(result_dict)
         return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
@@ -157,6 +187,7 @@ class ExaTools(Toolkit):
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "summary": self.summary,
+                "livecrawl": self.livecrawl,
                 "num_results": self.num_results or num_results,
                 "start_crawl_date": self.start_crawl_date,
                 "end_crawl_date": self.end_crawl_date,
@@ -166,6 +197,12 @@ class ExaTools(Toolkit):
                 "category": self.category or category,  # Prefer a user-set category
                 "include_domains": self.include_domains,
                 "exclude_domains": self.exclude_domains,
+                "include_text": self.include_text,
+                "exclude_text": self.exclude_text,
+                "user_location": self.user_location,
+                "moderation": self.moderation,
+                "highlights": self.highlights or None,
+                "subpages": self.subpages,
             }
             # Clean up the kwargs
             search_kwargs = {k: v for k, v in search_kwargs.items() if v is not None}
@@ -179,10 +216,10 @@ class ExaTools(Toolkit):
                 log_info(parsed_results)
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Search timed out after {self.timeout} seconds")
+            log_error(f"Search timed out after {self.timeout} seconds: {str(e)}")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to search exa {e}")
+            logger.exception("Failed to search exa")
             return f"Error: {e}"
 
     def get_contents(self, urls: list[str]) -> str:
@@ -199,6 +236,9 @@ class ExaTools(Toolkit):
         query_kwargs: Dict[str, Any] = {
             "text": self.text,
             "summary": self.summary,
+            "livecrawl": self.livecrawl,
+            "highlights": self.highlights or None,
+            "subpages": self.subpages,
         }
 
         try:
@@ -214,10 +254,10 @@ class ExaTools(Toolkit):
 
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Get contents timed out after {self.timeout} seconds")
+            log_error(f"Get contents timed out after {self.timeout} seconds: {str(e)}")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get contents from Exa: {e}")
+            logger.exception("Failed to get contents from Exa")
             return f"Error: {e}"
 
     def find_similar(self, url: str, num_results: int = 5) -> str:
@@ -235,8 +275,13 @@ class ExaTools(Toolkit):
         query_kwargs: Dict[str, Any] = {
             "text": self.text,
             "summary": self.summary,
+            "livecrawl": self.livecrawl,
             "include_domains": self.include_domains,
             "exclude_domains": self.exclude_domains,
+            "include_text": self.include_text,
+            "exclude_text": self.exclude_text,
+            "highlights": self.highlights or None,
+            "subpages": self.subpages,
             "start_crawl_date": self.start_crawl_date,
             "end_crawl_date": self.end_crawl_date,
             "start_published_date": self.start_published_date,
@@ -257,10 +302,10 @@ class ExaTools(Toolkit):
 
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Find similar timed out after {self.timeout} seconds")
+            log_error(f"Find similar timed out after {self.timeout} seconds: {str(e)}")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get similar links from Exa: {e}")
+            logger.exception("Failed to get similar links from Exa")
             return f"Error: {e}"
 
     def exa_answer(self, query: str, text: bool = False) -> str:
@@ -308,10 +353,10 @@ class ExaTools(Toolkit):
             return json.dumps(result, indent=4)
 
         except TimeoutError as e:
-            logger.error(f"Answer generation timed out after {self.timeout} seconds")
+            log_error(f"Answer generation timed out after {self.timeout} seconds: {str(e)}")
             return f"Error: {str(e)}"
         except Exception as e:
-            logger.error(f"Failed to get answer from Exa: {e}")
+            logger.exception("Failed to get answer from Exa")
             return f"Error: {e}"
 
     def research(
@@ -367,9 +412,9 @@ class ExaTools(Toolkit):
 
         except TimeoutError:
             error_msg = "Research task timed out"
-            logger.error(error_msg)
+            log_error(error_msg)
             return json.dumps({"error": error_msg}, indent=4)
         except Exception as e:
             error_msg = f"Research failed: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return json.dumps({"error": error_msg}, indent=4)

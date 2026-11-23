@@ -14,12 +14,13 @@ from typing import (
     Type,
     Union,
     cast,
-    get_args,
 )
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent._tools import result_store_kwargs
+from agno.agent.followup import prepare_followup_call
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -27,10 +28,11 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import (
+    TEAM_RUN_OUTPUT_EVENT_TYPES,
     TeamRunEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -146,7 +148,11 @@ def process_parser_response(
 
 
 def parse_response_with_parser_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.team._messages import _get_messages_for_parser_model
@@ -166,13 +172,29 @@ def parse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                team.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics,
+            )
+
         process_parser_response(team, model_response, run_messages, parser_model_response, messages_for_parser_model)
     else:
         log_warning("A response model is required to parse the response with a parser model")
 
 
 async def aparse_response_with_parser_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.team._messages import _get_messages_for_parser_model
@@ -192,6 +214,18 @@ async def aparse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                team.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics,
+            )
+
         process_parser_response(team, model_response, run_messages, parser_model_response, messages_for_parser_model)
     else:
         log_warning("A response model is required to parse the response with a parser model")
@@ -230,6 +264,7 @@ def parse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             ):
                 yield from _handle_model_response_chunk(
                     team,
@@ -300,6 +335,7 @@ async def aparse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             )
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in _handle_model_response_chunk(
@@ -343,7 +379,12 @@ async def aparse_response_with_parser_model_stream(
 # ---------------------------------------------------------------------------
 
 
-def parse_response_with_output_model(team: "Team", model_response: ModelResponse, run_messages: RunMessages) -> None:
+def parse_response_with_output_model(
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_response: Optional[TeamRunOutput] = None,
+) -> None:
     """Parse the model response using the output model."""
     from agno.team._messages import _get_messages_for_output_model
 
@@ -352,6 +393,18 @@ def parse_response_with_output_model(team: "Team", model_response: ModelResponse
 
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = team.output_model.response(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            team.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -383,7 +436,9 @@ def generate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    for model_response_event in team.output_model.response_stream(messages=messages_for_output_model):
+    for model_response_event in team.output_model.response_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         yield from _handle_model_response_chunk(
             team,
             session=session,
@@ -410,7 +465,10 @@ def generate_response_with_output_model_stream(
 
 
 async def agenerate_response_with_output_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the output model stream."""
     from agno.team._messages import _get_messages_for_output_model
@@ -420,6 +478,18 @@ async def agenerate_response_with_output_model(
 
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = await team.output_model.aresponse(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            team.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -451,7 +521,9 @@ async def agenerate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    async for model_response_event in team.output_model.aresponse_stream(messages=messages_for_output_model):
+    async for model_response_event in team.output_model.aresponse_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         for event in _handle_model_response_chunk(
             team,
             session=session,
@@ -593,7 +665,7 @@ def handle_reasoning_event(
 def handle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -609,7 +681,7 @@ def handle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> Iterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reasoning_generator = reason(
             team,
             run_response=run_response,
@@ -623,7 +695,7 @@ def handle_reasoning_stream(
 async def ahandle_reasoning(
     team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
         )
@@ -639,7 +711,7 @@ async def ahandle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: bool = False,
 ) -> AsyncIterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
+    if team.reasoning_model is not None:
         reason_generator = areason(
             team,
             run_response=run_response,
@@ -661,28 +733,18 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -706,28 +768,18 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
             debug_mode=team.debug_mode,
             debug_level=team.debug_level,
@@ -884,12 +936,26 @@ def _update_run_response(
     if model_response.citations is not None:
         run_response.citations = model_response.citations
 
-    # Update the run_response tools with the model response tool_executions
+    # Update the run_response tools with the model response tool_executions.
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
+    # already wrote tools into run_response, so a naive extend would duplicate
+    # every execution. Replace existing entries in place (preserving order) and
+    # append only genuinely new ones. Carry over child_run_id (the delegation ->
+    # member-run link) when the incoming entry lacks it, since model_response
+    # tool_executions do not carry it.
     if model_response.tool_executions is not None:
         if run_response.tools is None:
-            run_response.tools = model_response.tool_executions
+            run_response.tools = list(model_response.tool_executions)
         else:
-            run_response.tools.extend(model_response.tool_executions)
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    index = existing_by_id[tool.tool_call_id]
+                    if tool.child_run_id is None and run_response.tools[index].child_run_id is not None:
+                        tool.child_run_id = run_response.tools[index].child_run_id
+                    run_response.tools[index] = tool
+                else:
+                    run_response.tools.append(tool)
 
     # Update the run_response audio with the model response audio
     if model_response.audio is not None:
@@ -945,6 +1011,9 @@ def _handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import build_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
         team.model,
@@ -958,6 +1027,10 @@ def _handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        **result_store_kwargs(team),
+        after_tool_results=build_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1099,6 +1172,9 @@ async def _ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import abuild_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
         team.model,
@@ -1112,6 +1188,10 @@ async def _ahandle_model_response_stream(
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        **result_store_kwargs(team),
+        after_tool_results=abuild_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     )  # type: ignore
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse
@@ -1240,8 +1320,8 @@ def _handle_model_response_chunk(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-    if isinstance(model_response_event, tuple(get_args(RunOutputEvent))) or isinstance(
-        model_response_event, tuple(get_args(TeamRunOutputEvent))
+    if isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES) or isinstance(
+        model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES
     ):
         if team.stream_member_events:
             if model_response_event.event == TeamRunEvent.custom_event:  # type: ignore
@@ -1253,6 +1333,27 @@ def _handle_model_response_chunk(
                     model_response_event.session_id = session.session_id  # type: ignore
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
+
+            # Skip terminals — their content is a summary string, not a streaming delta.
+            if not parse_structured_output and team._member_response_model is None:
+                event_name = getattr(model_response_event, "event", "")
+                is_terminal = event_name in {
+                    "RunCompleted",
+                    "RunCancelled",
+                    "RunError",
+                    "TeamRunCompleted",
+                    "TeamRunCancelled",
+                    "TeamRunError",
+                }
+                if (
+                    not is_terminal
+                    and hasattr(model_response_event, "content")
+                    and isinstance(model_response_event.content, str)
+                ):
+                    if run_response.content is None:
+                        run_response.content = model_response_event.content
+                    elif isinstance(run_response.content, str):
+                        run_response.content += model_response_event.content
 
             # We just bubble the event up
             yield handle_event(  # type: ignore
@@ -1298,6 +1399,7 @@ def _handle_model_response_chunk(
                     run_response.content_type = content_type
                 elif isinstance(model_response_event.content, str):
                     full_model_response.content = (full_model_response.content or "") + model_response_event.content
+                    run_response.content = full_model_response.content
                 should_yield = True
 
             # Process reasoning content
@@ -1602,7 +1704,7 @@ def _convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Team run response content is not a string")
     elif team._member_response_model is not None:
@@ -1635,7 +1737,7 @@ def _convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
 
@@ -1650,29 +1752,11 @@ def generate_team_followups(
     run_response: TeamRunOutput,
 ) -> None:
     """Generate followups after the main response (sync, non-streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _run_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    model = team.followup_model or team.model
-    if model is None:
-        return
-
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
-
-    try:
-        model_response: ModelResponse = model.response(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    call = prepare_followup_call(team, run_response)
+    if call is not None:
+        _run_followups_model(call, run_response)
 
 
 async def agenerate_team_followups(
@@ -1680,29 +1764,11 @@ async def agenerate_team_followups(
     run_response: TeamRunOutput,
 ) -> None:
     """Generate followups after the main response (async, non-streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _arun_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    model = team.followup_model or team.model
-    if model is None:
-        return
-
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
-
-    try:
-        model_response: ModelResponse = await model.aresponse(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    call = prepare_followup_call(team, run_response)
+    if call is not None:
+        await _arun_followups_model(call, run_response)
 
 
 def generate_team_followups_stream(
@@ -1711,14 +1777,10 @@ def generate_team_followups_stream(
     stream_events: bool = True,
 ) -> Iterator[TeamRunOutputEvent]:
     """Generate followups after the main response (sync, streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _run_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    model = team.followup_model or team.model
-    if model is None:
+    call = prepare_followup_call(team, run_response)
+    if call is None:
         return
 
     if stream_events:
@@ -1729,19 +1791,7 @@ def generate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
-
-    try:
-        model_response: ModelResponse = model.response(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    _run_followups_model(call, run_response)
 
     if stream_events:
         yield handle_event(
@@ -1758,14 +1808,10 @@ async def agenerate_team_followups_stream(
     stream_events: bool = True,
 ) -> AsyncIterator[TeamRunOutputEvent]:
     """Generate followups after the main response (async, streaming)."""
-    from agno.agent._response import _build_followup_messages, _get_followups_response_format, _parse_followups_response
-    from agno.metrics import ModelType, accumulate_model_metrics
+    from agno.agent._response import _arun_followups_model
 
-    if not team.followups or run_response.content is None:
-        return
-
-    model = team.followup_model or team.model
-    if model is None:
+    call = prepare_followup_call(team, run_response)
+    if call is None:
         return
 
     if stream_events:
@@ -1776,19 +1822,7 @@ async def agenerate_team_followups_stream(
             store_events=team.store_events,
         )
 
-    response_format = _get_followups_response_format(model)
-    user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
-
-    try:
-        model_response: ModelResponse = await model.aresponse(
-            messages=messages,
-            response_format=response_format,
-        )
-        run_response.followups = _parse_followups_response(model_response)
-        accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
-    except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+    await _arun_followups_model(call, run_response)
 
     if stream_events:
         yield handle_event(

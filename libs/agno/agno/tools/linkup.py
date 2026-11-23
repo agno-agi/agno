@@ -2,7 +2,7 @@ from os import getenv
 from typing import Any, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 try:
     from linkup import LinkupClient
@@ -22,7 +22,7 @@ class LinkupTools(Toolkit):
     ):
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
-            logger.error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
+            log_error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
 
         self.linkup = LinkupClient(api_key=api_key)
         self.depth = depth

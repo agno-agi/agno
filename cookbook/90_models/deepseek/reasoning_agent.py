@@ -21,7 +21,7 @@ task = (
 
 agent = Agent(
     model=DeepSeek(
-        id="deepseek-reasoner",
+        id="deepseek-v4-pro",
     ),
     markdown=True,
 )

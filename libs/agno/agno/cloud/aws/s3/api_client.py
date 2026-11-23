@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class AwsApiClient:
@@ -31,8 +31,8 @@ class AwsApiClient:
             logger.debug(f"\taws_region: {self._boto3_session.region_name}")
             logger.debug(f"\taws_profile: {self._boto3_session.profile_name}")
         except Exception as e:
-            logger.error("Could not connect to aws. Please confirm aws cli is installed and configured")
-            logger.error(e)
+            log_error(f"Could not connect to aws. Please confirm aws cli is installed and configured: {str(e)}")
+            log_error(e)
             exit(0)
         return self._boto3_session
 

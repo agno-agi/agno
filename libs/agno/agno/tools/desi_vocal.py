@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 import requests
@@ -9,7 +9,7 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class DesiVocalTools(Toolkit):
@@ -20,11 +20,12 @@ class DesiVocalTools(Toolkit):
         enable_get_voices: bool = True,
         enable_text_to_speech: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
-            logger.error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
+            log_error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
 
         self.voice_id = voice_id
 
@@ -34,7 +35,7 @@ class DesiVocalTools(Toolkit):
         if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
 
-        super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
+        super().__init__(name="desi_vocal_tools", tools=tools, timeout=timeout, **kwargs)
 
     def get_voices(self) -> str:
         """
@@ -44,7 +45,7 @@ class DesiVocalTools(Toolkit):
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/voices"
-            response = requests.get(url)
+            response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
 
             voices_data = response.json()
@@ -66,7 +67,7 @@ class DesiVocalTools(Toolkit):
 
             return str(responses)
         except Exception as e:
-            logger.error(f"Failed to get voices: {e}")
+            logger.exception("Failed to get voices")
             return f"Error: {e}"
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> ToolResult:
@@ -85,12 +86,12 @@ class DesiVocalTools(Toolkit):
                 "voice_id": voice_id or self.voice_id,
             }
 
-            headers = {
+            headers: Dict[str, Any] = {
                 "X_API_KEY": self.api_key,
                 "Content-Type": "application/json",
             }
 
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
 
             response.raise_for_status()
 
@@ -104,5 +105,5 @@ class DesiVocalTools(Toolkit):
                 audios=[audio_artifact],
             )
         except Exception as e:
-            logger.error(f"Failed to generate audio: {e}")
+            logger.exception("Failed to generate audio")
             return ToolResult(content=f"Error: {e}")

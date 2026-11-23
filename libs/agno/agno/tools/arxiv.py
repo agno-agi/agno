@@ -71,8 +71,8 @@ class ArxivTools(Toolkit):
                     "comment": result.comment,
                 }
                 articles.append(article)
-            except Exception as e:
-                logger.error(f"Error processing article: {e}")
+            except Exception:
+                logger.exception("Error processing article")
         return json.dumps(articles, indent=4)
 
     def read_arxiv_papers(self, id_list: List[str], pages_to_read: Optional[int] = None) -> str:
@@ -122,6 +122,6 @@ class ArxivTools(Toolkit):
                         }
                         article["content"].append(content)
                 articles.append(article)
-            except Exception as e:
-                logger.error(f"Error processing article: {e}")
+            except Exception:
+                logger.exception("Error processing article")
         return json.dumps(articles, indent=4)

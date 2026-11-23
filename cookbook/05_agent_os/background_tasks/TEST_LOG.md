@@ -57,3 +57,58 @@
 **Description:** Simple example creating a session and using the AgentOS with a SessionApp to expose it.
 
 ---
+
+### redis_event_stream.py
+
+**Status:** NOT RUN (compile-checked)
+**Tier:** untagged
+**Description:** AgentOS configured via queue=QueueConfig(max_concurrency=16, redis=URL), which wires RedisEventStream + RedisRunCancellationManager from shared clients, plus RedisDb storage on the same Redis, enabling cross-replica background streaming resume (start a run on one replica, hit /resume on another). Serve-style example; requires a running Redis and multiple replicas to demonstrate. The underlying event stream behavior is covered by unit tests (libs/agno/tests/unit/os/test_event_streams_redis.py) and the library-level cookbook cookbook/02_agents/14_advanced/redis_event_stream_resume.py.
+**Result:** Compile check passed; full run requires Redis and a multi-replica setup.
+
+---
+
+### durable_queue.py
+
+**Status:** PASS (live end-to-end, real Postgres; streaming verified 2026-07-24)
+**Tier:** untagged
+**Description:** AgentOS with QueueConfig(durable=True) smoke-tested over HTTP against pgvector Postgres with real OpenAI calls: submit (202 with PENDING, row committed), duplicate submit with the same Idempotency-Key returned the SAME run_id, poll reached COMPLETED with content, /queue/stats and /queue/jobs/{id} returned correct counts and job state (attempt 1, key recorded). Incidental durability proof: two jobs accepted by an earlier server process (which then died) were recovered and executed by the next server's worker - accepted-then-crashed runs completed after restart.
+**Result:** PASS end to end.
+**Streaming (durable-streaming PR):** submitted stream=true through the queue: SSE response tailed events produced by the WORKER's claimed execution (queue stats showed the job running during the stream). Client disconnected mid-stream; run completed anyway (queue row completed, attempt 1, full output persisted) - the complete-output-guaranteed / live-view-best-effort contract demonstrated live. Also caught and fixed a real bug during testing: the sync PostgresDb queue methods were awaited directly (resolve_queue_store now wraps sync stores in an awaitable thread adapter).
+**Description:** AgentOS with QueueConfig(durable=True) smoke-tested over HTTP against pgvector Postgres with real OpenAI calls: submit (202 with PENDING, row committed), duplicate submit with the same Idempotency-Key returned the SAME run_id, poll reached COMPLETED with content, /queue/stats and /queue/jobs/{id} returned correct counts and job state (attempt 1, key recorded). Incidental durability proof: two jobs accepted by an earlier server process (which then died) were recovered and executed by the next server's worker - accepted-then-crashed runs completed after restart.
+**Result:** PASS end to end. Also caught and fixed a real bug during testing: the sync PostgresDb queue methods were awaited directly (resolve_queue_store now wraps sync stores in an awaitable thread adapter).
+
+---
+
+
+### durable_continue.py
+
+**Status:** PASS (live end-to-end, real Postgres + OpenAI, 2026-08-02)
+**Tier:** untagged
+**Description:** Durable HITL continuation legs: background submit paused on a requires_confirmation tool (run row PAUSED, queue ticket paused on the same row); continue with background=true returned 202 PENDING after CAS-flipping the ticket back to queued with the confirmations merged into its payload; the worker's continuation leg executed the confirmed tool and the run reached COMPLETED with the tool's output ("Deleted temp files in /tmp/scratch"), ticket on attempt 2. The wider matrix (re-pause cycles with payload replacement, double-click attach/settling, kill-worker-mid-continue -> sweep -> requeue re-drive, cancel-while-paused blocking continue) is covered by the two-replica live smoke recorded in the PR and by unit + PG integration tests.
+**Result:** PASS end to end.
+
+---
+
+### durable_queue.py
+
+**Status:** PASS
+
+**Description:** Started the example under FastAPI TestClient using the demo
+virtual environment and a disposable PostgreSQL database. Verified `/health`,
+creation of `ai.agno_jobs` before the first enqueue, and a strict lookup with no
+ticket. Captured concise startup logs and clean worker shutdown.
+
+**Result:** Startup and queue provisioning passed. No model calls, recovery
+scenario, or live streaming exercise was performed in this smoke check.
+
+---
+
+### queue_per_session.py
+
+**Status:** PASS (2026-10-13, cookbook run as written with gpt-5.6-luna against local Postgres on localhost:5532; an earlier 2026-10-12 pass used a 2-second offline fake model in a scratch harness)
+
+**Description:** Started the cookbook app and submitted its two documented messages to one session back to back, plus one run to another session, then polled all three every 300 ms. Also exercised, through a scratch harness with the same QueueConfig on both the Postgres and the Redis queue store: a run paused for tool confirmation holding its session (the next run polled PENDING with waiting_on naming the paused run while another session completed), continue releasing it in order, cancel of a paused head releasing the next run, and queue_per_session=False restoring concurrent same-session execution with no waiting_on. /config reported queue {durable: true, queue_per_session: true}. The second same-session run stayed PENDING with waiting_on naming the first run while the first was RUNNING; the other session's run went RUNNING alongside the first; the second run went RUNNING only after the first COMPLETED, and all three completed.
+
+**Result:** PASS. One run per session in acceptance order (the second answer named the city the first run chose), concurrency across sessions, waiting_on on the poll, paused-head hold with continue and cancel, and /config discovery behave as the docstring describes on both stores.
+
+---

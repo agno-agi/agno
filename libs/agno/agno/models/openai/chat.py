@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 from uuid import uuid4
 
 import httpx
@@ -9,13 +9,13 @@ from pydantic import BaseModel
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
-from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
+from agno.models.message import Citations, Message, UrlCitation
+from agno.models.openai.types import ReasoningEffort, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.reasoning import extract_thinking_content
@@ -39,7 +39,7 @@ class OpenAIChat(Model):
     For more information, see: https://platform.openai.com/docs/api-reference/chat/create
     """
 
-    id: str = "gpt-4o"
+    id: str = "gpt-5.4-mini"
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
@@ -48,8 +48,8 @@ class OpenAIChat(Model):
 
     # Request parameters
     store: Optional[bool] = None
-    reasoning_effort: Optional[str] = None
-    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
+    verbosity: Optional[Verbosity] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -67,7 +67,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
-    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
+    service_tier: Optional[ServiceTier] = None  # Defaults to "auto" when not set
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
@@ -148,12 +148,10 @@ class OpenAIChat(Model):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using OpenAI SDK default.")
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
         self.client = OpenAIClient(**client_params)
@@ -177,13 +175,11 @@ class OpenAIChat(Model):
                 client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         # Create and cache the client
         self.async_client = AsyncOpenAIClient(**client_params)
@@ -253,7 +249,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
+            if self.provider in ["AIMLAPI", "Cloudflare", "Fireworks", "MiniMax", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
@@ -435,7 +431,7 @@ class OpenAIChat(Model):
             return model_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {str(e)}")
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -452,10 +448,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error(f"API status error from OpenAI API: {str(e)}")
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -478,10 +474,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -525,7 +521,7 @@ class OpenAIChat(Model):
             return provider_response
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {str(e)}")
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -542,10 +538,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error(f"API status error from OpenAI API: {str(e)}")
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -568,10 +564,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -612,7 +608,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {str(e)}")
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -629,10 +625,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error(f"API status error from OpenAI API: {str(e)}")
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -655,10 +651,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -701,7 +697,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {str(e)}")
             try:
                 error_message = e.response.json().get("error", {})
             except Exception:
@@ -718,10 +714,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
+            log_error(f"API status error from OpenAI API: {str(e)}")
             try:
                 error_body = e.response.json().get("error", {})
             except Exception:
@@ -744,10 +740,10 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except ModelAuthenticationError as e:
-            log_error(f"Model authentication error from OpenAI API: {e}")
+            log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
         except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     @staticmethod
@@ -856,7 +852,22 @@ class OpenAIChat(Model):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
+
+        # Add citations
+        annotations = getattr(response_message, "annotations", None)
+        if annotations:
+            citations = Citations()
+            citations.raw = [annotation.model_dump() for annotation in annotations]
+            for annotation in annotations:
+                if annotation.type == "url_citation" and annotation.url_citation is not None:
+                    if citations.urls is None:
+                        citations.urls = []
+                    citations.urls.append(
+                        UrlCitation(url=annotation.url_citation.url, title=annotation.url_citation.title)
+                    )
+            if citations.urls or citations.documents:
+                model_response.citations = citations
 
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
@@ -882,7 +893,7 @@ class OpenAIChat(Model):
                         transcript=response_message.audio.transcript,
                     )
             except Exception as e:
-                log_warning(f"Error processing audio: {e}")
+                log_warning(f"Error processing audio: {str(e)}")
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
@@ -938,6 +949,22 @@ class OpenAIChat(Model):
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
+                # Add citations (streaming deltas surface annotations as dicts via model_extra)
+                annotations = getattr(choice_delta, "annotations", None)
+                if annotations:
+                    citations = Citations()
+                    citations.raw = list(annotations)
+                    for annotation in annotations:
+                        url_citation = annotation.get("url_citation") if isinstance(annotation, dict) else None
+                        if url_citation is not None:
+                            if citations.urls is None:
+                                citations.urls = []
+                            citations.urls.append(
+                                UrlCitation(url=url_citation.get("url"), title=url_citation.get("title"))
+                            )
+                    if citations.urls or citations.documents:
+                        model_response.citations = citations
+
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
                 elif hasattr(choice_delta, "reasoning") and choice_delta.reasoning is not None:
@@ -983,7 +1010,7 @@ class OpenAIChat(Model):
                                 mime_type="pcm16",
                             )
                     except Exception as e:
-                        log_warning(f"Error processing audio: {e}")
+                        log_warning(f"Error processing audio: {str(e)}")
 
         # Add usage metrics if present
         if self._should_collect_metrics(response_delta) and response_delta.usage is not None:
@@ -1012,12 +1039,14 @@ class OpenAIChat(Model):
         if prompt_token_details := response_usage.prompt_tokens_details:
             metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
             metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
+            metrics.cache_write_tokens = getattr(prompt_token_details, "cache_write_tokens", 0) or 0
 
         # Add the completion_tokens_details field
         if completion_tokens_details := response_usage.completion_tokens_details:
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
         metrics.cost = getattr(response_usage, "cost", None)
 
         return metrics

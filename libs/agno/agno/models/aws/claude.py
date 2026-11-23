@@ -2,13 +2,16 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
-import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model
+from agno.utils.models.claude import (
+    format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
+    route_thinking_budget_to_adaptive,
+)
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
@@ -117,16 +120,17 @@ class Claude(AnthropicClaude):
 
         client_params = self._get_client_params()
 
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            client_params["http_client"] = http_client
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.client is not None and not self.client.is_closed():
+            self.client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.client.
@@ -151,18 +155,17 @@ class Claude(AnthropicClaude):
 
         client_params = self._get_client_params()
 
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            client_params["http_client"] = http_client
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.async_client is not None and not self.async_client.is_closed():
+            self.async_client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.async_client.
@@ -195,13 +198,13 @@ class Claude(AnthropicClaude):
             _request_params["thinking"] = self.thinking
         if self.output_config:
             _request_params["output_config"] = self.output_config
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
             _request_params["stop_sequences"] = self.stop_sequences
-        if self.top_p:
+        if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.top_k:
+        if self.top_k is not None:
             _request_params["top_k"] = self.top_k
         if self.timeout:
             _request_params["timeout"] = self.timeout
@@ -215,6 +218,9 @@ class Claude(AnthropicClaude):
 
         if self.request_params:
             _request_params.update(self.request_params)
+
+        route_thinking_budget_to_adaptive(_request_params, model_id=self.id)
+        route_sampling_params_to_extra_body(_request_params, model_id=self.id)
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
@@ -241,20 +247,15 @@ class Claude(AnthropicClaude):
         """
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        self._apply_cache_tools(request_kwargs)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

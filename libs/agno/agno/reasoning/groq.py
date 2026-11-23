@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -13,9 +13,8 @@ if TYPE_CHECKING:
 def is_groq_reasoning_model(reasoning_model: Model) -> bool:
     return reasoning_model.__class__.__name__ == "Groq" and (
         "deepseek" in reasoning_model.id.lower()
-        or "openai/gpt-oss-20b" in reasoning_model.id.lower()
-        or "openai/gpt-oss-120b" in reasoning_model.id.lower()
-        or "qwen/qwen3-32b" in reasoning_model.id.lower()
+        or "gpt-oss" in reasoning_model.id.lower()
+        or "qwen3" in reasoning_model.id.lower()
     )
 
 
@@ -32,7 +31,7 @@ def get_groq_reasoning(
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -70,7 +69,7 @@ async def aget_groq_reasoning(
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -133,7 +132,7 @@ def get_groq_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message
@@ -184,7 +183,7 @@ async def aget_groq_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message

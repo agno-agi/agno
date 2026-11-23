@@ -34,7 +34,6 @@ class ReasoningTools(Toolkit):
             self.instructions = instructions
 
         tools: List[Any] = []
-        # Prefer new flags; fallback to legacy ones
         if all or enable_think:
             tools.append(self.think)
         if all or enable_analyze:
@@ -111,7 +110,7 @@ Confidence: {step_parsed.confidence}
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
-            log_error(f"Error recording thought: {e}")
+            log_error(f"Error recording thought: {str(e)}")
             return f"Error recording thought: {e}"
 
     def analyze(
@@ -183,7 +182,7 @@ Confidence: {step_parsed.confidence}
                 return formatted_reasoning_steps.strip()
             return reasoning_step.model_dump_json()
         except Exception as e:
-            log_error(f"Error recording analysis: {e}")
+            log_error(f"Error recording analysis: {str(e)}")
             return f"Error recording analysis: {e}"
 
     # --------------------------------------------------------------------------------

@@ -117,7 +117,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
+        model=Fireworks(id="accounts/fireworks/models/gpt-oss-120b"),
         output_schema=MovieScript,
         telemetry=False,
     )
@@ -138,7 +138,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
+        model=Fireworks(id="accounts/fireworks/models/gpt-oss-120b"),
         output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,

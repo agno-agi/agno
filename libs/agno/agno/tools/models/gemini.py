@@ -1,4 +1,3 @@
-import base64
 import time
 from os import getenv
 from typing import Any, Optional
@@ -67,7 +66,7 @@ class GeminiTools(Toolkit):
             self.client = Client(**client_params)
             log_debug("Google GenAI Client created successfully.")
         except Exception as e:
-            log_error(f"Failed to create Google GenAI Client: {e}", exc_info=True)
+            log_error(f"Failed to create Google GenAI Client: {str(e)}")
             raise ValueError(f"Failed to create Google GenAI Client. Error: {e}")
 
         self.image_model = image_generation_model
@@ -127,7 +126,7 @@ class GeminiTools(Toolkit):
                 return ToolResult(content="Failed to generate image: No valid images were generated.")
 
         except Exception as e:
-            log_error(f"Failed to generate image: Client or method not available ({e})")
+            log_error(f"Failed to generate image: Client or method not available (): {str(e)}")
             return ToolResult(content=f"Failed to generate image: Client or method not available ({e})")
 
     def generate_video(
@@ -180,10 +179,10 @@ class GeminiTools(Toolkit):
 
                 media_id = str(uuid4())
 
-                # Create VideoArtifact with base64 encoded content
+                # Create VideoArtifact with raw bytes
                 video_artifact = Video(
                     id=media_id,
-                    content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
+                    content=generated_video.video_bytes,
                     original_prompt=prompt,
                     mime_type=generated_video.mime_type or "video/mp4",
                 )
@@ -199,5 +198,5 @@ class GeminiTools(Toolkit):
                 return ToolResult(content="Failed to generate video: No valid videos were generated.")
 
         except Exception as e:
-            log_error(f"Failed to generate video: {e}")
+            log_error(f"Failed to generate video: {str(e)}")
             return ToolResult(content=f"Failed to generate video: {e}")

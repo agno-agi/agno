@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -43,10 +44,18 @@ class AgentSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        # Exclude runs from asdict to avoid the deep serialization cost. Serialize
+        # a shallow copy so we never mutate a live (possibly shared/cached) session
+        # while another thread reads self.runs.
+        session_copy = copy.copy(self)
+        session_copy.runs = None
+        session_dict = asdict(session_copy)
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        if include_runs:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
@@ -59,7 +68,7 @@ class AgentSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[RunOutput, TeamRunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -99,6 +108,12 @@ class AgentSession:
 
         for i, existing_run in enumerate(self.runs or []):
             if existing_run.run_id == run.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run, "queue_attempt", None) is None:
+                    run.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run
                 break
         else:
@@ -107,9 +122,20 @@ class AgentSession:
         log_debug("Added RunOutput to Agent Session")
 
     def get_run(self, run_id: str) -> Optional[Union[RunOutput, TeamRunOutput]]:
+        """The run with this id, as the caller's own copy.
+
+        History run objects are shared between session reads, and get_run's
+        callers mutate what they fetch -- background continue flips status,
+        HITL surfaces write answers into requirements and tools -- before
+        persisting. Handing out the shared object would publish those
+        mutations to every reader of the session before (or without) a store
+        write, so each caller gets a run of its own.
+        """
+        from copy import deepcopy
+
         for run in self.runs or []:
             if run.run_id == run_id:
-                return run
+                return deepcopy(run)
         return None
 
     def get_messages(
@@ -128,7 +154,7 @@ class AgentSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
-            last_n_messages: The number of messages to return, counting from the latest. Defaults to all messages.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
@@ -155,7 +181,7 @@ class AgentSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         runs = self.runs
 
@@ -170,6 +196,12 @@ class AgentSession:
 
         # Filter by status
         runs = [run for run in runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
+
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            runs = runs[-last_n_runs:]
 
         messages_from_history = []
         system_message = None
@@ -192,11 +224,17 @@ class AgentSession:
                         messages_from_history.append(message)
 
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[
-                    -(limit - 1) :
-                ]  # Grab one less message then add the system message
+                if limit <= 1:
+                    messages_from_history = [system_message]
+                else:
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
             else:
-                messages_from_history = messages_from_history[-limit:]
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
 
             # Remove tool result messages that don't have an associated assistant message with tool calls
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
@@ -204,8 +242,7 @@ class AgentSession:
 
         # If limit is not set, return all messages
         else:
-            runs_to_process = runs[-last_n_runs:] if last_n_runs is not None else runs
-            for run_response in runs_to_process:
+            for run_response in runs:
                 if not run_response or not run_response.messages:
                     continue
 
@@ -234,7 +271,7 @@ class AgentSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"], last_n_runs=last_n_runs)
+        return self.get_messages(skip_roles=["system", "tool"], skip_statuses=[], last_n_runs=last_n_runs)
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""

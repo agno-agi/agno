@@ -13,7 +13,7 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True)
+agent = Agent(model=DeepSeek(id="deepseek-v4-flash"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

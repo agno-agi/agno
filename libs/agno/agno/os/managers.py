@@ -5,16 +5,18 @@ This module provides various manager classes for AgentOS:
 - WebSocketManager: WebSocket connection management for real-time streaming
 - EventsBuffer: Event buffering for agent/team/workflow reconnection support
 - WebSocketHandler: Handler for sending events over WebSocket connections
+- SSESubscriberManager: Subscriber management for SSE-based reconnection
 
 These managers are used by agents, teams, and workflows for background WebSocket execution.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from starlette.websockets import WebSocket
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
@@ -80,13 +82,24 @@ class WebSocketHandler:
 
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
+        except WebSocketDisconnect:
+            # The send raced the client's disconnect: same treatment as a
+            # closed socket - disarm and go quiet
+            log_debug("WebSocket disconnected, event delivery disabled for this handler")
+            self.websocket = None
         except RuntimeError as e:
-            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
-                log_debug("WebSocket closed, event not sent (expected during disconnection)")
+            msg = str(e).lower()
+            if "websocket.close" in msg or "already completed" in msg or "close message has been sent" in msg:
+                # Expected during disconnection. Disarm the handler so the
+                # producer stops attempting a send per remaining event - a
+                # refreshed client otherwise floods the log with one warning
+                # per event for the rest of the run.
+                log_debug("WebSocket closed, event delivery disabled for this handler")
+                self.websocket = None
             else:
-                log_warning(f"Failed to handle WebSocket event: {e}")
+                log_warning(f"Failed to handle WebSocket event: {str(e)}")
         except Exception as e:
-            log_warning(f"Failed to handle WebSocket event: {e}")
+            log_warning(f"Failed to handle WebSocket event: {str(e)}")
 
 
 class WebSocketManager:
@@ -160,7 +173,7 @@ class WebSocketManager:
             try:
                 await websocket.send_text(message)
             except Exception as e:
-                log_warning(f"Failed to broadcast to run {run_id}: {e}")
+                log_warning(f"Failed to broadcast to run {run_id}: {str(e)}")
                 # Remove dead connection
                 await self.disconnect_by_run_id(run_id)
 
@@ -213,6 +226,7 @@ class EventsBuffer:
         """
         # Store all event types (WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent)
         self.events: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
+        self._next_index: Dict[str, int] = {}  # monotonic event index counter per run
         self.run_metadata: Dict[str, Dict[str, Any]] = {}  # {run_id: {status, last_updated, etc}}
         self.max_events_per_run = max_events_per_run
         self.cleanup_interval = cleanup_interval
@@ -223,17 +237,28 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
+            # A reclaimed paused run keeps its index; a continuation must not
+            # recycle event indices a client has already seen.
+            self._next_index.setdefault(run_id, 0)
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
                 "last_updated": current_time,
             }
+        elif self.run_metadata.get(run_id, {}).get("status") == RunStatus.paused:
+            # A continue reuses the paused run's id, so an event arriving on a
+            # paused entry means a new producer took the run over. The pause's
+            # status and completed_at would let the cleanup pass reclaim a live
+            # run and would route /resume to replay instead of subscribing.
+            self.run_metadata[run_id]["status"] = RunStatus.running
+            self.run_metadata[run_id].pop("completed_at", None)
 
         self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
 
-        # Get the index of the event we just added (before potential trimming)
-        event_index = len(self.events[run_id]) - 1
+        # Monotonic counter — to survive buffer trims
+        event_index = self._next_index[run_id]
+        self._next_index[run_id] += 1
 
         # Keep buffer size under control - trim oldest events if exceeded
         if len(self.events[run_id]) > self.max_events_per_run:
@@ -244,34 +269,82 @@ class EventsBuffer:
 
     def get_events(
         self, run_id: str, last_event_index: Optional[int] = None
-    ) -> List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]:
+    ) -> List[Tuple[int, Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]]:
         """
         Get events since the last received event index.
 
         Args:
             run_id: The run ID (agent/team/workflow)
-            last_event_index: Index of last event received by client (0-based)
+            last_event_index: Monotonic index of last event received by client (0-based)
 
         Returns:
-            List of events since last_event_index, or all events if None
+            List of (monotonic_index, event) tuples since last_event_index, or all if None
         """
         events = self.events.get(run_id, [])
+        if not events:
+            return []
+
+        # The buffer may have been trimmed, so list positions don't match event indices.
+        # first_index is the monotonic index of the oldest event still in the buffer.
+        next_idx = self._next_index.get(run_id, len(events))
+        first_index = next_idx - len(events)
 
         if last_event_index is None:
-            # Client has no events, send all
-            return events
+            # Client has no events, send all with their real indices
+            return [(first_index + i, e) for i, e in enumerate(events)]
 
-        # Client has events up to last_event_index, send new ones
-        # last_event_index is 0-based, so we want events starting from index + 1
-        if last_event_index >= len(events) - 1:
+        # Client wants events after last_event_index
+        start_index = last_event_index + 1
+
+        if start_index >= next_idx:
             # Client is caught up
             return []
 
-        return events[last_event_index + 1 :]
+        if start_index <= first_index:
+            # Client is behind the buffer — return everything we have
+            return [(first_index + i, e) for i, e in enumerate(events)]
+
+        # Convert monotonic index to list position
+        list_offset = start_index - first_index
+        return [(start_index + i, e) for i, e in enumerate(events[list_offset:])]
 
     def get_event_count(self, run_id: str) -> int:
         """Get the current number of events for a run"""
         return len(self.events.get(run_id, []))
+
+    def get_last_index(self, run_id: str) -> int:
+        """Get the monotonic index of the last event added for a run.
+
+        Returns -1 if no events have been added for this run.
+        Unlike get_event_count(), this survives buffer trims.
+        """
+        next_idx = self._next_index.get(run_id)
+        if next_idx is None or next_idx == 0:
+            return -1
+        return next_idx - 1
+
+    def register_run(self, run_id: str, status: RunStatus = RunStatus.pending) -> None:
+        """Pre-register a run so its status is visible before any event is buffered.
+
+        Used by background streaming runs waiting for a concurrency slot: the run
+        exists (PENDING) but has produced no events yet, and reconnecting clients
+        must be able to attach and wait rather than get a not-found error.
+        """
+        if run_id not in self.run_metadata:
+            current_time = time()
+            self.events.setdefault(run_id, [])
+            self._next_index.setdefault(run_id, 0)
+            self.run_metadata[run_id] = {
+                "status": status,
+                "created_at": current_time,
+                "last_updated": current_time,
+            }
+
+    def set_run_status(self, run_id: str, status: RunStatus) -> None:
+        """Update the status of a registered run (e.g. PENDING -> RUNNING on slot acquire)."""
+        if run_id in self.run_metadata:
+            self.run_metadata[run_id]["status"] = status
+            self.run_metadata[run_id]["last_updated"] = time()
 
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
@@ -283,10 +356,54 @@ class EventsBuffer:
         # Trigger cleanup of old completed runs
         self.cleanup_runs()
 
+    def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
+        """Atomically reopen a PAUSED run for a continuation leg.
+
+        Synchronous on purpose: the check-and-flip must not yield to the
+        event loop between reading and writing the status, or a racing
+        worker's terminal write could be overwritten with PENDING. Also
+        clears completed_at - the pause stamped it, and a reopened run left
+        carrying it would be reaped by cleanup_runs mid-continuation.
+        include_error is the worker-redrive variant (see BaseEventStream).
+        floor seeds the index counter to at least floor+1 (never regressing
+        a live counter): after a restart the buffer comes up empty, and a
+        continue whose indices restart at 0 is deduped away by resuming
+        clients holding the pause-event index.
+        """
+        # PENDING and MISSING are reopenable alongside PAUSED: the guard
+        # exists to never overwrite a NEWER state (RUNNING or a terminal),
+        # and both are pre-execution states where the flip is idempotent.
+        # This matters for the expired-state path: register_run re-creates
+        # PENDING before the reopen, and declining there would drop the
+        # counter seed (Redis parity - its missing-key case reopens too).
+        reopenable = (
+            (RunStatus.paused, RunStatus.error, RunStatus.pending)
+            if include_error
+            else (RunStatus.paused, RunStatus.pending)
+        )
+        metadata = self.run_metadata.get(run_id)
+        if metadata is None:
+            # State expired/lost (restart): re-create it, pre-execution
+            self.register_run(run_id, RunStatus.pending)
+            metadata = self.run_metadata[run_id]
+        elif metadata.get("status") not in reopenable:
+            return False
+        metadata["status"] = RunStatus.pending
+        metadata["last_updated"] = time()
+        metadata.pop("completed_at", None)
+        if floor is not None:
+            self._next_index[run_id] = max(self._next_index.get(run_id, 0), floor + 1)
+        return True
+
     def cleanup_run(self, run_id: str) -> None:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
+        # A paused run can be continued later under the same id: its monotonic
+        # index survives the reclaim, so the continuation's event indices keep
+        # ascending past every index a client has already seen.
+        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+            self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")
@@ -297,10 +414,23 @@ class EventsBuffer:
         runs_to_cleanup = []
 
         for run_id, metadata in self.run_metadata.items():
-            # Only cleanup completed runs
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Terminal runs, plus paused runs: a pause can wait on an approval
+            # forever, and a reclaimed paused entry is rebuilt by add_event
+            # when the run is eventually continued.
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
+                    runs_to_cleanup.append(run_id)
+            elif metadata["status"] == RunStatus.pending:
+                # Accept-side registrations whose runs execute on ANOTHER
+                # replica never advance past PENDING here and used to
+                # accumulate forever (that config is warned against at
+                # worker startup, but the warning must not mean a leak).
+                # Stale-pending reap is safe in-process too: a long-queued
+                # local run's stream state is rebuilt at claim time, and a
+                # tail of a reaped registration gets the honest
+                # stream_expired close while the ticket still vouches.
+                if current_time - metadata.get("last_updated", current_time) > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
 
         for run_id in runs_to_cleanup:
@@ -315,6 +445,56 @@ class EventsBuffer:
         return metadata["status"] if metadata else None
 
 
+class SSESubscriberManager:
+    """
+    Manages asyncio.Queue subscribers for SSE-based reconnection.
+
+    When a client reconnects to a still-running agent/team via the /resume SSE endpoint,
+    it registers a Queue here. The response streamer pushes SSE-formatted events to all
+    registered queues. A None sentinel signals run completion.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: Dict[str, List[asyncio.Queue[Optional[tuple[int, str]]]]] = {}
+
+    def subscribe(self, run_id: str) -> "asyncio.Queue[Optional[tuple[int, str]]]":
+        """Register a new subscriber queue for a run. Returns the queue."""
+        if run_id not in self._subscribers:
+            self._subscribers[run_id] = []
+        queue: asyncio.Queue[Optional[tuple[int, str]]] = asyncio.Queue()
+        self._subscribers[run_id].append(queue)
+        log_debug(f"Event subscriber connected: run={run_id}")
+        return queue
+
+    def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[tuple[int, str]]]") -> None:
+        """Remove a subscriber queue."""
+        if run_id in self._subscribers:
+            try:
+                self._subscribers[run_id].remove(queue)
+            except ValueError:
+                pass
+            if not self._subscribers[run_id]:
+                del self._subscribers[run_id]
+
+    async def publish(self, run_id: str, event_index: int, sse_data: str) -> None:
+        """Push an (event_index, sse_data) tuple to all subscriber queues for a run."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put((event_index, sse_data))
+            except Exception:
+                pass
+
+    async def complete(self, run_id: str) -> None:
+        """Signal all subscribers that the run is done by pushing None sentinel."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put(None)
+            except Exception:
+                pass
+
+
 # Global manager instances
 websocket_manager = WebSocketManager(
     active_connections={},
@@ -324,3 +504,5 @@ event_buffer = EventsBuffer(
     max_events_per_run=10000,  # Keep last 10000 events per run
     cleanup_interval=1800,  # Clean up completed runs after 30 minutes
 )
+
+sse_subscriber_manager = SSESubscriberManager()

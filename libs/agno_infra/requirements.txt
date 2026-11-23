@@ -28,13 +28,13 @@ markdown-it-py==3.0.0
     # via rich
 mdurl==0.1.2
     # via markdown-it-py
-pydantic==2.11.7
+pydantic==2.13.4
     # via
     #   agno-infra (libs/agno_infra/pyproject.toml)
     #   pydantic-settings
-pydantic-core==2.33.2
+pydantic-core==2.46.4
     # via pydantic
-pydantic-settings==2.10.1
+pydantic-settings==2.14.1
     # via agno-infra (libs/agno_infra/pyproject.toml)
 pygments==2.19.2
     # via rich

@@ -1,7 +1,7 @@
 import webbrowser
 from pathlib import Path
 
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 
 def open_html_file(file_path: Path):
@@ -13,7 +13,7 @@ def open_html_file(file_path: Path):
     absolute_path = file_path.resolve()
 
     if not absolute_path.is_file():
-        logger.error(f"The file '{absolute_path}' does not exist.")
+        log_error(f"The file '{absolute_path}' does not exist.")
         raise FileNotFoundError(f"The file '{absolute_path}' does not exist.")
 
     # Convert the file path to a file URI

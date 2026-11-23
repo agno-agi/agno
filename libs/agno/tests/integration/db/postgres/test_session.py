@@ -14,6 +14,7 @@ from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary
 from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 
 
 @pytest.fixture(autouse=True)
@@ -637,13 +638,15 @@ def test_session_type_polymorphism(
     team_result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=SessionType.TEAM)
     assert isinstance(team_result, TeamSession)
 
-    # Verify wrong session type returns None
+    # get_session queries by session_id only; session_type controls deserialization, not filtering.
+    # Passing a mismatched type still finds the session — it just deserializes it as the wrong class.
     wrong_type_result = postgres_db_real.get_session(
         session_id=sample_agent_session.session_id,
-        # Wrong session type!
         session_type=SessionType.TEAM,
     )
-    assert wrong_type_result is None
+    # Session is found (by session_id) but deserialized as TeamSession
+    assert wrong_type_result is not None
+    assert isinstance(wrong_type_result, TeamSession)
 
 
 def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: PostgresDb):
@@ -949,3 +952,112 @@ def test_upsert_sessions_performance(postgres_db_real: PostgresDb):
     assert bulk_time < individual_time / 2, (
         f"Bulk upsert is not fast enough: {bulk_time:.3f}s vs {individual_time:.3f}s"
     )
+
+
+# ── session_type=None integration tests ──────────────────────────────────────
+
+
+def test_get_sessions_without_type_returns_all(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None) returns agent, team, and workflow sessions together."""
+    workflow_session = WorkflowSession(
+        session_id="test_workflow_session_1",
+        workflow_id="test_workflow_1",
+        user_id="test_user_1",
+        session_data={"session_name": "Test Workflow Session"},
+        created_at=int(time.time()),
+        updated_at=int(time.time()),
+    )
+
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+    postgres_db_real.upsert_session(workflow_session)
+
+    # session_type=None should return all three
+    sessions_raw, total_count = postgres_db_real.get_sessions(session_type=None, deserialize=False)
+    assert total_count == 3
+    session_ids = {s["session_id"] for s in sessions_raw}
+    assert sample_agent_session.session_id in session_ids
+    assert sample_team_session.session_id in session_ids
+    assert workflow_session.session_id in session_ids
+
+    # Deserialized path should auto-detect correct types
+    sessions = postgres_db_real.get_sessions(session_type=None)
+    assert len(sessions) == 3
+    types = {type(s) for s in sessions}
+    assert AgentSession in types
+    assert TeamSession in types
+    assert WorkflowSession in types
+
+
+def test_get_sessions_without_type_with_component_id(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None, component_id=X) uses OR across agent_id/team_id/workflow_id."""
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+
+    # Filter by agent component_id without specifying type
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="test_agent_1", deserialize=False
+    )
+    assert total_count == 1
+    assert sessions_raw[0]["session_id"] == sample_agent_session.session_id
+
+    # Filter by team component_id without specifying type
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="test_team_1", deserialize=False
+    )
+    assert total_count >= 1
+    team_ids = {s["session_id"] for s in sessions_raw}
+    assert sample_team_session.session_id in team_ids
+
+    # Filter by nonexistent component_id
+    sessions_raw, total_count = postgres_db_real.get_sessions(
+        session_type=None, component_id="nonexistent", deserialize=False
+    )
+    assert total_count == 0
+
+
+def test_get_session_without_type_auto_detects(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_session(session_type=None) auto-detects the correct session type for deserialization."""
+    postgres_db_real.upsert_session(sample_agent_session)
+    postgres_db_real.upsert_session(sample_team_session)
+
+    # Auto-detect agent session
+    result = postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.session_id == sample_agent_session.session_id
+
+    # Auto-detect team session
+    result = postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, TeamSession)
+    assert result.session_id == sample_team_session.session_id
+
+
+def test_rename_session_without_type(
+    postgres_db_real: PostgresDb,
+    sample_agent_session: AgentSession,
+):
+    """rename_session(session_type=None) works without specifying session type."""
+    postgres_db_real.upsert_session(sample_agent_session)
+
+    result = postgres_db_real.rename_session(
+        session_id=sample_agent_session.session_id,
+        session_type=None,
+        session_name="Renamed Session",
+    )
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.session_data.get("session_name") == "Renamed Session"

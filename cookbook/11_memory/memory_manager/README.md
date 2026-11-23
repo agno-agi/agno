@@ -10,4 +10,4 @@ These examples focus on the direct `MemoryManager` API with PostgreSQL:
 - [Memory Search](04_memory_search.py)
 - [DB Tools Control](05_db_tools_control.py)
 
-For SurrealDB-based memory manager examples, see `cookbook/92_integrations/surrealdb/`.
+For SurrealDB-based memory manager examples, see `cookbook/integrations/surrealdb/`.

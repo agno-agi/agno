@@ -1,7 +1,6 @@
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Tuple, Union, overload
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
@@ -12,7 +11,13 @@ from agno.utils.agent import validate_input
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.routers.workflows.schema import WorkflowResponse
+else:
+    # fastapi only ships with the "os" extra; a loose binding keeps the
+    # websocket annotations resolvable by get_type_hints() without it.
+    WebSocket = Any
 
 
 class RemoteWorkflow(BaseRemote):
@@ -39,7 +44,7 @@ class RemoteWorkflow(BaseRemote):
             workflow_id: ID of remote workflow on the remote server
             timeout: Request timeout in seconds (default: 300)
             protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
+            a2a_protocol: Deprecated. For A2A protocol, the protocol is negotiated from the Agent Card.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
         super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
@@ -340,6 +345,95 @@ class RemoteWorkflow(BaseRemote):
         )
         return map_task_result_to_workflow_run_output(task_result, workflow_id=self.workflow_id, user_id=user_id)
 
+    async def acontinue_run(
+        self,
+        run_response: Optional[WorkflowRunOutput] = None,
+        *,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        step_requirements: Optional[List[Any]] = None,
+        stream: bool = False,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
+        """Continue a paused workflow run.
+
+        Args:
+            run_response: The paused WorkflowRunOutput (used to extract run_id/session_id/requirements)
+            run_id: Run ID (overrides run_response.run_id)
+            session_id: Session ID (overrides run_response.session_id)
+            step_requirements: Resolved requirements (overrides run_response.step_requirements)
+            stream: Whether to stream the response
+            auth_token: Optional JWT token for authentication
+
+        Returns:
+            WorkflowRunOutput for non-streaming, AsyncIterator for streaming
+        """
+        # Extract from run_response if not explicitly provided
+        if run_response is not None:
+            if run_id is None:
+                run_id = run_response.run_id
+            if session_id is None:
+                session_id = run_response.session_id
+            if step_requirements is None:
+                step_requirements = run_response.step_requirements
+
+        if run_id is None:
+            raise ValueError("run_id is required for continue_run")
+
+        headers = self._get_auth_headers(auth_token)
+        requirements = step_requirements or []
+
+        # A2A protocol path
+        if self.a2a_client:
+            from agno.client.a2a.utils import (
+                map_stream_events_to_workflow_run_events,
+                map_task_result_to_workflow_run_output,
+            )
+
+            data = {
+                "step_requirements": [
+                    requirement.to_dict() if hasattr(requirement, "to_dict") else requirement
+                    for requirement in requirements
+                ]
+            }
+            if stream:
+                event_stream = self.a2a_client.stream_message(
+                    message="",
+                    context_id=session_id,  # Map session_id → context_id for A2A
+                    headers=headers,
+                    task_id=run_id,
+                    data=data,
+                )
+                return map_stream_events_to_workflow_run_events(event_stream, workflow_id=self.workflow_id)  # type: ignore
+            task_result = await self.a2a_client.send_message(
+                message="",
+                context_id=session_id,  # Map session_id → context_id for A2A
+                headers=headers,
+                task_id=run_id,
+                data=data,
+            )
+            return map_task_result_to_workflow_run_output(task_result, workflow_id=self.workflow_id)
+
+        if stream:
+            return self.get_os_client().continue_workflow_run_stream(
+                workflow_id=self.workflow_id,
+                run_id=run_id,
+                requirements=requirements,
+                session_id=session_id,
+                headers=headers,
+                **kwargs,
+            )
+        else:
+            return await self.get_os_client().continue_workflow_run(
+                workflow_id=self.workflow_id,
+                run_id=run_id,
+                requirements=requirements,
+                session_id=session_id,
+                headers=headers,
+                **kwargs,
+            )
+
     async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running workflow execution.
 
@@ -351,6 +445,12 @@ class RemoteWorkflow(BaseRemote):
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
         headers = self._get_auth_headers(auth_token)
+        if self.a2a_client:
+            try:
+                task_result = await self.a2a_client.cancel_task(run_id, headers=headers)
+                return task_result.is_canceled
+            except Exception:
+                return False
         try:
             await self.get_os_client().cancel_workflow_run(
                 workflow_id=self.workflow_id,

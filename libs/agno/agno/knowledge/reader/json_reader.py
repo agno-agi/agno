@@ -15,13 +15,11 @@ from agno.utils.log import log_debug, log_error
 class JSONReader(Reader):
     """Reader for JSON files"""
 
-    chunk: bool = False
-
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+    def __init__(self, chunk: bool = True, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)
             chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        super().__init__(chunk=chunk, chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -40,6 +38,20 @@ class JSONReader(Reader):
         return [ContentType.JSON]
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        documents = self._read_documents(path, name)
+        if not self.chunk:
+            return documents
+        try:
+            chunked_documents = []
+            for document in documents:
+                chunked_documents.extend(self.chunk_document(document))
+            return chunked_documents
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise
+
+    def _read_documents(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        """Read and parse JSON without applying a chunking strategy."""
         try:
             if isinstance(path, Path):
                 if not path.exists():
@@ -49,13 +61,14 @@ class JSONReader(Reader):
                 json_contents = json.loads(path.read_text(encoding=self.encoding or "utf-8"))
             elif hasattr(path, "seek") and hasattr(path, "read"):
                 log_debug(f"Reading uploaded file: {getattr(path, 'name', 'BytesIO')}")
-                json_name = name or getattr(path, "name", "json_file").split(".")[0]
+                stream_name = getattr(path, "name", None)
+                json_name = name or (stream_name.split(".")[0] if isinstance(stream_name, str) else "json_file")
                 path.seek(0)
                 json_contents = json.load(path)
             else:
                 raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
-            if isinstance(json_contents, dict):
+            if not isinstance(json_contents, list):
                 json_contents = [json_contents]
 
             documents = [
@@ -63,22 +76,24 @@ class JSONReader(Reader):
                     name=json_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=json.dumps(content),
+                    content=json.dumps(content, ensure_ascii=False),
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
-            if self.chunk:
-                chunked_documents = []
-                for document in documents:
-                    chunked_documents.extend(self.chunk_document(document))
-                return chunked_documents
             return documents
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
             raise
         except Exception as e:
-            log_error(f"Error reading: {path}: {e}")
+            log_error(f"Error reading: {path}: {str(e)}")
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read JSON files."""
-        return await asyncio.to_thread(self.read, path, name)
+        """Read JSON off the event loop and await the configured chunking strategy."""
+        documents = await asyncio.to_thread(self._read_documents, path, name)
+        if not self.chunk:
+            return documents
+        try:
+            return await self.chunk_documents_async(documents)
+        except Exception as e:
+            log_error(f"Error reading: {path}: {str(e)}")
+            raise

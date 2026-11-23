@@ -21,7 +21,7 @@ class GitHubConfig(BaseStorageConfig):
     installation access token automatically.  Requires ``PyJWT[crypto]``.
     """
 
-    repo: str
+    repo: Optional[str] = None
     token: Optional[str] = None
     branch: Optional[str] = None
     path: Optional[str] = None
@@ -55,12 +55,20 @@ class GitHubConfig(BaseStorageConfig):
             )
         return self
 
-    def file(self, file_path: str, branch: Optional[str] = None) -> "GitHubContent":
+    def file(
+        self,
+        file_path: str,
+        branch: Optional[str] = None,
+        repo: Optional[str] = None,
+    ) -> "GitHubContent":
         """Create a content reference for a specific file.
 
         Args:
             file_path: Path to the file in the repository.
             branch: Optional branch override.
+            repo: Optional ``owner/repo`` override. When omitted, the config's
+                ``repo`` is used. Allows reusing the same auth credentials
+                across multiple repositories.
 
         Returns:
             GitHubContent configured with this source's credentials.
@@ -71,14 +79,23 @@ class GitHubConfig(BaseStorageConfig):
             config_id=self.id,
             file_path=file_path,
             branch=branch or self.branch,
+            repo=repo,
         )
 
-    def folder(self, folder_path: str, branch: Optional[str] = None) -> "GitHubContent":
+    def folder(
+        self,
+        folder_path: str,
+        branch: Optional[str] = None,
+        repo: Optional[str] = None,
+    ) -> "GitHubContent":
         """Create a content reference for a folder.
 
         Args:
             folder_path: Path to the folder in the repository.
             branch: Optional branch override.
+            repo: Optional ``owner/repo`` override. When omitted, the config's
+                ``repo`` is used. Allows reusing the same auth credentials
+                across multiple repositories.
 
         Returns:
             GitHubContent configured with this source's credentials.
@@ -89,4 +106,5 @@ class GitHubConfig(BaseStorageConfig):
             config_id=self.id,
             folder_path=folder_path,
             branch=branch or self.branch,
+            repo=repo,
         )

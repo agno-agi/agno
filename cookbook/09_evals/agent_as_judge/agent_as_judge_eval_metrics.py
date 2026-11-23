@@ -19,13 +19,13 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 eval_hook = AgentAsJudgeEval(
     name="Quality Check",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     criteria="Response should be accurate, clear, and concise",
     scoring_strategy="binary",
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Answer questions concisely.",
     post_hooks=[eval_hook],
 )

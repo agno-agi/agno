@@ -20,9 +20,9 @@ response = requests.get(url)
 response.raise_for_status()
 mp3_data = response.content
 
-# Audio input requires specific audio-enabled models like gpt-4o-audio-preview
+# Audio input requires specific audio-enabled models like gpt-audio
 agent = Agent(
-    model=LiteLLM(id="gpt-4o-audio-preview"),
+    model=LiteLLM(id="gpt-audio"),
     markdown=True,
 )
 agent.print_response(

@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class LocalFileSystemTools(Toolkit):
@@ -12,27 +12,52 @@ class LocalFileSystemTools(Toolkit):
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
         enable_write_file: bool = True,
+        enable_read_file: bool = True,
+        restrict_to_base_dir: bool = True,
         all: bool = False,
         **kwargs,
     ):
         """
-        Initialize the WriteToLocal toolkit.
+        Initialize the LocalFileSystem toolkit.
         Args:
             target_directory (Optional[str]): Default directory to write files to. Creates if doesn't exist.
             default_extension (str): Default file extension to use if none specified.
+            enable_write_file (bool): Enable the write_file tool.
+            enable_read_file (bool): Enable the read_file tool.
+            restrict_to_base_dir (bool): If True, file operations cannot escape target_directory.
         """
 
         self.target_directory = target_directory or str(Path.cwd())
         self.default_extension = default_extension.lstrip(".")
+        self.restrict_to_base_dir = restrict_to_base_dir
 
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
-        tools = []
+        tools: List[Any] = []
         if all or enable_write_file:
             tools.append(self.write_file)
+        if all or enable_read_file:
+            tools.append(self.read_file)
 
-        super().__init__(name="write_to_local", tools=tools, **kwargs)
+        super().__init__(name="local_file_system", tools=tools, **kwargs)
+
+    def check_escape(self, filename: str, directory: Optional[str] = None) -> Tuple[bool, Path]:
+        """Check if the file path is within the target directory.
+
+        Joins `directory` and `filename` into a single relative path and defers to
+        Toolkit._check_path, which (when restrict_to_base_dir is True) rejects
+        absolute paths, `..` traversal, and symlink escapes.
+
+        Args:
+            filename (str): The file name or relative path to check.
+            directory (Optional[str]): Directory to resolve against. Uses target_directory if not provided.
+
+        Returns:
+            Tuple[bool, Path]: (is_safe, resolved_path). If not safe, returns target_directory as the path.
+        """
+        relative_path = str(Path(directory) / filename) if directory else filename
+        return self._check_path(relative_path, Path(self.target_directory).resolve(), self.restrict_to_base_dir)
 
     def write_file(
         self,
@@ -53,38 +78,54 @@ class LocalFileSystemTools(Toolkit):
         """
         try:
             filename = filename or str(uuid4())
-            directory = directory or self.target_directory
-            if filename and "." in filename:
-                path_obj = Path(filename)
-                filename = path_obj.stem
-                extension = extension or path_obj.suffix.lstrip(".")
+            name_path = Path(filename)
+            extension = (extension or name_path.suffix.lstrip(".") or self.default_extension).lstrip(".")
+            full_name = str(name_path.with_name(f"{name_path.stem}.{extension}"))
 
-            log_debug(f"Writing file to local system: {filename}")
+            safe, file_path = self.check_escape(full_name, directory)
+            if not safe:
+                return f"Error: Path '{filename}' is outside the allowed base directory"
 
-            extension = (extension or self.default_extension).lstrip(".")
+            log_debug(f"Writing file to local system: {file_path.name}")
 
             # Create directory if it doesn't exist
-            dir_path = Path(directory)
-            dir_path.mkdir(parents=True, exist_ok=True)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Construct full filename with extension
-            full_filename = f"{filename}.{extension}"
-            file_path = dir_path / full_filename
-
-            file_path.write_text(content)
+            # Explicit UTF-8: the default locale encoding mangles or rejects valid
+            # non-ASCII text on non-UTF-8 hosts (cp1252/GBK/ASCII).
+            file_path.write_text(content, encoding="utf-8")
 
             return f"Successfully wrote file to: {file_path}"
 
         except Exception as e:
             error_msg = f"Failed to write file: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return f"Error: {error_msg}"
 
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:
         """
         Read content from a local file.
+        Args:
+            filename (str): Name of the file to read
+            directory (Optional[str]): Directory to read file from. Uses target_directory if not provided
+        Returns:
+            str: The text content of the file
         """
-        file_path = Path(directory or self.target_directory) / filename
-        if not file_path.exists():
-            return f"File not found: {file_path}"
-        return file_path.read_text()
+        try:
+            safe, file_path = self.check_escape(filename, directory)
+            if not safe:
+                return f"Error: Path '{filename}' is outside the allowed base directory"
+
+            log_debug(f"Reading file from local system: {filename}")
+
+            if not file_path.exists():
+                return f"File not found: {file_path}"
+
+            # Explicit UTF-8, matching write_file: the locale encoding can differ
+            # from the encoding the file was written with on another host.
+            return file_path.read_text(encoding="utf-8")
+
+        except Exception as e:
+            error_msg = f"Failed to read file: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"

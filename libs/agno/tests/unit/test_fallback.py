@@ -19,6 +19,7 @@ from agno.models.fallback import (
     call_model_with_fallback,
     get_fallback_models,
 )
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent
 
@@ -234,6 +235,46 @@ class TestCallModelWithFallback:
                     result = call_model_with_fallback(primary, config, messages=[])
                     assert result.content == "second-ok"
 
+    def test_fallback_response_synced_to_messages(self):
+        """The assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        def _fallback_response(messages, **kwargs):
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(primary, "response", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response", side_effect=_fallback_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
+
+    def test_fallback_strips_temporary_and_does_not_duplicate(self):
+        """Fallback does not see temporary messages, and its reply syncs back exactly once."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        temporary = Message(role="user", content="guidance")
+        temporary.temporary = True
+        messages = [Message(role="user", content="hi"), temporary]
+        seen_by_fallback = {}
+
+        def _fallback_response(messages, **kwargs):
+            seen_by_fallback["count"] = len(messages)
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(primary, "response", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response", side_effect=_fallback_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_fallback["count"] == 1  # temporary message stripped from what the fallback sees
+        assert sum(1 for m in messages if m.content == "fallback-reply") == 1
+        assert any(getattr(m, "temporary", False) for m in messages)  # temporary preserved in caller's list
+
     def test_fallback_receives_same_kwargs(self):
         """Verify fallback model gets the same messages/tools/etc as the primary."""
         primary = _make_model("primary")
@@ -301,6 +342,26 @@ class TestAsyncCallModelWithFallback:
                 with pytest.raises(ModelProviderError, match="primary fail"):
                     await acall_model_with_fallback(primary, config, messages=[])
 
+    @pytest.mark.asyncio
+    async def test_async_fallback_response_synced_to_messages(self):
+        """Async: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        async def _fallback_aresponse(messages, **kwargs):
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(
+            primary, "aresponse", new_callable=AsyncMock, side_effect=ModelProviderError("fail", status_code=500)
+        ):
+            with patch.object(fallback, "aresponse", side_effect=_fallback_aresponse):
+                await acall_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
+
 
 # =============================================================================
 # Group 5: call_model_stream_with_fallback() (sync streaming)
@@ -334,6 +395,23 @@ class TestCallModelStreamWithFallback:
                 assert len(result) == 2
                 assert result[0].event == ModelResponseEvent.fallback_model_activated.value
                 assert result[1].content == "fb-chunk"
+
+    def test_stream_fallback_response_synced_to_messages(self):
+        """Streaming: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        def _fallback_stream(messages, **kwargs):
+            yield ModelResponse(content="fb-chunk")
+            messages.append(Message(role="assistant", content="fallback-reply"))
+
+        with patch.object(primary, "response_stream", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response_stream", side_effect=_fallback_stream):
+                list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
 
 
 # =============================================================================
@@ -384,6 +462,29 @@ class TestAsyncCallModelStreamWithFallback:
                 assert result[0].event == ModelResponseEvent.fallback_model_activated.value
                 assert result[1].content == "fb-chunk"
 
+    @pytest.mark.asyncio
+    async def test_async_stream_fallback_response_synced_to_messages(self):
+        """Async streaming: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        async def mock_primary_stream(**kwargs):
+            raise ModelProviderError("fail", status_code=500)
+            yield  # make it an async generator
+
+        async def mock_fallback_stream(messages, **kwargs):
+            yield ModelResponse(content="fb-chunk")
+            messages.append(Message(role="assistant", content="fallback-reply"))
+
+        with patch.object(primary, "aresponse_stream", side_effect=mock_primary_stream):
+            with patch.object(fallback, "aresponse_stream", side_effect=mock_fallback_stream):
+                async for _ in acall_model_stream_with_fallback(primary, config, messages=messages):
+                    pass
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
+
 
 # =============================================================================
 # Group 7: Error classification integration
@@ -392,29 +493,29 @@ class TestAsyncCallModelStreamWithFallback:
 
 class TestClassifyError:
     def test_classify_error_rate_limit(self):
-        """Model.classify_error with 429 returns ModelRateLimitError."""
+        """ModelProviderError.classify with 429 returns ModelRateLimitError."""
         error = ModelProviderError("rate limited", status_code=429)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert isinstance(classified, ModelRateLimitError)
 
     def test_classify_error_context_window(self):
-        """Model.classify_error with context_length_exceeded message returns ContextWindowExceededError."""
+        """ModelProviderError.classify with context_length_exceeded message returns ContextWindowExceededError."""
         error = ModelProviderError("context_length_exceeded", status_code=400)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert isinstance(classified, ContextWindowExceededError)
 
     def test_classify_error_already_classified(self):
         """Already-classified errors are returned as-is."""
         rl_error = ModelRateLimitError("rate limited")
-        assert Model.classify_error(rl_error) is rl_error
+        assert ModelProviderError.classify(rl_error) is rl_error
 
         cw_error = ContextWindowExceededError("too long")
-        assert Model.classify_error(cw_error) is cw_error
+        assert ModelProviderError.classify(cw_error) is cw_error
 
     def test_classify_error_generic(self):
         """Unclassifiable errors are returned as-is."""
         error = ModelProviderError("unknown error", status_code=500)
-        classified = Model.classify_error(error)
+        classified = ModelProviderError.classify(error)
         assert classified is error
         assert type(classified) is ModelProviderError
 
@@ -674,3 +775,193 @@ class TestEdgeCases:
         """FallbackConfig callback defaults to None."""
         config = FallbackConfig()
         assert config.callback is None
+
+
+# =============================================================================
+# Overflow recovery must never mask the provider's error
+# =============================================================================
+
+
+class TestFailingOverflowRecovery:
+    """The recovery hook runs inside the handler for the provider's error. If it raises, the
+    provider's error and the fallback chain must still run as if recovery had not been tried."""
+
+    @staticmethod
+    def _broken_hook() -> bool:
+        raise ValueError("bad config")
+
+    def test_the_providers_error_is_raised_not_the_hooks(self):
+        primary = _make_model("primary")
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                call_model_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+
+    def test_the_fallback_chain_still_runs(self):
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_context_overflow=[fallback])
+        with patch.object(primary, "response", side_effect=ContextWindowExceededError("too long")):
+            with patch.object(fallback, "response", return_value=ModelResponse(content="fallback-ok")):
+                result = call_model_with_fallback(primary, config, recover_from_overflow=self._broken_hook, messages=[])
+        assert result.content == "fallback-ok"
+
+    def test_streaming_and_async_paths_behave_the_same(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        error = ContextWindowExceededError("too long")
+
+        def stream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def aresponse(**kwargs):
+            raise error
+
+        async def astream(**kwargs):
+            raise error
+            yield  # pragma: no cover
+
+        async def consume_async_stream():
+            async for _ in acall_model_stream_with_fallback(
+                primary, None, recover_from_overflow=self._broken_hook, messages=[]
+            ):
+                pass
+
+        with patch.object(primary, "response_stream", side_effect=stream):
+            with pytest.raises(ContextWindowExceededError):
+                list(
+                    call_model_stream_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+                )
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(
+                    acall_model_with_fallback(primary, None, recover_from_overflow=self._broken_hook, messages=[])
+                )
+        with patch.object(primary, "aresponse_stream", side_effect=astream):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(consume_async_stream())
+
+
+class TestAsyncOverflowHook:
+    """The async wrappers await a hook that returns an awaitable, so recovery - a summarizer call -
+    never blocks the event loop. A sync hook keeps working."""
+
+    def test_an_async_hook_is_awaited_and_the_call_retried(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        recovered = []
+
+        async def hook():
+            await asyncio.sleep(0)
+            recovered.append(True)
+            return True
+
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=hook, messages=[]))
+
+        assert result.content == "ok"
+        assert recovered == [True]
+
+    def test_a_sync_hook_still_works_on_the_async_path(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        responses = [ContextWindowExceededError("too long"), ModelResponse(content="ok")]
+
+        async def aresponse(**kwargs):
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with patch.object(primary, "aresponse", side_effect=aresponse):
+            result = asyncio.run(
+                acall_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[])
+            )
+
+        assert result.content == "ok"
+
+    def test_a_failing_async_hook_does_not_mask_the_providers_error(self):
+        import asyncio
+
+        primary = _make_model("primary")
+
+        async def broken():
+            raise ValueError("bad config")
+
+        with patch.object(primary, "aresponse", side_effect=ContextWindowExceededError("too long")):
+            with pytest.raises(ContextWindowExceededError):
+                asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=broken, messages=[]))
+
+
+# =============================================================================
+# A failed retry after overflow recovery raises the retry's error
+# =============================================================================
+
+
+class TestFailedOverflowRetry:
+    """After recovery shrinks the request and the retry still overflows, the caller must see the
+    retry's error - it describes the request as last sent, not the one before the fold."""
+
+    first = ContextWindowExceededError("input is 300000 tokens")
+    second = ContextWindowExceededError("input is 210000 tokens")
+
+    def test_sync(self):
+        primary = _make_model("primary")
+        with patch.object(primary, "response", side_effect=[self.first, self.second]):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                call_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[])
+        assert raised.value is self.second
+
+    def test_async(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        with patch.object(primary, "aresponse", AsyncMock(side_effect=[self.first, self.second])):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                asyncio.run(acall_model_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[]))
+        assert raised.value is self.second
+
+    def test_stream(self):
+        primary = _make_model("primary")
+        errors = iter([self.first, self.second])
+
+        def stream(**kwargs):
+            raise next(errors)
+            yield  # pragma: no cover
+
+        with patch.object(primary, "response_stream", side_effect=stream):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                list(call_model_stream_with_fallback(primary, None, recover_from_overflow=lambda: True, messages=[]))
+        assert raised.value is self.second
+
+    def test_async_stream(self):
+        import asyncio
+
+        primary = _make_model("primary")
+        errors = iter([self.first, self.second])
+
+        async def astream(**kwargs):
+            raise next(errors)
+            yield  # pragma: no cover
+
+        async def consume():
+            async for _ in acall_model_stream_with_fallback(
+                primary, None, recover_from_overflow=lambda: True, messages=[]
+            ):
+                pass
+
+        with patch.object(primary, "aresponse_stream", side_effect=astream):
+            with pytest.raises(ContextWindowExceededError) as raised:
+                asyncio.run(consume())
+        assert raised.value is self.second

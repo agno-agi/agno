@@ -7,7 +7,6 @@ import httpx
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_warning
 
 try:
@@ -140,12 +139,10 @@ class AzureOpenAI(OpenAILike):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using OpenAI SDK default.")
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         # Create client
         self.client = AzureOpenAIClient(**_client_params)
@@ -168,13 +165,11 @@ class AzureOpenAI(OpenAILike):
                 _client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.async_client = AsyncAzureOpenAIClient(**_client_params)
         return self.async_client

@@ -270,3 +270,31 @@ class TestAsyncGetGitHubAppToken:
         with patch.dict("sys.modules", {"jwt": None}):
             with pytest.raises(ImportError, match="PyJWT"):
                 await loader._aget_github_app_token(app_config)
+
+
+class TestLoadFromGithubMissingRepo:
+    """When neither GitHubConfig nor GitHubContent supplies a repo, the loader
+    must raise rather than silently return — otherwise direct SDK callers
+    (Knowledge.insert / ainsert) treat a misconfigured upload as successful.
+    """
+
+    @pytest.fixture
+    def content_without_repo(self):
+        from agno.knowledge.content import Content
+        from agno.knowledge.remote_content.remote_content import GitHubContent
+
+        return Content(
+            name="README.md",
+            remote_content=GitHubContent(config_id="gh", file_path="README.md"),
+        )
+
+    def test_sync_raises_when_repo_missing(self, loader, content_without_repo):
+        config = GitHubConfig(id="gh", name="GH")
+        with pytest.raises(ValueError, match="GitHub repo not specified"):
+            loader._load_from_github(content_without_repo, upsert=False, skip_if_exists=False, config=config)
+
+    @pytest.mark.asyncio
+    async def test_async_raises_when_repo_missing(self, loader, content_without_repo):
+        config = GitHubConfig(id="gh", name="GH")
+        with pytest.raises(ValueError, match="GitHub repo not specified"):
+            await loader._aload_from_github(content_without_repo, upsert=False, skip_if_exists=False, config=config)

@@ -1,8 +1,10 @@
 import logging
+import sys
 from functools import lru_cache
 from os import getenv
 from typing import Any, Literal, Optional
 
+from rich import get_console
 from rich.logging import RichHandler
 from rich.text import Text
 
@@ -70,6 +72,10 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
     if _logger.handlers or _logger.level != logging.NOTSET:
         return _logger
 
+    configured = logging.Logger.manager.loggerDict.get(logger_name)
+    if isinstance(configured, logging.Logger) and (configured.handlers or configured.level != logging.NOTSET):
+        return configured
+
     # Set the custom logger class as the default for this logger
     logging.setLoggerClass(AgnoLogger)
 
@@ -81,21 +87,23 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
 
     # https://rich.readthedocs.io/en/latest/reference/logging.html#rich.logging.RichHandler
     # https://rich.readthedocs.io/en/latest/logging.html#handle-exceptions
-    rich_handler = ColoredRichHandler(
-        show_time=False,
-        rich_tracebacks=False,
-        show_path=True if getenv("AGNO_API_RUNTIME") == "dev" else False,
-        tracebacks_show_locals=False,
-        source_type=source_type or "agent",
-    )
-    rich_handler.setFormatter(
-        logging.Formatter(
-            fmt="%(message)s",
-            datefmt="[%X]",
+    handler: logging.Handler
+    console = get_console()
+    if console.is_terminal or console.is_jupyter:
+        handler = ColoredRichHandler(
+            console=console,
+            show_time=False,
+            rich_tracebacks=False,
+            show_path=getenv("AGNO_API_RUNTIME") == "dev",
+            tracebacks_show_locals=False,
+            source_type=source_type or "agent",
         )
-    )
-
-    _logger.addHandler(rich_handler)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+    else:
+        # Container/file collectors supply timestamps and wrapping themselves.
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(levelname)-7s %(message)s"))
+    _logger.addHandler(handler)
     _logger.setLevel(logging.INFO)
     _logger.propagate = False
     return _logger
@@ -112,13 +120,21 @@ logger: AgnoLogger = agent_logger
 debug_on: bool = False
 debug_level: Literal[1, 2] = 1
 
+# Controls whether exc_info tracebacks are rendered in warning log output.
+# Opt-in only: set AGNO_LOG_TRACEBACKS=true or call set_log_tracebacks(True).
+log_tracebacks: bool = getenv("AGNO_LOG_TRACEBACKS", "false").lower() in ("true", "1", "yes")
 
+
+# These setters run on every agent/team/workflow run. Logger.setLevel clears
+# the level cache of EVERY logger in the process (cost grows with the host
+# app's logger count), so skip it when the level is already correct.
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
     if source_type is None:
         use_agent_logger()
 
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.DEBUG)
+    if _logger.level != logging.DEBUG:
+        _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
@@ -129,7 +145,8 @@ def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 
 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.INFO)
+    if _logger.level != logging.INFO:
+        _logger.setLevel(logging.INFO)
 
     global debug_on
     debug_on = False
@@ -137,7 +154,8 @@ def set_log_level_to_info(source_type: Optional[str] = None):
 
 def set_log_level_to_warning(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.WARNING)
+    if _logger.level != logging.WARNING:
+        _logger.setLevel(logging.WARNING)
 
     global debug_on
     debug_on = False
@@ -145,13 +163,16 @@ def set_log_level_to_warning(source_type: Optional[str] = None):
 
 def set_log_level_to_error(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.ERROR)
+    if _logger.level != logging.ERROR:
+        _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False
 
 
 def center_header(message: str, symbol: str = "*") -> str:
+    if not get_console().is_terminal:
+        return message
     try:
         import shutil
 
@@ -209,18 +230,51 @@ def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
 
 
 def log_warning(msg, *args, **kwargs):
+    """Log a warning. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included — no need to pass
+    exc_info=True at the call site.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.warning(msg, *args, **kwargs)
 
 
 def log_error(msg, *args, **kwargs):
+    """Log an error. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.error(msg, *args, **kwargs)
 
 
 def log_exception(msg, *args, **kwargs):
+    """Log an error with full traceback. Always includes the traceback
+    regardless of AGNO_LOG_TRACEBACKS setting.
+    """
     global logger
     logger.exception(msg, *args, **kwargs)
+
+
+def set_log_tracebacks(enabled: bool = True) -> None:
+    """Enable or disable full tracebacks in log output.
+
+    When enabled, ``log_error`` and ``log_warning`` calls inside except
+    blocks include the full traceback.  When disabled (the default),
+    only the message is logged.
+
+    ``log_exception`` always includes tracebacks regardless of this setting.
+
+    Can also be controlled via the ``AGNO_LOG_TRACEBACKS`` env var.
+    """
+    global log_tracebacks
+    log_tracebacks = enabled
 
 
 def configure_agno_logging(
@@ -228,6 +282,7 @@ def configure_agno_logging(
     custom_agent_logger: Optional[Any] = None,
     custom_team_logger: Optional[Any] = None,
     custom_workflow_logger: Optional[Any] = None,
+    enable_log_tracebacks: Optional[bool] = None,
 ) -> None:
     """
     Util to set custom loggers. These will be used everywhere across the Agno library.
@@ -237,7 +292,11 @@ def configure_agno_logging(
         custom_agent_logger: Custom logger for agent operations
         custom_team_logger: Custom logger for team operations
         custom_workflow_logger: Custom logger for workflow operations
+        enable_log_tracebacks: If True, show full tracebacks on warning logs.
+            Also controllable via ``AGNO_LOG_TRACEBACKS`` env var.
     """
+    if enable_log_tracebacks is not None:
+        set_log_tracebacks(enable_log_tracebacks)
     if custom_default_logger is not None:
         global logger
         logger = custom_default_logger

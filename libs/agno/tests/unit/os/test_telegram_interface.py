@@ -1,49 +1,16 @@
 import base64
-import sys
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.os.interfaces.telegram import Telegram
+from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html
+from agno.os.interfaces.telegram.security import _is_dev_mode as is_development_mode
+from agno.os.interfaces.telegram.security import get_webhook_secret_token, validate_webhook_secret_token
 
-def _install_fake_telebot():
-    telebot = types.ModuleType("telebot")
-    telebot_async = types.ModuleType("telebot.async_telebot")
-    telebot_apihelper = types.ModuleType("telebot.apihelper")
-
-    class AsyncTeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class TeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class ApiTelegramException(Exception):
-        pass
-
-    telebot.TeleBot = TeleBot
-    telebot_async.AsyncTeleBot = AsyncTeleBot
-    telebot_apihelper.ApiTelegramException = ApiTelegramException
-    sys.modules.setdefault("telebot", telebot)
-    sys.modules.setdefault("telebot.async_telebot", telebot_async)
-    sys.modules.setdefault("telebot.apihelper", telebot_apihelper)
-
-
-_install_fake_telebot()
-
-from agno.os.interfaces.telegram import Telegram  # noqa: E402
-from agno.os.interfaces.telegram.formatting import markdown_to_telegram_html  # noqa: E402
-from agno.os.interfaces.telegram.security import (  # noqa: E402
-    _is_dev_mode as is_development_mode,
-)
-from agno.os.interfaces.telegram.security import (  # noqa: E402
-    get_webhook_secret_token,
-    validate_webhook_secret_token,
-)
-
+ROUTER_MODULE = "agno.os.interfaces.telegram.router"
 SECURITY_MODULE = "agno.os.interfaces.telegram.security"
 
 
@@ -159,26 +126,39 @@ class TestTelegramClass:
         tg = Telegram(agent=agent, reply_to_mentions_only=False)
         assert tg.reply_to_mentions_only is False
 
+    def test_quoted_responses_default(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        agent = MagicMock()
+        tg = Telegram(agent=agent)
+        assert tg.quoted_responses is False
+
+    def test_quoted_responses_true(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        agent = MagicMock()
+        tg = Telegram(agent=agent, quoted_responses=True)
+        assert tg.quoted_responses is True
+
     def test_get_router_returns_api_router(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
         tg = Telegram(agent=agent)
-        router = tg.get_router()
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            router = tg.get_router()
         assert router is not None
         routes = [r.path for r in router.routes]
         assert "/telegram/status" in routes
         assert "/telegram/webhook" in routes
 
 
-ROUTER_MODULE = "agno.os.interfaces.telegram.router"
-
-
-def _make_app(monkeypatch, agent=None, team=None, workflow=None):
+def _make_app(monkeypatch, agent=None, team=None, workflow=None, mock_bot=None):
     monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
     monkeypatch.setenv("APP_ENV", "development")
     tg = Telegram(agent=agent, team=team, workflow=workflow)
     app = FastAPI()
-    app.include_router(tg.get_router())
+    if mock_bot is None:
+        mock_bot = AsyncMock()
+    with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+        app.include_router(tg.get_router())
     return app
 
 
@@ -252,7 +232,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
 
         with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
             client = TestClient(app)
@@ -268,7 +249,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
         client = TestClient(app)
 
         resp = client.post(
@@ -284,7 +266,8 @@ class TestWebhookEndpoint:
         agent = MagicMock()
         tg = Telegram(agent=agent)
         app = FastAPI()
-        app.include_router(tg.get_router())
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            app.include_router(tg.get_router())
 
         with patch(f"{ROUTER_MODULE}.validate_webhook_secret_token", return_value=False):
             client = TestClient(app)
@@ -304,6 +287,7 @@ def _build_telegram_client(
     show_reasoning=False,
     streaming=False,
     token=None,
+    quoted_responses=False,
 ):
     from fastapi import APIRouter
 
@@ -319,6 +303,7 @@ def _build_telegram_client(
         reply_to_bot_messages=reply_to_bot_messages,
         show_reasoning=show_reasoning,
         streaming=streaming,
+        quoted_responses=quoted_responses,
     )
     if token is not None:
         kwargs["token"] = token
@@ -1783,6 +1768,39 @@ class TestReplyThreading:
         assert resp.status_code == 200
         send_call = mock_bot.send_message.call_args
         assert send_call[1].get("reply_to_message_id") is None
+
+    def test_dm_reply_to_message_id_set_when_enabled(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        monkeypatch.setenv("APP_ENV", "development")
+
+        mock_response = MagicMock()
+        mock_response.status = "COMPLETED"
+        mock_response.content = "DM reply"
+        mock_response.reasoning_content = None
+        mock_response.images = None
+
+        agent = AsyncMock(id="test-agent")
+        agent.arun = AsyncMock(return_value=mock_response)
+        mock_bot = AsyncMock()
+
+        with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
+            client = _build_telegram_client(agent=agent, quoted_responses=True)
+            resp = client.post(
+                "/telegram/webhook",
+                json={
+                    "update_id": 1,
+                    "message": {
+                        "message_id": 100,
+                        "from": {"id": 67890},
+                        "chat": {"id": 12345, "type": "private"},
+                        "text": "Hello",
+                    },
+                },
+            )
+
+        assert resp.status_code == 200
+        send_call = mock_bot.send_message.call_args
+        assert send_call[1].get("reply_to_message_id") == 100
 
     def test_group_chunked_only_first_chunk_replies(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")

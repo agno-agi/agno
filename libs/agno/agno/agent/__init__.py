@@ -7,7 +7,18 @@ from agno.agent.agent import (
     get_agent_by_id,
     get_agents,
 )
+from agno.agent.factory import AgentFactory
+from agno.agent.followup import FollowupConfig
 from agno.agent.remote import RemoteAgent
+from agno.factory import (
+    BaseFactory,
+    FactoryContextRequired,
+    FactoryError,
+    FactoryPermissionError,
+    FactoryValidationError,
+    RequestContext,
+    TrustedContext,
+)
 from agno.models.fallback import FallbackConfig
 from agno.run.agent import (
     Followups,
@@ -34,8 +45,16 @@ from agno.run.agent import (
 
 __all__ = [
     "Agent",
+    "AgentFactory",
+    "BaseFactory",
     "FallbackConfig",
+    "FactoryContextRequired",
+    "FactoryError",
+    "FactoryPermissionError",
+    "FactoryValidationError",
     "RemoteAgent",
+    "RequestContext",
+    "TrustedContext",
     "AgentSession",
     "Followups",
     "FollowupsStartedEvent",
@@ -62,4 +81,5 @@ __all__ = [
     "ToolCallCompletedEvent",
     "get_agent_by_id",
     "get_agents",
+    "FollowupConfig",
 ]

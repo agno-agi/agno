@@ -5,9 +5,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
@@ -371,7 +371,7 @@ class WatsonX(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {str(e)}")
 
         # Add role
         if response_message.get("role") is not None:
@@ -386,7 +386,7 @@ class WatsonX(Model):
             try:
                 model_response.tool_calls = response_message["tool_calls"]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         if response.get("usage") is not None:
             model_response.response_usage = self._get_metrics(response["usage"])

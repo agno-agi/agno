@@ -22,7 +22,7 @@ choose which steps to execute. Here, the selector chooses, but user confirms.
 from agno.db.sqlite import SqliteDb
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -121,8 +121,10 @@ request_router = Router(
         ),
     ],
     selector=route_by_category,
-    requires_confirmation=True,
-    confirmation_message="The system has selected a handler. Proceed with the routed action?",
+    human_review=HumanReview(
+        requires_confirmation=True,
+        confirmation_message="The system has selected a handler. Proceed with the routed action?",
+    ),
 )
 
 finalize_step = Step(name="finalize_response", executor=finalize_response)

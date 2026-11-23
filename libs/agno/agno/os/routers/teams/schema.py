@@ -1,7 +1,12 @@
-from typing import Any, Dict, List, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.team.factory import TeamFactory
 
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
@@ -37,9 +42,32 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_factory: bool = False
+    factory_input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+    sandboxed: bool = False
+
+    @classmethod
+    def from_factory(cls, factory: TeamFactory) -> TeamResponse:
+        """Create a TeamResponse from a TeamFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
 
     @classmethod
     async def from_team(
@@ -74,10 +102,6 @@ class TeamResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
             "read_chat_history": False,
@@ -129,7 +153,12 @@ class TeamResponse(BaseModel):
             model_provider = model_id
 
         session_table = team.db.session_table_name if team.db else None
-        knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (team.db.knowledge_table_name if team.db and team.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -144,8 +173,6 @@ class TeamResponse(BaseModel):
             "num_history_runs": team.num_history_runs,
             "cache_session": team.cache_session,
         }
-
-        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
@@ -163,7 +190,6 @@ class TeamResponse(BaseModel):
             memory_info = {
                 "enable_agentic_memory": team.enable_agentic_memory,
                 "update_memory_on_run": team.update_memory_on_run,
-                "enable_user_memories": team.enable_user_memories,  # Soon to be deprecated. Use update_memory_on_run
                 "metadata": team.metadata,
                 "memory_table": team.db.memory_table_name if team.db and team.update_memory_on_run else None,
             }
@@ -176,10 +202,8 @@ class TeamResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": team.reasoning,
+            "reasoning": team.reasoning_model is not None,
             "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
-            "reasoning_min_steps": team.reasoning_min_steps,
-            "reasoning_max_steps": team.reasoning_max_steps,
         }
 
         if team.reasoning_model:
@@ -260,11 +284,19 @@ class TeamResponse(BaseModel):
         if team.model and team.model.provider is not None:
             _team_model_data["provider"] = team.model.provider
 
+        from agno.agents.base import BaseExternalAgent
+        from agno.registry._reserved import is_framework_owned
+
         members: List[Union[AgentResponse, TeamResponse]] = []
         for member in team.members if isinstance(team.members, list) else []:
             if isinstance(member, Agent):
                 agent_response = await AgentResponse.from_agent(member)
+                if is_framework_owned(member):
+                    # Built-in members can carry the server's source root in their instructions.
+                    agent_response.system_message = None
                 members.append(agent_response)
+            elif isinstance(member, BaseExternalAgent):
+                members.append(AgentResponse.from_harness_agent(member))
             if isinstance(member, Team):
                 team_response = await TeamResponse.from_team(member)
                 members.append(team_response)
