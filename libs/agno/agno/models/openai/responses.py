@@ -7,7 +7,12 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
+from agno.exceptions import (
+    ContextWindowExceededError,
+    ModelAuthenticationError,
+    ModelProviderError,
+    ModelResponseIncompleteError,
+)
 from agno.media import File
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
@@ -23,7 +28,13 @@ from agno.utils.tokens import count_schema_tokens
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
-    from openai.types.responses import Response, ResponseReasoningItem, ResponseStreamEvent, ResponseUsage
+    from openai.types.responses import (
+        Response,
+        ResponseIncompleteEvent,
+        ResponseReasoningItem,
+        ResponseStreamEvent,
+        ResponseUsage,
+    )
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
@@ -980,6 +991,9 @@ class OpenAIResponses(Model):
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelResponseIncompleteError as exc:
+            log_error(f"Incomplete response from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1101,6 +1115,9 @@ class OpenAIResponses(Model):
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelResponseIncompleteError as exc:
+            log_error(f"Incomplete response from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1154,6 +1171,7 @@ class OpenAIResponses(Model):
                     **request_params,
                 )
 
+            incomplete_response: Optional[Response] = None
             for chunk in stream:
                 model_response, tool_use = self._parse_provider_response_delta(
                     stream_event=chunk,  # type: ignore
@@ -1161,6 +1179,12 @@ class OpenAIResponses(Model):
                     tool_use=tool_use,  # type: ignore
                 )
                 yield model_response
+                if isinstance(chunk, ResponseIncompleteEvent):
+                    incomplete_response = chunk.response
+
+            # Raised once the stream is drained, so its connection is released first
+            if incomplete_response is not None:
+                self._raise_if_no_output(incomplete_response)
 
             assistant_message.metrics.stop_timer()
 
@@ -1209,6 +1233,9 @@ class OpenAIResponses(Model):
             ) from exc
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
+            raise exc
+        except ModelResponseIncompleteError as exc:
+            log_error(f"Incomplete response from OpenAI API: {exc}")
             raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
@@ -1262,9 +1289,16 @@ class OpenAIResponses(Model):
                     stream=True,
                     **request_params,
                 )
+            incomplete_response: Optional[Response] = None
             async for chunk in async_stream:  # type: ignore
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
                 yield model_response
+                if isinstance(chunk, ResponseIncompleteEvent):
+                    incomplete_response = chunk.response
+
+            # Raised once the stream is drained, so its connection is released first
+            if incomplete_response is not None:
+                self._raise_if_no_output(incomplete_response)
 
             assistant_message.metrics.stop_timer()
 
@@ -1314,6 +1348,9 @@ class OpenAIResponses(Model):
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelResponseIncompleteError as exc:
+            log_error(f"Incomplete response from OpenAI API: {exc}")
+            raise exc
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1335,6 +1372,19 @@ class OpenAIResponses(Model):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
+    def _raise_if_no_output(self, response: Response) -> None:
+        """Raise when a response was cut off before it produced any text or tool call."""
+        if getattr(response, "status", None) != "incomplete":
+            return
+        if response.output_text or any(output.type == "function_call" for output in response.output or []):
+            return
+
+        reason = response.incomplete_details.reason if response.incomplete_details else None
+        message = f"The model stopped before producing any output (reason: {reason or 'unknown'})."
+        if reason == "max_output_tokens":
+            message += " Raise max_output_tokens or lower the reasoning effort."
+        raise ModelResponseIncompleteError(message=message, model_name=self.name, model_id=self.id, reason=reason)
+
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
@@ -1353,6 +1403,8 @@ class OpenAIResponses(Model):
                 model_name=self.name,
                 model_id=self.id,
             )
+
+        self._raise_if_no_output(response)
 
         # Store the response ID for continuity
         if response.id:
@@ -1521,8 +1573,8 @@ class OpenAIResponses(Model):
             model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
-        # 5. Add metrics
-        elif stream_event.type == "response.completed":
+        # 5. Add metrics. A stream that was cut off ends on response.incomplete
+        elif stream_event.type in ("response.completed", "response.incomplete"):
             model_response = ModelResponse()
 
             # Preserve reasoning for replay when automatic chaining is disabled.

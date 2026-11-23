@@ -177,7 +177,7 @@ class ModelProviderError(AgnoError):
         specific subclass applies.
         """
         # Already classified
-        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
+        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError, ModelResponseIncompleteError)):
             return error
 
         # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
@@ -220,6 +220,23 @@ class ContextWindowExceededError(ModelProviderError):
     ):
         super().__init__(message, status_code, model_name, model_id)
         self.error_id = "context_window_exceeded_error"
+
+
+class ModelResponseIncompleteError(ModelProviderError):
+    """Exception raised when a model is cut off before it produces any text or tool call."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 502,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
+        reason: Optional[str] = None,
+    ):
+        super().__init__(message, status_code, model_name, model_id)
+        # Why the provider stopped, in its own words (e.g. "max_output_tokens", "content_filter", "length")
+        self.reason = reason
+        self.error_id = "model_response_incomplete_error"
 
 
 class EmbeddingError(AgnoError):

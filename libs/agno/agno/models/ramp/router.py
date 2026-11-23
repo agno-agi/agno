@@ -314,21 +314,12 @@ class RampRouter(OpenResponses):
         """
         Parse a streaming event into a ModelResponse.
 
-        A generation that runs out of `max_output_tokens` terminates on `response.incomplete`
-        rather than `response.completed`, which the base class does not read usage from.
-
-        Text deltas are also not mirrored into `reasoning_content`; see `_parse_provider_response`.
+        Text deltas are not mirrored into `reasoning_content`; see `_parse_provider_response`.
         """
         event_type = getattr(stream_event, "type", None)
 
         if event_type == "response.incomplete":
-            model_response = ModelResponse()
-            response = getattr(stream_event, "response", None)
-            usage = getattr(response, "usage", None)
-            if usage is not None:
-                model_response.response_usage = self._get_metrics(usage)
             log_warning("Router stopped the response before it was complete.")
-            return model_response, tool_use
 
         model_response, tool_use = super()._parse_provider_response_delta(stream_event, assistant_message, tool_use)
 

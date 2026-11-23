@@ -7,7 +7,12 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
+from agno.exceptions import (
+    ContextWindowExceededError,
+    ModelAuthenticationError,
+    ModelProviderError,
+    ModelResponseIncompleteError,
+)
 from agno.media import Audio
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
@@ -476,6 +481,9 @@ class OpenAIChat(Model):
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelResponseIncompleteError as e:
+            log_error(f"Incomplete response from OpenAI API: {str(e)}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -566,6 +574,9 @@ class OpenAIChat(Model):
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelResponseIncompleteError as e:
+            log_error(f"Incomplete response from OpenAI API: {str(e)}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -593,6 +604,7 @@ class OpenAIChat(Model):
 
         try:
             assistant_message.metrics.start_timer()
+            has_output, cut_off = False, False
 
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
@@ -603,7 +615,14 @@ class OpenAIChat(Model):
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
             ):
+                if chunk.choices:
+                    has_output = has_output or self._has_output(chunk.choices[0].delta)
+                    cut_off = cut_off or chunk.choices[0].finish_reason == "length"
                 yield self._parse_provider_response_delta(chunk)
+
+            # Raised once the stream is drained, so its connection is released first
+            if cut_off and not has_output:
+                raise self._no_output_error()
 
             assistant_message.metrics.stop_timer()
 
@@ -653,6 +672,9 @@ class OpenAIChat(Model):
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
             raise e
+        except ModelResponseIncompleteError as e:
+            log_error(f"Incomplete response from OpenAI API: {str(e)}")
+            raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -691,8 +713,16 @@ class OpenAIChat(Model):
                 ),
             )
 
+            has_output, cut_off = False, False
             async for chunk in async_stream:
+                if chunk.choices:
+                    has_output = has_output or self._has_output(chunk.choices[0].delta)
+                    cut_off = cut_off or chunk.choices[0].finish_reason == "length"
                 yield self._parse_provider_response_delta(chunk)
+
+            # Raised once the stream is drained, so its connection is released first
+            if cut_off and not has_output:
+                raise self._no_output_error()
 
             assistant_message.metrics.stop_timer()
 
@@ -741,6 +771,9 @@ class OpenAIChat(Model):
             ) from e
         except ModelAuthenticationError as e:
             log_error(f"Model authentication error from OpenAI API: {str(e)}")
+            raise e
+        except ModelResponseIncompleteError as e:
+            log_error(f"Incomplete response from OpenAI API: {str(e)}")
             raise e
         except Exception as e:
             log_error(f"Error from OpenAI API: {str(e)}")
@@ -801,6 +834,22 @@ class OpenAIChat(Model):
 
         return response.choices[0].finish_reason is not None
 
+    def _no_output_error(self) -> ModelResponseIncompleteError:
+        return ModelResponseIncompleteError(
+            message=(
+                "The model stopped before producing any output (finish_reason: length). "
+                "Allow more output tokens or lower the reasoning effort."
+            ),
+            model_name=self.name,
+            model_id=self.id,
+            reason="length",
+        )
+
+    @staticmethod
+    def _has_output(message: Any) -> bool:
+        """Whether a message or a stream delta carries text, a tool call or audio."""
+        return bool(message and (message.content or message.tool_calls or getattr(message, "audio", None)))
+
     def _parse_provider_response(
         self,
         response: ChatCompletion,
@@ -820,6 +869,9 @@ class OpenAIChat(Model):
 
         # Get response message
         response_message = response.choices[0].message
+
+        if getattr(response.choices[0], "finish_reason", None) == "length" and not self._has_output(response_message):
+            raise self._no_output_error()
 
         # Add role
         if response_message.role is not None:
