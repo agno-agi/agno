@@ -1,5 +1,9 @@
 chat:
   quick_prompts:
+    context:
+      - "Harbor sound walk kickoff notes, item 3. We open Saturday. Preload the recordings because mobile reception cuts out by the ferry steps. Orla will drop the players at the welcome desk on Thursday. The opening sound check needs an owner. Felix suggested a night route for autumn."
+      - "The welcome desk signed for the players. Harbor Works closed the ferry steps through Sunday. We can still open Saturday if the museum lets us use its courtyard. Kit is getting their answer by Friday noon and will run the sound check. Catch Kit up. What matters most now?"
+
     local-wiki:
       - "Add https://docs.agno.com/ to the wiki"
       - "Attach an image or PDF, then digest and file it"

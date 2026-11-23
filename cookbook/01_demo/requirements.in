@@ -1,4 +1,4 @@
-agno[os]
+agno[os]>=3.2.0,<4
 google-genai
 fastapi[standard]
 mcp

@@ -1,8 +1,6 @@
 # Agno Demo
 
-A demo AgentOS built from wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: local markdown files, a git repo, or Notion.
-
-Built on AgentOS with SQLite-backed sessions. The codebase is small enough to grok in an afternoon, and stable enough to build on.
+Start with Context. Paste a team update and it keeps a Markdown page for each project. In a fresh conversation it reads the pages, works out what changed, and catches the next teammate up. The same AgentOS also includes wiki agents for local files, Git and Notion, and an agent that answers questions about this repository.
 
 > For a production version of this demo, see the [agentos-railway](https://github.com/agno-agi/agentos-railway) codebase.
 
@@ -10,6 +8,7 @@ Built on AgentOS with SQLite-backed sessions. The codebase is small enough to gr
 
 | Agent | What it does |
 |-------|--------------|
+| [Context](agents/context.py) | Tracks priorities, decisions, owners and open questions in Markdown files you can edit. |
 | **LocalWiki** | Reads and writes a markdown wiki. Ingest a URL, an attached image, or a PDF. It digests and files a page in one call. |
 | **GitWiki** *(env-gated)* | The same agent with the wiki stored as a git repo. It auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` and `WIKI_GITHUB_TOKEN` are set. |
 | **NotionWiki** *(env-gated)* | The same agent with the wiki stored as a Notion database, one row per page. The database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` and `NOTION_DATABASE_ID` are set. |
@@ -44,7 +43,27 @@ export GOOGLE_API_KEY="..."      # optional: for gemini audio and video
 
 GitWiki and NotionWiki each switch on when their backend credentials are set. See "Enable the other wiki backends" below.
 
-### 4. Serve
+## Run Context
+
+From the repository root, give Context the kickoff notes:
+
+```bash
+python cookbook/01_demo/agents/context.py "Harbor sound walk kickoff notes, item 3. We open Saturday. Preload the recordings because mobile reception cuts out by the ferry steps. Orla will drop the players at the welcome desk on Thursday. The opening sound check needs an owner. Felix suggested a night route for autumn."
+```
+
+Open the project page under `cookbook/01_demo/data/context/projects/`. Look for the reason to preload the recordings and the missing sound-check owner. Try adding a detail yourself, such as “Spare headphone pads are in the blue tin.”
+
+Run the script again. This is a new conversation.
+
+```bash
+python cookbook/01_demo/agents/context.py "The welcome desk signed for the players. Harbor Works closed the ferry steps through Sunday. We can still open Saturday if the museum lets us use its courtyard. Kit is getting their answer by Friday noon and will run the sound check. Catch Kit up. What matters most now?"
+```
+
+Kit needs the museum’s answer by Friday noon. Reopen the same file. The Saturday opening now depends on permission, the players have arrived, and Kit owns the sound check. Check the history for the ferry steps closure and the ideas section for Felix’s suggestion. Your own edit should still be there.
+
+Both the script and AgentOS use the same on-disk folder by default. Set `CONTEXT_DATA_DIR` to a different parent directory to try the demo with a fresh set of files. The folder name for the shared filesystem is `context`.
+
+## Serve the demo
 
 ```bash
 fastapi dev cookbook/01_demo/run.py
@@ -105,6 +124,14 @@ The local mirror lands under `data/notion-wiki/` (gitignored). On startup the ba
 - **Generate HTML** with LocalWiki: *"Render the wiki's docs page as a standalone HTML page."* It returns a downloadable `.html` file.
 
 ## Evals
+
+To exercise Context in fresh processes with an unrelated project and a teammate's edit:
+
+```bash
+python cookbook/01_demo/evals/context_handoff.py
+```
+
+The check uses a temporary folder and prints the handoff and the saved Markdown.
 
 From the repo root:
 
