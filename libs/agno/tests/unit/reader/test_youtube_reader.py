@@ -124,6 +124,26 @@ def test_read_video_with_params():
         assert documents[0].meta_data["video_id"] == "test_video_id"
 
 
+@pytest.mark.parametrize(
+    "video_url",
+    [
+        "https://youtu.be/test_video_id?t=30s",
+        "https://www.youtube.com/shorts/test_video_id",
+        "https://www.youtube.com/embed/test_video_id",
+        "https://www.youtube.com/live/test_video_id",
+    ],
+)
+def test_read_extracts_video_id_from_every_url_form(video_url, mock_transcript):
+    """Every URL form YouTube hands out yields the id, not the whole URL, as the video id."""
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
+        mock_api.return_value.fetch.return_value = mock_transcript
+
+        documents = YouTubeReader(chunk=False).read(video_url)
+
+        assert documents[0].id == "youtube_test_video_id"
+        assert documents[0].meta_data["video_id"] == "test_video_id"
+
+
 def test_read_video_unicode_content():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
