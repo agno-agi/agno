@@ -9,7 +9,14 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped
+from agno.os.interfaces.slack.security import (
+    authorize_run,
+    authorize_sender,
+    authorize_unmapped,
+    is_other_app,
+    refuse_app,
+    refuse_unidentified,
+)
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
@@ -55,9 +62,20 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
-    """Run the message under the sender's authority, mapped, default or none; a refused user gets an ephemeral."""
+    """Run the message as its directory user, users= mapping, default role or none; a refusal says why."""
     from agno.os.auth import _authorization_enforced
 
+    # authorize_senders runs an agent, team or workflow as the sender's directory user, whose roles decide,
+    # and another app is never one
+    if ctx.senders_authorized:
+        event = event_context.event
+        try:
+            other_app = await is_other_app(ctx, client, event.get("user") or "", event.get("bot_id") or "")
+        except LookupError:
+            return await refuse_unidentified(ctx, event_context, client, event_context.owner)
+        if other_app:
+            return await refuse_app(ctx, event_context, client)
+        return await authorize_sender(ctx, event_context, client)
     # Without users=, the message runs and its permission checks use the default role, or no roles
     if ctx.users is None:
         return await authorize_unmapped(ctx, event_context, client, event_context.owner, event_context.thread_ts)

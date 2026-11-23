@@ -150,16 +150,22 @@ def strip_bot_mention(text: str, bot_user_id: Optional[str], bot_name: Optional[
 
 
 async def resolve_slack_user(
-    async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+    async_client: Any,
+    slack_user_id: str,
+    errors: Optional[Set[str]] = None,
+    members: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Resolve a Slack user ID to (canonical_user_id, display_name).
 
     Returns the user's email as canonical_user_id if available, otherwise
     falls back to the raw Slack user ID. Display name is best-effort.
+    The users.info record is added to members when given.
     """
     try:
         resp = await async_client.users_info(user=slack_user_id)
         user = resp.get("user", {}) if resp else {}
+        if members is not None:
+            members[slack_user_id] = user
         profile = user.get("profile", {})
 
         email = profile.get("email")
@@ -176,6 +182,17 @@ async def resolve_slack_user(
         if errors is not None:
             errors.add(slack_error_code(e) or "")
         return (slack_user_id, None)
+
+
+def confirmed_email(member: Dict[str, Any]) -> Optional[str]:
+    """A Slack member's email when Slack reports it confirmed, else None."""
+    email = (member.get("profile") or {}).get("email")
+    return email if email and member.get("is_email_confirmed") else None
+
+
+def is_guest(member: Dict[str, Any]) -> bool:
+    """Whether a Slack member is a guest of the workspace."""
+    return bool(member.get("is_restricted") or member.get("is_ultra_restricted"))
 
 
 async def resolve_slack_bot(
@@ -264,6 +281,8 @@ class EventDeduplicator:
 class LookupCache:
     """Remembers recent Slack lookups (channel names, user identities, session ids) so a message skips the call.
 
+    It also marks the threads where another app was already told it was refused, so it is told once.
+
     Entries expire so a renamed channel or a changed email is picked up again; only successful
     lookups are cached, except a sender name that can never be looked up (no users:read scope,
     no such user or bot). Instantiated once per mounted Slack interface.
@@ -305,11 +324,18 @@ class LookupCache:
         cached = self.get(key)
         if cached is not None:
             return cached
-        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors)
+        members: Dict[str, Any] = {}
+        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors, members)
         # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
         if resolved_user_id != slack_user_id or display_name:
             self.set(key, (resolved_user_id, display_name))
+        if slack_user_id in members:
+            self.set(f"user_record:{slack_user_id}", members[slack_user_id])
         return resolved_user_id, display_name
+
+    def member(self, slack_user_id: str) -> Optional[Dict[str, Any]]:
+        """The users.info record of the last successful user_identity lookup, while it is cached."""
+        return self.get(f"user_record:{slack_user_id}")
 
     async def bot_identity(
         self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None

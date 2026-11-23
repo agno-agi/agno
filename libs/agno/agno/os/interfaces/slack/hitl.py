@@ -44,6 +44,7 @@ from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error, log_info
 
 _NOT_ALLOWED_MESSAGE = "Only the person who started this run or an approver can decide."
+_NOT_OWNER_MESSAGE = "Only the person who started this run can decide."
 _ALREADY_SUBMITTED_MESSAGE = "Already submitted."
 _REMOTE_MESSAGE = "This run is paused on a remote AgentOS. Approve it there."
 
@@ -138,11 +139,13 @@ async def _decider_context(
         )
 
     if not await can_act(ctx, user, event_context, client):
-        await post_ephemeral(client, channel, user, _NOT_ALLOWED_MESSAGE, thread_ts)
+        # Under authorize_senders approvers= does not apply, so only the run's own user decides
+        message = _NOT_OWNER_MESSAGE if ctx.senders_authorized else _NOT_ALLOWED_MESSAGE
+        await post_ephemeral(client, channel, user, message, thread_ts)
         return None
 
-    # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
-    if ctx.users is not None and ctx.users.get(event_context.owner) is not None:
+    # The owner's authority is checked again on every decision: a mapped owner, or the authorize_senders run's user
+    if ctx.senders_authorized or (ctx.users is not None and ctx.users.get(event_context.owner) is not None):
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
             return None
     elif not await authorize_unmapped(ctx, event_context, client, user, thread_ts):

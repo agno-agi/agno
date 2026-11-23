@@ -338,7 +338,7 @@ async def test_handle_message_without_users_runs_as_the_slack_user_with_the_defa
     if super_agent:
         authorize.assert_awaited_once_with(ctx.app, "U123", "agent-1", ["slack-bot"])
     else:
-        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"])
+        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"], disabled=None)
     event_context = run_event.call_args.args[0]
     assert (event_context.user_id, event_context.authority) == ("U123", authority)
 

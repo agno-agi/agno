@@ -33,6 +33,7 @@ hands each event to the interface. The demo environment installs both.
 | `hitl_external_execution.py` | Show tool arguments and collect an external result |
 | `hitl_incident_commander.py` | Compound incident flow using all pause types |
 | `access_control.py` | `users=` maps Slack users to principals; `approvers=` names who may approve or stop |
+| `authorize_senders.py` | Each sender runs as their own directory user, created with the default role |
 | `claude_harness.py` | A Claude Code agent with native tool approvals |
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
@@ -203,6 +204,11 @@ returns it and adds the display name to run metadata.
 Sessions are stored under the run's `user_id`; map a member with `users=` to
 see the thread under their principal.
 
+With `authorize_senders=True` (see Approvers and User Mapping), the run's
+`user_id` is the sender's AgentOS directory user instead, so turning it on for
+an existing bot starts each member's new sessions under
+`slack:{workspace_id}:{member_id}` rather than their member ID.
+
 Claude Code and Codex take one turn per session at a time: a message that
 arrives while one is working gets a short "still working" reply. An Agent or
 Team runs both turns.
@@ -225,10 +231,11 @@ continues in a new message in the same thread; open task cards move with it.
 **Stop.** Pressing Stop on a streaming reply cancels the run and ends the
 message with "Stopped". Stop works for Agents, Teams, Workflows, and external
 agents. Slack offers no Stop while an approval card waits; a Stop pressed just
-before the run paused still stops it and freezes the card to "Stopped". Only the
-person who started the run, a Slack user mapped to the same principal, or a user
-in `approvers=` can stop it; anyone else who presses Stop on a streaming reply
-gets a private notice.
+before the run paused still stops it and freezes the card to "Stopped". Outside
+`authorize_senders=True` (see Approvers and User Mapping), only the person who
+started the run, a Slack user mapped to the same principal, or a user in
+`approvers=` can stop it; anyone else who presses Stop on a streaming reply gets
+a private notice.
 
 ## Approvers and User Mapping
 
@@ -255,7 +262,8 @@ export SLACK_APPROVER_ID="U..."
 ```
 
 - **`approvers=`**: Slack member IDs (not emails) that may approve, deny, or stop
-  any run. Without it, only the person who started the run can.
+  any run. Without it, only the person who started the run can. It is ignored
+  under `authorize_senders=True`, where AgentOS decides.
 - **`users=`**: maps Slack member IDs to AgentOS principals. Each message runs
   as the mapped principal, with the roles AgentOS authorization gives it, and
   the run's `user_id` is that principal. Unless a `default_role=` applies
@@ -286,7 +294,8 @@ export SLACK_APPROVER_ID="U..."
   members who need different access. Without it and without `users=`, under
   authorization, Super Agent runs such a user with no roles: they can chat, and
   every action that needs a permission is refused. An agent, team or workflow
-  other than Super Agent runs them unchecked.
+  other than Super Agent runs them unchecked, and under `authorize_senders=True`
+  it is not used.
 
 ```python
 # trust_token_scopes keeps os.agno.com sign-ins working once a role is defined
@@ -311,6 +320,52 @@ authz.define_role(
 
 Slack(team=agent_os.manager, default_role="slack-member")
 ```
+
+- **`authorize_senders=`**: runs an agent, team or workflow as each sender's user
+  in the AgentOS user directory (`AgentOS(user_directory=True)`), and that
+  user's roles decide what they can do, as for a web sign-in. Slack has already
+  signed the member in, so a sender with no user gets one on their first
+  message, with the platform default role (`define_role(..., default=True)`);
+  without a default role they are refused until an admin assigns one. The user
+  is `slack:{workspace_id}:{member_id}`, or with `resolve_user_identity=True` the
+  member's confirmed email, so an existing user whose ID is that email is
+  reused; otherwise the confirmed email only labels the user in `/users`.
+  Disabling the user refuses their messages and their paused runs.
+  - Approvals: only the person who started a run approves, denies or fills in
+    its pause, as over HTTP, and `approvers=` is ignored. A tool that needs an
+    admin (`@approval`) is approved in AgentOS by someone whose roles grant
+    `approvals:write`.
+  - Stop: anyone whose roles let them run the agent may stop a run, and only
+    its owner under `AgentOS(user_isolation=True)`, as a cancel over HTTP. A
+    disabled user stops nothing. With isolation off, a Stop with no message
+    stops every run in the thread.
+  - Guests get a user that starts disabled; an admin turns it on in `/users`.
+    Members of other organizations (Slack Connect), deactivated accounts and
+    bot users are refused, and a guest's email never names a user. Slack
+    membership and guest status are read from Slack at most every 10 minutes,
+    so a deactivation or guest change can take that long to apply; turning a
+    user off in `/users` applies at once.
+  - Other apps are refused, since only people run: with
+    `respond_to_other_apps=True` the bot tells an app once per thread in a reply
+    there, as it cannot see a private one, and with
+    `reply_to_mentions_only=False` an app that does not mention the bot, such as
+    a notification, is refused without a reply. An app never becomes a user.
+  - `users=` and `default_role=` are ignored under `authorize_senders`. Without
+    AgentOS authorization only the directory applies. Without
+    `AgentOS(user_directory=True)` no users are created, so a sender runs only
+    with roles assigned to their ID. Super Agent is not affected. A startup
+    warning names each ignored setting.
+
+When Slack cannot be reached to look up a sender under `authorize_senders`, the
+message is refused, as a token that cannot be verified is over HTTP. When the
+directory cannot be reached, `UserDirectory(fail_closed=True)` refuses the
+message; with `fail_closed=False` the user is not created and the disabled
+switch is not checked, as over HTTP, so roles alone decide. If the roles cannot
+be read, the message is not run.
+
+Slack runs carry no AgentOS token, so permissions that live only in a token,
+claims-based dependencies and session state do not apply, and a remote agent,
+team or workflow does not run as the sender.
 
 ## Workspace Search Action
 
@@ -448,8 +503,8 @@ list replaces the defaults, so keep `/health` and `/docs` in it.
   running turns that Stop uses are kept in process. Run each Slack app on a
   single worker.
 - **Slack bypasses `OS_SECURITY_KEY`.** Slack requests are verified by their
-  signature, not the AgentOS key. Without `users=`, every member of the
-  workspace can message the agent through Slack. Under AgentOS
+  signature, not the AgentOS key. Without `users=` or `authorize_senders=True`,
+  every member of the workspace can message the agent through Slack. Under AgentOS
   `authorization=`, Super Agent's tools still check the member's permissions,
   from `default_role=` or none.
 - **Super Agent trusts the caller's `user_id` with authorization off.** A result
