@@ -2064,6 +2064,13 @@ class BaseDb(ABC):
         """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    def permanently_delete_product(self, product_id: str) -> bool:
+        """Remove an archived Product with its Projects, Tasks and Sources; False if missing or active.
+
+        Raise ValueError with the open Task list when a Task inside is Ready, In progress or In review.
+        """
+        raise NotImplementedError("Company products not supported by the configured database")
+
     # --- Projects (Optional) ---
 
     def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
@@ -2108,6 +2115,13 @@ class BaseDb(ABC):
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and exactly the Tasks archived by it within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    def permanently_delete_project(self, project_id: str) -> bool:
+        """Remove an archived Project with its Tasks; False if missing or active.
+
+        Raise ValueError with the open Task list when a Task inside is Ready, In progress or In review.
+        """
         raise NotImplementedError("Company projects not supported by the configured database")
 
     def transition_project(
@@ -2170,6 +2184,16 @@ class BaseDb(ABC):
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def get_descendant_tasks(
+        self, *, product_id: Optional[str] = None, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Id, title, status and deleted_at of every Task in a Product or Project, archived ones included."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def permanently_delete_task(self, task_id: str) -> bool:
+        """Remove an archived Task; False if missing or active."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def start_task_run(
@@ -4223,6 +4247,13 @@ class AsyncBaseDb(ABC):
         """Restore a Product and exactly the children archived by it within the owner scope."""
         raise NotImplementedError("Company products not supported by the configured database")
 
+    async def permanently_delete_product(self, product_id: str) -> bool:
+        """Remove an archived Product with its Projects, Tasks and Sources; False if missing or active.
+
+        Raise ValueError with the open Task list when a Task inside is Ready, In progress or In review.
+        """
+        raise NotImplementedError("Company products not supported by the configured database")
+
     # --- Projects (Optional) ---
 
     async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
@@ -4267,6 +4298,13 @@ class AsyncBaseDb(ABC):
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and exactly the Tasks archived by it within the owner scope."""
+        raise NotImplementedError("Company projects not supported by the configured database")
+
+    async def permanently_delete_project(self, project_id: str) -> bool:
+        """Remove an archived Project with its Tasks; False if missing or active.
+
+        Raise ValueError with the open Task list when a Task inside is Ready, In progress or In review.
+        """
         raise NotImplementedError("Company projects not supported by the configured database")
 
     async def transition_project(
@@ -4331,6 +4369,16 @@ class AsyncBaseDb(ABC):
 
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def get_descendant_tasks(
+        self, *, product_id: Optional[str] = None, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Id, title, status and deleted_at of every Task in a Product or Project, archived ones included."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    async def permanently_delete_task(self, task_id: str) -> bool:
+        """Remove an archived Task; False if missing or active."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def start_task_run(

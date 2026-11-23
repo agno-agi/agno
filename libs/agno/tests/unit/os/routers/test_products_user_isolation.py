@@ -76,7 +76,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     path = "/company/products/" + a
     assert c.patch(path, json={"purpose": "Updated", "user_id": "bob"}, headers=headers("bob")).status_code == 200
     assert c.get(path, headers=read).json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
@@ -97,7 +97,7 @@ def test_isolation_on_shares_reads_and_writes(make_client):
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["name"] == "renamed"
     assert renamed.json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
     assert c.get("/company/products?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
@@ -111,7 +111,7 @@ def test_admin_bypass_and_creator_attribution(make_client):
     path = "/company/products/" + a
     assert c.get(path, headers=admin).status_code == 200
     assert c.patch(path, json={"name": "renamed"}, headers=admin).status_code == 200
-    assert c.delete(path, headers=admin).status_code == 204
+    assert c.post(path + "/archive", headers=admin).status_code == 200
     assert c.post(path + "/restore", headers=admin).status_code == 200
     response = c.post("/company/products", json={"name": "Admin product", "user_id": "alice"}, headers=admin)
     assert response.status_code == 201
@@ -129,6 +129,31 @@ def test_bulk_archive_requires_delete_scope(make_client):
     assert response.status_code == 200, response.text
     assert response.json()["results"] == [{"id": product_id, "status_code": 200, "detail": None}]
     assert c.get(path, headers=headers("bob")).status_code == 404
+
+
+def test_permanent_delete_requires_admin(make_client):
+    c = make_client(True)
+    path = "/company/products/" + create(c, "alice")
+    # The delete scope still archives and restores, but only an admin removes the record.
+    assert c.delete(path, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    assert c.delete(path, headers=admin).status_code == 204
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
+
+
+def test_bulk_delete_requires_admin(make_client):
+    c = make_client(True)
+    product_id = create(c, "alice")
+    path = "/company/products/" + product_id
+    body = {"product_ids": [product_id]}
+    assert c.request("DELETE", "/company/products", json=body, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    response = c.request("DELETE", "/company/products", json=body, headers=admin)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"results": [{"id": product_id, "status_code": 204, "detail": None}]}
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
 @pytest.mark.parametrize("isolation", [False, True])

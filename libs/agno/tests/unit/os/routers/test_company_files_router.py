@@ -129,7 +129,7 @@ def test_a_missing_task_is_the_task_routes_404(make):
         assert (response.status_code, response.json()) == (404, missing.json())
 
     # An archived Task is not found on the Task route, and neither are its files.
-    assert client.delete(f"/company/tasks/{task_id}").status_code == 204
+    assert client.post(f"/company/tasks/{task_id}/archive").status_code == 200
     assert client.get(f"/company/tasks/{task_id}").status_code == 404
     for url in [f"/company/tasks/{task_id}/files", f"/company/tasks/{task_id}/files/report.md"]:
         response = client.get(url)

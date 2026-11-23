@@ -150,7 +150,7 @@ async def test_disabled_on_demand_routine_stays_disabled_when_its_product_is_arc
     path = "/company/routines/" + routine["id"]
     await _call(db, "update_schedule", routine["id"], enabled=False)
     product_id = routine["payload"]["metadata"]["product_id"]
-    assert (await client.delete("/company/products/" + product_id)).status_code == 204
+    assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     disabled = await _call(db, "get_schedule", routine["id"])
     assert disabled["enabled"] is False
     refused = await client.post(path + "/resume")
@@ -508,7 +508,7 @@ async def test_automatic_disable_leaves_routine_updated_at(system, clock, cause,
         await _call(db, "update_schedule", routine["id"], cron_expr="not a cron")
     else:
         product_id = (await _call(db, "get_schedule", routine["id"]))["payload"]["metadata"]["product_id"]
-        assert (await client.delete("/company/products/" + product_id)).status_code == 204
+        assert (await client.post("/company/products/" + product_id + "/archive")).status_code == 200
     claimed = await claim_routine(db, routine["id"])
     edited = await stored_updated_at(db, routine["id"])
     clock[0] += 1000
@@ -685,3 +685,94 @@ async def test_execution_keeps_routine_order_and_edit_changes_it(system, clock):
     assert (await client.patch("/company/routines/" + older["id"], json={"name": "edited"})).status_code == 200
     assert await order("updated_at") == [older["id"], newer["id"]]
     assert await order("created_at") == [newer["id"], older["id"]]
+
+
+@pytest.mark.asyncio
+async def test_executing_routine_run_blocks_product_delete_which_then_removes_routines_and_runs(system):
+    client, db, _, _, _ = system
+    routine = await create_routine(client)
+    product_id = routine["payload"]["metadata"]["product_id"]
+    archived = (
+        await client.post(
+            "/company/routines",
+            json=dict(
+                product_id=product_id, name="old", instructions="Old", executor_type="agent", executor_id="writer"
+            ),
+        )
+    ).json()
+    assert (await client.post("/company/routines/" + archived["id"] + "/archive")).status_code == 200
+    now = int(time.time())
+    for schedule_id, run_id in ((routine["id"], "executing"), (archived["id"], "finished")):
+        await _call(
+            db,
+            "create_schedule_run",
+            dict(
+                id=run_id,
+                schedule_id=schedule_id,
+                attempt=1,
+                triggered_at=now,
+                status="running" if run_id == "executing" else "success",
+                run_id=run_id + "-run",
+                created_at=now,
+            ),
+        )
+    path = "/company/products/" + product_id
+    response = await client.delete(path)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == {
+        "message": "Cannot delete with executing Routine runs",
+        "tasks": [],
+        "routines": [{"id": routine["id"], "name": routine["name"]}],
+    }
+    assert (await client.get(path)).status_code == 200
+    assert await _call(db, "get_schedule", routine["id"]) is not None
+    await _call(db, "update_schedule_run", "executing", status="success", completed_at=int(time.time()))
+    assert (await client.delete(path)).status_code == 204
+    assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+    for schedule_id in (routine["id"], archived["id"]):
+        assert await _call(db, "get_schedule", schedule_id) is None
+        assert (await _call(db, "get_schedule_runs", schedule_id))[1] == 0
+    response = await client.get("/company/routines", params={"include_deleted": True})
+    assert response.json()["meta"]["total_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bulk_product_delete_reports_an_executing_routine_run(system):
+    client, db, _, _, _ = system
+    executing = await create_routine(client)
+    finished = await create_routine(client)
+    blocked = executing["payload"]["metadata"]["product_id"]
+    free = finished["payload"]["metadata"]["product_id"]
+    now = int(time.time())
+    for schedule_id, run_id in ((executing["id"], "executing"), (finished["id"], "finished")):
+        await _call(
+            db,
+            "create_schedule_run",
+            dict(
+                id=run_id,
+                schedule_id=schedule_id,
+                attempt=1,
+                triggered_at=now,
+                status="running" if run_id == "executing" else "success",
+                run_id=run_id + "-run",
+                created_at=now,
+            ),
+        )
+    response = await client.request("DELETE", "/company/products", json={"product_ids": [blocked, free]})
+    assert response.status_code == 200, response.text
+    detail = {
+        "message": "Cannot delete with executing Routine runs",
+        "tasks": [],
+        "routines": [{"id": executing["id"], "name": executing["name"]}],
+    }
+    assert response.json() == {
+        "results": [
+            {"id": blocked, "status_code": 409, "detail": detail},
+            {"id": free, "status_code": 204, "detail": None},
+        ]
+    }
+    assert (await client.get("/company/products/" + blocked)).status_code == 200
+    assert await _call(db, "get_schedule", executing["id"]) is not None
+    assert (await client.get("/company/products/" + free, params={"include_deleted": True})).status_code == 404
+    assert await _call(db, "get_schedule", finished["id"]) is None
+    assert (await _call(db, "get_schedule_runs", finished["id"]))[1] == 0

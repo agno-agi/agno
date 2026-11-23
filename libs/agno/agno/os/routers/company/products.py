@@ -8,7 +8,7 @@ User isolation does not apply; ``user_id`` records the creator for attribution.
 import asyncio
 from typing import Any, Dict, Literal, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from agno.company.manager import AsyncCompanyManager, CompanyManager
@@ -109,20 +109,6 @@ def get_products_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         if product is None:
             raise HTTPException(status_code=404, detail="Product not found")
         return product
-
-    @router.delete("/products/{product_id}", status_code=204)
-    async def delete_product(product_id: str, _: bool = Depends(auth_dependency)) -> Response:
-        await _existing(product_id)
-        try:
-            archived = await _call("delete", product_id, user_id=None)
-        except HTTPException as exc:
-            if exc.status_code == 409 and isinstance(exc.detail, dict):
-                # Keep the Task list structured through AgentOS's string error handler.
-                return JSONResponse(status_code=409, content={"detail": exc.detail})
-            raise
-        if not archived:
-            raise HTTPException(status_code=404, detail="Product not found")
-        return Response(status_code=204)
 
     @router.post("/products/{product_id}/archive", response_model=ProductResponse)
     async def archive_product(

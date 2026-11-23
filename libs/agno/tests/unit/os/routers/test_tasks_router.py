@@ -111,7 +111,7 @@ def test_lifecycle(client):
     assert response.json()["transitions"][1]["attempt"] == 1
     assert transition(client, path, "done").status_code == 409
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
@@ -134,6 +134,30 @@ def test_archive_lifecycle(client):
     restored = client.post(path + "/restore")
     assert restored.status_code == 200
     assert restored.json()["deleted_at"] is None
+
+
+def test_bulk_delete_reports_each_task(client):
+    active = create(client)["id"]
+    archived = create(client)["id"]
+    assert client.post("/company/tasks/" + archived + "/archive").status_code == 200
+    response = client.request("DELETE", "/company/tasks", json={"task_ids": [active, "missing", archived, active]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": active, "status_code": 204, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Task not found"},
+            {"id": archived, "status_code": 204, "detail": None},
+        ]
+    }
+    for task_id in (active, archived):
+        assert client.get("/company/tasks/" + task_id, params={"include_deleted": True}).status_code == 404
+
+
+def test_bulk_delete_validates_before_deleting(client):
+    task_id = create(client)["id"]
+    for body in ({"task_ids": []}, {"task_ids": [task_id], "force": True}):
+        assert client.request("DELETE", "/company/tasks", json=body).status_code == 422
+    assert client.get("/company/tasks/" + task_id).status_code == 200
 
 
 @pytest.mark.parametrize("parent", ["product", "project"])
@@ -366,6 +390,7 @@ def test_unsupported_database(db):
         ("post", "/company/tasks", {"product_id": "p", "project_id": "p", "title": "Work"}),
         ("patch", "/company/tasks/missing", {"title": "Work"}),
         ("delete", "/company/tasks/missing", None),
+        ("delete", "/company/tasks", {"task_ids": ["missing"]}),
         ("post", "/company/tasks/missing/restore", None),
         ("post", "/company/tasks/missing/archive", None),
         ("post", "/company/tasks/missing/transitions", {"target": "cancelled", "reason": "Stop"}),

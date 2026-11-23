@@ -271,6 +271,21 @@ class ProductBulkArchive(BaseModel):
     product_ids: List[str] = Field(..., min_length=1)
 
 
+class TaskBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: List[str] = Field(..., min_length=1)
+
+
+class ProjectBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_ids: List[str] = Field(..., min_length=1)
+
+
+class ProductBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_ids: List[str] = Field(..., min_length=1)
+
+
 class BulkResult(BaseModel):
     id: str
     status_code: int
