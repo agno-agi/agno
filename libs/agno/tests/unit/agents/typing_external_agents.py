@@ -8,6 +8,7 @@ from typing_extensions import assert_type
 from agno.agent.protocol import AgentProtocol
 from agno.agents.claude import ClaudeAgent
 from agno.agents.codex import CodexAgent, ThreadOptions, TurnOptions
+from agno.os.interfaces.slack import Slack
 from agno.run.agent import RunOutput, RunOutputEvent
 
 if TYPE_CHECKING:
@@ -42,3 +43,5 @@ if TYPE_CHECKING:
     turn_options: TurnOptions = {"effort": "low"}
     codex = CodexAgent(thread_options=thread_options, turn_options=turn_options)
     assert_type(codex.run("hello"), RunOutput)
+    Slack(agent=agent)
+    Slack(agent=codex)

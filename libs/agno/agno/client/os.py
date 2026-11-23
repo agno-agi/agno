@@ -4,10 +4,12 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence,
 
 from fastapi import UploadFile
 from httpx import ConnectError, ConnectTimeout, TimeoutException
+from pydantic import BaseModel
 
 from agno.db.base import SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.exceptions import RemoteServerUnavailableError
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.media import File as MediaFile
 from agno.models.response import ToolExecution
@@ -82,6 +84,33 @@ from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
+from agno.utils.log import log_warning
+from agno.utils.serialize import json_serializer
+
+
+def _form_json_default(obj: Any) -> Any:
+    if isinstance(obj, FilterExpr):
+        return obj.to_dict()
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    return json_serializer(obj)
+
+
+def _encode_form_fields(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Encode extra run fields for a multipart form, in the shapes the AgentOS run routes parse."""
+    fields: Dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, bytes, bool, int, float)):
+            fields[key] = value
+        elif isinstance(value, type) and issubclass(value, BaseModel):
+            fields[key] = json.dumps(value.model_json_schema())
+        elif isinstance(value, (dict, list, tuple, FilterExpr, BaseModel)):
+            fields[key] = json.dumps(value, default=_form_json_default)
+        else:
+            log_warning(f"Not sending '{key}' to the remote AgentOS: {type(value).__name__} has no form encoding")
+    return fields
 
 
 class AgentOSClient:
@@ -586,12 +615,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -648,11 +672,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -694,11 +714,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return RunOutput.from_dict(response_data)
@@ -736,11 +752,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
@@ -861,12 +873,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -923,12 +930,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -995,11 +997,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return TeamRunOutput.from_dict(response_data)
@@ -1049,11 +1047,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
@@ -1169,12 +1163,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -1231,12 +1220,7 @@ class AgentOSClient:
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         data = {k: v for k, v in data.items() if v is not None}
 
@@ -1286,11 +1270,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
         return WorkflowRunOutput.from_dict(response_data)
@@ -1336,11 +1316,7 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
 
-        for key, value in kwargs.items():
-            if isinstance(value, dict):
-                data[key] = json.dumps(value)
-            else:
-                data[key] = value
+        data.update(_encode_form_fields(kwargs))
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):

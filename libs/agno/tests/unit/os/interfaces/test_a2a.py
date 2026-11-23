@@ -8,7 +8,7 @@ event, which the A2A client reads as the run's out-of-band metadata.
 from datetime import datetime
 from types import SimpleNamespace
 from typing import AsyncIterator, List, Union
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -36,6 +36,7 @@ from agno.os.interfaces.a2a.executor import A2AExecutor
 from agno.os.interfaces.a2a.streaming import stream_run_events_to_task
 from agno.os.interfaces.a2a.task_store import A2ATaskStore
 from agno.os.interfaces.a2a.utils import map_run_output_to_a2a_task
+from agno.os.utils import format_sse_event_with_index
 from agno.run.agent import RunCompletedEvent, RunContentEvent, RunErrorEvent, RunOutput, RunStartedEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
@@ -291,3 +292,88 @@ class TestExecutorFailure:
 
         final = _final_status_update(event_queue.events)
         assert final.status.state == TaskState.TASK_STATE_FAILED
+
+
+class TestExecutorBackgroundStreamCutOff:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "stored_statuses,wait_seconds,sandbox,state,text",
+        [
+            (
+                [RunStatus.running, RunStatus.running, RunStatus.completed],
+                900.0,
+                None,
+                TaskState.TASK_STATE_COMPLETED,
+                None,
+            ),
+            # Past the wait, the stored run is still read for the sandbox's execution_timeout while its queue ticket runs
+            (
+                [RunStatus.running, RunStatus.running, RunStatus.completed],
+                0,
+                SimpleNamespace(execution_timeout=900),
+                TaskState.TASK_STATE_COMPLETED,
+                None,
+            ),
+            # Without a sandbox the ticket gets only the wait again
+            (
+                [RunStatus.running, RunStatus.running, RunStatus.completed],
+                0,
+                None,
+                TaskState.TASK_STATE_FAILED,
+                "Error: Background run timed out; inspect the persisted run",
+            ),
+            (
+                [RunStatus.paused],
+                900.0,
+                None,
+                TaskState.TASK_STATE_INPUT_REQUIRED,
+                "Run is paused and requires input to continue",
+            ),
+            ([None], 900.0, None, TaskState.TASK_STATE_FAILED, "Error: Background run is no longer available"),
+        ],
+        ids=[
+            "running-then-completed",
+            "read-for-the-sandbox-execution-timeout-while-ticket-runs",
+            "no-ticket-extension-without-a-sandbox",
+            "paused",
+            "missing",
+        ],
+    )
+    async def test_stream_cut_off_ends_the_task_in_the_stored_run_state(
+        self, stored_statuses, wait_seconds, sandbox, state, text
+    ):
+        async def _cut_off_stream(**kwargs):
+            yield format_sse_event_with_index(
+                RunContentEvent(content="partial", run_id="run-1", session_id="ctx-1"), event_index=0, run_id="run-1"
+            )
+            yield 'event: stream_expired\ndata: {"event": "stream_expired", "run_id": "run-1"}\n\n'
+
+        async def _aget_run_output(run_id, session_id):
+            # Each read sees the next stored status; the last one stays
+            status = stored_statuses.pop(0) if len(stored_statuses) > 1 else stored_statuses[0]
+            if status is None:
+                return None
+            return RunOutput(run_id=run_id, session_id=session_id, status=status, content="partial and done")
+
+        executor = A2AExecutor(entity_type="agent", entity_id="agent-1")
+        context = SimpleNamespace(
+            message=Message(message_id="m-1", role=Role.ROLE_USER, parts=[Part(text="Hi")]),
+            task_id="run-1",
+            context_id="ctx-1",
+            current_task=None,
+            call_context=SimpleNamespace(state={}),
+        )
+        entity = SimpleNamespace(arun=_cut_off_stream, aget_run_output=_aget_run_output, sandbox=sandbox)
+        event_queue = _RecordingEventQueue()
+        with (
+            patch.object(executor, "_get_entity", return_value=entity),
+            patch.object(executor, "_runs_in_background", return_value=True),
+            patch("agno.os.interfaces.a2a.executor._STORED_RUN_TIMEOUT_SECONDS", wait_seconds),
+            patch("agno.os.utils.run_ticket_active", AsyncMock(return_value=True)),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await executor.execute(context, event_queue)
+
+        final = _final_status_update(event_queue.events)
+        assert final.status.state == state
+        assert (final.status.message.parts[0].text if final.status.message.parts else None) == text

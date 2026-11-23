@@ -389,7 +389,6 @@ class MySQLDb(BaseDb):
             (self.session_table_name, "sessions"),
             (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
-            (self.metrics_table_name, "metrics"),
             (self.component_metrics_table_name, "component_metrics"),
             (self.aggregate_metrics_table_name, "aggregate_metrics"),
             (self.metrics_refreshes_table_name, "metrics_refreshes"),
@@ -3071,10 +3070,9 @@ class MySQLDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:

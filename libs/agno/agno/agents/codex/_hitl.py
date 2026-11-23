@@ -1,4 +1,4 @@
-"""Nonblocking permission and question transport for the pinned Codex app-server SDK.
+"""Nonblocking permission and question transport for the Codex app-server SDK.
 
 The SDK's synchronous approval callback runs on its only reader thread. This
 small transport subclass schedules requests on the owning loop instead, retaining
@@ -8,9 +8,17 @@ feedback, and the selections are sent back as the answers.
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from agno.agents._hitl import HITLBridge
+
+
+def require_hooks(target: Any, names: Tuple[str, ...]) -> None:
+    missing = [name for name in names if not callable(getattr(target, name, None))]
+    if missing:
+        raise ValueError(
+            f"Native human-in-the-loop is not compatible with this openai-codex version (missing {', '.join(missing)})"
+        )
 
 
 def human_client(
@@ -24,14 +32,18 @@ def human_client(
     from openai_codex import AsyncCodex
     from openai_codex.async_client import AsyncCodexClient
     from openai_codex.client import CodexClient
+    from packaging.version import Version
 
-    if version("openai-codex") != "0.163.0":
-        raise ValueError("Native human-in-the-loop requires the tested openai-codex==0.163.0 transport")
+    if Version(version("openai-codex")) < Version("0.163.0"):
+        raise ValueError("Native human-in-the-loop requires openai-codex>=0.163.0")
+    # Without these hooks the SDK's default handler would accept every request, so refuse instead.
+    require_hooks(CodexClient, ("_reader_loop", "_read_message", "_write_message", "_coerce_notification"))
     loop = asyncio.get_running_loop()
 
     class PermissionClient(CodexClient):
         def __init__(self) -> None:
             super().__init__(config=config)
+            require_hooks(getattr(self, "_router", None), ("route_notification", "route_response", "fail_all"))
             self.pending: Dict[Any, Any] = {}
             self.items: Dict[str, Any] = {}
 

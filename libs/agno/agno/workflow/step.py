@@ -2680,10 +2680,17 @@ class Step:
 
             # Scrub the executor response based on the executor's storage flags before storing.
             # A harness agent (Claude Code, Codex) has no such flags and keeps everything.
+            from agno.remote.base import BaseRemote
             from agno.team._members import member_storage
 
             if not member_storage(self.active_executor).keeps_all:
-                self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
+                if isinstance(self.active_executor, BaseRemote):
+                    # A remote agent has storage flags but no scrub method of its own
+                    from agno.agent._run import scrub_run_output_for_storage
+
+                    scrub_run_output_for_storage(self.active_executor, run_response=executor_run_response)  # type: ignore[arg-type]
+                else:
+                    self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response

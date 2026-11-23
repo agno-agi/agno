@@ -73,6 +73,30 @@ if TYPE_CHECKING:
     from agno.tools.component import ComponentTool
 
 
+def take_local_run_options(
+    kwargs: Dict[str, Any],
+    *,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Any] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Any]]:
+    """Remove the run options that only exist in this process from kwargs bound for a remote AgentOS.
+
+    A RunContext cannot cross the wire, so its dependencies, metadata and knowledge filters fill
+    the ones the caller left unset, as they would for a local run. Returns those three values.
+    """
+    kwargs.pop("background_tasks", None)
+    kwargs.pop("debug_mode", None)
+    run_context = kwargs.pop("run_context", None)
+    if run_context is None:
+        return dependencies, metadata, knowledge_filters
+    return (
+        dependencies if dependencies is not None else run_context.dependencies,
+        metadata if metadata is not None else run_context.metadata,
+        knowledge_filters if knowledge_filters is not None else run_context.knowledge_filters,
+    )
+
+
 @dataclass
 class RemoteDb:
     id: str
@@ -83,8 +107,6 @@ class RemoteDb:
     learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
     component_metrics_table_name: Optional[str] = None
-    aggregate_metrics_table_name: Optional[str] = None
-    metrics_refreshes_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
@@ -111,10 +133,7 @@ class RemoteDb:
         knowledge_table_name = None
         memory_table_name = None
         learnings_table_name = None
-        metrics_table_name = None
         component_metrics_table_name = None
-        aggregate_metrics_table_name = None
-        metrics_refreshes_table_name = None
         eval_table_name = None
         traces_table_name = None
 
@@ -136,12 +155,7 @@ class RemoteDb:
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
-            metrics_tables = metrics_dbs[0].tables if metrics_dbs and metrics_dbs[0].tables else []
-            metrics_table_name = metrics_tables[0] if metrics_tables else None
-            # Listed after the deprecated metrics table, in the order AgentOS lists them
-            component_metrics_table_name = metrics_tables[1] if len(metrics_tables) > 1 else None
-            aggregate_metrics_table_name = metrics_tables[2] if len(metrics_tables) > 2 else None
-            metrics_refreshes_table_name = metrics_tables[3] if len(metrics_tables) > 3 else None
+            component_metrics_table_name = metrics_dbs[0].tables[0] if metrics_dbs and metrics_dbs[0].tables else None
 
         if config and config.evals and config.evals.dbs is not None:
             eval_dbs = [db for db in config.evals.dbs if db.db_id == db_id]
@@ -158,10 +172,7 @@ class RemoteDb:
             knowledge_table_name=knowledge_table_name,
             memory_table_name=memory_table_name,
             learnings_table_name=learnings_table_name,
-            metrics_table_name=metrics_table_name,
             component_metrics_table_name=component_metrics_table_name,
-            aggregate_metrics_table_name=aggregate_metrics_table_name,
-            metrics_refreshes_table_name=metrics_refreshes_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
         )

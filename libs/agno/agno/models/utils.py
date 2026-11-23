@@ -73,6 +73,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
     "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
     "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
+    "sarvam": ("agno.models.sarvam", "Sarvam", "Sarvam", "sarvam"),
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
     "synthorai": ("agno.models.synthorai", "Synthorai", "Synthorai", "synthorai"),
     "together": ("agno.models.together", "Together", "Together", "together"),

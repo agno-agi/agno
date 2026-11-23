@@ -94,3 +94,13 @@ The final live rename was not approved; approval/rejection and continuation were
 **Result:** PASS. No live provider calls or deployment.
 
 ---
+
+### chat.py and company_details.py: Super Agent saves company details (2026-11-10)
+
+**Status:** PASS
+
+**Description:** Created a disposable PostgreSQL database. Loaded `chat.py` with `runpy` to build the app without serving it, and checked that Super Agent holds `update_company_details` and `confirm_company_details` and has one member, `platform-builder`. Ran `company_details.py` against the same database, then dropped it.
+
+**Result:** App construction and the offline persistence example passed. Saving details through chat needs a live model and was not run. No model calls were made.
+
+---

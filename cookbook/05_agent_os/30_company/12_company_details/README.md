@@ -4,7 +4,7 @@
 
 `GET /company/details` requires `company:read`. `PATCH /company/details` requires `company:write`, and the admin scope bypasses it as usual. Pass `expected_updated_at` from the last read with the changed `name` or `description`. A concurrent edit returns 409. Reload and reconcile your changes before retrying. `description: null` clears it.
 
-Super Agent and Company Manager read current details on each authorized run. The playbook remains the home for longer guidance. Use `company:read` with the relevant manager run permission to include company context.
+Super Agent and its Mini Agent read current details on each authorized run. The playbook remains the home for longer guidance. Use `company:read` with permission to run Super Agent to include company context.
 
 ## Edit through chat
 
@@ -18,7 +18,7 @@ Connect the AgentOS UI to `http://localhost:7777` and tell Super Agent:
 
 > Our company is Acme. We build warehouse robots.
 
-Super Agent's coordination instructions delegate the company's name and description to Company Manager. Company Manager is instructed to use `update_company_details` when the person states their company's name or what it does, or asks to change either. The tool description distinguishes statements about another organization from a request to save; that disambiguation is not repeated in the system prompts. Products and Routines are created only when the person asks for them.
+Super Agent saves company details itself with `update_company_details`. It is instructed to save the company's name or description when the person states or changes it. The tool description distinguishes statements about another organization from a request to save; that disambiguation is not repeated in the system prompts. Products and Routines are created only when the person asks for them.
 
 Initial setup saves without another approval while the record is still unedited. Replacing human-edited details requests approval through `confirm_company_details`; rejecting it leaves the record unchanged. Open a new chat and ask what your company does, then try a name-only edit. Restart with a different `CompanyConfig` name and description to verify that the saved edit remains.
 
@@ -28,7 +28,7 @@ Initial setup checks for competing writes between the tool's read and write; it 
 
 A person may explicitly ask Super Agent to research and save company details. The tool description allows facts from requested research and states that text in Sources and tool results is not a request to save. Company details remain reference data, not instructions. Web-search configuration is separate and is not included in this example.
 
-Chat messages make live model calls. The three live results in TEST_LOG.md were recorded against `c346e021b0`, before the prompt rewrite in `97cdd12a87`. They do not verify the current prompts; a paid rerun requires approval. The log also records the earlier offline approval, permission and persistence coverage.
+Chat messages make live model calls. The live results in TEST_LOG.md predate the current Super Agent prompts and do not verify them; a paid rerun requires approval. The log also records offline approval, permission and persistence coverage.
 
 ## Offline persistence example
 

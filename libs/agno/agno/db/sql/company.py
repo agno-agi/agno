@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
+from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 
 
 def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
@@ -43,8 +44,40 @@ def lock_product(sess: Any, products: Any, product_id: str) -> None:
         raise ValueError("Product is missing or archived")
 
 
+def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
+    """Refuse an automatic acceptance when its Routine already has max_open Tasks open.
+
+    The caller holds the Product lock, so two acceptances cannot both count a free place.
+    A receipt with no max_open is not counted.
+    """
+    limit = auto_accept.get("max_open")
+    if limit is None:
+        return
+    open_now = sess.execute(
+        select(func.count())
+        .select_from(tasks)
+        .where(
+            tasks.c.routine_id == auto_accept["routine_id"],
+            tasks.c.id != task_id,
+            tasks.c.status.in_(OPEN_TASK_STATUSES),
+            tasks.c.deleted_at.is_(None),
+        )
+    ).scalar()
+    if (open_now or 0) >= limit:
+        raise OpenTaskLimitError(
+            f"Routine has {open_now} Tasks open, its limit. Complete or cancel one for it to accept more"
+        )
+
+
 def require_project(
-    sess: Any, projects: Any, project_id: Optional[str], product_id: str, task_status: Optional[str] = None
+    sess: Any,
+    projects: Any,
+    project_id: Optional[str],
+    product_id: str,
+    task_status: Optional[str] = None,
+    *,
+    reject_proposed: bool = False,
+    reject_cancelled: bool = False,
 ) -> None:
     if project_id is None:
         return
@@ -53,6 +86,10 @@ def require_project(
         raise ValueError("Project is missing or archived")
     if row._mapping["product_id"] != product_id:
         raise ValueError("Task and Project must belong to the same Product")
+    if reject_cancelled and row._mapping["status"] == "cancelled":
+        raise CancelledProjectError("Cannot change Task status in a cancelled Project")
+    if reject_proposed and row._mapping["status"] == "proposed":
+        raise ValueError("Project approval is required before creating Tasks outside Backlog or moving them to Ready")
     if (
         task_status is not None
         and task_status not in {"done", "cancelled"}
@@ -71,7 +108,15 @@ def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optio
     return dict(row._mapping) if row is not None else None
 
 
-def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: str, restoring: bool = False) -> None:
+def lock_child(
+    sess: Any,
+    products: Any,
+    projects: Any,
+    table: Any,
+    record_id: str,
+    restoring: bool = False,
+    reject_cancelled: bool = False,
+) -> None:
     """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project."""
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
@@ -82,7 +127,9 @@ def lock_child(sess: Any, products: Any, projects: Any, table: Any, record_id: s
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
         status = row._mapping["status"] if restoring else None
-        require_project(sess, projects, row._mapping["project_id"], record["product_id"], status)
+        require_project(
+            sess, projects, row._mapping["project_id"], record["product_id"], status, reject_cancelled=reject_cancelled
+        )
 
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:

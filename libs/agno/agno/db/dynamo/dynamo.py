@@ -227,7 +227,6 @@ class DynamoDb(BaseDb):
             ("sessions", self.session_table_name),
             ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
-            ("metrics", self.metrics_table_name),
             ("component_metrics", self.component_metrics_table_name),
             ("aggregate_metrics", self.aggregate_metrics_table_name),
             ("metrics_refreshes", self.metrics_refreshes_table_name),
@@ -2864,10 +2863,9 @@ class DynamoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def _get_metrics_counted_days(self, starting_date: Optional[date], ending_date: Optional[date]) -> List[date]:

@@ -769,8 +769,13 @@ class MCPTools(Toolkit):
         self._active_contexts = []
         self._initialized = False
 
-    async def connect(self, force: bool = False):
-        """Initialize a MCPTools instance and connect to the contextual MCP server"""
+    async def connect(self, force: bool = False) -> bool:
+        """Initialize a MCPTools instance and connect to the contextual MCP server.
+
+        Returns True if the toolkit is initialized after the attempt, False if the
+        handshake failed (errors are logged and swallowed for AgentOS compatibility).
+        Cancellation and other BaseExceptions still clean up then re-raise.
+        """
 
         if force:
             # Clean up the session and context so we force a new connection
@@ -782,13 +787,23 @@ class MCPTools(Toolkit):
             self._active_contexts = []
 
         if self._initialized:
-            return
+            return True
 
         try:
             await self._connect()
         except Exception as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
             await self._safe_cleanup()
+            return False
+        except BaseException:
+            # Cancellation is not an Exception, and would leave the session context behind.
+            await self._safe_cleanup()
+            raise
+
+        if not self._initialized:
+            # initialize() swallows handshake/tool-discovery errors, so close what _connect() opened.
+            await self._safe_cleanup()
+        return self._initialized
 
     def _connection_params(self, extra_headers: Optional[dict] = None) -> dict:
         """Resolve server_params into a plain dict, filling in the url and merging headers.

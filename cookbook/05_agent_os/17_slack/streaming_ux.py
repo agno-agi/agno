@@ -2,12 +2,12 @@
 Configure Slack Streaming UX
 =============================
 
-Show a streaming response with rotating loading messages, dynamic suggested
-prompts, and plan-mode task cards for tool calls.
+Stream a reply into Slack with loading messages, suggested prompts, plan-mode
+task cards for tool calls, and the Stop button.
 
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/streaming_ux.py
-Try in Slack: Ask "What changed in Python packaging this year? Cite sources."
+Try in Slack: Ask "Write a detailed report on what changed in Python packaging this year, with sources", then press Stop while it streams
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
@@ -36,7 +36,7 @@ researcher = Agent(
     instructions=[
         "Research current questions with web search.",
         "Use more than one source when the answer benefits from comparison.",
-        "Return a concise synthesis with source links.",
+        "When asked for a detailed report, write one section per topic with source links.",
     ],
     add_history_to_context=True,
     num_history_runs=3,
@@ -64,8 +64,8 @@ agent_os = AgentOS(
                     "message": "Summarize today's most important AI infrastructure news.",
                 },
                 {
-                    "title": "Compare approaches",
-                    "message": "Compare two current approaches to Python dependency management.",
+                    "title": "Detailed report",
+                    "message": "Write a detailed report on what changed in Python packaging this year, with sources.",
                 },
             ],
         )

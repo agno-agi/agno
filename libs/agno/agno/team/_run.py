@@ -124,6 +124,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    continue_post_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -8366,7 +8367,7 @@ def _continue_run(
                 if team.post_hooks is not None:
                     iterator = _execute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -8600,7 +8601,7 @@ def _continue_run_stream(
                 if team.post_hooks is not None:
                     iterator = _execute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -9796,7 +9797,7 @@ async def _acontinue_run(
                 if team.post_hooks is not None:
                     async for _ in _aexecute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=team_session,
@@ -10446,7 +10447,7 @@ async def _acontinue_run_stream(
                 if team.post_hooks is not None:
                     async for event in _aexecute_post_hooks(
                         team,
-                        hooks=team.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(team.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=team_session,

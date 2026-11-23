@@ -151,6 +151,8 @@ class Registry:
     # Served framework components may be runnable without being building blocks.
     # IDs keep that boundary intact when a caller supplies a per-run copy.
     _excluded_component_ids: Set[str] = field(default_factory=lambda: set(RESERVED_MANAGER_IDS), init=False, repr=False)
+    # Mini Agent, set by the AgentOS that built it. It executes Company Routines and Tasks and is in no list above.
+    _mini_agent: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for component in [*self.agents, *self.teams, *self.workflows]:
