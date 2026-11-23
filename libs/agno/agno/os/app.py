@@ -104,6 +104,8 @@ from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 if TYPE_CHECKING:
+    from agno.fs import FileSystem
+
     # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
@@ -403,6 +405,7 @@ class AgentOS:
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
+        filesystem: Optional[Union["FileSystem", List["FileSystem"]]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: Union[bool, "Authorization"] = False,
@@ -451,6 +454,9 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
+            filesystem: A FileSystem, or a list of them, to include in the OS. They are
+                browsable through the /filesystem routes whether or not an agent holds
+                them; agents attach a filesystem themselves to get file tools.
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
             company: Enable Company Products, inheriting db unless a Company database is provided.
@@ -527,8 +533,18 @@ class AgentOS:
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
         """
-        if not agents and not workflows and not teams and not knowledge and not db and company is None:
-            raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
+        if (
+            not agents
+            and not workflows
+            and not teams
+            and not knowledge
+            and not filesystem
+            and not db
+            and company is None
+        ):
+            raise ValueError(
+                "Either agents, teams, workflows, knowledge bases, a filesystem or a database must be provided."
+            )
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -537,6 +553,7 @@ class AgentOS:
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
+        self.filesystems: List["FileSystem"] = self._normalize_filesystems(filesystem)
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -792,6 +809,7 @@ class AgentOS:
         self._apply_manager_manifest()
 
         self._initialize_agents()
+        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -946,6 +964,7 @@ class AgentOS:
     def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
         self._initialize_agents()
+        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -1415,6 +1434,44 @@ class AgentOS:
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(agent)
 
+    @staticmethod
+    def _normalize_filesystems(filesystem: Any) -> List["FileSystem"]:
+        """The OS-level filesystems as a list, validated."""
+        if filesystem is None:
+            return []
+        from agno.fs import FileSystem
+
+        stores = list(filesystem) if isinstance(filesystem, (list, tuple)) else [filesystem]
+        for store in stores:
+            if not isinstance(store, FileSystem):
+                raise TypeError("AgentOS filesystem must be a FileSystem or a list of FileSystem instances")
+            # No agent or team stands behind an OS-level store, so only the caller can fill a template.
+            unbound = [name for name in store._placeholders if name != "user_id"]
+            if unbound:
+                raise ValueError(
+                    f"AgentOS filesystem namespace {store.namespace!r} uses {{{unbound[0]}}}, "
+                    "which only an agent or team can fill. Attach that filesystem to the agent instead."
+                )
+        return stores
+
+    def _user_isolation_enabled(self) -> bool:
+        """The top-level flag, or the legacy AuthorizationConfig(user_isolation=True) on an authorized OS."""
+        return bool(
+            self.user_isolation
+            or (
+                self.authorization
+                and self.authorization_config is not None
+                and self.authorization_config.user_isolation
+            )
+        )
+
+    def _initialize_filesystems(self) -> None:
+        """Partition OS-level filesystems by user when isolation is on and they left it unset."""
+        user_isolation = self._user_isolation_enabled()
+        for filesystem in self.filesystems:
+            if filesystem.user_scoped is None:
+                filesystem.user_scoped = user_isolation
+
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
         # Inject db into external framework agents (not covered by self._agents)
@@ -1433,16 +1490,8 @@ class AgentOS:
 
         from agno.agent import _init as agent_init
 
-        # Same rule the auth middleware applies: the top-level flag, or the legacy
-        # AuthorizationConfig(user_isolation=True) on an authorized OS.
-        user_isolation = bool(
-            self.user_isolation
-            or (
-                self.authorization
-                and self.authorization_config is not None
-                and self.authorization_config.user_isolation
-            )
-        )
+        # Same rule the auth middleware applies.
+        user_isolation = self._user_isolation_enabled()
         for agent in agents_to_initialize:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -3018,6 +3067,11 @@ class AgentOS:
             if knowledge_base.contents_db:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
 
+        for filesystem in self.filesystems:
+            filesystem_db = getattr(filesystem.backend, "db", None)
+            if isinstance(filesystem_db, (BaseDb, AsyncBaseDb)):
+                self._register_db_with_validation(dbs, filesystem_db)
+
         for interface in self.interfaces or []:
             agent_db = getattr(interface.agent, "db", None)
             if agent_db:
@@ -3323,6 +3377,17 @@ class AgentOS:
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
         namespaces: Dict[tuple, FileSystemNamespace] = {}
+        # OS-level filesystems come first and stand without an agent; an agent
+        # holding the same store is linked to the same row below.
+        for filesystem in self.filesystems:
+            summary = _extract_filesystem(filesystem, None, user_id=user_id)
+            key = (
+                _filesystem_backend_key(filesystem),
+                summary.namespace,
+                summary.max_file_bytes,
+                summary.max_namespace_bytes,
+            )
+            namespaces.setdefault(key, FileSystemNamespace(**summary.model_dump(), agents=[]))
         # ``agents`` is the caller's roster when /config filters by access; the
         # filesystem section must not describe agents the caller cannot see.
         for entry in (self.agents if agents is None else agents) or []:

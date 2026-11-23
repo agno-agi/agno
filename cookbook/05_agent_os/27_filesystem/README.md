@@ -57,6 +57,25 @@ each namespace's linked `agents`, with `access: "read_only"` on read-only agents
 and omitted `access` defaulting to `"full"`. To browse one of an
 agent's several stores, pass its `namespace` to the `/filesystem` routes.
 
+## OS-level stores
+
+A filesystem can also be declared on the AgentOS itself (`os_level_filesystem.py`):
+
+```python
+handbook = FileSystem(db, namespace="handbook")
+agent_os = AgentOS(db=db, agents=[...], filesystem=handbook)  # or a list of them
+```
+
+An OS-level store is listed in `/config` and browsable through the `/filesystem`
+routes even when no agent holds it; `/config` then shows it with `agents: []`.
+With authorization enabled, `filesystem:read` alone is enough to browse it.
+
+It is not handed to agents: an agent gets file tools on it only by attaching the
+same store with `filesystem=` or `tools=`, as `AgentOS(knowledge=[...])` does not
+give agents a knowledge base. An OS-level namespace may use `{user_id}` but not
+`{agent_id}` or `{team_id}`, and `AgentOS(user_isolation=True)` partitions it by
+user unless the store sets `user_scoped` itself.
+
 ## Namespaces and isolation
 
 The agent receives its filesystem tools automatically. The managed namespace is
@@ -102,14 +121,15 @@ identity fails closed. AgentOS exposes read-only browser routes:
 Filesystems are addressed by namespace, not by agent. `entries`, `content` and
 `search` take `namespace`, `agent_id`, or both:
 
-- `namespace` alone browses that filesystem when an agent the caller can read holds it.
+- `namespace` alone browses that filesystem when the AgentOS declares it or an agent the caller can read holds it.
 - `agent_id` alone browses that agent's first filesystem (the setting, then `tools` order).
 - Both together pick one of an agent's several filesystems, and settle the rare case
   of one namespace used on two backends, which otherwise returns 409.
 
-Access always derives from the agents the caller may read: a namespace none of them
-holds returns 404, the same as one that does not exist. Responses carry the resolved
-`namespace` and the accessible `agent_ids` holding it.
+Access to an agent-held filesystem derives from the agents the caller may read: a
+namespace none of them holds, and the AgentOS does not declare, returns 404, the same
+as one that does not exist. Responses carry the resolved `namespace` and the accessible
+`agent_ids` holding it, which is empty for a store only the AgentOS declares.
 
 `GET /filesystem/files` accepts optional `agent_id`, `namespace`, and `query` filters, plus
 `page` and `limit`. The namespace filter matches an exact resolved namespace and
@@ -117,15 +137,16 @@ cannot widen access beyond the caller's agents and user scope. Shared files are
 returned once with their accessible `agent_ids`. Remote agents are skipped in a
 global listing; selecting one explicitly returns an unsupported response.
 
-`GET /config` exposes `filesystem.namespaces` discovered from concrete local
-agents. Each entry includes backend metadata, limits, linked agents with access
+`GET /config` exposes `filesystem.namespaces` discovered from the AgentOS
+`filesystem` setting and from concrete local agents. Each entry includes backend metadata, limits, linked agents with access
 in `agents`, and the canonical namespace resolved for the caller. Use that namespace directly as a
 `/filesystem` filter. When identity is unavailable, placeholders remain in config;
 browsing requires the missing identity. Factory and stored agents are resolved
 when browsing but are not included in config discovery.
 
-With authorization enabled, file routes require `agents:read` or the corresponding
-per-agent read scope; config requests require `config:read`. Content previews use the row's
+With authorization enabled, agent-held filesystems require `agents:read` or the
+corresponding per-agent read scope, and OS-level ones only `filesystem:read`; config
+requests require `config:read`. Content previews use the row's
 `namespace` and relative `path`, with `offset` and `limit` for continuation.
 The API provides no write or delete routes.
 
