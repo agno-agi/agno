@@ -4,6 +4,7 @@ import logging
 import math
 from pathlib import PurePath
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
@@ -15,6 +16,7 @@ from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.urls import is_sitemap_url
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import (
     get_agno_metadata,
@@ -1768,6 +1770,16 @@ async def process_content(
                 content.reader = knowledge._select_reader(reader_hint)
             elif isinstance(content.file_data, str):
                 content.reader = knowledge.text_reader
+            elif isinstance(content.url, str) and content.url:
+                parsed_url = urlparse(content.url)
+                if parsed_url.scheme and parsed_url.netloc:
+                    file_extension = PurePath(parsed_url.path).suffix.lower()
+                    if is_sitemap_url(content.url):
+                        content.reader = knowledge.sitemap_reader
+                    elif file_extension:
+                        content.reader, _ = knowledge._select_reader_by_extension(file_extension)
+                    else:
+                        content.reader = knowledge.website_reader
         if chunker and content.reader:
             # The reader belongs to the knowledge base - either a custom reader from
             # `Knowledge(readers=...)` or a default one it has already resolved - so

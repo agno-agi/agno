@@ -1,15 +1,21 @@
 """Per-upload chunker options must not leak into the knowledge base's reader."""
 
+import socket
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.text_reader import TextReader
+from agno.os.routers.knowledge import knowledge as routes
 from agno.os.routers.knowledge.knowledge import process_content
 
 
@@ -38,8 +44,11 @@ class _FakeVectorDb:
     def content_hash_exists(self, content_hash: str, **kwargs: Any) -> bool:
         return False
 
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        return None
+
     async def async_insert(
-        self, content_hash: str, documents: List[Any], filters: Optional[Dict[str, Any]] = None
+        self, content_hash: str, documents: List[Any], filters: Optional[Dict[str, Any]] = None, **kwargs: Any
     ) -> None:
         for doc in documents:
             if self.embedder is not None:
@@ -199,3 +208,177 @@ async def test_semantic_chunker_falls_back_to_default_when_vector_db_has_no_embe
     assert isinstance(content.reader.chunking_strategy, SemanticChunking)
     assert type(content.reader.chunking_strategy.embedder).__name__ == "OpenAIEmbedder"
     assert content.reader.chunking_strategy.chunk_size == 256
+
+
+@pytest.mark.asyncio
+async def test_semantic_chunker_infers_embedder_for_website_url_without_reader_id(monkeypatch):
+    pytest.importorskip("chonkie")
+    pytest.importorskip("bs4")
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    def _forbid_network(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("network forbidden")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(socket, "create_connection", _forbid_network)
+    url = "https://example.invalid/articles/semantic-chunking"
+    embedder = _CustomEmbedder()
+    vector_db = _FakeVectorDb(embedder=embedder)
+    knowledge = Knowledge(name="docs", vector_db=vector_db)
+    website_reader = knowledge.website_reader
+    assert website_reader is not None
+    default_strategy = website_reader.chunking_strategy
+
+    async def _fake_crawl(self: Any, target_url: str, starting_depth: int = 1) -> Dict[str, str]:
+        return {target_url: _MULTI_SENTENCE_BYTES.decode("utf-8")}
+
+    monkeypatch.setattr(type(website_reader), "async_crawl", _fake_crawl)
+    content = Content(
+        id="c-url-website",
+        name=url,
+        content_hash="hash-url-website",
+        url=url,
+    )
+
+    await process_content(knowledge, content, None, "SemanticChunker", 20, 0)
+
+    assert content.reader is not None
+    assert type(content.reader) is type(website_reader)
+    assert content.reader is not website_reader
+    assert isinstance(content.reader.chunking_strategy, SemanticChunking)
+    assert content.reader.chunking_strategy.embedder is embedder
+    assert len(vector_db.inserted_docs) >= 2
+    assert len(embedder.calls) > len(vector_db.inserted_docs)
+    assert content.status != ContentStatus.FAILED
+    assert website_reader.chunking_strategy is default_strategy
+
+
+@pytest.mark.asyncio
+async def test_semantic_chunker_infers_embedder_for_extension_url_without_reader_id(monkeypatch):
+    pytest.importorskip("chonkie")
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    def _forbid_network(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("network forbidden")
+
+    async def _fake_fetch(target_url: str, **kwargs: Any) -> Any:
+        return SimpleNamespace(content=_MULTI_SENTENCE_BYTES)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(socket, "create_connection", _forbid_network)
+    monkeypatch.setattr("agno.knowledge.knowledge.async_fetch_with_retry", _fake_fetch)
+    url = "https://example.invalid/docs/notes.txt"
+    embedder = _CustomEmbedder()
+    vector_db = _FakeVectorDb(embedder=embedder)
+    knowledge = Knowledge(name="docs", vector_db=vector_db)
+    text_reader = knowledge.text_reader
+    assert text_reader is not None
+    default_strategy = text_reader.chunking_strategy
+    content = Content(
+        id="c-url-txt",
+        name=url,
+        content_hash="hash-url-txt",
+        url=url,
+    )
+
+    await process_content(knowledge, content, None, "SemanticChunker", 20, 0)
+
+    assert content.reader is not None
+    assert isinstance(content.reader, TextReader)
+    assert content.reader is not text_reader
+    assert isinstance(content.reader.chunking_strategy, SemanticChunking)
+    assert content.reader.chunking_strategy.embedder is embedder
+    assert len(vector_db.inserted_docs) >= 2
+    assert len(embedder.calls) > len(vector_db.inserted_docs)
+    assert content.status != ContentStatus.FAILED
+    assert text_reader.chunking_strategy is default_strategy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url,reader_attr,required_pkg",
+    [
+        ("https://example.invalid/guide", "website_reader", "bs4"),
+        ("https://example.invalid/report.pdf", "pdf_reader", "pypdf"),
+        ("https://example.invalid/sitemap.xml", "sitemap_reader", "bs4"),
+    ],
+)
+async def test_url_upload_chunker_resolves_default_reader_without_mutating_shared_readers(
+    monkeypatch, url: str, reader_attr: str, required_pkg: str
+):
+    pytest.importorskip("chonkie")
+    pytest.importorskip(required_pkg)
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    embedder = _CustomEmbedder()
+    vector_db = _FakeVectorDb(embedder=embedder)
+    knowledge = Knowledge(name="docs", vector_db=vector_db)
+    shared_reader = getattr(knowledge, reader_attr)
+    assert shared_reader is not None
+    original_strategy = shared_reader.chunking_strategy
+    captured: List[Content] = []
+
+    async def _capture_load(loaded_content: Content, *args: Any, **kwargs: Any) -> None:
+        captured.append(loaded_content)
+
+    monkeypatch.setattr(knowledge, "_aload_content", _capture_load)
+    content = Content(id="c-url-dispatch", name=url, content_hash="hash-url-dispatch", url=url)
+
+    await process_content(knowledge, content, None, "SemanticChunker", 128, 0)
+
+    assert len(captured) == 1
+    resolved_reader = captured[0].reader
+    assert resolved_reader is not None
+    assert type(resolved_reader) is type(shared_reader)
+    assert resolved_reader is not shared_reader
+    assert isinstance(resolved_reader.chunking_strategy, SemanticChunking)
+    assert resolved_reader.chunking_strategy.embedder is embedder
+    assert shared_reader.chunking_strategy is original_strategy
+
+
+def test_http_upload_url_with_semantic_chunker_without_reader_id_completes(tmp_path, monkeypatch):
+    pytest.importorskip("chonkie")
+
+    def _forbid_network(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("network forbidden")
+
+    async def _fake_fetch(target_url: str, **kwargs: Any) -> Any:
+        return SimpleNamespace(content=_MULTI_SENTENCE_BYTES)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(socket, "create_connection", _forbid_network)
+    monkeypatch.setattr("agno.knowledge.knowledge.async_fetch_with_retry", _fake_fetch)
+
+    embedder = _CustomEmbedder()
+    vector_db = _FakeVectorDb(embedder=embedder)
+    knowledge = Knowledge(
+        name="docs",
+        contents_db=SqliteDb(db_file=str(tmp_path / "url_chunker.db")),
+        vector_db=vector_db,
+    )
+    text_reader = knowledge.text_reader
+    assert text_reader is not None
+    default_strategy = text_reader.chunking_strategy
+
+    app = FastAPI()
+    app.include_router(routes.get_knowledge_router([knowledge]))
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/knowledge/content",
+            data={
+                "url": "https://example.invalid/docs/notes.txt",
+                "chunker": "SemanticChunker",
+                "chunk_size": "20",
+                "chunk_overlap": "0",
+            },
+        )
+        assert response.status_code == 202, response.text
+        content_id = response.json()["id"]
+        status_resp = client.get(f"/knowledge/content/{content_id}/status")
+
+    assert status_resp.status_code == 200
+    assert status_resp.json()["status"] == "completed"
+    assert len(vector_db.inserted_docs) >= 2
+    assert len(embedder.calls) > len(vector_db.inserted_docs)
+    assert text_reader.chunking_strategy is default_strategy
