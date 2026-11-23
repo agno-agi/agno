@@ -119,6 +119,89 @@ def test_upsert_documents(singlestore_db, sample_documents, mock_session):
     mock_session.commit.assert_called_once()
 
 
+def _make_documents(count: int) -> List[Document]:
+    return [Document(name=f"doc_{i}", content=f"content {i}") for i in range(count)]
+
+
+def test_insert_commits_once_per_batch(singlestore_db, mock_session):
+    """insert() honours batch_size: 5 documents with batch_size=2 commit in 3 transactions."""
+    mock_session.begin.reset_mock()
+    singlestore_db.insert(documents=_make_documents(5), content_hash="test_hash", batch_size=2)
+
+    assert mock_session.execute.call_count == 5
+    assert mock_session.begin.call_count == 3
+    assert mock_session.commit.call_count == 3
+
+
+def test_upsert_commits_once_per_batch(singlestore_db, mock_session):
+    """_upsert() honours batch_size: 5 documents with batch_size=2 commit in 3 transactions."""
+    mock_session.begin.reset_mock()
+    singlestore_db._upsert(documents=_make_documents(5), content_hash="test_hash", batch_size=2)
+
+    assert mock_session.execute.call_count == 5
+    assert mock_session.begin.call_count == 3
+    assert mock_session.commit.call_count == 3
+
+
+def test_insert_failure_only_rolls_back_its_batch(mock_engine, mock_embedder):
+    """Batches committed before a failure stay committed; later batches never start."""
+    batches = []
+
+    class RecordingTransaction:
+        def __init__(self):
+            self.executed = 0
+            self.committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, stmt):
+            if len(batches) == 2:
+                raise RuntimeError("boom")
+            self.executed += 1
+
+        def commit(self):
+            self.committed = True
+
+    def begin():
+        tx = RecordingTransaction()
+        batches.append(tx)
+        return tx
+
+    session_factory = MagicMock()
+    session_factory.begin.side_effect = begin
+    with patch("agno.vectordb.singlestore.singlestore.sessionmaker", return_value=session_factory):
+        db = SingleStore(collection=TEST_COLLECTION, schema=TEST_SCHEMA, db_engine=mock_engine, embedder=mock_embedder)
+    db._owner_column_exists = True
+
+    with pytest.raises(RuntimeError):
+        db.insert(documents=_make_documents(5), content_hash="test_hash", batch_size=2)
+
+    assert len(batches) == 2
+    assert batches[0].executed == 2 and batches[0].committed
+    assert not batches[1].committed
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_insert_rejects_non_positive_batch_size(singlestore_db, mock_session, batch_size):
+    mock_session.execute.reset_mock()
+    with pytest.raises(ValueError, match="batch_size"):
+        singlestore_db.insert(documents=_make_documents(2), content_hash="test_hash", batch_size=batch_size)
+    mock_session.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_upsert_rejects_non_positive_batch_size_before_delete(singlestore_db, mock_session, batch_size):
+    """A bad batch_size must not delete the existing chunks for the content hash."""
+    mock_session.execute.reset_mock()
+    with pytest.raises(ValueError, match="batch_size"):
+        singlestore_db.upsert(documents=_make_documents(2), content_hash="test_hash", batch_size=batch_size)
+    mock_session.execute.assert_not_called()
+
+
 def test_delete_collection(singlestore_db, mock_session):
     """Test deleting collection"""
     mock_session.execute.return_value.scalar.return_value = True
