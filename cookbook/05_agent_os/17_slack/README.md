@@ -404,7 +404,7 @@ answer streams into the same thread. Two requirements:
 - AgentOS has a durable queue: `queue=QueueConfig(durable=True, db=db)`.
 
 `sandbox_review.py` runs this way. It needs the runtime image and Postgres from
-[`frameworks/sandbox`](../../frameworks/sandbox/README.md). Give the container
+[`16_frameworks/sandbox`](../../16_frameworks/sandbox/README.md). Give the container
 read-only repository access only.
 
 ## Super Agent
@@ -482,7 +482,7 @@ list replaces the defaults, so keep `/health` and `/docs` in it.
   unfinished then ends in Slack as an error, even if it finishes later.
 - **Approvals inside a Team member or a Workflow step.** A Claude Code or Codex
   member, or a workflow step, that asks for permission fails before the action
-  runs; see [`frameworks/human_in_the_loop`](../../frameworks/human_in_the_loop/README.md).
+  runs; see [`16_frameworks/human_in_the_loop`](../../16_frameworks/human_in_the_loop/README.md).
 - **An expired native approval card stays clickable after a crash.** After a
   crash, a native approval card whose request expired stays clickable until
   someone clicks it; the click freezes it and ends the run.

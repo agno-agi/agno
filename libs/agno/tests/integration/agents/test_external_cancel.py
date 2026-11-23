@@ -16,7 +16,7 @@ def test_live_cancel(framework, gate):
         pytest.skip("Set " + gate + "=1 with SDK credentials")
     root = Path(__file__).resolve().parents[5]
     subprocess.run(
-        [sys.executable, str(root / "cookbook/frameworks" / framework / "background_cancel.py"), "--verify"],
+        [sys.executable, str(root / "cookbook/16_frameworks" / framework / "background_cancel.py"), "--verify"],
         check=True,
         timeout=150,
     )

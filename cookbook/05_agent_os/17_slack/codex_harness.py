@@ -23,7 +23,7 @@ from agno.os.interfaces.slack import Slack
 # Create Codex Slack AgentOS
 # ---------------------------------------------------------------------------
 
-workspace = Path(__file__).resolve().parents[2] / "frameworks" / "sample_project"
+workspace = Path(__file__).resolve().parents[2] / "16_frameworks" / "sample_project"
 
 db = SqliteDb(
     id="slack-codex-harness-db",

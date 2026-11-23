@@ -14,7 +14,7 @@ import pytest
 def test_transcript_mirror_and_resume():
     root = Path(__file__).resolve().parents[5]
     subprocess.run(
-        [sys.executable, str(root / "cookbook/frameworks/claude-agent-sdk/transcript_store.py")],
+        [sys.executable, str(root / "cookbook/16_frameworks/claude-agent-sdk/transcript_store.py")],
         check=True,
         timeout=180,
     )

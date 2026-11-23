@@ -5,9 +5,9 @@ runner exists to make that survivable: it CAPTURES each script's output so a
 failure can be triaged from the report instead of by scrolling the terminal,
 shows live progress, and can run several scripts at once.
 
-    python cookbook/scripts/cookbook_runner.py cookbook/environments/_00_quickstart
-    python cookbook/scripts/cookbook_runner.py cookbook/environments -r --concurrency 4
-    python cookbook/scripts/cookbook_runner.py cookbook/environments -r --pattern basic.py
+    python cookbook/scripts/cookbook_runner.py cookbook/15_environments/_00_quickstart
+    python cookbook/scripts/cookbook_runner.py cookbook/15_environments -r --concurrency 4
+    python cookbook/scripts/cookbook_runner.py cookbook/15_environments -r --pattern basic.py
 """
 
 from __future__ import annotations

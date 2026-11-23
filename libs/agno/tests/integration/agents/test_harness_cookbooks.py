@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[5]
-COOKBOOK = ROOT / "cookbook/frameworks"
+COOKBOOK = ROOT / "cookbook/16_frameworks"
 PROVIDER_DIRS = {"claude": "claude-agent-sdk", "codex": "codex"}
 GATES = {"claude": "AGNO_TEST_CLAUDE_SDK", "codex": "AGNO_TEST_CODEX_SDK"}
 PROMPT = (

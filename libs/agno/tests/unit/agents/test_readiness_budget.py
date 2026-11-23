@@ -9,7 +9,7 @@ import pytest
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):
-    path = Path(__file__).resolve().parents[5] / "cookbook/frameworks/reliability/ledger.py"
+    path = Path(__file__).resolve().parents[5] / "cookbook/16_frameworks/reliability/ledger.py"
     spec = importlib.util.spec_from_file_location("readiness_ledger", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

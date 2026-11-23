@@ -6,7 +6,7 @@ Hundreds of examples. Copy, paste, run.
 
 **New to Agno?** Start with [00_quickstart](./00_quickstart) — it walks you through the fundamentals, with each cookbook building on the last.
 
-**Want to see something real?** Jump to [01_demo](./01_demo) — advanced use cases. Run the examples, break them, learn from them.
+**Want to try a complete agent?** Give Context a team update, start a fresh conversation, and see how its project files change. [Run the demo](./01_demo#run-context).
 
 **Want to build something complete?** Browse [examples](./examples) — small products you can run and point your AI apps at. Two files per folder: one builds the agent and serves it, `test.py` drives it from the command line.
 
@@ -59,6 +59,18 @@ Hundreds of examples. Copy, paste, run.
 ### FileSystem
 [13_filesystem](./13_filesystem) — Give your agent a durable, private filesystem for its own working state: records of what it has processed, decisions, progress checkpoints. Database-backed by default, local disk optional.
 
+### CodeMode
+[14_code](./14_code) shows how an agent can use Python to call its tools and keep variables across turns.
+
+### Environments
+[15_environments](./15_environments) — Verification and dataset generation. Run an agent K times against hard tasks, score every attempt, read the pass-rate grid, and export the passing trajectories as a fine-tuning dataset.
+
+### Harnesses and Other Frameworks
+[16_frameworks](./16_frameworks) — Run Claude, Codex, LangGraph, DSPy and Antigravity through Agno and AgentOS. Each integration keeps its starting examples, advanced patterns and test results together.
+
+### Data Labeling
+[17_data_labeling](./17_data_labeling) — Agents for labeling, classification, and synthetic data generation, from single-label prompts to juries and DPO pair generation.
+
 ### Models
 [90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 
@@ -67,15 +79,6 @@ Hundreds of examples. Copy, paste, run.
 
 ### Components as Config
 [93_components](./93_components) — Save agents, teams and workflows to a database and load them back, so a running system can be versioned, shared and restored.
-
-### Environments
-[environments](./environments) — Verification and dataset generation. Run an agent K times against hard tasks, score every attempt, read the pass-rate grid, and export the passing trajectories as a fine-tuning dataset.
-
-### Data Labeling
-[data_labeling](./data_labeling) — Agents for labeling, classification, and synthetic data generation, from single-label prompts to juries and DPO pair generation.
-
-### Harnesses and Other Frameworks
-[frameworks](./frameworks) — Run Claude, Codex, LangGraph, DSPy and Antigravity through Agno and AgentOS. Each integration keeps its starting examples, advanced patterns and test results together.
 
 ### Integrations
 [integrations](./integrations) — Partner integrations. [Parallel](https://parallel.ai) for web-scale search, extraction, and deep research; SurrealDB for agent memory.

@@ -3,13 +3,13 @@ docs/examples/
 
 # data_labeling numbered folders commit hand-written fixtures in data/;
 # generated output stays ignored via data/generated/
-!data_labeling/_*/data/
-data_labeling/_*/data/generated/
+!17_data_labeling/_*/data/
+17_data_labeling/_*/data/generated/
 
 # environments numbered folders commit hand-written task fixtures in data/;
 # rollout exports and saved baselines stay ignored via data/generated/
-!environments/_*/data/
-environments/_*/data/generated/
+!15_environments/_*/data/
+15_environments/_*/data/generated/
 
 # quickstart commits its small, versioned knowledge fixture.
 !00_quickstart/data/

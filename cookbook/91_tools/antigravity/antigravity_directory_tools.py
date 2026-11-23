@@ -10,7 +10,7 @@ Lets a regular Agno agent (any model) delegate sub-tasks to a folder-defined
 Antigravity agent without having to wire up `/agents` calls yourself.
 
 Re-uses the example folder from
-`cookbook/frameworks/antigravity/example_agent/`.
+`cookbook/16_frameworks/antigravity/example_agent/`.
 
 Requirements:
     export GEMINI_API_KEY=...
@@ -27,7 +27,10 @@ from agno.models.google import Gemini
 from agno.tools.antigravity import AntigravityTools
 
 AGENT_DIR = (
-    Path(__file__).parent.parent.parent / "frameworks" / "antigravity" / "example_agent"
+    Path(__file__).parent.parent.parent
+    / "16_frameworks"
+    / "antigravity"
+    / "example_agent"
 )
 
 agent = Agent(
