@@ -75,6 +75,11 @@ def test_routine_archive_restore_and_delete(system):
     assert client.post(path + "/archive").status_code == 404
     assert client.get("/company/routines").json()["meta"]["total_count"] == 0
     assert client.get("/company/routines", params={"include_deleted": True}).json()["meta"]["total_count"] == 1
+    active_id = client.post("/company/routines", json={**body, "name": "triage"}).json()["id"]
+    archived_only = client.get("/company/routines", params={"deleted_only": True, "product_id": product["id"]}).json()
+    assert [row["id"] for row in archived_only["data"]] == [routine_id]
+    assert archived_only["meta"]["total_count"] == 1
+    assert client.delete("/company/routines/" + active_id).status_code == 204
     restored = client.post(path + "/restore")
     assert restored.status_code == 200, restored.text
     # An on-demand Routine comes back enabled; it has no schedule to pause.
