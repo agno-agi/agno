@@ -936,6 +936,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["num_history_messages"] = agent.num_history_messages
     if agent.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
+    if agent.strip_reasoning_from_history:
+        config["strip_reasoning_from_history"] = agent.strip_reasoning_from_history
 
     # --- Knowledge settings ---
     # Knowledge is a non-serializable object (it holds live db/vector_db connections),
@@ -1473,6 +1475,7 @@ def from_dict(
         num_history_runs=config.get("num_history_runs"),
         num_history_messages=config.get("num_history_messages"),
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+        strip_reasoning_from_history=config.get("strip_reasoning_from_history", False),
         # --- Knowledge settings ---
         knowledge=config.get("knowledge"),
         knowledge_filters=config.get("knowledge_filters"),

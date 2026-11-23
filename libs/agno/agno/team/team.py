@@ -359,6 +359,9 @@ class Team:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # Remove model reasoning (thinking text, signatures, reasoning items) from history messages,
+    # so earlier runs are replayed as text and tool calls only. The current run keeps its reasoning.
+    strip_reasoning_from_history: bool = False
 
     # --- Team Storage ---
     # Metadata stored with this team
@@ -532,6 +535,7 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        strip_reasoning_from_history: bool = False,
         skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -651,6 +655,7 @@ class Team:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
+            strip_reasoning_from_history=strip_reasoning_from_history,
             skills=skills,
             tools=tools,
             tool_call_limit=tool_call_limit,

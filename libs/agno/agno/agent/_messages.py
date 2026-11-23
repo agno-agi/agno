@@ -46,7 +46,13 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.knowledge import get_run_response_kwarg, get_user_id_kwarg
 from agno.utils.log import log_debug, log_info, log_warning
-from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
+from agno.utils.message import (
+    copy_history_message,
+    filter_tool_calls,
+    get_text_from_message,
+    render_instructions,
+    strip_reasoning,
+)
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -2026,6 +2032,9 @@ def get_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
+            if agent.strip_reasoning_from_history:
+                strip_reasoning(history_copy)
+
             # Replace the older part of the history with a summary once it has
             # grown past the configured threshold.
             history_copy = apply_compaction(
@@ -2241,6 +2250,9 @@ async def aget_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
+            if agent.strip_reasoning_from_history:
+                strip_reasoning(history_copy)
+
             # Replace the older part of the history with a summary once it has
             # grown past the configured threshold.
             history_copy = await aapply_compaction(
@@ -2424,6 +2436,9 @@ def _build_continue_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            if agent.strip_reasoning_from_history:
+                strip_reasoning(history_copy)
 
             # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
             # checked this same history before it paused, and its own messages are never folded.

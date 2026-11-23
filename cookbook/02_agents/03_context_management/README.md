@@ -18,6 +18,7 @@ Examples for instructions, system messages, introduction messages, and context s
 - `compaction/compaction_anthropic_thinking.py` - Extended thinking plus tool calls, the hardest shape for a cut to respect.
 - `few_shot_learning.py` - Demonstrates few-shot learning with example messages.
 - `filter_tool_calls_from_history.py` - Filter tool calls from conversation history.
+- `strip_reasoning_from_history.py` - Replay earlier runs without their reasoning, so a changed system prompt cannot invalidate signed thinking.
 - `instructions.py` - Set agent instructions.
 - `instructions_with_state.py` - Dynamic instructions using session state.
 - `introduction_message.py` - Set an initial greeting message for the agent.

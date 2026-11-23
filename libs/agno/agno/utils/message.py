@@ -165,6 +165,73 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
 
+# provider_data keys that carry a provider's reasoning state for replay:
+# Anthropic thinking signature, Gemini thought signature, OpenAI Responses reasoning item.
+_REASONING_PROVIDER_DATA_KEYS = ("signature", "thought_signature", "reasoning_output")
+# Anthropic content blocks that hold thinking.
+_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _block_type(block: object) -> Optional[str]:
+    block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+    return block_type if isinstance(block_type, str) else None
+
+
+def strip_reasoning(messages: List[Message]) -> None:
+    """Remove model reasoning from history messages, in place.
+
+    Clears the reasoning text and the provider-specific reasoning state stored on each assistant
+    message (Anthropic thinking blocks and signatures, Gemini thought signatures, OpenAI Responses
+    reasoning items), so earlier runs are replayed as plain text and tool calls only.
+
+    Earlier runs' reasoning is optional for the providers that document it: Anthropic accepts a
+    request without the thinking of earlier turns, and OpenAI drops or ignores earlier reasoning
+    depending on the model. The reasoning of the current run is not touched (it is not part of
+    history), so a tool-use loop still gets back the reasoning it requires.
+
+    Messages are rebound, never mutated: history copies are shallow and share ``provider_data``
+    and ``tool_calls`` with the session's stored messages.
+
+    Args:
+        messages: History messages to clean (modified in-place)
+    """
+    stripped = 0
+    for msg in messages:
+        if msg.role != "assistant":
+            continue
+        changed = msg.reasoning_content is not None or msg.redacted_reasoning_content is not None
+        msg.reasoning_content = None
+        msg.redacted_reasoning_content = None
+
+        if msg.provider_data:
+            provider_data = {k: v for k, v in msg.provider_data.items() if k not in _REASONING_PROVIDER_DATA_KEYS}
+            blocks = provider_data.get("content_blocks")
+            if isinstance(blocks, list):
+                kept = [b for b in blocks if _block_type(b) not in _THINKING_BLOCK_TYPES]
+                if len(kept) != len(blocks):
+                    if kept:
+                        provider_data["content_blocks"] = kept
+                    else:
+                        # Nothing left to echo: let the provider rebuild the turn from its fields.
+                        del provider_data["content_blocks"]
+            if provider_data != msg.provider_data:
+                changed = True
+                msg.provider_data = provider_data or None
+
+        if msg.tool_calls and any(isinstance(tc, dict) and "thought_signature" in tc for tc in msg.tool_calls):
+            changed = True
+            msg.tool_calls = [
+                {k: v for k, v in tc.items() if k != "thought_signature"} if isinstance(tc, dict) else tc
+                for tc in msg.tool_calls
+            ]
+
+        if changed:
+            stripped += 1
+
+    if stripped:
+        log_debug(f"Stripped reasoning from {stripped} history messages")
+
+
 # ---------------------------------------------------------------------------
 # Provider tool call ID configuration
 # ---------------------------------------------------------------------------

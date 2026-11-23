@@ -123,6 +123,15 @@ markdown instead of into the database.
 
 ---
 
+### strip_reasoning_from_history.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Two runs on claude-haiku-5-5 with adaptive thinking and `add_datetime_to_context`, so the system prompt differs per run. With `strip_reasoning_from_history=True` the follow-up succeeds and storage keeps the thinking block. With the option off, the same follow-up fails with 400 invalid_request_error (thinking block bound to a different system prompt).
+**Result:** Completed successfully in 9s.
+
+---
+
 ### instructions.py
 
 **Status:** PASS

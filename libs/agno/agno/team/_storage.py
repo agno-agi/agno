@@ -763,6 +763,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_history_messages"] = team.num_history_messages
     if team.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = team.max_tool_calls_from_history
+    if team.strip_reasoning_from_history:
+        config["strip_reasoning_from_history"] = team.strip_reasoning_from_history
 
     # --- Media/storage settings ---
     if not team.send_media_to_model:  # default is True
@@ -1396,6 +1398,7 @@ def from_dict(
             num_history_runs=config.get("num_history_runs"),
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            strip_reasoning_from_history=config.get("strip_reasoning_from_history", False),
             # --- Compression settings ---
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO

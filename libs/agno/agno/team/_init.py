@@ -131,6 +131,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
+    strip_reasoning_from_history: bool = False,
     skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
@@ -249,6 +250,7 @@ def __init__(
         team.num_history_runs = 3
 
     team.max_tool_calls_from_history = max_tool_calls_from_history
+    team.strip_reasoning_from_history = strip_reasoning_from_history
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs

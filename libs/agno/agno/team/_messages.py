@@ -49,7 +49,13 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
-from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
+from agno.utils.message import (
+    copy_history_message,
+    filter_tool_calls,
+    get_text_from_message,
+    render_instructions,
+    strip_reasoning,
+)
 from agno.utils.team import (
     get_member_id,
 )
@@ -1113,6 +1119,9 @@ def _get_run_messages(
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
 
+            if team.strip_reasoning_from_history:
+                strip_reasoning(history_copy)
+
             log_debug(f"Adding {len(history_copy)} messages from history")
 
             # Extend the messages with the history
@@ -1254,6 +1263,9 @@ async def _aget_run_messages(
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+            if team.strip_reasoning_from_history:
+                strip_reasoning(history_copy)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
