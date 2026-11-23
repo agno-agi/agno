@@ -661,6 +661,8 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
+            # Unregister the failed Table so a retry isn't rejected as "already defined".
+            self._invalidate_table_cache(table_name)
             from traceback import print_exc
 
             print_exc()
