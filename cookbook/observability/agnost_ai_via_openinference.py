@@ -14,7 +14,8 @@ See https://docs.agnost.ai/agno for the complete setup guide.
 import os
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.db.in_memory import InMemoryDb
+from agno.models.openai import OpenAIResponses
 from openinference.instrumentation import using_attributes
 from openinference.instrumentation.agno import AgnoInstrumentor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -47,8 +48,10 @@ def get_order_status(order_id: str) -> str:
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Support Agent",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     tools=[get_order_status],
+    db=InMemoryDb(),
+    add_history_to_context=True,
     session_id="session-123",
     user_id="user-42",
 )
