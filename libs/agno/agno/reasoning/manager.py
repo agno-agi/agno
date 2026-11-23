@@ -973,7 +973,7 @@ class ReasoningManager:
                     )
                     return
                 if result.message:
-                    run_messages.messages.append(result.message)
+                    run_messages.add_reasoning_message(result.message)
                     yield ReasoningEvent(
                         event_type=ReasoningEventType.completed,
                         reasoning_steps=result.steps,
@@ -994,7 +994,7 @@ class ReasoningManager:
             return
 
         if result.message:
-            run_messages.messages.append(result.message)
+            run_messages.add_reasoning_message(result.message)
             yield ReasoningEvent(
                 event_type=ReasoningEventType.completed,
                 reasoning_steps=result.steps,
@@ -1022,7 +1022,7 @@ class ReasoningManager:
                     )
                     return
                 if result.message:
-                    run_messages.messages.append(result.message)
+                    run_messages.add_reasoning_message(result.message)
                     yield ReasoningEvent(
                         event_type=ReasoningEventType.completed,
                         reasoning_steps=result.steps,
@@ -1045,7 +1045,7 @@ class ReasoningManager:
             return
 
         if result.message:
-            run_messages.messages.append(result.message)
+            run_messages.add_reasoning_message(result.message)
             yield ReasoningEvent(
                 event_type=ReasoningEventType.completed,
                 reasoning_steps=result.steps,

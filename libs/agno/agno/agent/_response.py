@@ -364,6 +364,8 @@ def parse_response_with_parser_model(
 
     if output_schema is not None:
         parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+        # The parser reads the run's content, derived the same way in every run mode
+        model_response.content = run_messages.get_content(default=model_response.content)
         messages_for_parser_model = get_messages_for_parser_model(
             agent, model_response, parser_response_format, run_context=run_context
         )
@@ -412,6 +414,8 @@ async def aparse_response_with_parser_model(
 
     if output_schema is not None:
         parser_response_format = get_response_format(agent, agent.parser_model, run_context=run_context)
+        # The parser reads the run's content, derived the same way in every run mode
+        model_response.content = run_messages.get_content(default=model_response.content)
         messages_for_parser_model = get_messages_for_parser_model(
             agent, model_response, parser_response_format, run_context=run_context
         )
@@ -659,6 +663,9 @@ def generate_response_with_output_model_stream(
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
 
+    # The content is derived from the run's messages, the same way in every run mode
+    run_response.content = run_messages.get_content(default=run_response.content)
+
 
 async def agenerate_response_with_output_model(
     agent: Agent, model_response: ModelResponse, run_messages: RunMessages, run_response: Optional[RunOutput] = None
@@ -742,6 +749,9 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
+
+    # The content is derived from the run's messages, the same way in every run mode
+    run_response.content = run_messages.get_content(default=run_response.content)
 
 
 # ---------------------------------------------------------------------------
@@ -962,8 +972,8 @@ def update_run_response(
             # Update the run_response content_type with the structured output class name
             run_response.content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__
     else:
-        # Update the run_response content with the model response content
-        run_response.content = model_response.content
+        # The content is derived from the run's messages, the same way in every run mode
+        run_response.content = run_messages.get_content(default=model_response.content)
 
     # Update the run_response reasoning content with the model response reasoning content
     if model_response.reasoning_content is not None:
@@ -1083,6 +1093,10 @@ def handle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # A new model call starts a new assistant message, so the text streamed so far is not carried over
+                if model_response.content:
+                    model_response.content = ""
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
@@ -1162,6 +1176,11 @@ def handle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
+
+    # The content is derived from the run's messages, the same way in every run mode
+    run_response.content = run_messages.get_content(default=run_response.content)
+    if should_parse_structured_output:
+        convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
     # Determine reasoning completed
     if stream_events and reasoning_state["reasoning_started"]:
@@ -1249,6 +1268,10 @@ async def ahandle_model_response_stream(
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
             if model_response_event.event == ModelResponseEvent.model_request_started.value:
+                # A new model call starts a new assistant message, so the text streamed so far is not carried over
+                if model_response.content:
+                    model_response.content = ""
+                    run_response.content = None
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_model_request_started_event(
@@ -1329,6 +1352,11 @@ async def ahandle_model_response_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunOutput messages
     run_response.messages = messages_for_run_response
+
+    # The content is derived from the run's messages, the same way in every run mode
+    run_response.content = run_messages.get_content(default=run_response.content)
+    if should_parse_structured_output:
+        convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
     if stream_events and reasoning_state["reasoning_started"]:
         all_reasoning_steps: List[ReasoningStep] = []
