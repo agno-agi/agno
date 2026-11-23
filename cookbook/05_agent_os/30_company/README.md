@@ -635,6 +635,20 @@ does not matter, so deleting a Task in review discards its result. If the run
 cannot be verified the delete returns 503; retry it. Without a queue worker the
 run check is skipped.
 
+`DELETE /company/tasks` with `{"task_ids": [...]}`, `DELETE /company/projects`
+with `{"project_ids": [...]}` and `DELETE /company/products` with
+`{"product_ids": [...]}` delete many records in one request and need
+`agent_os:admin`. Each record goes through its single `DELETE` in turn, in request
+order; a repeated id is deleted once. The response is 200 with `results`, one
+`{id, status_code, detail}` per record: 204 when deleted, otherwise the 404 or 409
+its single `DELETE` returns, with a Project's or Product's blocking Tasks and
+Routines as an object. It is not all-or-nothing: a refused record does not stop
+the others or bring back those already deleted. Match results by `id`. If the
+database or run store fails, the request returns that 503 or 500 and stops;
+repeating it answers 404 for the records already deleted and continues. There is
+no limit on the number of ids, so a large batch, especially of Products, takes as
+long as that many single deletes.
+
 A delete archives the record first, then removes Routines and files, then the
 rows. If a step fails, the record stays archived and repeating `DELETE` finishes
 it. Restoring it instead brings back its rows only: Routines and files already
