@@ -13,6 +13,7 @@ from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
     BulkResponse,
+    TaskBulkArchive,
     TaskBulkDelete,
     TaskCreate,
     TaskResponse,
@@ -349,6 +350,12 @@ def get_tasks_router(
         if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
         return await task_response(request, await _existing(task_id, include_deleted=True))
+
+    @router.post("/tasks/archive", response_model=BulkResponse)
+    async def archive_tasks(
+        body: TaskBulkArchive, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await _apply_each(body.task_ids, lambda task_id: archive_task(task_id, request))
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
     async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

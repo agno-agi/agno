@@ -256,6 +256,21 @@ class TaskTransition(BaseModel):
         return self
 
 
+class TaskBulkArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: List[str] = Field(..., min_length=1)
+
+
+class ProjectBulkArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_ids: List[str] = Field(..., min_length=1)
+
+
+class ProductBulkArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_ids: List[str] = Field(..., min_length=1)
+
+
 class TaskBulkDelete(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_ids: List[str] = Field(..., min_length=1)

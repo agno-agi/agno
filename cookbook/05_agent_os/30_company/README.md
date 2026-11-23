@@ -27,6 +27,20 @@ Lists return `{data, meta}` with `limit` and `page`; reads accept
 `DELETE` requires `agent_os:admin`.
 Read and create/update require `products:read` and `products:write` respectively.
 
+`POST /company/products/archive` with `{"product_ids": [...]}`,
+`POST /company/projects/archive` with `{"project_ids": [...]}` and
+`POST /company/tasks/archive` with `{"task_ids": [...]}` archive many records in
+one request and need `products:delete`, `projects:delete` and `tasks:delete`
+respectively, like a single archive. Each record goes through its single
+archive in turn, in request order; a repeated id is archived once. The response
+is 200 with `results`, one `{id, status_code, detail}` per record: 200 when
+archived, otherwise the 404 or 409 its single archive returns, with a Product's
+or Project's blocking Tasks as an object. It is not all-or-nothing: a refused
+record does not stop the others or bring back those already archived. Match
+results by `id`. If the database fails, the request returns that 503 or 500 and
+stops; repeating it answers 404 for the records already archived and continues.
+There is no limit on the number of ids.
+
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
 database and exposes the same methods as coroutines. `list()` returns rows and
 a total. `user_id=None` is unscoped; a string filters by owner before paging.
@@ -161,6 +175,8 @@ Project, evidence and executor until returned to Backlog, because an accepted
 Task runs under its accepter's permissions. The title stays editable at any
 stage (Company tools run by Routines and executors edit Backlog Tasks only).
 Archive and restore need the delete scope, not ownership; `DELETE` needs `agent_os:admin`.
+`POST /company/projects/archive` and `POST /company/tasks/archive` archive many
+records in one request, as described for Products.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
