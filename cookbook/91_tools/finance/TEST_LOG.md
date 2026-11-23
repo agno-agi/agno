@@ -69,3 +69,17 @@ Environment: `.venvs/demo` (yfinance 1.6.0), `openai:gpt-5.6`, no `FINANCIAL_DAT
 **Status:** PASS
 
 **Result:** `pytest libs/agno/tests/unit/tools/test_finance*.py` - 116 passed, 1 skipped in `.venv` (yfinance provider tests skip without yfinance); 149 passed in `.venvs/demo`. Includes every tool sync + async through the toolkit, financialdatasets pagination and sync/async request parity, and yfinance normalizers against 1.6.0-shaped objects.
+
+---
+
+## 2026-11-23
+
+Environment: `.venv` from `./scripts/dev_setup.sh` (Python 3.12, yfinance 1.8.0, TA-Lib 0.8.3), `openai:gpt-5.6`.
+
+### 07_technical_indicators.py
+
+**Status:** PASS (tool functions), agent run NOT RUN
+
+**Description:** `FinanceTools()` plus two function tools, `get_momentum_indicators` (RSI, MACD) and `scan_candlestick_patterns` (engulfing, hammer, shooting star), computed with TA-Lib from the default provider's daily bars. `__main__` prints both tool outputs, then asks "Where do RSI and MACD stand on NVDA, and did any candlestick pattern complete in the last two weeks?".
+
+**Result:** Tool functions: `get_momentum_indicators("NVDA")` returned 5 rows (date, close, rsi, macd, macd_signal, macd_hist) and `scan_candlestick_patterns("NVDA")` returned 0 hits over the last 10 bars. Agent run: NOT RUN (no model key); the script logs the missing `OPENAI_API_KEY` and exits 0.
