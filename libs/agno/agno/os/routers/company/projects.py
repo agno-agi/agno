@@ -11,6 +11,8 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    BulkResponse,
+    ProjectBulkArchive,
     ProjectCreate,
     ProjectResponse,
     ProjectStatus,
@@ -156,6 +158,12 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         if not archived:
             raise HTTPException(status_code=404, detail="Project not found")
         return await _existing(project_id, include_deleted=True)
+
+    @router.post("/projects/archive", response_model=BulkResponse)
+    async def archive_projects(body: ProjectBulkArchive, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
+        from agno.os.routers.company.tasks import _apply_each
+
+        return await _apply_each(body.project_ids, archive_project)
 
     @router.post("/projects/{project_id}/restore", response_model=ProjectResponse)
     async def restore_project(project_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

@@ -15,7 +15,13 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import ProductCreate, ProductResponse, ProductUpdate
+from agno.os.routers.company.schema import (
+    BulkResponse,
+    ProductBulkArchive,
+    ProductCreate,
+    ProductResponse,
+    ProductUpdate,
+)
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
 
@@ -133,6 +139,12 @@ def get_products_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         if not archived:
             raise HTTPException(status_code=404, detail="Product not found")
         return await _existing(product_id, include_deleted=True)
+
+    @router.post("/products/archive", response_model=BulkResponse)
+    async def archive_products(body: ProductBulkArchive, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
+        from agno.os.routers.company.tasks import _apply_each
+
+        return await _apply_each(body.product_ids, archive_product)
 
     @router.post("/products/{product_id}/restore", response_model=ProductResponse)
     async def restore_product(product_id: str, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

@@ -77,6 +77,28 @@ def test_archive_lifecycle(client):
     assert restored.json()["deleted_at"] is None
 
 
+def test_bulk_archive_reports_each_product(client):
+    a, b, c, d = (client.post("/company/products", json={"name": "SDK"}).json()["id"] for _ in range(4))
+    assert client.post("/company/products/" + c + "/archive").status_code == 200
+    response = client.post("/company/products/archive", json={"product_ids": [a, "missing", c, b, a]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Product not found"},
+            {"id": c, "status_code": 404, "detail": "Product not found"},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    }
+    for product_id in [a, b]:
+        path = "/company/products/" + product_id
+        assert client.get(path).status_code == 404
+        assert isinstance(client.get(path, params={"include_deleted": True}).json()["deleted_at"], int)
+    for body in [{"product_ids": []}, {"product_ids": [d], "force": True}]:
+        assert client.post("/company/products/archive", json=body).status_code == 422
+    assert client.get("/company/products/" + d).json()["deleted_at"] is None
+
+
 def test_pagination_and_duplicate_display_names(client):
     ids = {client.post("/company/products", json={"name": "SDK"}).json()["id"] for _ in range(3)}
     pages = [client.get("/company/products", params={"page": page, "limit": 2}).json() for page in (1, 2)]
@@ -140,7 +162,7 @@ def test_database_resolution_once_and_override(tmp_path):
             for path, methods in client.app.openapi()["paths"].items()
             if path.startswith("/company/products") and "/wiki" not in path
         }
-        assert sum(len(methods) for methods in paths.values()) == 7
+        assert sum(len(methods) for methods in paths.values()) == 8
         assert client.get("/company/products").status_code == 200
     default.close()
     override.close()
@@ -201,6 +223,11 @@ def test_unavailable_database_all_routes(db):
         ("post", "/company/products/missing/archive", None),
     ]:
         assert client.request(method, path, json=body).status_code == 503
+    response = client.post("/company/products/archive", json={"product_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company products not supported by the configured database"
+    )
 
 
 def test_manager_unsupported():
