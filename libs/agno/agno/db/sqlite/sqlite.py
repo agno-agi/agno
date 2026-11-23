@@ -663,6 +663,8 @@ class SqliteDb(BaseDb):
         except Exception as e:
             from traceback import print_exc
 
+            # Unregister the failed Table so a retry isn't rejected as "already defined".
+            self._invalidate_table_cache(table_name)
             print_exc()
             log_error(f"Could not create table '{table_name}': {str(e)}")
             raise e
