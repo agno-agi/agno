@@ -353,8 +353,9 @@ Slack(team=agent_os.manager, default_role="slack-member")
     Members of other organizations (Slack Connect) and deactivated accounts are
     refused, and a guest's email never names a user.
     A member's Slack status is read at most once a minute, so deactivating them
-    or making them a guest applies within a minute; disabling the user in `/users`
-    applies on their next message.
+    applies within a minute; disabling the user in `/users` applies on their next
+    message. Only a newly created guest user starts disabled: making a member a
+    guest in Slack leaves an existing user as it is, so disable it in `/users`.
   - `users=` and `default_role=` are ignored under `authorize_senders`. Without
     AgentOS authorization only the directory applies. Without
     `AgentOS(user_directory=True)` no users are created, so a sender runs only

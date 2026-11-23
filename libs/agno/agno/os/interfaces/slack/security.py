@@ -119,13 +119,10 @@ async def can_stop(ctx: "SlackContext", user: str, event_context: "EventContext"
 
 
 async def started_by_app(ctx: "SlackContext", event_context: "EventContext", client: Any = None) -> bool:
-    """Whether another app started the run: it runs as an app's service account, or its owner is a bot user."""
-    if not ctx.respond_to_other_apps or ctx.company is not None:
+    """Whether another app started the run: its owner is a bot user the bot answers as an app."""
+    if not (ctx.respond_to_other_apps and ctx.company is None and event_context.owner):
         return False
-    # The run's stored user names the app's account even for a webhook, whose bot id users.info cannot look up
-    mapped = ctx.users is not None and not ctx.senders_authorized and event_context.owner in ctx.users
-    if not mapped and event_context.user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
-        return True
+    # A webhook's run is owned by its bot id, which users.info cannot look up, so it stays undecidable
     if not event_context.owner.startswith(("U", "W")):
         return False
     member = await ctx.lookup_cache.member(client or ctx.web(), event_context.owner)
