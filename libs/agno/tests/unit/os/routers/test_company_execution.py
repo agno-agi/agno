@@ -243,6 +243,55 @@ def test_unaccepted_no_queue_and_request_overrides(system):
     assert client.get(path, headers=headers()).json()["status"] == "ready"
 
 
+def test_bulk_task_delete_keeps_a_task_with_a_live_run(system):
+    client, db, os, queue = system
+    live_path, live = accepted(client)
+    _, idle = accepted(client)
+    run_id = client.post(live_path + "/runs", headers=headers()).json()["run_id"]
+    claimed = asyncio.run(queue.store.claim_job(queue.worker_id, queue.config.lock_grace_seconds))
+    assert claimed["id"] == run_id
+    before = db.get_task(live["id"])
+    response = client.request(
+        "DELETE",
+        "/company/tasks",
+        json={"task_ids": [live["id"], idle["id"]]},
+        headers=headers(scopes=["agent_os:admin"]),
+    )
+    assert response.status_code == 200, response.text
+    detail = f"Cancel the run with POST /company/runs/{run_id}/cancel, then delete the Task"
+    assert response.json() == {
+        "results": [
+            {"id": live["id"], "status_code": 409, "detail": detail},
+            {"id": idle["id"], "status_code": 204, "detail": None},
+        ]
+    }
+    assert db.get_task(live["id"]) == before
+    assert db.get_task(idle["id"], include_deleted=True) is None
+
+
+def test_bulk_task_delete_stops_at_an_unverifiable_run(system, monkeypatch):
+    client, db, os, queue = system
+    _, idle = accepted(client)
+    ticketed_path, ticketed = accepted(client)
+    assert client.post(ticketed_path + "/runs", headers=headers()).status_code == 202
+    before = db.get_task(ticketed["id"])
+
+    async def unreadable(*args, **kwargs):
+        raise RuntimeError("Injected job read failure")
+
+    monkeypatch.setattr(queue.store, "get_job", unreadable)
+    response = client.request(
+        "DELETE",
+        "/company/tasks",
+        json={"task_ids": [idle["id"], ticketed["id"]]},
+        headers=headers(scopes=["agent_os:admin"]),
+    )
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Could not verify the Task run; retry the request"
+    assert db.get_task(idle["id"], include_deleted=True) is None
+    assert db.get_task(ticketed["id"]) == before
+
+
 def test_python_acceptance_also_validates_registry(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "registry.db"))
     manager = CompanyManager(db)

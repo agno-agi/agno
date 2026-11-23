@@ -793,6 +793,48 @@ async def test_permanent_delete_refuses_archived_open_task_then_removes_every_ch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("parent_type", ["product", "project"])
+async def test_bulk_delete_reports_a_parent_blocked_by_an_archived_open_task(db, parent_type):
+    m, product, project, _, blocked_path = await delete_scenario(db, parent_type)
+    running = await call(m.create_task, product_id=product["id"], title="Running", project_id=project["id"])
+    await call(
+        m.transition_task,
+        task_id=running["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    await call(m.transition_task, task_id=running["id"], target="in_progress", reason="Start")
+    await call(m.delete_task, running["id"])
+    _, _, _, _, free_path = await delete_scenario(db, parent_type)
+    blocked, free = blocked_path.rsplit("/", 1)[1], free_path.rsplit("/", 1)[1]
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        body = {parent_type + "_ids": [blocked, free]}
+        response = await client.request("DELETE", "/company/" + parent_type + "s", json=body)
+        assert response.status_code == 200, response.text
+        saved = await call(m.get_task, running["id"], include_deleted=True)
+        detail = {
+            "message": "Cannot delete with active Tasks",
+            "tasks": [
+                {"id": running["id"], "title": "Running", "status": "in_progress", "deleted_at": saved["deleted_at"]}
+            ],
+        }
+        if parent_type == "product":
+            detail["routines"] = []
+        assert response.json() == {
+            "results": [
+                {"id": blocked, "status_code": 409, "detail": detail},
+                {"id": free, "status_code": 204, "detail": None},
+            ]
+        }
+        assert (await client.get(blocked_path)).status_code == 200
+        assert saved["status"] == "in_progress"
+        assert (await client.get(free_path, params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("parent_type", ["product", "project", "task"])
 async def test_failed_cleanup_leaves_an_archived_record_that_a_repeat_delete_finishes(db, monkeypatch, parent_type):
     import agno.company.files as files

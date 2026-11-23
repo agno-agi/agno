@@ -125,6 +125,44 @@ def test_routine_delete_requires_admin(tmp_path):
         assert client.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
+def test_bulk_product_delete_reports_an_executing_routine_run(system):
+    import time
+
+    client, _, db = system
+    blocked = client.post("/company/products", json={"name": "Docs"}).json()["id"]
+    free = client.post("/company/products", json={"name": "Notes"}).json()["id"]
+    body = dict(product_id=blocked, name="review", executor_type="agent", executor_id="reader", instructions="Review")
+    routine = client.post("/company/routines", json=body).json()
+    db.create_schedule_run(
+        {
+            "id": "schedule-run",
+            "schedule_id": routine["id"],
+            "attempt": 1,
+            "triggered_at": int(time.time()),
+            "status": "running",
+            "run_id": "routine-run",
+            "session_id": "routine-session",
+            "created_at": int(time.time()),
+        }
+    )
+    response = client.request("DELETE", "/company/products", json={"product_ids": [blocked, free]})
+    assert response.status_code == 200, response.text
+    detail = {
+        "message": "Cannot delete with executing Routine runs",
+        "tasks": [],
+        "routines": [{"id": routine["id"], "name": routine["name"]}],
+    }
+    assert response.json() == {
+        "results": [
+            {"id": blocked, "status_code": 409, "detail": detail},
+            {"id": free, "status_code": 204, "detail": None},
+        ]
+    }
+    assert client.get("/company/products/" + blocked).status_code == 200
+    assert client.get("/company/routines/" + routine["id"]).status_code == 200
+    assert client.get("/company/products/" + free, params={"include_deleted": True}).status_code == 404
+
+
 def test_routine_cancel_stops_the_running_run(system):
     import time
 

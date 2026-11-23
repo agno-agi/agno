@@ -1,6 +1,6 @@
 """Product request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -254,6 +254,32 @@ class TaskTransition(BaseModel):
         elif self.executor_type is not None or self.executor_id is not None:
             raise ValueError("Only Ready can set an executor")
         return self
+
+
+class TaskBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_ids: List[str] = Field(..., min_length=1)
+
+
+class ProjectBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_ids: List[str] = Field(..., min_length=1)
+
+
+class ProductBulkDelete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_ids: List[str] = Field(..., min_length=1)
+
+
+class BulkDeleteResult(BaseModel):
+    id: str
+    status_code: int
+    # The single DELETE's detail: a message, or for a Project or Product refusal the Tasks and Routines that block it.
+    detail: Optional[Union[str, Dict[str, Any]]] = None
+
+
+class BulkDeleteResponse(BaseModel):
+    results: List[BulkDeleteResult]
 
 
 class WikiWrite(BaseModel):

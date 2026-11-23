@@ -1,4 +1,4 @@
-"""Sources, Routine schedule wrappers, Product permanent delete and blank-deployment setup."""
+"""Sources, Routine schedule wrappers, Product permanent and bulk delete and blank-deployment setup."""
 
 import asyncio
 import inspect
@@ -19,6 +19,7 @@ from agno.db.base import AsyncBaseDb
 from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
+from agno.os.routers.company.schema import BulkDeleteResponse, ProductBulkDelete
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -604,6 +605,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         if await call(manager.get, product_id, include_deleted=True) is None:
             raise HTTPException(404, "Product not found")
         raise HTTPException(409, "Product was restored during delete; repeat DELETE")
+
+    @router.delete("/products", response_model=BulkDeleteResponse, tags=["Products"])
+    async def delete_products(body: ProductBulkDelete, request: Request, _: bool = Depends(auth)):
+        from agno.os.routers.company.tasks import _delete_each
+
+        return await _delete_each(body.product_ids, lambda product_id: delete_product(product_id, request))
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
