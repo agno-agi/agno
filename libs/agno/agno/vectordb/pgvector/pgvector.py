@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import and_, not_, null, or_, update
+    from sqlalchemy import text,  and_, not_, null, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.exc import NoSuchTableError
@@ -201,6 +201,11 @@ class PgVector(VectorDb):
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Per-content_hash lock registry (issue #11801).
+        import threading as _threading
+        import weakref as _weakref
+        self._content_hash_locks: dict[str, _threading.Lock] = {}
+        self._content_hash_locks_mutex = _threading.Lock()
         # Whether the live table has the ``user_id`` column; pre-v3 tables lack it
         self._owner_column_exists: Optional[bool] = None
         # Database table
@@ -554,6 +559,30 @@ class PgVector(VectorDb):
         """
         return True
 
+    def _upsert_lock(self, content_hash: str):
+        """Return a per-content_hash threading.Lock used to serialize writers."""
+        import threading as _threading
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _locked():
+            with self._content_hash_locks_mutex:
+                lock = self._content_hash_locks.get(content_hash)
+                if lock is None:
+                    lock = _threading.Lock()
+                    self._content_hash_locks[content_hash] = lock
+            lock.acquire()
+            try:
+                yield
+            finally:
+                lock.release()
+                with self._content_hash_locks_mutex:
+                    # Clean up to prevent unbounded growth
+                    if not lock.locked():
+                        self._content_hash_locks.pop(content_hash, None)
+
+        return _locked()
+
     def upsert(
         self,
         content_hash: str,
@@ -579,13 +608,19 @@ class PgVector(VectorDb):
         # without asking the embedder again. Raised failures above still precede deletion.
         documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
-        try:
-            if self.content_hash_exists(content_hash, user_id=user_id):
-                self._delete_by_content_hash(content_hash, user_id=user_id)
-            self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
-        except Exception as e:
-            log_error(f"Error upserting documents by content hash: {str(e)}")
-            raise
+        # Serialize writers of the same content_hash within this process with a per-hash
+        # threading.Lock.  This covers the two common concurrent-writer cases: sync
+        # Knowledge.insert calls from worker threads, and async_upsert across event loops.
+        # Cross-process races (multiple server workers) need a database-level solution;
+        # that is a known limitation documented in the issue.
+        with self._upsert_lock(content_hash):
+            try:
+                if self.content_hash_exists(content_hash, user_id=user_id):
+                    self._delete_by_content_hash(content_hash, user_id=user_id)
+                self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
+            except Exception as e:
+                log_error(f"Error upserting documents by content hash: {str(e)}")
+                raise
 
     def _upsert(
         self,
@@ -790,13 +825,15 @@ class PgVector(VectorDb):
         # without asking the embedder again. Raised failures above still precede deletion.
         documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
-        try:
-            if self.content_hash_exists(content_hash, user_id=user_id):
-                self._delete_by_content_hash(content_hash, user_id=user_id)
-            await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
-        except Exception as e:
-            log_error(f"Error upserting documents by content hash: {str(e)}")
-            raise
+        # Same per-hash lock as the sync path (issue #11801).
+        with self._upsert_lock(content_hash):
+            try:
+                if self.content_hash_exists(content_hash, user_id=user_id):
+                    self._delete_by_content_hash(content_hash, user_id=user_id)
+                await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
+            except Exception as e:
+                log_error(f"Error upserting documents by content hash: {str(e)}")
+                raise
 
     async def _async_upsert(
         self,
