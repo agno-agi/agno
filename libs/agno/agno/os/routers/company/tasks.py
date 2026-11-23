@@ -1,19 +1,53 @@
 """Collaborative Company task reads, edits and lifecycle transitions."""
 
 import asyncio
-from typing import Any, Dict, List, Literal, Optional, Union, get_args
+import json
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    BulkResponse,
+    TaskBulkArchive,
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
 from agno.registry._reserved import MINI_AGENT_ID
+
+
+async def _apply_each(ids: List[str], route: Callable[[str], Awaitable[Any]]) -> Dict[str, Any]:
+    """Call a single-record route for each id in turn and report each answer; a 5xx ends the request."""
+    results: List[Dict[str, Any]] = []
+    # A repeated id is handled once, at its first position.
+    for record_id in dict.fromkeys(ids):
+        try:
+            response = await route(record_id)
+        except HTTPException as exc:
+            # A 5xx is about the database or run store, not this record, so the ids after it would fail the same way.
+            if exc.status_code >= 500:
+                raise
+            results.append({"id": record_id, "status_code": exc.status_code, "detail": exc.detail})
+            continue
+        if isinstance(response, JSONResponse):
+            # A refusal that lists the Tasks or Routines blocking the action.
+            detail = json.loads(bytes(response.body))["detail"]
+            results.append({"id": record_id, "status_code": response.status_code, "detail": detail})
+        else:
+            # A route that returns the record answers 200; one that returns nothing answers 204.
+            status_code = 200 if isinstance(response, dict) else 204
+            results.append({"id": record_id, "status_code": status_code, "detail": None})
+    return {"results": results}
 
 
 def get_tasks_router(
@@ -267,6 +301,12 @@ def get_tasks_router(
         if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
         return await task_response(request, await _existing(task_id, include_deleted=True))
+
+    @router.post("/tasks/archive", response_model=BulkResponse)
+    async def archive_tasks(
+        body: TaskBulkArchive, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await _apply_each(body.task_ids, lambda task_id: archive_task(task_id, request))
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
     async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

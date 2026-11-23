@@ -75,6 +75,28 @@ def test_archive_lifecycle(client):
     assert restored.json()["deleted_at"] is None
 
 
+def test_bulk_archive_reports_each_project(client):
+    a, b, c, d = (create(client)["id"] for _ in range(4))
+    assert client.post("/company/projects/" + c + "/archive").status_code == 200
+    response = client.post("/company/projects/archive", json={"project_ids": [a, "missing", c, b, a]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Project not found"},
+            {"id": c, "status_code": 404, "detail": "Project not found"},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    }
+    for project_id in [a, b]:
+        path = "/company/projects/" + project_id
+        assert client.get(path).status_code == 404
+        assert isinstance(client.get(path, params={"include_deleted": True}).json()["deleted_at"], int)
+    for body in [{"project_ids": []}, {"project_ids": [d], "force": True}]:
+        assert client.post("/company/projects/archive", json=body).status_code == 422
+    assert client.get("/company/projects/" + d).json()["deleted_at"] is None
+
+
 @pytest.mark.parametrize("states", [[], ["active"]])
 def test_cancel_from_every_nonterminal_state(client, states):
     path = "/company/projects/" + create(client)["id"]
@@ -132,3 +154,8 @@ def test_unsupported_database(db):
         ("post", "/company/projects/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
     ]:
         assert c.request(method, path, json=body).status_code == 503
+    response = c.post("/company/projects/archive", json={"project_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company projects not supported by the configured database"
+    )

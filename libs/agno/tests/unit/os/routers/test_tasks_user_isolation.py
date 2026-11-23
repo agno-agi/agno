@@ -148,6 +148,19 @@ def test_admin_bypass_and_creator_attribution(make_client):
     assert response.json()["user_id"] == "admin"
 
 
+def test_bulk_archive_requires_delete_scope(make_client):
+    c = make_client(False)
+    task_id = create(c, "alice")
+    path = "/company/tasks/" + task_id
+    body = {"task_ids": [task_id]}
+    assert c.post("/company/tasks/archive", json=body, headers=headers("bob", ["tasks:write"])).status_code == 403
+    assert c.get(path, headers=headers("bob")).json()["deleted_at"] is None
+    response = c.post("/company/tasks/archive", json=body, headers=headers("bob", ["tasks:delete"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [{"id": task_id, "status_code": 200, "detail": None}]
+    assert c.get(path, headers=headers("bob")).status_code == 404
+
+
 @pytest.mark.parametrize("isolation", [False, True])
 def test_scopes_apply_to_every_route(make_client, isolation):
     c = make_client(isolation)

@@ -721,3 +721,98 @@ async def test_argless_storage_value_error_remains_validation_error(db, monkeypa
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/company/" + resource, json=payload)
         assert response.status_code == 422, response.text
+
+
+async def active_task(m, title):
+    product = await call(m.create, name=title)
+    project = await call(m.create_project, product_id=product["id"], name=title)
+    await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
+    return await call(m.create_task, product_id=product["id"], title=title, project_id=project["id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resource", ["tasks", "projects", "products"])
+async def test_http_bulk_archive_reports_each_record(db, resource):
+    m = manager(db)
+    key = {"tasks": "id", "projects": "project_id", "products": "product_id"}[resource]
+    get = {"tasks": m.get_task, "projects": m.get_project, "products": m.get}[resource]
+    a, b, c = [(await active_task(m, title))[key] for title in "abc"]
+    not_found = resource[:-1].capitalize() + " not found"
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.post("/company/" + resource + "/" + c + "/archive")).status_code == 200
+        archived_at = (await call(get, c, include_deleted=True))["deleted_at"]
+        response = await client.post(
+            "/company/" + resource + "/archive", json={resource[:-1] + "_ids": [a, "missing", c, b, a]}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["results"] == [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": not_found},
+            {"id": c, "status_code": 404, "detail": not_found},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    for record_id in [a, b]:
+        assert await call(get, record_id) is None
+        assert (await call(get, record_id, include_deleted=True))["deleted_at"] is not None
+    assert (await call(get, c, include_deleted=True))["deleted_at"] == archived_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent_type", ["product", "project"])
+async def test_http_bulk_archive_reports_a_parent_blocked_by_an_active_task(db, parent_type):
+    m = manager(db)
+    blocked, free = await active_task(m, "Blocked"), await active_task(m, "Free")
+    await call(
+        m.transition_task,
+        task_id=blocked["id"],
+        target="ready",
+        reason="Accept",
+        executor_type="agent",
+        executor_id="writer",
+    )
+    x, y = blocked[parent_type + "_id"], free[parent_type + "_id"]
+    get = m.get if parent_type == "product" else m.get_project
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/company/" + parent_type + "s/archive", json={parent_type + "_ids": [x, y]})
+        assert response.status_code == 200, response.text
+        assert response.json()["results"] == [
+            {
+                "id": x,
+                "status_code": 409,
+                "detail": {
+                    "message": "Cannot archive with active Tasks",
+                    "tasks": [{"id": blocked["id"], "title": "Blocked"}],
+                },
+            },
+            {"id": y, "status_code": 200, "detail": None},
+        ]
+        assert (await call(get, x))["deleted_at"] is None
+        assert (await call(m.get_task, blocked["id"]))["status"] == "ready"
+        assert await call(get, y) is None
+        assert await call(m.get_task, free["id"]) is None
+        assert (await client.post("/company/" + parent_type + "s/" + y + "/restore")).status_code == 200
+    assert (await call(m.get_task, free["id"]))["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_http_bulk_task_archive_stops_at_a_server_error(db, monkeypatch):
+    m = manager(db)
+    ids = [(await active_task(m, title))["id"] for title in "abc"]
+    delete_task = db.delete_task
+
+    def fail_for_second(task_id, *args, **kwargs):
+        # Raised on the call, before an async database creates its coroutine, so both managers see it.
+        if task_id == ids[1]:
+            raise NotImplementedError
+        return delete_task(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "delete_task", fail_for_second)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/company/tasks/archive", json={"task_ids": ids})
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"] == "Company tasks not supported by the configured database"
+    assert await call(m.get_task, ids[0]) is None
+    assert [(await call(m.get_task, task_id))["deleted_at"] for task_id in ids[1:]] == [None, None]
