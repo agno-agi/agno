@@ -1,6 +1,24 @@
 # Demo AgentOS Test Log
 
-Last updated: 2026-06-05
+### agents/context.py
+
+**Status:** PASS (2026-11-23)
+
+**Description:** Ran the two README prompts as separate CLI processes with GPT-5.5, using an isolated local filesystem. Between runs, added a second harbor project that also mentioned Orla and the welcome desk, and edited the sound-walk page by hand.
+
+**Result:** The first run flagged the missing sound-check owner. The second updated the same page, recorded the signed-for players, and made Kit's Friday noon museum answer the priority. Saturday remained conditional, Felix's night route remained a suggestion, and the kickoff reference and handwritten headphone-pad note survived. The print-fair page was byte-identical. A third message about an unspecified harbor project's welcome desk prompted a clarification.
+
+### evals/context_handoff.py and the AgentOS run endpoint
+
+**Status:** PASS (2026-11-23)
+
+**Description:** Installed `requirements.txt` in a fresh Python 3.12 environment (Agno 3.2.1). Ran the three-message CLI evaluation with GPT-5.5. Started the demo app with an isolated database and called `POST /agents/context/runs` for a read-only handoff using the previously saved pages.
+
+**Result:** Both entry points found the sound walk. An early API reply described the planned preload as complete. After tightening the instructions, the API handoff distinguished the decision to preload from the completed delivery, identified the pending museum answer, and kept the night route tentative. The trace showed `list_files` and `read_file`, and the project files were byte-identical after the handoff. The final CLI evaluation passed with the same instructions.
+
+---
+
+## Wiki and CodeSearch runs (2026-06-05)
 
 ## Test Environment
 

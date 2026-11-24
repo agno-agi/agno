@@ -109,7 +109,7 @@ those require service and model credentials.
 
 **Status:** PENDING
 
-**Description:** `AntigravityTools(agent_directory=...)` parses a local agent folder (`agent.yaml` + `AGENTS.md` + `workspace/` + `skills/`), registers it via POST /agents (idempotent), and routes subsequent `run_antigravity_task` calls at the named agent. Re-uses the `example_agent/` folder from `cookbook/frameworks/antigravity/`.
+**Description:** `AntigravityTools(agent_directory=...)` parses a local agent folder (`agent.yaml` + `AGENTS.md` + `workspace/` + `skills/`), registers it via POST /agents (idempotent), and routes subsequent `run_antigravity_task` calls at the named agent. Re-uses the `example_agent/` folder from `cookbook/16_frameworks/antigravity/`.
 
 **Result:** Unit tests pass for the new constructor path (register=False parse-only, register=True POSTs, 409 = success, agent= / default_sources= conflict validation, required-key validation, run_antigravity_task routes at the named agent post-load). Live cookbook awaiting partner key.
 

@@ -95,7 +95,7 @@ _BASE_CASES: tuple[Case, ...] = (
         agent=code_search,
         input="Which agents are registered in this AgentOS demo (cookbook/01_demo)?",
         criteria=(
-            "Identifies the demo agents (local-wiki, code-search; git-wiki and "
+            "Identifies the demo agents (context, local-wiki, code-search; git-wiki and "
             "notion-wiki when env-gated). May reference cookbook/01_demo/run.py as the source."
         ),
         expected_tool_calls=("query_codebase",),

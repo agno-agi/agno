@@ -2,9 +2,10 @@
 Agno Demo — AgentOS Entrypoint
 ===============================
 
-A demo AgentOS made of wiki agents.
+A demo AgentOS for keeping project records and working with wikis.
 
 Agents
+  Context      — keeps project priorities and decisions in local Markdown files
   LocalWiki    — read + write a local markdown wiki; ingest URLs or media
   GitWiki      — same agent, but the wiki is a git repo (env-gated)
   NotionWiki   — same agent, but the wiki is a Notion database (env-gated)
@@ -19,6 +20,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from agents.code_search import code_search, code_search_provider
+from agents.context import context
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
@@ -48,9 +50,9 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
             await notion_wiki_provider.aclose()
 
 
-# LocalWiki + CodeSearch are always on.
+# Context, LocalWiki and CodeSearch are always on.
 # GitWiki and NotionWiki are available when their backend credentials are set
-_agents = [local_wiki, code_search]
+_agents = [context, local_wiki, code_search]
 if git_wiki is not None:
     _agents.append(git_wiki)
 if notion_wiki is not None:
