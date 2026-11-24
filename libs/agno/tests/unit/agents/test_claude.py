@@ -1357,6 +1357,24 @@ async def test_retried_continuation_forks_again_from_the_anchor(scripted, tmp_db
     assert (await agent.aget_session("s")).session_data["claude_sdk_session_id"] == "fork-2"
 
 
+def test_rate_limit_error_is_not_retried_until_reset(fake_sdk):
+    from datetime import datetime, timedelta, timezone
+
+    from agno.agents.claude.agent import ClaudeRateLimitError
+
+    agent = ClaudeAgent(id="claude", retries=2)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    error = ClaudeRateLimitError(
+        "limit reached", resets_at=future, rate_limit_type="five_hour"
+    )
+    assert agent._is_retryable_error(error) is False
+    assert error.resets_at == future
+    assert error.rate_limit_type == "five_hour"
+
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert agent._is_retryable_error(ClaudeRateLimitError("expired", resets_at=past)) is True
+
+
 @pytest.mark.asyncio
 async def test_fork_failures_are_not_continuable_and_not_retried(fake_sdk):
     from agno.exceptions import RunNotContinuableError
