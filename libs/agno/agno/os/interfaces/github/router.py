@@ -16,6 +16,9 @@ from agno.os.interfaces.github.security import verify_signature
 from agno.utils.log import log_error, log_warning
 
 EventHandler = Callable[[GitHubEvent], Union[Optional[Dict[str, Any]], Awaitable[Optional[Dict[str, Any]]]]]
+# Takes the event name, the delivery id and the payload of a verified delivery, stores what it
+# becomes, and returns the answer for GitHub.
+TriggerDelivery = Callable[[str, str, Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
 
 class DeliveryLog:
@@ -73,12 +76,13 @@ async def _run(handler: EventHandler, event: GitHubEvent) -> Optional[Dict[str, 
 
 def attach_routes(
     router: APIRouter,
-    handler: EventHandler,
+    handler: Optional[EventHandler],
     secret: str,
     repositories: Collection[str],
     events: Collection[str],
     handle_bot_events: bool = False,
     deliveries: Optional[DeliveryLog] = None,
+    deliver: Optional[TriggerDelivery] = None,
 ) -> APIRouter:
     # Several GitHub interfaces can share an app on different prefixes; their operation ids must differ.
     op_suffix = (router.prefix.strip("/") or "root").replace("/", "_").replace("-", "_")
@@ -114,6 +118,22 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="The delivery is not JSON")
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="The delivery is not a JSON object")
+
+        if handler is None:
+            # No handler: the delivery goes to triggers. It is stored before it is answered, and
+            # the stored row is what makes a redelivery start nothing.
+            if deliver is None:
+                raise HTTPException(status_code=503, detail="No trigger is declared for this GitHub source")
+            try:
+                stored = await deliver(name, delivery_id, payload)
+            except HTTPException:
+                raise
+            except Exception as exc:
+                log_error(f"GitHub delivery {delivery_id} ({name}) could not be recorded: {exc}")
+                raise HTTPException(
+                    status_code=500, detail="The event could not be recorded; redeliver it from the webhook settings"
+                )
+            return JSONResponse(status_code=202, content=stored)
 
         event = parse_event(name, delivery_id, payload)
         reason = "the delivery names no repository" if event is None else None
