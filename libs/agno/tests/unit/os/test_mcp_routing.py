@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS, MCPConfig
+from agno.os import AgentOS, CORSConfig, MCPConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.public import PublicSurface
 from agno.os.public._limits import Admission
@@ -32,12 +32,13 @@ class Limiter:
 
 
 @asynccontextmanager
-async def client(*, host="mcp.example.com", mounted=False, **options):
-    surface = PublicSurface(mcp=True)
+async def client(*, host="mcp.example.com", mounted=False, origin_regex=None, enforce_origins=False, **options):
+    surface = PublicSurface(mcp=True, enforce_browser_origins=enforce_origins)
     limiter = Limiter()
     surface._limiter = limiter
     server = AgentOS(
         id="mcp-routing",
+        cors=CORSConfig(origin_regex=origin_regex),
         agents=[Agent(id="docs", telemetry=False)],
         db=PostgresDb(db_url="postgresql+psycopg://unused:unused@127.0.0.1:1/unused"),
         authorization=True,
@@ -151,11 +152,13 @@ async def test_unknown_and_duplicate_hosts_and_forwarding_headers():
 )
 def test_invalid_configuration(options):
     with pytest.raises(ValueError):
-        MCPConfig(**options)
+        MCPConfig(default_tools=True, **options)
 
 
 def test_transport_cannot_hide_rest_routes():
-    server = AgentOS(agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(path="/health"), telemetry=False)
+    server = AgentOS(
+        agents=[Agent(id="docs", telemetry=False)], mcp=MCPConfig(default_tools=True, path="/health"), telemetry=False
+    )
     with pytest.raises(ValueError, match="conflicts"):
         server.get_app()
 
@@ -185,7 +188,7 @@ def test_custom_oauth_routing_fails_before_serving_incorrect_metadata():
 
     server = AgentOS(
         agents=[Agent(id="docs", telemetry=False)],
-        mcp=MCPConfig(root_host="mcp.example.com"),
+        mcp=MCPConfig(default_tools=True, root_host="mcp.example.com"),
         mcp_auth=InMemoryOAuthProvider(base_url="https://mcp.example.com"),
         telemetry=False,
     )
@@ -206,7 +209,10 @@ def test_route_conflicts_respect_included_router_prefixes(prefix, path, conflict
 
     base.include_router(router, prefix=prefix)
     server = AgentOS(
-        agents=[Agent(id="docs", telemetry=False)], base_app=base, mcp=MCPConfig(path=path), telemetry=False
+        agents=[Agent(id="docs", telemetry=False)],
+        base_app=base,
+        mcp=MCPConfig(default_tools=True, path=path),
+        telemetry=False,
     )
     if conflict:
         with pytest.raises(ValueError, match="conflicts"):
@@ -265,3 +271,51 @@ async def test_host_check_is_scoped_to_mcp_routes_and_allows_underscores():
         # A malformed Host is only the MCP routes' problem.
         assert (await http.get("/health", headers={"host": "evil.example/x?y="})).status_code == 200
         assert (await http.get("/mcp/server-card", headers={"host": "evil.example/x?y="})).status_code == 400
+
+
+async def test_public_browser_policy_reaches_mcp_alias_and_error_headers():
+    origin = "https://docs-feature.example.com"
+    async with client(origin_regex=r"https://docs-[a-z]+\.example\.com", enforce_origins=True) as (http, limiter):
+        headers = {**HEADERS, "Origin": origin}
+        preflight = await http.options("/", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+        assert preflight.status_code == 200
+        response = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        assert "tools" in result(response)["result"]
+        assert response.headers["access-control-allow-origin"] == origin
+        bad = await http.post(
+            "/",
+            headers={**HEADERS, "Origin": origin + ".evil.test"},
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
+        assert bad.status_code == 400
+        assert "access-control-allow-origin" not in bad.headers
+        limiter.allowed = False
+        denied = await http.post("/", headers=headers, json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+        assert denied.status_code == 429
+        assert denied.headers["access-control-allow-origin"] == origin
+
+
+# The tool runner moves with the transport path the same way the card does, but it is never
+# admitted anonymously: this harness is a public-MCP deployment, where the protocol endpoint
+# is open and the runner still is not.
+
+
+async def test_tool_runner_is_not_public_on_a_public_mcp_deployment():
+    """Public MCP opens the transport, never the operator surface."""
+    async with client() as (http, _):
+        assert (await http.post("/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)).status_code == 401
+        # The transport itself stays anonymous, so the exemption is still in place.
+        assert (
+            await http.post("/", headers=HEADERS, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        ).status_code == 200
+
+
+async def test_tool_runner_follows_a_configured_transport_path():
+    """The route moves with ``path``; the canonical prefix stops answering."""
+    async with client(host="localhost", path="/api/rpc") as (http, _):
+        moved = await http.post("/api/rpc/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)
+        canonical = await http.post("/mcp/server/tools/echo/run", json={"arguments": {}}, headers=HEADERS)
+
+    # 401 rather than 404: the route exists at the configured path and is gated.
+    assert moved.status_code == 401
+    assert canonical.status_code == 404

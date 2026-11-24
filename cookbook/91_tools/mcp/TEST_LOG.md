@@ -1,5 +1,15 @@
 # Test Log
 
+### getyoutubetranscript.py
+
+**Status:** NOT RUN
+
+**Description:** Connects to GetYouTubeTranscript's production Streamable HTTP MCP endpoint through Agno's `MCPTools` with bearer authentication and runs a research task with OpenAI.
+
+**Result:** Not run end to end through Agno. Checked directly against the endpoint: `initialize` and `tools/list` succeed and list 13 tools (`get_youtube_transcript`, `search_youtube`, channel and playlist tools, `get_credits`); a `tools/call` with an invalid bearer token returns HTTP 401, and one without a token returns `invalid_token`. The example passes Python compilation; Ruff was not run.
+
+---
+
 ### magic_hour.py
 
 **Status:** PASS
@@ -42,5 +52,25 @@ the agent produced a grounded one-sentence answer about the repository.
 **Description:** Tests for this cookbook directory have not been executed yet in this workspace.
 
 **Result:** Add individual run results after executing examples.
+
+---
+
+### mem0.py, supabase.py
+
+**Status:** PASS (model only)
+
+**Description:** Moved off `o4-mini`, which OpenAI shut down on 2026-10-23, to `OpenAIResponses(id="gpt-5.6-terra")`. `OpenAIChat` rejects function tools for this model (`use /v1/responses or set reasoning_effort to 'none'`), so both examples switch to `OpenAIResponses`.
+
+**Result:** An async run with a function tool and `ReasoningTools` completes on `OpenAIResponses(id="gpt-5.6-terra")` and errors on `OpenAIChat`.
+
+---
+
+### graphiti.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. Ran against the Graphiti MCP server (`zepai/knowledge-graph-mcp`) on SSE at `localhost:8000/sse`.
+
+**Result:** The agent calls `add_memory`, `get_episodes`, `search_nodes` and `search_memory_facts` and answers.
 
 ---

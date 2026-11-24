@@ -17,7 +17,7 @@ from agno.learn.utils import (
     same_user,
 )
 from agno.os.auth import get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import assert_session_writable, get_scoped_user_id
 from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
 from agno.os.schema import (
     BadRequestResponse,
@@ -206,13 +206,24 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> LearningResponse:
         scoped_user_id = get_scoped_user_id(request)
-        if scoped_user_id is not None and body.user_id is not None and body.user_id != scoped_user_id:
-            raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
+        if scoped_user_id is not None:
+            if body.user_id is not None and body.user_id != scoped_user_id:
+                raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
+            # A scoped caller owns what it writes. Leaving user_id empty would create an
+            # ownerless (global) row that every user's agent reads and only an admin may
+            # change (see _enforce_user_scope): pin it to the caller instead of refusing.
+            body.user_id = scoped_user_id
 
         db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        if scoped_user_id is not None and body.session_id:
+            # A session-keyed learning (session_context) is read back by session id alone, so
+            # naming another user's session would inject into that user's next run. Same
+            # ownership predicate the run routes apply; the session must be the caller's.
+            await assert_session_writable(db, body.session_id, scoped_user_id)
 
         if (
             body.learning_type == "entity_memory"

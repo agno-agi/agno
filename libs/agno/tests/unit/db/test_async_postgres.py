@@ -67,6 +67,41 @@ async def test_get_or_create_table_creates_when_not_available_and_create_flag_se
 
 
 @pytest.mark.asyncio
+async def test_failed_table_creation_can_be_retried(async_postgres_db):
+    """A failed CREATE TABLE must not leave the table registered on MetaData."""
+    async_postgres_db.create_schema = False
+    attempts = {"create": 0}
+
+    async def run_sync(fn, *args, **kwargs):
+        attempts["create"] += 1
+        if attempts["create"] == 1:
+            raise OSError("temporary DDL outage")
+
+    conn = Mock(run_sync=run_sync)
+    begin_ctx = Mock(__aenter__=AsyncMock(return_value=conn), __aexit__=AsyncMock(return_value=None))
+    async_postgres_db.db_engine.begin = Mock(return_value=begin_ctx)
+
+    # Every index already exists, so only the table DDL goes through run_sync.
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock(return_value=Mock(scalar=Mock(return_value=1)))
+    async_postgres_db.async_session_factory = Mock(return_value=session)
+
+    with (
+        patch.object(AsyncPostgresDb, "table_exists", AsyncMock(return_value=False)),
+        patch.object(AsyncPostgresDb, "upsert_schema_version", AsyncMock()),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            await async_postgres_db._create_table("retry_table", "knowledge")
+
+        table = await async_postgres_db._create_table("retry_table", "knowledge")
+
+    assert table.name == "retry_table"
+    assert attempts["create"] == 2
+
+
+@pytest.mark.asyncio
 async def test_get_schedules_default_swallows_error(async_postgres_db, monkeypatch):
     """Test that get_schedules returns ([], 0) on DB failure by default"""
 
@@ -103,3 +138,40 @@ async def test_get_schedules_table_none_raises_under_flag(async_postgres_db, mon
     assert await async_postgres_db.get_schedules() == ([], 0)
     with pytest.raises(RuntimeError, match="schedules table unavailable"):
         await async_postgres_db.get_schedules(raise_on_error=True)
+
+
+def _session_raising(error: Exception) -> Mock:
+    """An async session factory whose execute() fails the way a live backend does."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.begin = Mock(return_value=session)
+    session.execute = AsyncMock(side_effect=error)
+    return Mock(return_value=session)
+
+
+@pytest.mark.asyncio
+async def test_delete_run_raises_on_a_backend_failure(async_postgres_db):
+    """False means the run was not found. A dropped connection must not say that."""
+    async_postgres_db._get_table = AsyncMock(return_value=Mock())
+    async_postgres_db.async_session_factory = _session_raising(OSError("server closed the connection"))
+
+    with pytest.raises(OSError, match="server closed"):
+        await async_postgres_db.delete_run("run-1")
+
+
+@pytest.mark.asyncio
+async def test_delete_run_still_returns_false_when_there_is_no_such_run(async_postgres_db):
+    """The meaning of False, pinned so it is not lost to the fix above."""
+    async_postgres_db._get_table = AsyncMock(return_value=None)
+
+    assert await async_postgres_db.delete_run("run-1") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_runs_raises_on_a_backend_failure(async_postgres_db):
+    async_postgres_db._get_table = AsyncMock(return_value=Mock())
+    async_postgres_db.async_session_factory = _session_raising(OSError("server closed the connection"))
+
+    with pytest.raises(OSError, match="server closed"):
+        await async_postgres_db.delete_runs(["run-1", "run-2"])

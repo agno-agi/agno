@@ -1229,6 +1229,21 @@ async def aget_chat_history_util(entity: Union["Agent", "Team"], session_id: str
     return session.get_chat_history()  # type: ignore
 
 
+def get_chat_history_json(
+    session: Union[AgentSession, TeamSession], num_chats: Optional[int] = None, team_id: Optional[str] = None
+) -> str:
+    """Serialize the last `num_chats` runs as user messages and assistant replies, oldest first.
+
+    System prompts, tool results and assistant turns that only carry tool calls are dropped.
+    `num_chats=None` returns every run; `num_chats <= 0` returns none.
+    """
+    import json
+
+    messages = session.get_messages(team_id=team_id, last_n_runs=num_chats, skip_roles=["system", "tool"])
+    history = [message.to_dict() for message in messages if message.role == "user" or message.content]
+    return json.dumps(history, ensure_ascii=False)
+
+
 def execute_instructions(
     instructions: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
@@ -1299,6 +1314,8 @@ async def aexecute_instructions(
     """Execute the instructions function."""
     import inspect
 
+    # Callable objects may provide an asynchronous counterpart for I/O-bound context.
+    instructions = getattr(instructions, "__acall__", instructions)
     signature = inspect.signature(instructions)
     instruction_args: Dict[str, Any] = {}
 
