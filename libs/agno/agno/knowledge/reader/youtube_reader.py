@@ -20,6 +20,11 @@ except ImportError:
 _ID_PATH_PREFIXES = ("shorts", "embed", "live", "v")
 
 
+def _is_host(host: str, domain: str) -> bool:
+    """Whether ``host`` is ``domain`` or one of its subdomains."""
+    return host == domain or host.endswith(f".{domain}")
+
+
 def extract_video_id(url: str) -> str:
     """The video id of a YouTube URL: ``watch?v=``, ``youtu.be``, ``/shorts/``, ``/embed/``,
     ``/live/`` and ``/v/``. Anything else falls back to the historical ``v=`` split, so a
@@ -27,10 +32,10 @@ def extract_video_id(url: str) -> str:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     segments = [segment for segment in parsed.path.split("/") if segment]
-    if host.endswith("youtu.be"):
+    if _is_host(host, "youtu.be"):
         if segments:
             return segments[0]
-    elif host.endswith("youtube.com") or host.endswith("youtube-nocookie.com"):
+    elif _is_host(host, "youtube.com") or _is_host(host, "youtube-nocookie.com"):
         if len(segments) > 1 and segments[0] in _ID_PATH_PREFIXES:
             return segments[1]
     video_ids = parse_qs(parsed.query).get("v")

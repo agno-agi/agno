@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.knowledge.document.base import Document
-from agno.knowledge.reader.youtube_reader import YouTubeReader
+from agno.knowledge.reader.youtube_reader import YouTubeReader, extract_video_id
 
 
 @pytest.fixture
@@ -142,6 +142,35 @@ def test_read_extracts_video_id_from_every_url_form(video_url, mock_transcript):
 
         assert documents[0].id == "youtube_test_video_id"
         assert documents[0].meta_data["video_id"] == "test_video_id"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://notyoutu.be/test_video_id",
+        "https://notyoutube.com/shorts/test_video_id",
+        "https://notyoutube-nocookie.com/embed/test_video_id",
+        "https://youtube.com.example.org/shorts/test_video_id",
+        "https://youtu.be.example.org/test_video_id",
+    ],
+)
+def test_extract_video_id_ignores_lookalike_domains(url):
+    assert extract_video_id(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtu.be/test_video_id",
+        "https://www.youtu.be/test_video_id",
+        "https://youtube.com/shorts/test_video_id",
+        "https://m.youtube.com/shorts/test_video_id",
+        "https://WWW.YouTube.com/live/test_video_id",
+        "https://www.youtube-nocookie.com/embed/test_video_id",
+    ],
+)
+def test_extract_video_id_accepts_exact_hosts_and_subdomains(url):
+    assert extract_video_id(url) == "test_video_id"
 
 
 def test_read_video_unicode_content():
