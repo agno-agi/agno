@@ -397,7 +397,7 @@ class ScheduleExecutor:
             )
             snapshot["company_routine_unscoped"] = unscoped
             snapshot["company_routine_id"] = schedule.id
-            snapshot["company_product_id"] = (payload.get("metadata") or {}).get("product_id")
+            snapshot["company_goal_id"] = (payload.get("metadata") or {}).get("goal_id")
             snapshot["company_routine"] = True
             has_authority = True
         elif snapshot is not None:

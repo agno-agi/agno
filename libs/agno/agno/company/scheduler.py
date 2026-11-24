@@ -14,12 +14,12 @@ class CompanyScheduleExecutor(ScheduleExecutor):
         self.schedule_db = schedule_db
 
     async def _call_endpoint(self, schedule: Schedule) -> Dict[str, Any]:
-        from agno.company.routines import _require_active_routine_product
+        from agno.company.routines import _require_active_routine_goal
 
         if schedule.managed_by == "company":
             try:
-                await _require_active_routine_product(
-                    self.company_db, (schedule.payload or {}).get("metadata", {}).get("product_id")
+                await _require_active_routine_goal(
+                    self.company_db, (schedule.payload or {}).get("metadata", {}).get("goal_id")
                 )
             except ValueError:
                 await _call(
@@ -27,7 +27,7 @@ class CompanyScheduleExecutor(ScheduleExecutor):
                     "update_schedule",
                     schedule.id,
                     enabled=False,
-                    disabled_reason="company_product_archived",
+                    disabled_reason="company_goal_archived",
                     **_preserve_updated_at(self.schedule_db, "update_schedule", schedule),
                 )
                 raise

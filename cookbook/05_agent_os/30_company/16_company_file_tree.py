@@ -3,16 +3,16 @@
 Super Agent and Mini Agent share one tree:
 
     wiki/                   agreed direction; a person confirms each change
-    products/<product-id>/  brief.md (confirmed), status.md and what agents found
+    goals/<goal-id>/  brief.md (confirmed), status.md and what agents found
     tasks/<task-id>/        what one Task was given and what it produced
     notes/                  Super Agent's own notes
 
-wiki/, products/ and tasks/ are stored in the Company database. notes/ is stored in
+wiki/, goals/ and tasks/ are stored in the Company database. notes/ is stored in
 the AgentOS database and is shared by everyone who talks to Super Agent, including
 when user isolation is on.
 
 This script makes the tool calls Super Agent would make in a chat: it saves a company
-page, writes a Product page, a note and a Task file, reads the Task file and the note
+page, writes a Goal page, a note and a Task file, reads the Task file and the note
 back through the API, and then prints what a Task's input loads. In a chat,
 save_company_page pauses until the person confirms the page and the change; here the
 script is that person.
@@ -56,15 +56,15 @@ if __name__ == "__main__":
         assert not files.functions["write_company_file"].requires_confirmation
 
         manager = CompanyManager(db)
-        product = manager.create(name="Documentation", purpose="Help developers")
-        project = manager.create_project(product_id=product["id"], name="Release")
+        goal = manager.create(name="Documentation", objective="Help developers")
+        project = manager.create_project(goal_id=goal["id"], name="Release")
         task = manager.create_task(
-            product_id=product["id"],
+            goal_id=goal["id"],
             project_id=project["id"],
             title="Draft release notes",
             brief="Summarize the reviewed changes.",
         )
-        product_folder = "products/" + product["id"]
+        goal_folder = "goals/" + goal["id"]
         task_folder = "tasks/" + task["id"]
         # Trusted application code supplies the context; identity is never a model argument.
         context = RunContext(run_id="demo", session_id="planning", user_id="alice")
@@ -81,11 +81,11 @@ if __name__ == "__main__":
             expected_version=0,
             new_text="# Priorities\n\n1. Ship the 3.2 release.",
         )
-        # Chat step: "The docs are for Python developers. Put that in the Product brief."
-        brief = call("read_company_file", path=product_folder + "/brief.md")
+        # Chat step: "The docs are for Python developers. Put that in the Goal brief."
+        brief = call("read_company_file", path=goal_folder + "/brief.md")
         call(
             "save_company_page",
-            path=product_folder + "/brief.md",
+            path=goal_folder + "/brief.md",
             expected_version=brief["version"],
             new_text="The docs are written for Python developers.",
         )
@@ -93,7 +93,7 @@ if __name__ == "__main__":
         try:
             call(
                 "save_company_page",
-                path=product_folder + "/brief.md",
+                path=goal_folder + "/brief.md",
                 expected_version=brief["version"],
                 new_text="A change against the old version.",
             )
@@ -115,10 +115,10 @@ if __name__ == "__main__":
         else:
             raise AssertionError("The wiki changed without a confirmation")
 
-        # What agents found about a Product goes under the Product. It is read on request.
+        # What agents found about a Goal goes under the Goal. It is read on request.
         call(
             "write_company_file",
-            path=product_folder + "/research.md",
+            path=goal_folder + "/research.md",
             content="# Research\n\nThe install page has the most exits.\n",
             expected_version=0,
         )
@@ -136,12 +136,12 @@ if __name__ == "__main__":
         )
 
         print("Top folders:", call("list_company_files")["folders"])
-        print("Products:", call("list_company_files", folder="products")["folders"])
-        for folder in ("wiki", product_folder, task_folder, "notes"):
+        print("Goals:", call("list_company_files", folder="goals")["folders"])
+        for folder in ("wiki", goal_folder, task_folder, "notes"):
             listed = call("list_company_files", folder=folder)["files"]
             print(folder + ":", [row["path"].split("/")[-1] for row in listed])
         found = call("search_company_files", query="install page")["matches"]
-        assert [match["path"] for match in found] == [product_folder + "/research.md"]
+        assert [match["path"] for match in found] == [goal_folder + "/research.md"]
 
         # A person reads a Task's files and the notes through the API, as the Company
         # pages do. With authorization on, a Task's files ask for tasks:read and
@@ -156,14 +156,14 @@ if __name__ == "__main__":
         note = client.get("/company/notes/follow-ups.md").json()
         assert note["content"] == "Ask about the docs search next week.\n"
 
-        # A Task's input carries the Product's brief and status and the company wiki.
+        # A Task's input carries the Goal's brief and status and the company wiki.
         # The queue builds it when the Task starts. Everything else is read on request.
         payload = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]))))
         loaded = [page["file"] for page in payload["wiki"]]
         print("A Task's input loads:", loaded)
         assert loaded == [
-            product_folder + "/brief.md",
-            product_folder + "/status.md",
+            goal_folder + "/brief.md",
+            goal_folder + "/status.md",
             "wiki/brief.md",
             "wiki/status.md",
             "wiki/priorities.md",

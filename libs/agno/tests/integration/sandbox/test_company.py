@@ -121,14 +121,14 @@ async def service(request, tmp_path):
 
 
 async def draft(client):
-    product = (await client.post("/company/products", json={"name": "Repository"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Change"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Repository"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Change"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
     response = await client.post(
         "/company/tasks",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "project_id": project["id"],
             "title": "Inspect README",
             "brief": "Read README from the repository",
@@ -148,7 +148,7 @@ async def accept(client, task, executor="engineer"):
 async def source(client, task, reference=REPOSITORY):
     response = await client.post(
         "/company/sources",
-        json={"product_id": task["product_id"], "type": "git", "reference": reference, "config": {"branch": "master"}},
+        json={"goal_id": task["goal_id"], "type": "git", "reference": reference, "config": {"branch": "master"}},
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -184,7 +184,7 @@ async def test_checkout_session_reuse_and_concurrent_start(service, tmp_path):
     assert sorted(response.status_code for response in starts) == [202, 409], [r.text for r in starts]
     if starts[0].status_code == 409:
         task, other = other, task
-        src = (await client.get("/company/sources", params={"product_id": task["product_id"]})).json()["data"][0]
+        src = (await client.get("/company/sources", params={"goal_id": task["goal_id"]})).json()["data"][0]
         path = "/company/tasks/" + task["id"] + "/runs"
     blocked = await client.post("/company/tasks/" + other["id"] + "/runs")
     assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text

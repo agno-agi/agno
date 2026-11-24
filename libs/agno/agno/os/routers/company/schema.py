@@ -1,4 +1,4 @@
-"""Product request and response schemas."""
+"""Goal request and response schemas."""
 
 from typing import Any, Dict, List, Literal, Optional
 
@@ -7,9 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from agno.registry._reserved import MINI_AGENT_ID
 
 
-class ProductCreate(BaseModel):
+class GoalCreate(BaseModel):
     name: str = Field(..., min_length=1)
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
     @field_validator("name")
@@ -20,9 +20,9 @@ class ProductCreate(BaseModel):
         return value
 
 
-class ProductUpdate(BaseModel):
+class GoalUpdate(BaseModel):
     name: Optional[str] = None
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
     @field_validator("name")
@@ -46,15 +46,15 @@ class ProjectCounts(BaseModel):
     tasks: TaskCounts = Field(default_factory=TaskCounts)
 
 
-class ProductCounts(ProjectCounts):
+class GoalCounts(ProjectCounts):
     projects: int = Field(0, description="Non-archived Projects in proposed or active status")
 
 
-class ProductResponse(BaseModel):
-    counts: ProductCounts = Field(default_factory=ProductCounts)
+class GoalResponse(BaseModel):
+    counts: GoalCounts = Field(default_factory=GoalCounts)
     id: str
     name: str
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
@@ -68,7 +68,7 @@ TaskStatus = Literal["backlog", "ready", "in_progress", "in_review", "done", "ca
 
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    goal_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -97,7 +97,7 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(BaseModel):
     counts: ProjectCounts = Field(default_factory=ProjectCounts)
-    product_id: str = Field(..., min_length=1)
+    goal_id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -136,7 +136,7 @@ class TaskCreate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    goal_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: str = Field(..., min_length=1)
@@ -201,7 +201,7 @@ class TaskResponse(BaseModel):
 
         return public_task({"transitions": value})["transitions"]
 
-    product_id: str = Field(..., min_length=1)
+    goal_id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: Optional[str] = None

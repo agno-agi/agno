@@ -45,7 +45,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "component_links_table",
         "learnings_table",
         "schedules_table",
-        "products_table",
+        "goals_table",
         "sources_table",
         "projects_table",
         "tasks_table",

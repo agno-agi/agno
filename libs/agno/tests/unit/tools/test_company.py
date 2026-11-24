@@ -59,15 +59,15 @@ def test_optional_schema_describes_null_and_hides_identity(tmp_path, use_async, 
 async def test_source_capabilities_guide_reads_without_changing_saved_sources(tmp_path, use_async, processed):
     db = SqliteDb(db_file=str(tmp_path / "capabilities.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     path = tmp_path / "README.md"
     path.write_text("Local repository evidence")
     sources = [
-        manager.create_source(product_id=product["id"], type="git", reference=str(tmp_path)),
-        manager.create_source(product_id=product["id"], type="markdown", reference=str(path)),
-        manager.create_source(product_id=product["id"], type="website", reference="https://docs.agno.com"),
+        manager.create_source(goal_id=goal["id"], type="git", reference=str(tmp_path)),
+        manager.create_source(goal_id=goal["id"], type="markdown", reference=str(path)),
+        manager.create_source(goal_id=goal["id"], type="website", reference="https://docs.agno.com"),
         manager.create_source(
-            product_id=product["id"],
+            goal_id=goal["id"],
             type="git",
             reference="https://github.com/agno-agi/agno",
             credential_ref="REPO_TOKEN",
@@ -88,7 +88,7 @@ async def test_source_capabilities_guide_reads_without_changing_saved_sources(tm
     try:
         rows = []
         for page in (1, 2):
-            result = await invoke("list_product_sources", product_id=product["id"], limit=2, page=page)
+            result = await invoke("list_goal_sources", goal_id=goal["id"], limit=2, page=page)
             assert result["meta"]["total_count"] == 4
             assert result["meta"]["page"] == page
             rows.extend(result["data"])
@@ -105,10 +105,10 @@ async def test_source_capabilities_guide_reads_without_changing_saved_sources(tm
             assert manager.get_source(source["id"]) == source
 
         # Capabilities guide selection; they neither grant access nor bypass the reader.
-        content = await invoke("read_product_source", source_id=sources[0]["id"], path="README.md")
+        content = await invoke("read_goal_source", source_id=sources[0]["id"], path="README.md")
         assert content["content"] == "Local repository evidence"
         with pytest.raises(ValueError, match="Git URL Sources are for sandbox checkout"):
-            await invoke("read_product_source", source_id=remote["id"])
+            await invoke("read_goal_source", source_id=remote["id"])
     finally:
         db.close()
 
@@ -122,10 +122,10 @@ async def test_source_capabilities_guide_reads_without_changing_saved_sources(tm
 async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, name):
     db = SqliteDb(db_file=str(tmp_path / "tools.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK", user_id="alice")
-    project = manager.create_project(product_id=product["id"], name="Release")
+    goal = manager.create(name="SDK", user_id="alice")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
-    manager.create_task(product_id=product["id"], title="Existing task", project_id=project["id"])
+    manager.create_task(goal_id=goal["id"], title="Existing task", project_id=project["id"])
     manager.log_decision(decision="Review before shipping", agent_id="planner", session_id="prior")
     tools = CompanyTools(db)
     context = RunContext(run_id="run", session_id="session", user_id="alice")
@@ -144,7 +144,7 @@ async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, na
     else:
         fn = raw
     required = (
-        {"product_id": product["id"], "project_id": project["id"], "title": "Proposed"}
+        {"goal_id": goal["id"], "project_id": project["id"], "title": "Proposed"}
         if name == "propose_company_task"
         else {}
     )
@@ -172,14 +172,14 @@ async def test_empty_optionals_equal_omission(tmp_path, use_async, processed, na
 async def test_empty_optionals_do_not_weaken_required_validation(tmp_path, use_async):
     tools = CompanyTools(SqliteDb(db_file=str(tmp_path / "validation.db")))
     manager = CompanyManager(tools.db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     fn = tools.apropose_company_task if use_async else tools.propose_company_task
     with pytest.raises(ValueError, match="title"):
-        result = fn(product["id"], "", project_id="project")
+        result = fn(goal["id"], "", project_id="project")
         if inspect.isawaitable(result):
             await result
     with pytest.raises(ValueError):
-        result = fn(product["id"], "Valid title", project_id=" ")
+        result = fn(goal["id"], "Valid title", project_id=" ")
         if inspect.isawaitable(result):
             await result
     tools.db.close()
@@ -202,10 +202,10 @@ async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_
         return await result if inspect.isawaitable(result) else result
 
     try:
-        product = await call(manager.create, name="SDK")
-        project = await call(manager.create_project, product_id=product["id"], name="Release")
+        goal = await call(manager.create, name="SDK")
+        project = await call(manager.create_project, goal_id=goal["id"], name="Release")
         project = await call(manager.get_project, project["id"])
-        task = json.loads(await call(propose, product["id"], "Document release", project_id=project["id"]))
+        task = json.loads(await call(propose, goal["id"], "Document release", project_id=project["id"]))
         assert task["status"] == "backlog" and task["project_id"] == project["id"]
         current = await call(manager.get_project, project["id"])
         assert current["status"] == "proposed" and current["counts"]["tasks"]["backlog"] == 1
@@ -219,14 +219,14 @@ async def test_propose_task_allows_backlog_before_project_approval(tmp_path, db_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("processed", [False, True])
-@pytest.mark.parametrize("name", ["list_product_sources", "read_product_source"])
+@pytest.mark.parametrize("name", ["list_goal_sources", "read_goal_source"])
 async def test_source_optionals_equal_omission(tmp_path, use_async, processed, name):
     db = SqliteDb(db_file=str(tmp_path / "sources.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK")
+    goal = manager.create(name="SDK")
     path = tmp_path / "source.md"
     path.write_text("Observed content")
-    source = manager.create_source(product_id=product["id"], type="markdown", reference=str(path))
+    source = manager.create_source(goal_id=goal["id"], type="markdown", reference=str(path))
     tools = CompanyTools(db)
     context = RunContext(run_id="scan", session_id="session", user_id="alice")
     raw = getattr(tools, ("a" if use_async else "") + name)
@@ -242,7 +242,7 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
         function = (tools.get_async_functions() if use_async else tools.functions)[name]
         function.process_entrypoint()
         fn = function.entrypoint
-    required = {"product_id": product["id"]} if name == "list_product_sources" else {"source_id": source["id"]}
+    required = {"goal_id": goal["id"]} if name == "list_goal_sources" else {"source_id": source["id"]}
 
     async def invoke(options):
         result = fn(**required, **options, _agno_run_context=context)
@@ -252,7 +252,7 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
     for argument in optional:
         assert await invoke({argument: ""}) == expected, argument
         assert await invoke({argument: None}) == expected, argument
-    if name == "read_product_source":
+    if name == "read_goal_source":
         selected = await invoke({"path": path.name, "max_chars": None, "content_offset": ""})
         assert selected["content"] == "Observed content"
     db.close()
@@ -262,14 +262,14 @@ async def test_source_optionals_equal_omission(tmp_path, use_async, processed, n
 @pytest.mark.parametrize("enabled", [True, False, None, ""])
 async def test_create_routine_enabled_option(tmp_path, use_async, enabled):
     db = SqliteDb(db_file=str(tmp_path / "routine.db"))
-    product = CompanyManager(db).create(name="SDK", user_id="alice")
+    goal = CompanyManager(db).create(name="SDK", user_id="alice")
     reviewer = Agent(id="reviewer", telemetry=False)
     tools = CompanyTools(db, registry=Registry(agents=[reviewer]))
-    function = (tools.get_async_functions() if use_async else tools.functions)["create_product_routine"]
+    function = (tools.get_async_functions() if use_async else tools.functions)["create_goal_routine"]
     function.process_entrypoint(strict=True)
     try:
         result = function.entrypoint(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="review",
             executor_type="agent",
             executor_id="reviewer",
@@ -294,9 +294,9 @@ async def test_task_status_filter_accepts_labels(tmp_path, use_async, label):
     # "Backlog" used to match nothing, and the empty list read as "no Backlog Tasks".
     db = SqliteDb(db_file=str(tmp_path / "status.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK")
-    project = manager.create_project(product_id=product["id"], name="Release")
-    task = manager.create_task(product_id=product["id"], title="Publish wheels", project_id=project["id"])
+    goal = manager.create(name="SDK")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
+    task = manager.create_task(goal_id=goal["id"], title="Publish wheels", project_id=project["id"])
     tools = CompanyTools(db)
     listed = await tools.alist_company_tasks(status=label) if use_async else tools.list_company_tasks(status=label)
     titles = [row["title"] for row in json.loads(listed)["data"]]

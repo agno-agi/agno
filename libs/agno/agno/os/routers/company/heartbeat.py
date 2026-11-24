@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from agno.company.declarations import AutoAccept, Product, Routine, Source
+from agno.company.declarations import AutoAccept, Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
 from agno.db.base import AsyncBaseDb
@@ -25,12 +25,12 @@ from agno.scheduler.cron import is_on_demand
 
 
 class SourceCreate(Source):
-    product_id: str
+    goal_id: str
     id: None = None
 
 
 class RoutineCreate(Routine):
-    product_id: str
+    goal_id: str
 
 
 class RoutineLastRun(BaseModel):
@@ -94,7 +94,7 @@ class RoutineUpdate(BaseModel):
         return AutoAccept() if value is True else value
 
 
-class Setup(Product):
+class Setup(Goal):
     id: None = None
     user_id: None = None
 
@@ -136,10 +136,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc))
 
-    async def product(product_id, include_deleted=False):
-        row = await call(manager.get, product_id, include_deleted=include_deleted)
+    async def goal(goal_id, include_deleted=False):
+        row = await call(manager.get, goal_id, include_deleted=include_deleted)
         if row is None:
-            raise HTTPException(404, "Product not found")
+            raise HTTPException(404, "Goal not found")
         return row
 
     async def routine(routine_id, request, include_deleted=False):
@@ -150,8 +150,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await call(handlers["get_schedule"], routine_id, request)
         if row.get("managed_by") != "company":
             raise HTTPException(404, "Routine not found")
-        if not (row.get("payload") or {}).get("metadata", {}).get("product_id"):
-            raise HTTPException(409, "Routine is missing its Product metadata")
+        if not (row.get("payload") or {}).get("metadata", {}).get("goal_id"):
+            raise HTTPException(409, "Routine is missing its Goal metadata")
         if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
             raise HTTPException(404, "Routine not found")
         return row
@@ -253,7 +253,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.get("/sources")
     async def list_sources(
         request: Request,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
@@ -261,7 +261,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     ):
         get_scoped_user_id(request)
         rows, total = await call(
-            manager.list_sources, product_id=product_id, limit=limit, page=page, include_deleted=include_deleted
+            manager.list_sources, goal_id=goal_id, limit=limit, page=page, include_deleted=include_deleted
         )
         return page_response(rows, total, limit, page)
 
@@ -283,7 +283,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await call(manager.get_source, source_id, include_deleted=True)
         if row is None:
             raise HTTPException(404, "Source not found")
-        await product(row["product_id"])
+        await goal(row["goal_id"])
         if row.get("deleted_at") is None:
             raise HTTPException(409, "Source is not archived")
         return await call(manager.restore_source, source_id)
@@ -291,7 +291,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.get("/routines", response_model=PaginatedResponse[RoutineResponse])
     async def list_routines(
         request: Request,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
@@ -307,8 +307,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             row.to_dict()
             for row in rows
             if row.managed_by == "company"
-            and (row.payload or {}).get("metadata", {}).get("product_id")
-            and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
+            and (row.payload or {}).get("metadata", {}).get("goal_id")
+            and (goal_id is None or (row.payload or {}).get("metadata", {}).get("goal_id") == goal_id)
             and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
         ]
         selected = sort_routines(selected, sort_by, sort_order)
@@ -334,15 +334,15 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             grantor = grant.get("user_id")
             if getattr(request.state, "user_id", None) != grantor:
                 raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
-        await product(row["payload"]["metadata"]["product_id"])
+        await goal(row["payload"]["metadata"]["goal_id"])
         if not row["enabled"]:
             raise HTTPException(409, "Routine is paused")
         return await call(handlers["trigger_schedule"], routine_id, request)
 
     @router.post("/routines", status_code=201, response_model=RoutineResponse)
     async def create_routine(body: RoutineCreate, request: Request, _: bool = Depends(auth)):
-        await product(body.product_id)
-        fields = await call(_schedule_fields, body.product_id, body, agent_os.registry, agent_os=agent_os)
+        await goal(body.goal_id)
+        fields = await call(_schedule_fields, body.goal_id, body, agent_os.registry, agent_os=agent_os)
         if body.auto_accept:
             from agno.company.routines import _authorize_auto_accept, _require_sent_executor_type
 
@@ -355,7 +355,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             fields["payload"]["metadata"]["initial_enabled"] = False
         schedule = await call(ScheduleCreate, **fields)
         row = await call(handlers["create_schedule"], schedule, request)
-        await call(db.add_product_routine, body.product_id, row["id"])
+        await call(db.add_goal_routine, body.goal_id, row["id"])
         if body.enabled:
             row = await call(handlers["enable_schedule"], row["id"], request)
         else:
@@ -366,7 +366,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"])
+        await goal(row["payload"]["metadata"]["goal_id"])
         updates: Dict[str, Any] = body.model_dump(exclude_unset=True)
         if any(value is None for key, value in updates.items() if key != "cron_expr"):
             raise HTTPException(422, "Routine fields cannot be null")
@@ -403,9 +403,9 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             # The request sets auto_accept, so the stored grant is not carried into the new payload.
             kept = {key: value for key, value in row["payload"].items() if key != "_agno_company_acceptance"}
             updates["payload"] = {**kept, "metadata": {**row["payload"]["metadata"], "auto_accept": policy}}
-        product_id = row["payload"]["metadata"]["product_id"]
+        goal_id = row["payload"]["metadata"]["goal_id"]
         if "name" in updates:
-            updates["name"] = product_id + "." + updates["name"]
+            updates["name"] = goal_id + "." + updates["name"]
         if "executor_type" in updates or "executor_id" in updates:
             # Cancel reaches a live run through the Routine's executor, so the executor stays until it ends.
             if await running_runs(row, request):
@@ -430,7 +430,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
                 raise HTTPException(422, "Routine instructions must be nonempty")
             updates["payload"] = {
                 **updates.get("payload", row["payload"]),
-                "message": _routine_message(row["payload"]["metadata"]["product_id"], updates.pop("instructions")),
+                "message": _routine_message(row["payload"]["metadata"]["goal_id"], updates.pop("instructions")),
             }
         update = await call(ScheduleUpdate, **updates)
         return await routine_response(await call(handlers["update_schedule"], routine_id, update, request))
@@ -442,7 +442,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines/{routine_id}/pause", response_model=RoutineResponse)
     async def pause_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
         if is_on_demand(row["cron_expr"]):
             raise HTTPException(409, "On-demand Routines cannot be paused")
         return await routine_response(await call(handlers["disable_schedule"], routine_id, request))
@@ -450,8 +450,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines/{routine_id}/resume", response_model=RoutineResponse)
     async def resume_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        product_id = row["payload"]["metadata"]["product_id"]
-        await product(product_id)
+        goal_id = row["payload"]["metadata"]["goal_id"]
+        await goal(goal_id)
         # A disabled on-demand routine still resumes: that is its only checked way back to usable.
         if is_on_demand(row["cron_expr"]) and row["enabled"]:
             raise HTTPException(409, "On-demand Routine is already enabled")
@@ -461,13 +461,13 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             await call(
                 _routine_executor_endpoint, row["target_type"], row["target_id"], agent_os.registry, agent_os=agent_os
             )
-        await call(db.add_product_routine, product_id, routine_id)
+        await call(db.add_goal_routine, goal_id, routine_id)
         return await routine_response(await call(handlers["enable_schedule"], routine_id, request))
 
     @router.post("/routines/{routine_id}/cancel")
     async def cancel_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
         runs = [run for run in await running_runs(row, request, include_outlived=True) if run.get("run_id")]
         if not runs:
             raise HTTPException(409, "Routine has no running run")
@@ -513,7 +513,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines/{routine_id}/archive", response_model=RoutineResponse)
     async def archive_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request)
-        await product(row["payload"]["metadata"]["product_id"], include_deleted=True)
+        await goal(row["payload"]["metadata"]["goal_id"], include_deleted=True)
         if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
@@ -521,27 +521,27 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         await call(handlers["disable_schedule"], routine_id, request)
         metadata = {**row["payload"]["metadata"], "deleted_at": int(time.time())}
         await call(schedule_db.update_schedule, routine_id, payload={**row["payload"], "metadata": metadata})
-        # An archived Routine leaves the Product's routine_ids, so Product Routine counts skip it.
-        await call(manager._unlink_routine, metadata["product_id"], routine_id)
+        # An archived Routine leaves the Goal's routine_ids, so Goal Routine counts skip it.
+        await call(manager._unlink_routine, metadata["goal_id"], routine_id)
         return await routine_response(await routine(routine_id, request, include_deleted=True))
 
     @router.delete("/routines/{routine_id}", status_code=204)
     async def delete_routine(routine_id: str, request: Request, _: bool = Depends(auth)) -> None:
         row = await routine(routine_id, request, include_deleted=True)
-        product_id = row["payload"]["metadata"]["product_id"]
-        await product(product_id, include_deleted=True)
+        goal_id = row["payload"]["metadata"]["goal_id"]
+        await goal(goal_id, include_deleted=True)
         if await running_runs(row, request):
             raise HTTPException(
                 409, f"Wait for the run to stop, or cancel it with POST /company/routines/{routine_id}/cancel"
             )
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
-        await call(manager._unlink_routine, product_id, routine_id)
+        await call(manager._unlink_routine, goal_id, routine_id)
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):
         row = await routine(routine_id, request, include_deleted=True)
-        await product(row["payload"]["metadata"]["product_id"])
+        await goal(row["payload"]["metadata"]["goal_id"])
         metadata = dict(row["payload"]["metadata"])
         if metadata.pop("deleted_at", None) is None:
             raise HTTPException(409, "Routine is not archived")
@@ -549,7 +549,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         # An on-demand Routine has no schedule to pause, so restore resumes it; a scheduled one stays paused.
         if is_on_demand(row["cron_expr"]):
             return await resume_routine(routine_id, request)
-        await call(db.add_product_routine, metadata["product_id"], routine_id)
+        await call(db.add_goal_routine, metadata["goal_id"], routine_id)
         return await routine_response(await routine(routine_id, request))
 
     @router.get("/routines/{routine_id}/runs")
@@ -565,7 +565,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
     @router.post("/setup", status_code=201)
     async def setup(body: Setup, request: Request, response: Response, _: bool = Depends(auth)):
-        from agno.company.bootstrap import arehydrate_product
+        from agno.company.bootstrap import arehydrate_goal
         from agno.os.routers.run_permissions import _require_endpoint_permission
         from agno.run.authorization import current_authorization
 
@@ -588,12 +588,12 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         else:
             rows, _ = await call(manager.list, limit=1, include_deleted=True)
             if rows:
-                raise HTTPException(409, "Company setup requires a deployment without Products")
-        product_declaration = Product(**{**body.model_dump(), "id": "company-setup", "user_id": owner})
+                raise HTTPException(409, "Company setup requires a deployment without Goals")
+        goal_declaration = Goal(**{**body.model_dump(), "id": "company-setup", "user_id": owner})
         return await call(
-            arehydrate_product,
+            arehydrate_goal,
             db,
-            product_declaration,
+            goal_declaration,
             agent_os.registry,
             schedule_db=schedule_db,
             agent_os=agent_os,

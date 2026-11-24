@@ -41,21 +41,21 @@ Changing the port also updates the scheduler's callback URL. Source paths are
 relative to this example's file, so launching from another directory still
 reads the same `feedback/` folder.
 
-If this Product already exists, restarting with the updated example preserves
+If this Goal already exists, restarting with the updated example preserves
 its saved Routine instructions. Follow [Update saved Routine instructions](../README.md#update-saved-routine-instructions)
 to allow Backlog proposals before approval while keeping acceptance gated in
 **review-feedback** through the existing Routine PATCH
 endpoint, retaining your customizations. Do this between runs and verify the saved
-text before continuing; there is no need to delete the Product or its history.
+text before continuing; there is no need to delete the Goal or its history.
 
 ## Test in the UI
 
 1. Sign in at [AgentOS](https://os.agno.com) and connect a local AgentOS endpoint
    at `http://127.0.0.1:7777` (or your configured port). This local example has
    no AgentOS authentication token configured.
-2. Open Company and the **Customer Feedback** Product. Inspect its purpose,
+2. Open Company and the **Customer Feedback** Goal. Inspect its objective,
    Source, Projects and Routines.
-3. Run **review-feedback** from the Product's Routines. You can trigger it now;
+3. Run **review-feedback** from the Goal's Routines. You can trigger it now;
    the daily schedule is 09:00 UTC while the server is running.
 4. On a fresh instance, inspect the proposed Projects and their Backlog Task drafts.
    The sample evidence contains two
@@ -81,7 +81,7 @@ runs Routines and can only propose work. Feedback Analyst executes accepted Task
 the built-in managers cannot be selected as business Task executors.
 `auto_accept=False` keeps discovery from authorizing execution.
 
-Run one review at a time for a Product. Overlapping manual or scheduled reviews
+Run one review at a time for a Goal. Overlapping manual or scheduled reviews
 can create duplicate proposals: separate runs may choose different issue keys
 before either sees the other's work. Check existing run status before triggering
 another review, and inspect proposals before accepting them.

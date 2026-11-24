@@ -24,7 +24,7 @@ class Source(BaseModel):
 
 class AcceptanceScope(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    product_ids: Optional[List[str]] = None
+    goal_ids: Optional[List[str]] = None
     project_ids: Optional[List[Optional[str]]] = None
 
 
@@ -144,11 +144,11 @@ class Routine(BaseModel):
         return self
 
 
-class Product(BaseModel):
+class Goal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: Optional[str] = None
     name: str = Field(min_length=1)
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     user_id: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
     sources: List[Source] = Field(default_factory=list)
@@ -159,7 +159,7 @@ class CompanyDeclarations(BaseModel):
     """Validated YAML declarations; runtime dependencies are supplied in code."""
 
     model_config = ConfigDict(extra="forbid")
-    products: List[Product] = Field(default_factory=list)
+    goals: List[Goal] = Field(default_factory=list)
 
 
 class IntakeProposal(BaseModel):

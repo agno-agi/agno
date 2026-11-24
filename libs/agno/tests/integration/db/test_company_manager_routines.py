@@ -79,19 +79,19 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
         authority = current_authorization()
         if not isinstance(authority, _RoutineAuthorization):
             raise RuntimeError("Routine authority lost at queue/delegation boundary")
-        observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.product_id))
+        observed.append((_agno_run_context.user_id, authority.context.principal_id, authority.goal_id))
         return "Restored authority observed"
 
     os._mini_agent.tools.routine.append(observe_queue_authority)
     try:
-        product = await _call(manager, "create", name="Docs", user_id="alice")
-        project = await _call(manager, "create_project", product_id=product["id"], name="Guides", user_id="alice")
+        goal = await _call(manager, "create", name="Docs", user_id="alice")
+        project = await _call(manager, "create_project", goal_id=goal["id"], name="Guides", user_id="alice")
         await _manager_call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
         path = tmp_path / "source.md"
         path.write_text("The released API needs a guide.")
-        source = await _call(manager, "create_source", product_id=product["id"], type="markdown", reference=str(path))
+        source = await _call(manager, "create_source", goal_id=goal["id"], type="markdown", reference=str(path))
         os._mini_agent.model = ScriptedModel(
-            [("observe_queue_authority", {})] + review_steps(product, project, source, path)
+            [("observe_queue_authority", {})] + review_steps(goal, project, source, path)
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             jobs = []
@@ -115,7 +115,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
             response = await client.post(
                 "/company/routines",
                 headers=headers(),
-                json={"product_id": product["id"], **declaration().model_dump()},
+                json={"goal_id": goal["id"], **declaration().model_dump()},
             )
             assert response.status_code == 201, response.text
             row = queue_db.get_schedule(response.json()["id"])
@@ -123,12 +123,12 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
             assert result["status"] == "success", result
             assert len(jobs) == 1 and jobs[0]["status"] == "completed"
             assert jobs[0]["user_id"] == "alice"
-            assert observed == [("alice", "alice", product["id"])]
-            tasks, total = await _call(db, "get_tasks", product_id=product["id"])
+            assert observed == [("alice", "alice", goal["id"])]
+            tasks, total = await _call(db, "get_tasks", goal_id=goal["id"])
             assert total == 1 and tasks[0]["status"] == "backlog"
             assert tasks[0]["user_id"] == "alice" and tasks[0]["routine_id"] == row["id"]
             assert tasks[0]["evidence"][0]["content_hash"]
-            status = await _call(manager, "read_wiki", product["id"], "status.md")
+            status = await _call(manager, "read_wiki", goal["id"], "status.md")
             assert "API guide proposed" in status.content
     finally:
         if db is not queue_db:
@@ -146,7 +146,7 @@ async def test_manager_review_through_durable_queue(tmp_path, backend, mode):
 async def test_chat_declarations_name_mini_agent(db, use_async, mode, tmp_path):
     from agno.agent import Agent
     from agno.tools.company import CompanyTools
-    from tests.integration.db.test_company_chat_products import context, invoke
+    from tests.integration.db.test_company_chat_goals import context, invoke
 
     if isinstance(db, AsyncBaseDb) and not use_async:
         pytest.skip("Sync tools require a sync database")
@@ -165,27 +165,27 @@ async def test_chat_declarations_name_mini_agent(db, use_async, mode, tmp_path):
         with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
             await invoke(
                 tools,
-                "create_company_product",
+                "create_company_goal",
                 use_async,
                 name="Coordinated",
                 routines=[declaration(kind, cid).model_dump()],
                 _agno_run_context=context(),
             )
-    assert (await _call(db, "get_products"))[1] == 0
+    assert (await _call(db, "get_goals"))[1] == 0
     kind, cid = "agent", MINI_AGENT_ID
     routine = declaration(kind, cid).model_dump()
-    product = await invoke(
-        tools, "create_company_product", use_async, name="Docs", routines=[routine], _agno_run_context=context()
+    goal = await invoke(
+        tools, "create_company_goal", use_async, name="Docs", routines=[routine], _agno_run_context=context()
     )
-    saved = os.db.get_schedule(product["metadata"]["routine_ids"][0])
+    saved = os.db.get_schedule(goal["metadata"]["routine_ids"][0])
     assert saved["endpoint"] == "/agents/" + MINI_AGENT_ID + "/runs"
     # The stored row names the component that runs.
     assert saved["target_type"] == "agent" and saved["target_id"] == MINI_AGENT_ID and saved["user_id"] == "ana"
     second = await invoke(
         tools,
-        "create_product_routine",
+        "create_goal_routine",
         use_async,
-        product_id=product["id"],
+        goal_id=goal["id"],
         **{**declaration(kind, cid).model_dump(exclude={"auto_accept"}), "name": "another-review"},
         _agno_run_context=context(),
     )
@@ -193,9 +193,9 @@ async def test_chat_declarations_name_mini_agent(db, use_async, mode, tmp_path):
     with pytest.raises(ValueError, match="only Mini Agent runs Routines"):
         await invoke(
             tools,
-            "create_product_routine",
+            "create_goal_routine",
             use_async,
-            product_id=product["id"],
+            goal_id=goal["id"],
             **{**declaration("team", MANAGER_TEAM_ID).model_dump(exclude={"auto_accept"}), "name": "coordinated"},
             _agno_run_context=context(),
         )
@@ -203,12 +203,12 @@ async def test_chat_declarations_name_mini_agent(db, use_async, mode, tmp_path):
     with pytest.raises(ValueError, match="Mini Agent unavailable"):
         await invoke(
             tools,
-            "create_company_product",
+            "create_company_goal",
             use_async,
             name="Unavailable",
             routines=[routine],
             _agno_run_context=context(),
         )
-    assert (await _call(db, "get_products"))[1] == 1
+    assert (await _call(db, "get_goals"))[1] == 1
     if os.db is not db:
         os.db.close()

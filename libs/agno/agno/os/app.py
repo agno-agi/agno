@@ -453,7 +453,7 @@ class AgentOS:
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
-            company: Enable Company Products, inheriting db unless a Company database is provided.
+            company: Enable Company Goals, inheriting db unless a Company database is provided.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
@@ -563,21 +563,21 @@ class AgentOS:
         self.db = db
         if (
             company is not None
-            and company.products
+            and company.goals
             and self.config is not None
             and self.config.company is not None
-            and self.config.company.products
+            and self.config.company.goals
         ):
-            raise ValueError("Declare Company Products in code or config.yaml, not both")
-        if self.config is not None and self.config.company is not None and (company is None or not company.products):
+            raise ValueError("Declare Company Goals in code or config.yaml, not both")
+        if self.config is not None and self.config.company is not None and (company is None or not company.goals):
             from agno.company.config import CompanyConfig
 
             if company is None:
-                company = CompanyConfig(products=self.config.company.products)
+                company = CompanyConfig(goals=self.config.company.goals)
             else:
                 from dataclasses import replace
 
-                company = replace(company, products=self.config.company.products)
+                company = replace(company, goals=self.config.company.goals)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
         self.checkpoint = checkpoint
@@ -1056,15 +1056,15 @@ class AgentOS:
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.files import get_company_files_router
+            from agno.os.routers.company.goals import get_goals_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
-            from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             updated_routers.append(get_company_details_router(self))
-            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_goals_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             updated_routers.append(
@@ -2166,15 +2166,15 @@ class AgentOS:
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.files import get_company_files_router
+            from agno.os.routers.company.goals import get_goals_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
-            from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             routers.append(get_company_details_router(self))
-            routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            routers.append(get_goals_router(db=self._company_db, settings=self.settings))
             routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
@@ -3289,7 +3289,7 @@ class AgentOS:
             DatabaseConfig(
                 db_id=db.id,
                 domain_config=configured.domain_config if configured else CompanyDomainConfig(display_name=db.id),
-                tables=[db.products_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name],
+                tables=[db.goals_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name],
             )
         ]
         return company_config

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
-from agno.company.declarations import Product
+from agno.company.declarations import Goal
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
 
@@ -14,7 +14,7 @@ class CompanyConfig:
 
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     model: Optional[Model] = None
-    products: List["Product"] = field(default_factory=list)
+    goals: List["Goal"] = field(default_factory=list)
     acceptance_checks: Dict[str, Callable[[Dict[str, Any], Any], Any]] = field(default_factory=dict)
     automation_history_retention_days: int = 30
     cron_expr: str = "0 * * * *"

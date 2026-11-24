@@ -134,7 +134,7 @@ if __name__ == "__main__":
         session = "chat-" + uuid4().hex[:8]
         chat(
             client,
-            "Create a Product named SDK. In it, propose a Project named 'Release 2.4' and one "
+            "Create a Goal named SDK. In it, propose a Project named 'Release 2.4' and one "
             "Task in that Project: write the release notes for version 2.4 from these changes: "
             "added streaming for workflow runs; changed the default tool call limit from 8 to 24; "
             "fixed a crash when a schedule has no timezone. Say in the brief that the Release "

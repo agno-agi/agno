@@ -569,11 +569,11 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         mappings.update(
             {
                 # Company playbook and learning-decision endpoints. Keep nested
-                # wiki routes before products/*: matching is first-match and *
-                # spans slashes, so the generic Product pattern also matches wiki.
-                "GET /company/products/*/wiki": ["wiki:read"],
-                "GET /company/products/*/wiki/*": ["wiki:read"],
-                "PUT /company/products/*/wiki/*": ["wiki:write"],
+                # wiki routes before goals/*: matching is first-match and *
+                # spans slashes, so the generic Goal pattern also matches wiki.
+                "GET /company/goals/*/wiki": ["wiki:read"],
+                "GET /company/goals/*/wiki/*": ["wiki:read"],
+                "PUT /company/goals/*/wiki/*": ["wiki:write"],
                 "GET /company/details": ["company:read"],
                 "GET /company/details/access": ["company:read"],
                 "PATCH /company/details": ["company:write"],
@@ -585,8 +585,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/notes/*": ["wiki:read"],
                 "GET /company/decisions": ["decisions:read"],
                 "POST /company/decisions": ["decisions:write"],
-                # Company Product endpoints
-                # Company Sources, scheduler-backed Routines and first-Product setup.
+                # Company Goal endpoints
+                # Company Sources, scheduler-backed Routines and first-Goal setup.
                 "GET /company/sources": ["sources:read"],
                 "POST /company/sources": ["sources:write"],
                 "DELETE /company/sources/*": ["sources:delete"],
@@ -603,13 +603,13 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "POST /company/routines/*/archive": ["routines:delete", "schedules:delete"],
                 "DELETE /company/routines/*": ["agent_os:admin"],
                 "POST /company/routines/*/restore": ["routines:delete", "schedules:delete"],
-                "POST /company/setup": ["products:write"],
-                "GET /company/products": ["products:read"],
-                "GET /company/products/*": ["products:read"],
-                "POST /company/products": ["products:write"],
-                "PATCH /company/products/*": ["products:write"],
-                "DELETE /company/products/*": ["products:delete"],
-                "POST /company/products/*/restore": ["products:delete"],
+                "POST /company/setup": ["goals:write"],
+                "GET /company/goals": ["goals:read"],
+                "GET /company/goals/*": ["goals:read"],
+                "POST /company/goals": ["goals:write"],
+                "PATCH /company/goals/*": ["goals:write"],
+                "DELETE /company/goals/*": ["goals:delete"],
+                "POST /company/goals/*/restore": ["goals:delete"],
                 # Company Project endpoints
                 "GET /company/projects": ["projects:read"],
                 "GET /company/projects/*": ["projects:read"],

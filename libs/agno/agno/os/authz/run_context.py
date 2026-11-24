@@ -32,7 +32,7 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         routine_authority = _RoutineAuthorization(
             None if snapshot.get("company_routine_unscoped") else authority,
             routine_id=snapshot.get("company_routine_id"),
-            product_id=snapshot.get("company_product_id"),
+            goal_id=snapshot.get("company_goal_id"),
         )
         routine_authority.context = authority.context
         return routine_authority
@@ -40,7 +40,7 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         from agno.company.execution import _ExecutorAuthorization
 
         executor_authority = _ExecutorAuthorization(authority, task_id=snapshot.get("company_task_id"))
-        executor_authority.product_id = snapshot.get("company_product_id")
+        executor_authority.goal_id = snapshot.get("company_goal_id")
         if snapshot.get("company_acceptance") is not None:
             executor_authority.acceptance = restore_authorization(app, snapshot["company_acceptance"])
         return executor_authority
