@@ -248,6 +248,17 @@ class SingleStore(VectorDb):
             result = sess.execute(stmt).first()
             return result is not None
 
+    @staticmethod
+    def _validate_batch_size(batch_size: int) -> None:
+        """Reject a non-positive batch_size before any embedding or writes happen."""
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
+
+    @staticmethod
+    def _batch_documents(documents: List[Document], batch_size: int) -> List[List[Document]]:
+        """Split documents into consecutive batches of at most ``batch_size``."""
+        return [documents[start : start + batch_size] for start in range(0, len(documents), batch_size)]
+
     def insert(
         self,
         content_hash: str,
@@ -265,44 +276,47 @@ class SingleStore(VectorDb):
             batch_size (int): Number of documents to insert in each batch.
             user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
+        self._validate_batch_size(batch_size)
         self._require_owner_column(user_id)
-        with self.Session.begin() as sess:
-            counter = 0
-            for document in documents:
-                document.embed(embedder=self.embedder)
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash in ID to ensure uniqueness across different content hashes
-                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                record_id = self._scoped_record_id(base_id, content_hash, user_id)
-                _id = record_id
+        for batch in self._batch_documents(documents, batch_size):
+            # One transaction per batch, so a failure only rolls back its own batch.
+            with self.Session.begin() as sess:
+                counter = 0
+                for document in batch:
+                    document.embed(embedder=self.embedder)
+                    cleaned_content = document.content.replace("\x00", "\ufffd")
+                    # Include content_hash in ID to ensure uniqueness across different content hashes
+                    base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                    record_id = self._scoped_record_id(base_id, content_hash, user_id)
+                    _id = record_id
 
-                meta_data_json = json.dumps(document.meta_data)
-                usage_json = json.dumps(document.usage)
+                    meta_data_json = json.dumps(document.meta_data)
+                    usage_json = json.dumps(document.usage)
 
-                # Convert embedding list to SingleStore VECTOR format
-                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                    # Convert embedding list to SingleStore VECTOR format
+                    embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
-                record: Dict[str, Any] = dict(
-                    id=_id,
-                    name=document.name,
-                    meta_data=meta_data_json,
-                    content=cleaned_content,
-                    embedding=embeddings,
-                    usage=usage_json,
-                    content_hash=content_hash,
-                    content_id=document.content_id,
-                )
-                # Only name the owner column when the live table has it.
-                if self._user_id_column_exists():
-                    record["user_id"] = user_id
+                    record: Dict[str, Any] = dict(
+                        id=_id,
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                    # Only name the owner column when the live table has it.
+                    if self._user_id_column_exists():
+                        record["user_id"] = user_id
 
-                stmt = mysql.insert(self.table).values(**record)
-                sess.execute(stmt)
-                counter += 1
-                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+                    stmt = mysql.insert(self.table).values(**record)
+                    sess.execute(stmt)
+                    counter += 1
+                    log_debug(f"Inserted document: {document.name} ({document.meta_data})")
 
-            sess.commit()
-            log_debug(f"Committed {counter} documents")
+                sess.commit()
+                log_debug(f"Committed batch of {counter} documents")
 
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
@@ -316,6 +330,8 @@ class SingleStore(VectorDb):
         batch_size: int = 20,
         user_id: Optional[str] = None,
     ) -> None:
+        # Validate before the delete below so a bad batch_size cannot drop existing chunks.
+        self._validate_batch_size(batch_size)
         # Embed before the delete below: clearing the old chunks first would destroy
         # retrievable content if the embedder then fails.
         embed_before_replace(documents, self.embedder)
@@ -343,53 +359,56 @@ class SingleStore(VectorDb):
             batch_size (int): Number of documents to upsert in each batch.
             user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
-        with self.Session.begin() as sess:
-            counter = 0
-            for document in documents:
-                document.embed(embedder=self.embedder)
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash in ID to ensure uniqueness across different content hashes
-                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                record_id = self._scoped_record_id(base_id, content_hash, user_id)
-                _id = record_id
+        self._validate_batch_size(batch_size)
+        for batch in self._batch_documents(documents, batch_size):
+            # One transaction per batch, so a failure only rolls back its own batch.
+            with self.Session.begin() as sess:
+                counter = 0
+                for document in batch:
+                    document.embed(embedder=self.embedder)
+                    cleaned_content = document.content.replace("\x00", "\ufffd")
+                    # Include content_hash in ID to ensure uniqueness across different content hashes
+                    base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                    record_id = self._scoped_record_id(base_id, content_hash, user_id)
+                    _id = record_id
 
-                meta_data_json = json.dumps(document.meta_data)
-                usage_json = json.dumps(document.usage)
+                    meta_data_json = json.dumps(document.meta_data)
+                    usage_json = json.dumps(document.usage)
 
-                # Convert embedding list to SingleStore VECTOR format
-                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                    # Convert embedding list to SingleStore VECTOR format
+                    embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
-                record: Dict[str, Any] = dict(
-                    id=_id,
-                    name=document.name,
-                    meta_data=meta_data_json,
-                    content=cleaned_content,
-                    embedding=embeddings,
-                    usage=usage_json,
-                    content_hash=content_hash,
-                    content_id=document.content_id,
-                )
-                set_clause: Dict[str, Any] = dict(
-                    name=document.name,
-                    meta_data=meta_data_json,
-                    content=cleaned_content,
-                    embedding=embeddings,
-                    usage=usage_json,
-                    content_hash=content_hash,
-                    content_id=document.content_id,
-                )
-                # Only name the owner column when the live table has it.
-                if self._user_id_column_exists():
-                    record["user_id"] = user_id
-                    set_clause["user_id"] = user_id
+                    record: Dict[str, Any] = dict(
+                        id=_id,
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                    set_clause: Dict[str, Any] = dict(
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                    # Only name the owner column when the live table has it.
+                    if self._user_id_column_exists():
+                        record["user_id"] = user_id
+                        set_clause["user_id"] = user_id
 
-                stmt = mysql.insert(self.table).values(**record).on_duplicate_key_update(**set_clause)
-                sess.execute(stmt)
-                counter += 1
-                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
+                    stmt = mysql.insert(self.table).values(**record).on_duplicate_key_update(**set_clause)
+                    sess.execute(stmt)
+                    counter += 1
+                    log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
-            sess.commit()
-            log_debug(f"Committed {counter} documents")
+                sess.commit()
+                log_debug(f"Committed batch of {counter} documents")
 
     def search(
         self,
