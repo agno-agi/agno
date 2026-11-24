@@ -30,6 +30,17 @@ def test_query_csv_file_preserves_csv_fields(tmp_path, columns, rows):
     assert list(csv.reader(StringIO(result, newline=""))) == [columns, *rows]
 
 
+def test_query_csv_file_separates_rows_with_newlines(tmp_path):
+    pytest.importorskip("duckdb")
+    csv_path = tmp_path / "records.csv"
+    csv_path.write_text("name,total\nfirst,30\nsecond,40\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    result = tools.query_csv_file("records", "SELECT * FROM records ORDER BY total")
+
+    assert result == "name,total\nfirst,30\nsecond,40"
+
+
 @pytest.mark.parametrize("empty_result", [False, True])
 def test_query_csv_file_preserves_scalar_values_and_empty_results(tmp_path, empty_result):
     pytest.importorskip("duckdb")

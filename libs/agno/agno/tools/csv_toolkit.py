@@ -8,6 +8,14 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 
+def _format_csv_row(row: List[str]) -> str:
+    """Format one CSV row without its line terminator."""
+    # The default terminator is required for older Pythons to quote a bare "\r".
+    output = StringIO(newline="")
+    csv.writer(output).writerow(row)
+    return output.getvalue()[: -len("\r\n")]
+
+
 class CsvTools(Toolkit):
     def __init__(
         self,
@@ -171,11 +179,9 @@ class CsvTools(Toolkit):
             if query_result is not None:
                 try:
                     results_as_python_objects = query_result.fetchall()
-                    output = StringIO(newline="")
-                    writer = csv.writer(output)
-                    writer.writerow(query_result.columns)
-                    writer.writerows([str(value) for value in row] for row in results_as_python_objects)
-                    result_output = output.getvalue().rstrip("\r\n")
+                    rows = [query_result.columns]
+                    rows.extend([str(value) for value in row] for row in results_as_python_objects)
+                    result_output = "\n".join(_format_csv_row(row) for row in rows)
                 except AttributeError:
                     result_output = str(query_result)
 
