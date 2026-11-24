@@ -109,6 +109,7 @@ if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider
 
     from agno.company.config import CompanyConfig
+    from agno.fs import FileSystem
     from agno.os.authz.audit import AuditSink
     from agno.os.authz.authorization import Authorization
     from agno.os.authz.provider import AuthorizationProvider
@@ -434,6 +435,7 @@ class AgentOS:
         public: Optional[Any] = None,
         manager: Optional[Union[bool, "OSManager"]] = None,
         company: Optional["CompanyConfig"] = None,
+        filesystem: Optional[Union["FileSystem", List["FileSystem"]]] = None,
     ):
         """Initialize AgentOS.
 
@@ -526,9 +528,22 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
+            filesystem: A FileSystem, or a list of them, to include in the OS. Each one is listed in
+                /config and browsable through the /filesystem routes whether or not an agent holds
+                it. An agent gets file tools on one only by holding it.
         """
-        if not agents and not workflows and not teams and not knowledge and not db and company is None:
-            raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
+        if (
+            not agents
+            and not workflows
+            and not teams
+            and not knowledge
+            and not filesystem
+            and not db
+            and company is None
+        ):
+            raise ValueError(
+                "Either agents, teams, workflows, knowledge bases, a filesystem or a database must be provided."
+            )
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -537,6 +552,7 @@ class AgentOS:
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
+        self.filesystems: List["FileSystem"] = self._normalize_filesystems(filesystem)
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -792,6 +808,7 @@ class AgentOS:
         self._apply_manager_manifest()
 
         self._initialize_agents()
+        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -946,6 +963,7 @@ class AgentOS:
     def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
         self._initialize_agents()
+        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -1415,6 +1433,37 @@ class AgentOS:
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(agent)
 
+    @staticmethod
+    def _normalize_filesystems(filesystem: Any) -> List["FileSystem"]:
+        """The filesystems declared on the OS, as a list."""
+        if filesystem is None:
+            return []
+        from agno.fs import FileSystem
+
+        stores = list(filesystem) if isinstance(filesystem, (list, tuple)) else [filesystem]
+        for store in stores:
+            if not isinstance(store, FileSystem):
+                raise TypeError("AgentOS filesystem must be a FileSystem or a list of FileSystem instances")
+        return stores
+
+    def _user_isolation_enabled(self) -> bool:
+        """The top-level flag, or the legacy AuthorizationConfig(user_isolation=True) on an authorized OS."""
+        return bool(
+            self.user_isolation
+            or (
+                self.authorization
+                and self.authorization_config is not None
+                and self.authorization_config.user_isolation
+            )
+        )
+
+    def _initialize_filesystems(self) -> None:
+        """Set ``user_scoped`` from the ``user_isolation`` setting on declared filesystems that left it unset."""
+        user_isolation = self._user_isolation_enabled()
+        for filesystem in self.filesystems:
+            if filesystem.user_scoped is None:
+                filesystem.user_scoped = user_isolation
+
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
         # Inject db into external framework agents (not covered by self._agents)
@@ -1433,16 +1482,8 @@ class AgentOS:
 
         from agno.agent import _init as agent_init
 
-        # Same rule the auth middleware applies: the top-level flag, or the legacy
-        # AuthorizationConfig(user_isolation=True) on an authorized OS.
-        user_isolation = bool(
-            self.user_isolation
-            or (
-                self.authorization
-                and self.authorization_config is not None
-                and self.authorization_config.user_isolation
-            )
-        )
+        # Same rule the auth middleware applies.
+        user_isolation = self._user_isolation_enabled()
         for agent in agents_to_initialize:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -3319,27 +3360,49 @@ class AgentOS:
     def _get_filesystem_config(
         self, user_id: Optional[str] = None, agents: Optional[List[Any]] = None
     ) -> "FileSystemConfig":
-        from agno.os.routers.filesystem.utils import _filesystem_backend_key
+        from agno.fs import InvalidPathError
+        from agno.os.routers.filesystem.utils import _filesystem_id_forms, _filesystem_ids, _filesystem_key
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
         namespaces: Dict[tuple, FileSystemNamespace] = {}
-        # ``agents`` is the caller's roster when /config filters by access; the
-        # filesystem section must not describe agents the caller cannot see.
-        for entry in (self.agents if agents is None else agents) or []:
-            if not isinstance(entry, Agent) or not entry.id:
+        declared: List[tuple] = []
+        held: List[tuple] = []
+
+        def describe(filesystem: Any, agent: Optional[Agent] = None) -> FileSystemNamespace:
+            """The entry of one store: every filesystem on one backend and namespace joins it."""
+            summary = _extract_filesystem(filesystem, agent, user_id=user_id)
+            key = _filesystem_key(filesystem, summary.namespace)
+            (held if agent is not None else declared).append((key, _filesystem_id_forms(filesystem, summary.namespace)))
+            namespace_config = namespaces.get(key)
+            if namespace_config is None:
+                namespace_config = namespaces[key] = FileSystemNamespace(
+                    **summary.model_dump(), id=summary.namespace, declared=agent is None, agents=[]
+                )
+            return namespace_config
+
+        # Declared filesystems come first and stand without an agent; an agent
+        # holding the same store is linked to the same entry below.
+        for filesystem in self.filesystems:
+            if any(name != "user_id" for name in filesystem._placeholders):
+                # Only an agent holding the store fills {agent_id} or {team_id}.
+                continue
+            try:
+                describe(filesystem)
+            except InvalidPathError:
+                # The caller's identity cannot be part of a namespace: the store is not theirs to browse.
                 continue
 
+        # ``agents`` is the caller's roster when /config filters by access; the
+        # filesystem section must not describe agents the caller cannot see.
+        roster = [
+            entry
+            for entry in (self.agents if agents is None else agents) or []
+            if isinstance(entry, Agent) and entry.id
+        ]
+        # The first agent by id describes a store that several agents hold, as on the /filesystem routes.
+        for entry in sorted(roster, key=lambda agent: str(agent.id)):
             for filesystem, read_only in entry.filesystems:
-                summary = _extract_filesystem(filesystem, entry, user_id=user_id)
-                key = (
-                    _filesystem_backend_key(filesystem),
-                    summary.namespace,
-                    summary.max_file_bytes,
-                    summary.max_namespace_bytes,
-                )
-                namespace_config = namespaces.get(key)
-                if namespace_config is None:
-                    namespace_config = namespaces[key] = FileSystemNamespace(**summary.model_dump(), agents=[])
+                namespace_config = describe(filesystem, entry)
                 linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
                 if linked_agent is None:
                     namespace_config.agents.append(
@@ -3349,7 +3412,9 @@ class AgentOS:
                     # A writable attachment takes precedence over a read-only one on the same store.
                     linked_agent.access = "full"
 
-        for namespace_config in namespaces.values():
+        ids = _filesystem_ids(declared, held)
+        for key, namespace_config in namespaces.items():
+            namespace_config.id = ids[key]
             namespace_config.agents.sort(key=lambda agent: agent.id)
 
         return FileSystemConfig(
@@ -3359,6 +3424,7 @@ class AgentOS:
                     namespace_config.backend_type,
                     namespace_config.db_id or "",
                     namespace_config.namespace,
+                    namespace_config.id,
                     [agent.id for agent in namespace_config.agents],
                 ),
             )

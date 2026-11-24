@@ -69,3 +69,13 @@ Earlier config output in this log records the previous schema.
 **Result:** All partition and upgrade tests pass. Agent runs against a model were not exercised.
 
 ---
+
+### os_level_filesystem.py
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/27_filesystem/os_level_filesystem.py`, served on port 7777, and requested with curl. No model call. The AgentOS declares two file systems, `handbook` and `shared`. Four agents are served: the writer holds `shared`, the editor holds `drafts` and `shared` read-only, the notes agent uses `filesystem=True`, and the plain agent holds none.
+
+**Result:** `/config` listed four entries, each with an `id`: `handbook` (`declared: true`, `agents: []`), `shared` (`declared: true`, agents `editor` read-only and `writer`), `drafts` and `notes-agent` (`declared: false`). `/filesystem/entries?filesystem_id=handbook` listed the `onboarding` directory with `agent_ids: []`, `/filesystem/content?filesystem_id=handbook&path=onboarding/welcome.md` returned the seeded page, `/filesystem/search?filesystem_id=shared&query=filesystem` found `notes/standup.md`, and `/filesystem/files` listed the three seeded files, each row with its `filesystem_id`. `namespace=handbook` and `agent_id=editor` still returned 200, and an id nothing uses returned 404. `/agents` reported no file system for the plain agent. Agent runs against a model were not exercised.
+
+---
