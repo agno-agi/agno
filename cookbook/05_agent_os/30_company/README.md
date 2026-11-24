@@ -31,6 +31,38 @@ The HTTP layer records the authenticated caller as the creator. Company records
 are shared: reads need the read scope and writes need the write or delete scope,
 whoever created the Goal. User isolation does not restrict Company records.
 
+### Upgrading from agno 3.2.0
+
+In 3.2.0 a Goal was a Product and its objective was its purpose. Run the
+migration once, before you start the new version, on the Company database and
+on the AgentOS database when they are different databases:
+
+```python
+import asyncio
+
+from agno.db.migrations.manager import MigrationManager
+
+asyncio.run(MigrationManager(db).up())
+```
+
+It renames the stored tables and columns in place and keeps every id. A
+deployment written for 3.2.0 then starts with no edit. These 3.2.0 names are
+still accepted:
+
+| 3.2.0 | Now |
+| --- | --- |
+| `from agno.company import Product` | `Goal` |
+| `Product(purpose=...)` | `Goal(objective=...)` |
+| `CompanyConfig(products=[...])` and `company: products:` in `config.yaml` | `goals` |
+| `AcceptanceScope(product_ids=[...])` | `goal_ids` |
+| `products_table=` on `SqliteDb` and `PostgresDb` | `goals_table=` |
+| The scopes `products:read`, `products:write`, `products:delete` | `goals:read`, `goals:write`, `goals:delete` |
+
+These changed with no alias: the routes are `/company/goals`, with the fields
+`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`;
+the Company tools are named for Goals, for example `create_company_goal` and
+`update_goal_status`; and the tree path is `goals/<goal-id>/`.
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so
@@ -207,7 +239,7 @@ and Super Agent's notes as one tree, addressed by path:
 
 ```
 wiki/                   agreed direction: brief.md and status.md by default
-goals/<goal-id>/  brief.md and status.md by default, and what agents found
+goals/<goal-id>/        brief.md and status.md by default, and what agents found
 tasks/<task-id>/        what one Task was given and what it produced
 notes/                  Super Agent's own notes
 ```

@@ -651,3 +651,203 @@ Three controls, two runs each:
 **Result:** Exit 0 and all assertions passed. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
 
 ---
+
+## Product renamed to Goal — 2026-11-24
+
+Branch: `refactor/company-goals`. Company's Product is now a Goal and its `purpose` is its
+`objective`. `01_manage_products.py` is now `01_manage_goals.py` and
+`10_weekly_product_review.py` is now `10_weekly_goal_review.py`. Earlier entries in this log
+keep the names the files and the tools had when they were written.
+
+Each file below was run once with the worktree's `.venv/bin/python` (`agno[demo]`), on SQLite
+unless the entry names PostgreSQL (the `pgvector` container on port 5532).
+
+### 01_manage_goals.py
+
+**Status:** PASS
+
+**Description:** Create two owners' Goals with `objective=`, list them unscoped and by owner, soft-delete one, read it with `include_deleted` and restore it.
+
+**Result:** Exit 0. Printed "Soft delete, include_deleted and restore passed". No model call.
+
+---
+
+### 02_manage_projects.py
+
+**Status:** PASS
+
+**Description:** Projects inside a Goal (`goal_id`): owner filtering, transitions, soft delete and restore.
+
+**Result:** Exit 0. Printed "Company projects lifecycle passed". No model call.
+
+---
+
+### 03_manage_tasks.py
+
+**Status:** PASS
+
+**Description:** Backlog proposals under a Goal, executor acceptance, rescoping, review and completion.
+
+**Result:** Exit 0. Printed "Company tasks lifecycle passed". No model call.
+
+---
+
+### 04_manage_playbook.py
+
+**Status:** PASS
+
+**Description:** The company wiki and a Goal's pages through the sync and the async manager, and the decision log.
+
+**Result:** Exit 0. Printed "Company playbook sync and async examples passed". No model call.
+
+---
+
+### 05_super_agent_company.py
+
+**Status:** PASS
+
+**Description:** Super Agent's Company tools under their Goal names: `create_company_goal` with a Source and an intake Routine, a proposal with `intake_goal_source`, status and a decision.
+
+**Result:** Exit 0. Printed "Super Agent saved company details, a Goal, a Routine and a proposal" and "No model call was made".
+
+---
+
+### 06_execute_tasks.py
+
+**Status:** PASS
+
+**Description:** Start an accepted Task through the durable queue and repeat the start.
+
+**Result:** Exit 0. The duplicate start returned the first run. No model call.
+
+---
+
+### 07_cascading_archive.py
+
+**Status:** PASS
+
+**Description:** Archive a Goal with its Projects and Tasks and restore them, with the sync and the async manager. Run on SQLite and with `--postgres`.
+
+**Result:** Exit 0 on both. Printed "Company cascading archive passed for sync and async". No model call.
+
+---
+
+### 07_heartbeat.py
+
+**Status:** PASS
+
+**Description:** Goals declared in code with `CompanyConfig(goals=[...])`, a reader Source, the Intake skill, the Routines' schedule rows and repeated scans without duplicates.
+
+**Result:** Exit 0. Refresh proposed completion, archived old work and kept restore working. No model call.
+
+---
+
+### 08_custom_routines.py
+
+**Status:** PASS
+
+**Description:** A Routine with its own instructions and a website Source an agent found, added with `add_goal_source`.
+
+**Result:** Exit 0. The person archived the discovered Source. No model call, website request or delivery.
+
+---
+
+### 09_sandboxed_engineers.py
+
+**Status:** PASS
+
+**Description:** Run with `--config-only`: build the Claude and the Codex engineer with a public repository, Docker and explicit checkpoints.
+
+**Result:** Exit 0. Running a Task with `--executor claude` or `--executor codex` needs Docker sandboxes and live models and was NOT RUN.
+
+---
+
+### 09_task_session_ownership.py
+
+**Status:** PASS
+
+**Description:** Two collaborators revise one Task through its owner's session. Run on SQLite and with `COMPANY_DB=postgres`.
+
+**Result:** Exit 0 on both. Both results are durable and the Task waits for review. No model call.
+
+---
+
+### 10_weekly_goal_review.py
+
+**Status:** PASS
+
+**Description:** Renamed from `10_weekly_product_review.py`. Run with `--check` and with `--check --with-os-manager`: declare the Goal and its weekly Routine with `rehydrate_goal` and read the stored schedule.
+
+**Result:** Exit 0 on both. Printed "Weekly Mini Agent review configured; no model calls made." `--enable-weekly-review` serves the app and runs scheduled reviews with model calls; it was NOT RUN.
+
+---
+
+### 11_disabled_routine.py
+
+**Status:** PASS
+
+**Description:** A Routine declared disabled stays visible, and stays enabled after a person turns it on and the app restarts.
+
+**Result:** Exit 0. No model call.
+
+---
+
+### 12_task_board.py
+
+**Status:** FAIL
+
+**Description:** Start a Backlog Task by naming its workflow executor, then read the board by status.
+
+**Result:** Exit 1 at line 87: `AssertionError: {"detail":"Approve the Project before starting Task work"}`. The same run fails the same way on `main` at `471f930b2e`, before the rename, so the rename did not cause it. The example creates its Task under a Project it never approves. Not fixed here.
+
+---
+
+### 13_start_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a person asks Super Agent to start an accepted Task and keeps talking while it runs.
+
+**Result:** Exit 0 in 59 seconds. The Task's run finished and its result was read back in the chat. `--serve` was NOT RUN.
+
+---
+
+### 14_work_to_done_in_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a Goal, a proposed Project and a Task go from proposal to Done in one chat, with Mini Agent doing the Task.
+
+**Result:** Exit 0 in 51 seconds. The last transition was `in_review -> done`.
+
+---
+
+### 15_policy_source_to_done.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a Routine declared with `auto_accept` takes work from a Source to In review with no person.
+
+**Result:** Exit 0 in 60 seconds. The Routine approved the Project "Docs fixes" and accepted one Task, which reached In review. `--authorization` was NOT RUN.
+
+---
+
+### 16_company_file_tree.py
+
+**Status:** PASS
+
+**Description:** The file tree through Super Agent's tools with the new path `goals/<goal-id>/`: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads.
+
+**Result:** Exit 0. Listing `goals` returned the Goal's folder. No model call.
+
+---
+
+### 17_continue_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: read a Task's result and what its run did, answer its question and continue the same work.
+
+**Result:** Exit 0 in 35 seconds. Printed "Same worker session across attempts: True". `--serve` was NOT RUN.
+
+---
