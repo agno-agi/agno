@@ -62,15 +62,16 @@ class CompanyFileTools(Toolkit):
     Reads ask for wiki:read. A write asks for wiki:write under goals/ and wiki/, and for tasks:write
     under tasks/, which whoever started a Task already holds. notes/ asks for no Company permission.
 
-    wiki/, goals/ and tasks/ are stored in the Company database. notes/ is stored in the AgentOS
-    database. No folder is isolated by user: notes/ is shared by everyone who talks to Super Agent,
-    including when user isolation is on.
+    Every folder is stored in the Company file system: one store in the Company database, with each
+    file at its path in the tree. No folder is isolated by user: notes/ is shared by everyone who
+    talks to Super Agent, including when user isolation is on.
 
     Args:
         db: The Company database. Without it the tree is notes/ only.
-        notes_db: The AgentOS database that holds notes/. Without it there is no notes/. A Routine
-            run and a Task run never see notes/. A scheduled or service-account run of an agent
-            that holds these tools counts as a person's chat, and reads and writes notes/.
+        notes_db: The database that holds notes/: the Company database, or the AgentOS database
+            when there is no Company database. Without it there is no notes/. A Routine run and a
+            Task run never see notes/. A scheduled or service-account run of an agent that holds
+            these tools counts as a person's chat, and reads and writes notes/.
         user_isolation: Deployment setting. With it on, a write to a Company folder needs a caller
             identity. It never narrows what is listed, searched or read.
         include_tools: Limit the tools registered.

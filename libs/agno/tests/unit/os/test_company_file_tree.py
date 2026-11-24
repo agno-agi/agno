@@ -7,11 +7,11 @@ import pytest
 
 from agno.company.execution import _ExecutorAuthorization, _task_input
 from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS, READ_NOTE
+from agno.company.filesystem import company_filesystem
 from agno.company.manager import CompanyManager
 from agno.company.mini_agent import TASK_FILE_TOOLS
 from agno.company.routines import _RoutineAuthorization
 from agno.db.sqlite import SqliteDb
-from agno.fs import FileSystem
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
@@ -97,9 +97,9 @@ def pages(system, ids):
     for owner in (None, ids["goal"], ids["other"]):
         for row in manager.list_wiki(owner, limit=100)[0]:
             listed[(owner, row.path)] = manager.read_wiki(owner, row.path).content
-    for name in (f"company/tasks/{ids['task']}", f"company/tasks/{ids['stray']}", "company/notes"):
-        store = FileSystem(system.db, namespace=name, user_scoped=False)
-        listed.update({(name, meta.path): store.read(meta.path) for meta in store.list()})
+    # Every stored file, by its path in the tree.
+    store = company_filesystem(system.db)
+    listed.update({meta.path: store.read(meta.path) for meta in store.list()})
     return listed
 
 
@@ -147,13 +147,12 @@ def test_the_tree_lists_its_folders_and_shows_each_goal_by_id_and_name(system):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_pages_stored_under_the_current_namespaces_are_still_read(system, use_async):
+def test_a_file_is_stored_at_its_tree_path_in_the_company_file_system(system, use_async):
     ids = records(system)
-    # Written as 3.1 stores them: one namespace for the company and one for each Goal.
-    FileSystem(system.db, namespace="company/wiki", user_scoped=False).write("handbook.md", "Company handbook")
-    FileSystem(system.db, namespace=f"company/products/{ids['goal']}/wiki", user_scoped=False).write(
-        "research.md", "Goal research"
-    )
+    # Written straight into the store: one namespace, each file at its path in the tree.
+    store = company_filesystem(system.db)
+    store.write("wiki/handbook.md", "Company handbook")
+    store.write(f"goals/{ids['goal']}/research.md", "Goal research")
     files = tree(system.os)
     assert call(files, "read_company_file", use_async=use_async, path="wiki/handbook.md")["content"] == (
         "Company handbook"
@@ -336,7 +335,7 @@ def test_mini_agent_writes_its_task_files_through_a_real_task_run(system):
     assert "only a person changes them" in wiki and "own Goal" in other
     assert "does not exist or is not available" in save
     stored = pages(system, ids)
-    assert stored[(f"company/tasks/{ids['task']}", "report.md")] == "The report"
+    assert stored[f"tasks/{ids['task']}/report.md"] == "The report"
     assert stored[(ids["goal"], "findings.md")] == "Found"
     assert (None, "priorities.md") not in stored and (ids["other"], "findings.md") not in stored
     # A Task run holds the read tools and one write tool: no second way to read or write a page.
@@ -371,7 +370,7 @@ def test_a_task_started_without_wiki_write_fills_its_folder_and_writes_no_goal_p
     for refused in (findings, status):
         assert "Permission required: wiki:write" in refused, refused
     stored = pages(system, ids)
-    assert stored[(f"company/tasks/{ids['task']}", "report.md")] == "The report"
+    assert stored[f"tasks/{ids['task']}/report.md"] == "The report"
     assert (ids["goal"], "findings.md") not in stored and "Done" not in stored[(ids["goal"], "status.md")]
 
 
@@ -723,7 +722,7 @@ def test_super_agent_owns_notes_with_or_without_company(tmp_path, company, use_a
         db.close()
 
 
-def test_notes_are_in_the_agentos_database_and_the_rest_in_the_company_database(tmp_path):
+def test_every_company_file_is_in_the_company_database_notes_included(tmp_path):
     os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
     company_db = SqliteDb(db_file=str(tmp_path / "company.db"))
     agent_os = AgentOS(
@@ -736,13 +735,9 @@ def test_notes_are_in_the_agentos_database_and_the_rest_in_the_company_database(
         files = tree(agent_os)
         call(files, "write_company_file", path="notes/ideas.md", content="A note")
         call(files, "save_company_page", path="wiki/people.md", expected_version=0, new_text="Ada")
-        notes = [
-            FileSystem(db, namespace="company/notes", user_scoped=False).read("ideas.md") for db in (os_db, company_db)
-        ]
-        wiki = [
-            FileSystem(db, namespace="company/wiki", user_scoped=False).read("people.md") for db in (os_db, company_db)
-        ]
-        assert notes == ["A note", None] and wiki == [None, "Ada\n"]
+        notes = [company_filesystem(db).read("notes/ideas.md") for db in (os_db, company_db)]
+        wiki = [company_filesystem(db).read("wiki/people.md") for db in (os_db, company_db)]
+        assert notes == [None, "A note"] and wiki == [None, "Ada\n"]
     finally:
         os_db.close()
         company_db.close()

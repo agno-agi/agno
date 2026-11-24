@@ -1,20 +1,16 @@
-"""Company wiki namespaces, backed by the existing durable filesystem."""
+"""The company wiki and each Goal's pages: folders of the Company file system."""
 
 from typing import Any, Dict, Optional
 
+from agno.company.filesystem import company_folder
 from agno.context.wiki.backend import DurableWikiBackend
 from agno.context.wiki.provider import WikiContextProvider
-from agno.fs import FileSystem
 from agno.fs._paths import normalize_path
 from agno.fs.errors import VersionConflictError
 
 
 def _wiki(db: Any, goal: Optional[Dict[str, Any]] = None) -> WikiContextProvider:
-    namespace = "company/wiki" if goal is None else f"company/products/{goal['id']}/wiki"
-    try:
-        filesystem = FileSystem(db, namespace=namespace, user_scoped=False)
-    except (TypeError, ValueError) as exc:
-        raise NotImplementedError("Company wiki requires a supported FileSystem database") from exc
+    filesystem = company_folder(db, "wiki" if goal is None else f"goals/{goal['id']}")
     return WikiContextProvider(
         id="company-wiki" if goal is None else f"goal-{goal['id']}-wiki",
         name="Company playbook" if goal is None else f"{goal['name']} playbook",

@@ -585,6 +585,10 @@ class AgentOS:
         # Databases the start could not migrate, by id(), and whether Company still has to start.
         self._unmigrated_dbs: Set[int] = set()
         self._company_start_pending = False
+        if company is not None and self._company_db is not None:
+            from agno.company.filesystem import set_company_filesystem_bytes
+
+            set_company_filesystem_bytes(self._company_db, company.max_filesystem_bytes)
         self.checkpoint = checkpoint
 
         self.telemetry = telemetry

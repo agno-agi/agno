@@ -906,4 +906,22 @@ unless the entry names PostgreSQL (the `pgvector` container on port 5532).
 
 **Result:** Exit 0 in 35 seconds. Printed "Same worker session across attempts: True". `--serve` was NOT RUN.
 
+### 16_company_file_tree.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after Company files moved into one store: the namespace `company` of the Company database, each file at its tree path, with `notes/` a folder of it. No model call. The script saves a company page and a Goal brief with confirmation, writes a Goal page, a Task file and a note, and reads the Task file and the note back through the API.
+
+**Result:** The script printed the same tree as before the change: top folders `wiki/`, `goals/`, `tasks/`, `notes/`; the wiki pages, the Goal's pages, the Task's `changes.md` and the note `follow-ups.md`; the Task files and the notes over the API; and the pages a Task's input loads. A stale save and an unconfirmed wiki write were refused. It ended with "Company file tree example passed".
+
+---
+
+### 04_manage_playbook.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/04_manage_playbook.py` on the same change. No model call. Sync and async wiki pages, creation with version 0, a version conflict and the decision log.
+
+**Result:** "Stale wiki edit refused" and "Company playbook sync and async examples passed". The cookbooks that run a model were not run for this change.
+
 ---

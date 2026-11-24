@@ -7,9 +7,9 @@ Super Agent and Mini Agent share one tree:
     tasks/<task-id>/        what one Task was given and what it produced
     notes/                  Super Agent's own notes
 
-wiki/, goals/ and tasks/ are stored in the Company database. notes/ is stored in
-the AgentOS database and is shared by everyone who talks to Super Agent, including
-when user isolation is on.
+Every folder is stored in the Company file system: one store in the Company
+database, with each file at its path in the tree. notes/ is shared by everyone who
+talks to Super Agent, including when user isolation is on.
 
 This script makes the tool calls Super Agent would make in a chat: it saves a company
 page, writes a Goal page, a note and a Task file, reads the Task file and the note
