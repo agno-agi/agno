@@ -117,6 +117,7 @@ if TYPE_CHECKING:
     from agno.os.manager import OSManager
     from agno.os.manager.manager import _Manager
     from agno.os.schema import FileSystemConfig
+    from agno.triggers.trigger import Trigger
 
 # FastAPI 0.142.0 added the telemetry argument; earlier versions reject it
 _FASTAPI_SUPPORTS_TELEMETRY = "telemetry" in inspect.signature(FastAPI.__init__).parameters
@@ -223,6 +224,32 @@ async def interface_lifespan(_, agent_os: "AgentOS"):
 
     for interface in agent_os.interfaces:
         await interface.aclose()
+
+
+@asynccontextmanager
+async def trigger_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Store the triggers declared in code, turn off the ones no longer declared, and run the events that arrive."""
+    from agno.triggers.runtime import adeclare_triggers
+
+    runtime = agent_os._get_trigger_runtime()
+    # A schedule can only fire where the scheduler runs, so only there are stored schedules looked through.
+    with_schedules = bool(agent_os.triggers) or agent_os._scheduler_enabled
+    if runtime is not None:
+        app.state.trigger_runtime = runtime
+        await runtime.astart(with_schedules=with_schedules)
+    elif agent_os.triggers:
+        await adeclare_triggers(agent_os.db, agent_os.triggers)
+    else:
+        # Nothing is declared now, but an earlier version of this code may have declared triggers.
+        try:
+            await adeclare_triggers(agent_os.db, [], with_schedules=with_schedules)
+        except Exception as exc:
+            log_debug(f"Could not check for triggers that are no longer declared: {exc}")
+
+    yield
+
+    if runtime is not None:
+        await runtime.astop()
 
 
 @asynccontextmanager
@@ -434,6 +461,7 @@ class AgentOS:
         public: Optional[Any] = None,
         manager: Optional[Union[bool, "OSManager"]] = None,
         company: Optional["CompanyConfig"] = None,
+        triggers: Optional[List["Trigger"]] = None,
     ):
         """Initialize AgentOS.
 
@@ -454,6 +482,10 @@ class AgentOS:
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
             company: Enable Company Products, inheriting db unless a Company database is provided.
+            triggers: Events and schedules that start runs, e.g.
+                ``Trigger(name="triage", on=github.on("issues.opened"), agent=engineer, input="...")``.
+                The source of an event trigger goes in ``interfaces``. Declaring a trigger turns the
+                scheduler on. Needs a PostgreSQL or SQLite ``db``.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
@@ -714,11 +746,18 @@ class AgentOS:
         if queue is not None:
             apply_queue_config(queue)
 
+        # Triggers: events and schedules that start runs. A trigger fires through the scheduler's path.
+        self.triggers: List["Trigger"] = list(triggers or [])
+        self._trigger_runtime: Optional[Any] = None
+        self._runs_trigger_events = self._check_triggers()
+        if self.triggers:
+            scheduler = True
+
         # Scheduler configuration
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if (self._scheduler_enabled or company is not None) and not internal_service_token:
+        if (self._scheduler_enabled or company is not None or self._runs_trigger_events) and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -1415,6 +1454,72 @@ class AgentOS:
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(agent)
 
+    def _trigger_sources(self) -> List[Any]:
+        """The interfaces that hand their deliveries to triggers."""
+        return [interface for interface in self.interfaces if getattr(interface, "accepts_triggers", False)]
+
+    def _check_triggers(self) -> bool:
+        """Refuse a trigger set that cannot work. Returns whether this AgentOS runs trigger events."""
+        sources = self._trigger_sources()
+        if not self.triggers and not sources:
+            return False
+        from agno.triggers.runtime import require_trigger_storage
+        from agno.triggers.trigger import Events
+
+        names = [trigger.name for trigger in self.triggers]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"Trigger names must be unique; declared more than once: {repeated}")
+        source_ids = [source.id for source in sources]
+        repeated = sorted({source_id for source_id in source_ids if source_ids.count(source_id) > 1})
+        if repeated:
+            raise ValueError(f"Trigger sources must have different ids; declared more than once: {repeated}")
+        for trigger in self.triggers:
+            if isinstance(trigger.on, Events) and not any(trigger.on.source is source for source in sources):
+                raise ValueError(
+                    f"Trigger '{trigger.name}' listens to {trigger.on.source_id}, which is not one of this "
+                    "AgentOS's interfaces: add the source to interfaces=[...]"
+                )
+        require_trigger_storage(self.db)
+        return bool(sources)
+
+    def _check_trigger_targets(self) -> None:
+        """A trigger that names its target by object must name one this AgentOS serves."""
+        served = {
+            "agent": {getattr(agent, "id", None) for agent in self.agents or []},
+            "team": {getattr(team, "id", None) for team in self.teams or []},
+            "workflow": {getattr(workflow, "id", None) for workflow in self.workflows or []},
+        }
+        for trigger in self.triggers:
+            # A target named by id may be a stored component, which is resolved when the run starts.
+            if not isinstance(trigger.target, str) and trigger.target_id not in served[trigger.target_type]:
+                raise ValueError(
+                    f"Trigger '{trigger.name}' runs {trigger.target_type} '{trigger.target_id}', which this "
+                    f"AgentOS does not serve: add it to {trigger.target_type}s=[...]"
+                )
+
+    def _get_trigger_runtime(self) -> Optional[Any]:
+        """The runtime that matches deliveries to triggers and runs them, when a source needs one."""
+        if not self._runs_trigger_events:
+            return None
+        if self._trigger_runtime is None:
+            from agno.triggers.runtime import TriggerRuntime
+
+            if self._internal_service_token is None:
+                raise ValueError("internal_service_token must be set when triggers are declared")
+            runtime = TriggerRuntime(
+                db=self.db,
+                triggers=self.triggers,
+                sources=self._trigger_sources(),
+                base_url=self._scheduler_base_url or "http://127.0.0.1:7777",
+                internal_service_token=self._internal_service_token,
+                poll_interval=self._scheduler_poll_interval,
+            )
+            for source in self._trigger_sources():
+                source.triggers = runtime
+            self._trigger_runtime = runtime
+        return self._trigger_runtime
+
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
         # Inject db into external framework agents (not covered by self._agents)
@@ -1993,6 +2098,11 @@ class AgentOS:
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
+        # Give each trigger source its runtime before its route can receive a delivery
+        if self.triggers:
+            self._check_trigger_targets()
+        self._get_trigger_runtime()
+
         if self.base_app:
             fastapi_app = self.base_app
 
@@ -2046,6 +2156,10 @@ class AgentOS:
 
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))
+
+            # The trigger lifespan (after db so tables exist, before the scheduler claims a schedule)
+            if self.db is not None:
+                lifespans.append(partial(trigger_lifespan, agent_os=self))
 
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
@@ -2107,6 +2221,10 @@ class AgentOS:
 
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))  # type: ignore
+
+            # The trigger lifespan (after db so tables exist, before the scheduler claims a schedule)
+            if self.db is not None:
+                lifespans.append(partial(trigger_lifespan, agent_os=self))
 
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
