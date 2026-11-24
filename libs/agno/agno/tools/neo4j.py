@@ -1,5 +1,5 @@
 import os
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 try:
     from neo4j import GraphDatabase
@@ -73,9 +73,13 @@ class Neo4jTools(Toolkit):
             tools.append(self.run_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 
-    def list_labels(self) -> list:
+    def list_labels(self) -> Union[list, str]:
         """
         Retrieve all node labels present in the connected Neo4j database.
+
+        Returns:
+            list: Node labels on success.
+            str: Error message on failure (so agents do not treat failures as empty results).
         """
         try:
             log_debug("Listing node labels in Neo4j database")
@@ -83,13 +87,17 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
             return labels
-        except Exception:
+        except Exception as e:
             logger.exception("Error listing labels")
-            return []
+            return f"Error listing labels: {e}"
 
-    def list_relationship_types(self) -> list:
+    def list_relationship_types(self) -> Union[list, str]:
         """
         Retrieve all relationship types present in the connected Neo4j database.
+
+        Returns:
+            list: Relationship types on success.
+            str: Error message on failure (so agents do not treat failures as empty results).
         """
         try:
             log_debug("Listing relationship types in Neo4j database")
@@ -97,13 +105,17 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
             return types
-        except Exception:
+        except Exception as e:
             logger.exception("Error listing relationship types")
-            return []
+            return f"Error listing relationship types: {e}"
 
-    def get_schema(self) -> list:
+    def get_schema(self) -> Union[list, str]:
         """
         Retrieve a visualization of the database schema, including nodes and relationships.
+
+        Returns:
+            list: Schema visualization data on success.
+            str: Error message on failure (so agents do not treat failures as empty results).
         """
         try:
             log_debug("Retrieving Neo4j schema visualization")
@@ -111,16 +123,20 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
             return schema_data
-        except Exception:
+        except Exception as e:
             logger.exception("Error getting Neo4j schema")
-            return []
+            return f"Error getting Neo4j schema: {e}"
 
-    def run_cypher_query(self, query: str) -> list:
+    def run_cypher_query(self, query: str) -> Union[list, str]:
         """
         Execute an arbitrary Cypher query against the connected Neo4j database.
 
         Args:
             query (str): The Cypher query string to execute.
+
+        Returns:
+            list: Query result rows on success.
+            str: Error message on failure (so agents do not treat failures as empty results).
         """
         try:
             log_debug(f"Running Cypher query: {query}")
@@ -128,6 +144,6 @@ class Neo4jTools(Toolkit):
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
             return data
-        except Exception:
+        except Exception as e:
             logger.exception("Error running Cypher query")
-            return []
+            return f"Error running Cypher query: {e}"

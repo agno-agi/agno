@@ -37,7 +37,7 @@ def _make_message_event(event_cls, input_tokens: int, output_tokens: int):
 
 def test_message_start_event_does_not_emit_usage():
     """MessageStartEvent should NOT produce response_usage (would cause double-counting)."""
-    claude = Claude(id="claude-sonnet-4-5-20250929")
+    claude = Claude(id="claude-sonnet-5-5")
     start_event = _make_message_event(MessageStartEvent, input_tokens=50000, output_tokens=0)
 
     result = claude._parse_provider_response_delta(start_event)
@@ -50,7 +50,7 @@ def test_message_start_event_does_not_emit_usage():
 
 def test_message_stop_event_emits_usage():
     """MessageStopEvent SHOULD produce response_usage with correct token counts."""
-    claude = Claude(id="claude-sonnet-4-5-20250929")
+    claude = Claude(id="claude-sonnet-5-5")
     stop_event = _make_message_event(MessageStopEvent, input_tokens=50000, output_tokens=1200)
 
     result = claude._parse_provider_response_delta(stop_event)
@@ -63,7 +63,7 @@ def test_message_stop_event_emits_usage():
 
 def test_streaming_metrics_not_doubled():
     """Simulate a full streaming sequence and verify input_tokens is NOT doubled."""
-    claude = Claude(id="claude-sonnet-4-5-20250929")
+    claude = Claude(id="claude-sonnet-5-5")
 
     start_event = _make_message_event(MessageStartEvent, input_tokens=50000, output_tokens=0)
     stop_event = _make_message_event(MessageStopEvent, input_tokens=50000, output_tokens=1200)

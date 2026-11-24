@@ -2,8 +2,8 @@
 Serve one AgentOS gateway over local and remote components
 ==========================================================
 
-The gateway registers a local Agent alongside native AgentOS, Agno A2A REST,
-and Google ADK JSON-RPC components. Callers use one AgentOS API on port 7777
+The gateway registers a local Agent alongside native AgentOS, Agno A2A,
+and Google ADK A2A components. Callers use one AgentOS API on port 7777
 without needing to know which transport backs each entity.
 
 Prerequisites: start all three files under `servers/`; set OPENAI_API_KEY and GOOGLE_API_KEY
@@ -49,14 +49,12 @@ remote_a2a_agent = RemoteAgent(
     base_url="http://127.0.0.1:7781/a2a/agents/a2a-assistant",
     agent_id="a2a-assistant",
     protocol="a2a",
-    a2a_protocol="rest",
 )
 
 remote_adk_agent = RemoteAgent(
     base_url="http://127.0.0.1:8001",
     agent_id="facts_agent",
     protocol="a2a",
-    a2a_protocol="json-rpc",
 )
 
 remote_team = RemoteTeam(

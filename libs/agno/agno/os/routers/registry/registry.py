@@ -442,6 +442,20 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     )
                 )
 
+        # Sandboxes (what a stored external agent's sandbox reference resolves to).
+        # Only the identity is listed: a sandbox's env carries credentials.
+        if resource_type is None or resource_type == RegistryResourceType.SANDBOX:
+            for sandbox in getattr(registry, "sandboxes", []) or []:
+                sandbox_id = _safe_str(getattr(sandbox, "id", None))
+                resources.append(
+                    RegistryContentResponse(
+                        name=sandbox_id or sandbox.__class__.__name__,
+                        id=sandbox_id,
+                        type=RegistryResourceType.SANDBOX,
+                        metadata={"id": sandbox_id, "class_path": _class_path(sandbox)},
+                    )
+                )
+
         # Agents (code-defined agents for workflow rehydration)
         if resource_type is None or resource_type == RegistryResourceType.AGENT:
             for agent in getattr(registry, "agents", []) or []:
@@ -452,6 +466,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         name=agent_name,
                         id=agent_id,
                         type=RegistryResourceType.AGENT,
+                        sandboxed=_sandboxed(agent),
                         description=_safe_str(getattr(agent, "description", None)),
                         metadata={
                             "id": agent_id,
@@ -589,3 +604,9 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e))
 
     return router
+
+
+def _sandboxed(component: Any) -> bool:
+    from agno.agents.base import BaseExternalAgent
+
+    return isinstance(component, BaseExternalAgent) and component.sandbox is not None

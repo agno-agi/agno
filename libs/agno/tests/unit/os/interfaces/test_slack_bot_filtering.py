@@ -2,7 +2,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from agno.os.interfaces.slack.handlers import should_process
 from agno.os.interfaces.slack.helpers import extract_event_context, resolve_slack_bot
+
+from .conftest import BOT_ID, BOT_USER_ID, make_ctx
 
 # -- extract_event_context sender identity --
 
@@ -55,3 +58,21 @@ async def test_resolve_slack_bot_fallback_on_error():
 
     assert resolved_id == "B123456"
     assert display_name is None
+
+
+# -- should_process with respond_to_other_apps --
+
+
+@pytest.mark.parametrize(
+    "event, expected",
+    [
+        ({"type": "message", "subtype": "bot_message", "bot_id": "B_OTHER_BOT", "text": "peer"}, True),
+        ({"type": "message", "subtype": "bot_message", "bot_id": "B_SELF", "text": "own"}, False),
+        ({"type": "message", "user": "U_SELF", "text": "own as user"}, False),
+        ({"type": "message", "subtype": "message_changed", "message": {"text": "edited", "user": "U_OTHER"}}, False),
+    ],
+)
+def test_should_process_with_other_apps_still_drops_own_and_lifecycle(event, expected):
+    ctx = make_ctx(respond_to_other_apps=True)
+    ctx.bot_id, ctx.bot_user_id = BOT_ID, BOT_USER_ID
+    assert should_process(event, ctx) is expected
