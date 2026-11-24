@@ -7,7 +7,7 @@ from httpx import ConnectError, ConnectTimeout, TimeoutException
 from pydantic import BaseModel
 
 from agno.db.base import SessionType
-from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunStatus, EvalType
 from agno.exceptions import RemoteServerUnavailableError
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -2284,6 +2284,7 @@ class AgentOSClient:
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_types: Optional[List[EvalType]] = None,
+        status: Optional[EvalRunStatus] = None,
         limit: int = 20,
         page: int = 1,
         sort_by: str = "created_at",
@@ -2301,6 +2302,7 @@ class AgentOSClient:
             model_id: Filter by model ID
             filter_type: Filter type (agent, team, workflow)
             eval_types: List of eval types to filter by (accuracy, performance, reliability)
+            status: Suite result to filter by (PASS or FAIL)
             limit: Number of eval runs per page
             page: Page number
             sort_by: Field to sort by
@@ -2326,6 +2328,7 @@ class AgentOSClient:
             "model_id": model_id,
             "type": filter_type.value if filter_type else None,
             "eval_types": ",".join(et.value for et in eval_types) if eval_types else None,
+            "status": status.value if status else None,
             "db_id": db_id,
             "table": table,
         }

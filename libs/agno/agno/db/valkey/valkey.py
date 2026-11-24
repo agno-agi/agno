@@ -3605,6 +3605,7 @@ class ValkeyDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -3641,6 +3642,8 @@ class ValkeyDb(BaseDb):
                 if workflow_id is not None and run.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
+                    continue
+                if status is not None and (((run.get("eval_data") or {}).get("summary") or {}).get("status") != status):
                     continue
 
                 if user_id is not None and run.get("user_id") != user_id:

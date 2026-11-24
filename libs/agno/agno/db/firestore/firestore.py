@@ -3294,6 +3294,7 @@ class FirestoreDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -3338,6 +3339,8 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
             if model_id is not None:
                 query = query.where(filter=FieldFilter("model_id", "==", model_id))
+            if status is not None:
+                query = query.where(filter=FieldFilter("eval_data.summary.status", "==", status))
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if eval_type is not None and len(eval_type) > 0:

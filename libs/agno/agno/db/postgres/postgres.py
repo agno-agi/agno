@@ -4715,6 +4715,7 @@ class PostgresDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -4764,6 +4765,8 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
+                if status is not None:
+                    stmt = stmt.where(table.c.eval_data["summary"]["status"].as_string() == status)
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:

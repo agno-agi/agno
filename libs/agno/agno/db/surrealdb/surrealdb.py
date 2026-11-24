@@ -2873,6 +2873,7 @@ class SurrealDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -2915,6 +2916,8 @@ class SurrealDb(BaseDb):
             where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
         if model_id is not None:
             where.and_("model_id", model_id)
+        if status is not None:
+            where.and_("eval_data.summary.status", status)
         if eval_type is not None and len(eval_type) > 0:
             where.and_("eval_type", [et.value for et in eval_type], "IN")
         if filter_type is not None:

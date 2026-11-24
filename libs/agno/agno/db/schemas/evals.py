@@ -18,6 +18,13 @@ class EvalFilterType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class EvalRunStatus(str, Enum):
+    """Result of a suite run, from eval_data.summary.status."""
+
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
 class EvalRunRecord(BaseModel):
     """Evaluation run results stored in the database"""
 

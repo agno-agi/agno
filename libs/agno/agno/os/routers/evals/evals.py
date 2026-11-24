@@ -11,7 +11,7 @@ from starlette._utils import get_route_path
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalRunStatus, EvalType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.eval.suite import Case, EvalSuite, JudgeMode, arun_cases
 from agno.eval.utils import async_log_eval
@@ -188,6 +188,9 @@ def attach_routes(
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
+        status: Optional[EvalRunStatus] = Query(
+            default=None, description="Suite result to filter by (PASS or FAIL); only suite runs have one"
+        ),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
         page: Optional[int] = Query(default=1, description="Page number", ge=1),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -211,6 +214,7 @@ def attach_routes(
                 team_id=team_id,
                 workflow_id=workflow_id,
                 model_id=model_id,
+                status=status,
                 eval_types=eval_types,
                 filter_type=filter_type.value if filter_type else None,
                 headers=headers,
@@ -227,6 +231,7 @@ def attach_routes(
                 team_id=team_id,
                 workflow_id=workflow_id,
                 model_id=model_id,
+                status=status.value if status else None,
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
@@ -242,6 +247,7 @@ def attach_routes(
                 team_id=team_id,
                 workflow_id=workflow_id,
                 model_id=model_id,
+                status=status.value if status else None,
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,

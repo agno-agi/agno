@@ -3597,6 +3597,7 @@ class DynamoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -3670,6 +3671,13 @@ class DynamoDb(BaseDb):
                 eval_item = deserialize_from_dynamodb_item(item)
                 if eval_item:
                     eval_data.append(eval_item)
+            # eval_data is stored as a JSON string, so the suite result is filtered after reading.
+            if status is not None:
+                eval_data = [
+                    item
+                    for item in eval_data
+                    if ((item.get("eval_data") or {}).get("summary") or {}).get("status") == status
+                ]
 
             # Apply sorting
             eval_data = apply_sorting(eval_data, sort_by, sort_order)

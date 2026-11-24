@@ -3303,6 +3303,7 @@ class MongoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -3346,6 +3347,8 @@ class MongoDb(BaseDb):
                 query["workflow_id"] = workflow_id
             if model_id is not None:
                 query["model_id"] = model_id
+            if status is not None:
+                query["eval_data.summary.status"] = status
             if user_id is not None:
                 query["user_id"] = user_id
             if eval_type is not None and len(eval_type) > 0:
