@@ -1189,16 +1189,6 @@ class AgentOS:
                 if getattr(interface, "security_schemes", None) is None:
                     interface.security_schemes = self._get_a2a_security_schemes()  # type: ignore[attr-defined]
             if interface.type == "slack" and interface.team is not None and interface.team is self.manager:
-                from agno.os.auth import _has_authorization_middleware
-
-                # An authorization middleware on a base_app enforces roles just as AgentOS(authorization=...) does
-                if getattr(interface, "users", None) is None and (
-                    self.authorization or _has_authorization_middleware(app)
-                ):
-                    raise ValueError(
-                        "Slack serving Super Agent under authorization requires Slack identity mapping: "
-                        "pass Slack(users={slack_user_id: principal_id})."
-                    )
                 # Slack serving the Manager team reaches Company through the AgentOS that owns it
                 if getattr(interface, "company", None) is None:
                     from agno.os.interfaces.slack.company import CompanyBridge

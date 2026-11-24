@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.knowledge.document.base import Document
-from agno.knowledge.reader.youtube_reader import YouTubeReader
+from agno.knowledge.reader.youtube_reader import YouTubeReader, extract_video_id
 
 
 @pytest.fixture
@@ -122,6 +122,68 @@ def test_read_video_with_params():
         assert len(documents) == 1
         assert documents[0].name == "youtube_test_video_id"
         assert documents[0].meta_data["video_id"] == "test_video_id"
+
+
+@pytest.mark.parametrize(
+    "video_url",
+    [
+        "https://youtu.be/test_video_id?t=30s",
+        "https://www.youtube.com/shorts/test_video_id",
+        "https://www.youtube.com/embed/test_video_id",
+        "https://www.youtube.com/live/test_video_id",
+    ],
+)
+def test_read_extracts_video_id_from_every_url_form(video_url, mock_transcript):
+    """Every URL form YouTube hands out yields the id, not the whole URL, as the video id."""
+    with patch("agno.knowledge.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
+        mock_api.return_value.fetch.return_value = mock_transcript
+
+        documents = YouTubeReader(chunk=False).read(video_url)
+
+        assert documents[0].id == "youtube_test_video_id"
+        assert documents[0].meta_data["video_id"] == "test_video_id"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://notyoutu.be/test_video_id",
+        "https://notyoutube.com/shorts/test_video_id",
+        "https://notyoutube-nocookie.com/embed/test_video_id",
+        "https://youtube.com.example.org/shorts/test_video_id",
+        "https://youtu.be.example.org/test_video_id",
+    ],
+)
+def test_extract_video_id_ignores_lookalike_domains(url):
+    assert extract_video_id(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtu.be/test_video_id",
+        "https://www.youtu.be/test_video_id",
+        "https://youtube.com/shorts/test_video_id",
+        "https://m.youtube.com/shorts/test_video_id",
+        "https://WWW.YouTube.com/live/test_video_id",
+        "https://www.youtube-nocookie.com/embed/test_video_id",
+    ],
+)
+def test_extract_video_id_accepts_exact_hosts_and_subdomains(url):
+    assert extract_video_id(url) == "test_video_id"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtu.be/watch?v=test_video_id",
+        "https://www.youtube.com/v/test_video_id",
+        "https://www.youtube.com/watch?t=3&v=test_video_id",
+        "test_video_id",
+    ],
+)
+def test_extract_video_id_supports_query_legacy_and_bare_forms(url):
+    assert extract_video_id(url) == "test_video_id"
 
 
 def test_read_video_unicode_content():

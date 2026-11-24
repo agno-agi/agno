@@ -277,13 +277,14 @@ async def test_handle_message_super_agent_authorizes_through_company():
     ctx.company = company
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), make_async_client_mock(), ctx)
-    company.authorize.assert_awaited_once_with(None, "alice", "agent-1")
+    # A mapped user runs as their own principal, with its own roles
+    company.authorize.assert_awaited_once_with(None, "alice", "agent-1", None)
     # With AgentOS authorization off there is no authority, and the message still runs as the principal
     assert run_event.call_args.args[0].user_id == "alice"
 
 
 @pytest.mark.asyncio
-async def test_handle_message_super_agent_without_users_is_refused_under_a_jwt_middleware():
+async def test_handle_message_super_agent_without_users_runs_under_a_jwt_middleware():
     from agno.agent import Agent
     from agno.os import AgentOS
     from agno.os.middleware.jwt import JWTMiddleware
@@ -296,8 +297,91 @@ async def test_handle_message_super_agent_without_users_is_refused_under_a_jwt_m
     client = make_async_client_mock()
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), client, ctx)
-    assert not run_event.called
-    assert client.chat_postEphemeral.call_args.kwargs["text"] == _NOT_LINKED_MESSAGE
+    assert not client.chat_postEphemeral.called
+    # Permission checks see a caller with no roles, not authorization turned off
+    authority = run_event.call_args.args[0].authority
+    assert authority is not None and authority.context.principal_id == "slack:U123"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_agent_without_users_runs_unchecked_under_a_jwt_middleware():
+    from agno.agent import Agent
+    from agno.os import AgentOS
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    app = AgentOS(id="slack-handlers", agents=[Agent(id="agent-1")], telemetry=False).get_app()
+    app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+    ctx = make_ctx().bind(app)
+    client = make_async_client_mock()
+    with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
+        await handle_message(make_event_body(), client, ctx)
+    assert not client.chat_postEphemeral.called
+    # An agent other than Super Agent runs unchecked without users=
+    assert run_event.call_args.args[0].authority is None
+
+
+@pytest.mark.parametrize("super_agent", [True, False], ids=["super-agent", "agent"])
+@pytest.mark.asyncio
+async def test_handle_message_without_users_runs_as_the_slack_user_with_the_default_roles_access(super_agent):
+    ctx = make_ctx(default_role="slack-bot")
+    authority = object()
+    authorize = AsyncMock(return_value=authority)
+    if super_agent:
+        ctx.company = AsyncMock()
+        ctx.company.authorize = authorize
+    with (
+        patch("agno.os.interfaces.slack.security.resolve_principal_authorization", authorize),
+        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
+    ):
+        await handle_message(make_event_body(), make_async_client_mock(), ctx)
+    # The member acts as themselves; the default role only supplies the permissions
+    if super_agent:
+        authorize.assert_awaited_once_with(ctx.app, "U123", "agent-1", ["slack-bot"])
+    else:
+        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"])
+    event_context = run_event.call_args.args[0]
+    assert (event_context.user_id, event_context.authority) == ("U123", authority)
+
+
+@pytest.mark.parametrize(
+    "super_agent, authorization",
+    [(True, True), (True, False), (False, True), (False, False)],
+    ids=[
+        "super-agent-authorization-on",
+        "super-agent-authorization-off",
+        "agent-authorization-on",
+        "agent-authorization-off",
+    ],
+)
+@pytest.mark.asyncio
+async def test_handle_message_member_not_in_users_runs_with_the_default_roles_access(super_agent, authorization):
+    from agno.agent import Agent
+    from agno.os import AgentOS
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    app = AgentOS(id="slack-handlers", agents=[Agent(id="agent-1")], telemetry=False).get_app()
+    if authorization:
+        app.add_middleware(JWTMiddleware, verification_keys=[JWT_KEY], algorithm="HS256", authorization=True)
+    ctx = make_ctx(users={"U999": "alice"}, default_role="slack-bot").bind(app)
+    authority = object()
+    authorize = AsyncMock(return_value=authority)
+    if super_agent:
+        ctx.company = AsyncMock()
+        ctx.company.authorize = authorize
+    client = make_async_client_mock()
+    with (
+        patch("agno.os.interfaces.slack.security.resolve_principal_authorization", authorize),
+        patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event,
+    ):
+        await handle_message(make_event_body(), client, ctx)
+    if authorization:
+        authorize.assert_awaited_once()
+        event_context = run_event.call_args.args[0]
+        assert (event_context.user_id, event_context.authority) == ("U123", authority)
+    else:
+        # Without authorization the default role grants nothing, so users= still refuses the member
+        assert not run_event.called
+        assert client.chat_postEphemeral.call_args.kwargs["text"] == _NOT_LINKED_MESSAGE
 
 
 @pytest.mark.asyncio

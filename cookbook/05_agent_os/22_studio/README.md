@@ -15,6 +15,7 @@ Registry/Components HTTP contracts.
 | `studio_hitl_agent.py` | Resolve structured feedback, free-text input, and confirmation pauses in a console process. |
 | `studio_hitl_agent_os.py` | Resolve the same pauses through AgentOS run and continuation endpoints. |
 | `registry_and_components.py` | Read `GET /registry` and complete a component lifecycle over the Components API: draft, guarded append, publish, archive, restore. |
+| `inline_output_schema.py` | Attach a plain JSON Schema to a Studio-built Agent, load it back as a Pydantic model, run it for a typed result, and read a refusal. |
 | `studio_runner_dispatcher.py` | Dispatch Studio-built components from a runner-only Agent with `StudioRunnerTools`. |
 | `studio_runner_direct.py` | Call the runner's list/run tools directly and observe the registry guard's refusal. |
 | `registry_learning.py` | Declare `LearningMachine`s on the Registry, discover them with `list_learning`, wire a built agent with `learning_name`, and rehydrate it with the shared machine. |
