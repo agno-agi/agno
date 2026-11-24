@@ -17,11 +17,19 @@ class CompanyConfig:
     products: List["Product"] = field(default_factory=list)
     acceptance_checks: Dict[str, Callable[[Dict[str, Any], Any], Any]] = field(default_factory=dict)
     automation_history_retention_days: int = 30
+    cron_expr: str = "0 * * * *"
+    name: str = "Company"
+    description: Optional[str] = None
 
     def __post_init__(self) -> None:
+        from agno.db.schemas.company import validate_company_details
+
+        validate_company_details({"name": self.name, "description": self.description})
         if (
             isinstance(self.automation_history_retention_days, bool)
             or not isinstance(self.automation_history_retention_days, int)
             or self.automation_history_retention_days < 1
         ):
             raise ValueError("automation_history_retention_days must be a positive integer")
+        if not isinstance(self.cron_expr, str) or not self.cron_expr.strip():
+            raise ValueError("cron_expr must be a cron expression")

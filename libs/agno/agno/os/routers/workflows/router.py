@@ -102,6 +102,7 @@ from agno.os.utils import (
     stamped_component_version,
     stored_event_replay_dicts,
 )
+from agno.run.authorization import current_authorization, require_task_authority
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_debug, log_error, log_warning, logger
@@ -968,6 +969,12 @@ async def handle_workflow_continue_via_websocket(
                 )
             )
             return
+        # Same refusal as the HTTP continue route, for a run a Company Task started.
+        try:
+            require_task_authority(getattr(existing_run, "metadata", None), current_authorization())
+        except PermissionError as exc:
+            await websocket.send_text(json.dumps({"event": "error", "run_id": run_id, "error": str(exc)}))
+            return
 
         # Version-stable continuation (see the HTTP continue route): a run
         # started with an explicitly pinned version (draft preview) recorded
@@ -1447,7 +1454,7 @@ async def _resume_stream_generator(
     Three reconnection paths:
     1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
     2. Run completed (in buffer): replay all events since last_event_index
-    3. Not in buffer: fall back to database replay
+    3. Not in buffer, or executed elsewhere: fall back to database replay
     """
     event_stream = get_event_stream()
     try:
@@ -1460,8 +1467,12 @@ async def _resume_stream_generator(
         yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
-    if buffer_status is None:
-        # PATH 3: Not in buffer -- fall back to database
+    from agno.os.utils import run_stream_served_here
+
+    # A replica-local stream never advances a run another replica's worker executes.
+    elsewhere = buffer_status in (RunStatus.pending, RunStatus.running) and not await run_stream_served_here(run_id)
+    if buffer_status is None or elsewhere:
+        # PATH 3: Not in buffer, or executed elsewhere -- fall back to database
         if session_id and not isinstance(workflow, RemoteWorkflow):
             try:
                 run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
@@ -1478,8 +1489,16 @@ async def _resume_stream_generator(
             elif run_output:
                 from agno.os.utils import no_stored_events_replay_meta
 
-                yield f"event: replay\ndata: {json.dumps(no_stored_events_replay_meta(run_output, run_id))}\n\n"
+                meta = no_stored_events_replay_meta(run_output, run_id, elsewhere=elsewhere)
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
                 return
+
+        # Executed on another replica, whose events only the database can replay
+        if elsewhere and not session_id:
+            yield sse_error_frame(
+                f"Run {run_id} executes on another replica; pass session_id to replay it from the database"
+            )
+            return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
@@ -1548,44 +1567,9 @@ async def _resume_stream_generator(
 
     log_debug(f"SSE client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
-    # Pump the tail through a queue so we can heartbeat on idle without
-    # cancelling the tail generator (cancelling its __anext__ would kill it).
-    tail_queue: asyncio.Queue = asyncio.Queue()
-
-    async def _pump_tail() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Resume tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
-        finally:
-            await tail_queue.put(None)
-
-    pump_task = asyncio.create_task(_pump_tail())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                # Tail is idle (queued or silent run) - keep the connection alive
-                yield ": heartbeat\n\n"
-                continue
-            if item is None:
-                # Tail finished: run reached a terminal state
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything, not just CancelledError: an exception re-raised
-        # here reaches the ASGI layer on a response whose headers are already
-        # sent (the pump has already surfaced it as an error frame)
-        with contextlib.suppress(BaseException):
-            await pump_task
+    # queued_run_tail_streamer also ends on a settled ticket or a claim by another replica.
+    async for frame in queued_run_tail_streamer(run_id, last_replayed_index, keepalive=": heartbeat\n\n"):
+        yield frame
 
 
 def get_workflow_router(
@@ -2337,6 +2321,13 @@ def get_workflow_router(
                 f"run is not paused (status={getattr(status, 'value', status)})",
             )
             raise HTTPException(status_code=409, detail=detail)
+
+        # The tool-level check covers only steps that call a tool: a function step of a run that a
+        # Company Task started would still run. Refuse the whole run here.
+        try:
+            require_task_authority(getattr(existing_run, "metadata", None), current_authorization())
+        except PermissionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
         # Version-stable continuation: a run started with an explicitly pinned
         # version (draft preview) recorded it in its run metadata; continue on

@@ -115,7 +115,9 @@ async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
     assert (await client.post(second_path)).status_code == 409
     assert (
         await client.post(path + "/transitions", json={"target": "backlog", "reason": "Edit work"})
-    ).status_code == 200
+    ).status_code == 409
+    # The route refuses leaving In progress mid-run; a direct manager or db caller can still move the Task.
+    await _call(db, "transition_task", first["id"], "backlog", "Edit work")
     if mutation in {"reassigned", "new_reservation"}:
         ready = await client.post(
             path + "/transitions",
@@ -193,7 +195,9 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
     from agno.db.base import AsyncBaseDb
     from tests.integration.db.test_company_execution_parity import execute
 
-    client, db, worker, os, _ = sandbox_system
+    client, db, worker, os, engineer = sandbox_system
+    # The fixture serves only the engineer's instance under a shared id; the writer runs first.
+    os._register_db_with_validation(os.dbs, db)
     old = await accepted(client)
     other = await engineering_task(client, db)
     path = "/company/tasks/" + old["id"]
@@ -215,6 +219,8 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
             with db.db_engine.begin() as connection:
                 connection.execute(table.update().where(table.c.id == old["id"]).values(transitions=history))
     os.dbs.pop(db.id, None)
+    # The engineer's runs are read back through its database, so AgentOS must still serve it.
+    os._register_db_with_validation(os.dbs, engineer.db)
     os.registry.agents[:] = [agent for agent in os.registry.agents if agent.id != "writer"]
     started = await client.post("/company/tasks/" + other["id"] + "/runs")
     assert started.status_code == 202, started.text

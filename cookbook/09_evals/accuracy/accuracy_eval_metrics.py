@@ -11,20 +11,20 @@ run_output.metrics.details alongside the agent's own "model" entries.
 
 from agno.agent import Agent
 from agno.eval.accuracy import AccuracyEval
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions="Answer factual questions concisely.",
 )
 
 evaluation = AccuracyEval(
     name="Capital Cities",
-    model=OpenAIChat(id="gpt-5.6-luna"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     agent=agent,
     input="What is the capital of Japan?",
     expected_output="Tokyo",

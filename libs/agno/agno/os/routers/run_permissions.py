@@ -23,7 +23,7 @@ async def _require_endpoint_permission(
         detail = (
             "Manager specialists are internal. Select a registered agent, team or workflow as the Task executor."
             if action == "accept"
-            else "Manager specialists are internal. Schedule OS Manager instead."
+            else "Manager specialists are internal. Schedule Super Agent instead."
         )
         raise HTTPException(status_code=409, detail=detail)
 

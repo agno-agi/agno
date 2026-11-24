@@ -354,3 +354,22 @@ class TestAgentInitModelType:
             reasoning_model=OpenAIChat(id="gpt-4o-mini"),
         )
         assert agent.reasoning_model.model_type == ModelType.REASONING_MODEL
+
+
+# ---------------------------------------------------------------------------
+# Team init sets model_type
+# ---------------------------------------------------------------------------
+
+
+class TestTeamInitModelType:
+    def test_team_output_model_gets_type_set(self):
+        from agno.models.openai.chat import OpenAIChat
+        from agno.team import Team
+
+        team = Team(
+            members=[],
+            model=OpenAIChat(id="gpt-4o-mini"),
+            output_model=OpenAIChat(id="gpt-4o-mini"),
+        )
+        assert team.model.model_type == ModelType.MODEL
+        assert team.output_model.model_type == ModelType.OUTPUT_MODEL

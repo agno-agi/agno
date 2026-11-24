@@ -130,6 +130,7 @@ class AgentCoreSandbox(Sandbox):
         self,
         runtime_arn: str,
         *,
+        id: Optional[str] = None,
         namespace: str = "default",
         qualifier: str = "DEFAULT",
         lifetime: int = 3600,
@@ -159,6 +160,9 @@ class AgentCoreSandbox(Sandbox):
             execution_timeout = min(900.0, lifetime / 2)
         if not math.isfinite(execution_timeout) or not 0 < execution_timeout < lifetime:
             raise ValueError("AgentCore execution timeout must be positive and shorter than the lifetime")
+        if id is not None and (not isinstance(id, str) or not id):
+            raise ValueError("Sandbox id must be None or a nonempty string")
+        self.id = id
         self.checkpoints = checkpoints
         self.env = dict(env) if env is not None else None
         self.execution_timeout = execution_timeout
@@ -385,8 +389,12 @@ class AgentCoreSandbox(Sandbox):
         A failed or lost reply never touches the claimed computer: the caller
         reconciles. Only an unclaimed replacement microVM is stopped.
         """
-        if operation not in ("start", "poll") or not isinstance(payload, bytes) or len(payload) > 1024 * 1024:
-            raise ValueError("Runtime RPC requires start/poll and a payload no larger than 1 MiB")
+        if (
+            operation not in ("start", "poll", "resolve", "capabilities")
+            or not isinstance(payload, bytes)
+            or len(payload) > 1024 * 1024
+        ):
+            raise ValueError("Runtime RPC requires start/poll/resolve/capabilities and a payload no larger than 1 MiB")
         reply = await self._invoke_for(handle, "rpc", operation=operation, payload=payload.decode())
         body = str(reply["body"])[: 4 * 1024 * 1024]
         if reply["status"] != 200:

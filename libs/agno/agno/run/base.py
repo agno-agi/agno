@@ -448,3 +448,10 @@ HISTORY_SKIP_STATUSES: list["RunStatus"] = [
     RunStatus.error,
     RunStatus.regenerated,
 ]
+
+# Statuses that end a run's metrics: a run in one of them is counted, a paused run only once it ends.
+METRICS_FINAL_STATUSES: list["RunStatus"] = [
+    RunStatus.completed,
+    RunStatus.error,
+    RunStatus.cancelled,
+]

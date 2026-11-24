@@ -2,7 +2,8 @@
 Setup helper functions for configuring Agno tracing.
 """
 
-from typing import Union
+from os import getenv
+from typing import Any, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
@@ -12,12 +13,28 @@ from agno.utils.log import log_debug, log_error, log_info
 try:
     from openinference.instrumentation.agno import AgnoInstrumentor  # type: ignore
     from opentelemetry import trace as trace_api  # type: ignore
-    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+    from opentelemetry.sdk.trace import SpanLimits, TracerProvider  # type: ignore
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanProcessor  # type: ignore
+
+    from agno.tracing.processor import AgnoSpanFilterProcessor
 
     OPENTELEMETRY_AVAILABLE = True
 except ImportError:
     OPENTELEMETRY_AVAILABLE = False
+
+# The tracer provider setup_tracing installed, if any
+_agno_tracer_provider: Optional[Any] = None
+
+
+def is_agno_tracing_active() -> bool:
+    """Whether the global tracer provider is the one setup_tracing installed.
+
+    False when tracing was never set up, or when setup_tracing found a provider the
+    application had already configured and left it in place.
+    """
+    if not OPENTELEMETRY_AVAILABLE or _agno_tracer_provider is None:
+        return False
+    return trace_api.get_tracer_provider() is _agno_tracer_provider
 
 
 def setup_tracing(
@@ -31,6 +48,8 @@ def setup_tracing(
     Set up OpenTelemetry tracing with database export for Agno agents.
 
     This function configures automatic tracing for all Agno agents, teams, and workflows.
+    Uses OpenInference's span attribute limits for message and tool metadata,
+    while respecting explicit OpenTelemetry attribute limit settings.
     Traces are automatically captured for:
     - Agent runs (agent.run, agent.arun)
     - Model calls (model.response)
@@ -75,8 +94,12 @@ def setup_tracing(
         return
 
     try:
-        # Create tracer provider
-        tracer_provider = TracerProvider()
+        # Match OpenInference's default for flattened message and tool attributes.
+        # Explicit operator limits still use OpenTelemetry's normal precedence.
+        span_limits = None
+        if not getenv("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT") and not getenv("OTEL_ATTRIBUTE_COUNT_LIMIT"):
+            span_limits = SpanLimits(max_span_attributes=1024)
+        tracer_provider = TracerProvider(span_limits=span_limits)
 
         # Create database exporter
         exporter = DatabaseSpanExporter(db=db)
@@ -98,10 +121,13 @@ def setup_tracing(
             processor = SimpleSpanProcessor(exporter)
             log_debug("Tracing configured with SimpleSpanProcessor")
 
-        tracer_provider.add_span_processor(processor)
+        # Store only Agno runs, even when other libraries emit spans into this provider
+        tracer_provider.add_span_processor(AgnoSpanFilterProcessor(processor))
 
         # Set the global tracer provider
         trace_api.set_tracer_provider(tracer_provider)
+        global _agno_tracer_provider
+        _agno_tracer_provider = tracer_provider
 
         # Instrument Agno with OpenInference
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)

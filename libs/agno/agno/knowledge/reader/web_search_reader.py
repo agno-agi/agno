@@ -251,6 +251,7 @@ class WebSearchReader(Reader):
             return []
 
         documents: List[Document] = []
+        pages_read = 0
 
         for result in search_results:
             url = result.get("url", "")
@@ -273,6 +274,7 @@ class WebSearchReader(Reader):
 
             # Create document
             document = self._create_document_from_url(url, content, result)
+            pages_read += 1
 
             # Apply chunking if enabled
             if self.chunk:
@@ -281,8 +283,8 @@ class WebSearchReader(Reader):
             else:
                 documents.append(document)
 
-            # Stop if we've reached max_results
-            if len(documents) >= self.max_results:
+            # The result limit counts fetched pages, not the chunks they produce.
+            if pages_read >= self.max_results:
                 break
 
         log_debug(f"Created {len(documents)} documents from web search")
@@ -334,19 +336,21 @@ class WebSearchReader(Reader):
                 return None
 
         documents = []
+        pages_read = 0
         for i, result in enumerate(search_results):
             if i > 0:
                 await asyncio.sleep(self.delay_between_requests)
 
             doc = await fetch_url_async(result)
             if doc is not None:
+                pages_read += 1
                 if self.chunk:
                     chunked_docs = await self.chunk_documents_async([doc])
                     documents.extend(chunked_docs)
                 else:
                     documents.append(doc)
 
-                if len(documents) >= self.max_results:
+                if pages_read >= self.max_results:
                     break
 
         log_debug(f"Created {len(documents)} documents from async web search")

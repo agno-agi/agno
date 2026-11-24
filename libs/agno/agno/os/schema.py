@@ -402,6 +402,15 @@ class McpInfo(BaseModel):
     oauth: Optional[McpOAuthInfo] = Field(
         None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
     )
+    tool_run_endpoint: bool = Field(
+        False,
+        description=(
+            "Whether this deployment serves the plain-HTTP tool runner at "
+            "`{path}/server/tools/{tool_name}/run`. False both when the MCP server is off and "
+            "when it is on with `MCPConfig(tool_run_endpoint=False)`, so a client can tell upfront "
+            "whether running a tool is possible instead of discovering it on the call."
+        ),
+    )
 
 
 class InfoResponse(BaseModel):
@@ -739,8 +748,35 @@ CANCELLATION_STAGE_DESCRIPTION = (
 )
 
 
+class CompactionSchema(BaseModel):
+    """What one compaction did to the context, without the summary text or the archived messages."""
+
+    id: Optional[str] = Field(None, description="Unique identifier for the compaction record")
+    run_id: Optional[str] = Field(
+        None, description="Run that compacted its own context. Not set for a manual compaction, which no run made"
+    )
+    messages_compacted: int = Field(0, description="Number of history messages the compaction replaced")
+    tokens_before: Optional[int] = Field(None, description="Context size before the compaction, in tokens")
+    tokens_after: Optional[int] = Field(None, description="Context size after the compaction, in tokens")
+    created_at: Optional[datetime] = Field(None, description="Compaction creation timestamp")
+    archived: bool = Field(False, description="Whether the replaced messages were stored and can be read back")
+
+    @classmethod
+    def from_dict(cls, record: Dict[str, Any]) -> "CompactionSchema":
+        return cls(
+            id=record.get("compaction_id"),
+            run_id=record.get("run_id"),
+            messages_compacted=record.get("messages_compacted") or 0,
+            tokens_before=record.get("tokens_before"),
+            tokens_after=record.get("tokens_after"),
+            created_at=to_utc_datetime(record.get("created_at")),
+            archived=bool(record.get("archived_messages")),
+        )
+
+
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -777,10 +813,12 @@ class RunSchema(BaseModel):
         None, description="If this run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this run was forked, the message index at which the source was truncated"
+        None,
+        description="If this run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this run was created via session branch, the source session's ID"
+        None,
+        description="If this run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this run was produced via regenerate=true, the source run's ID"
@@ -849,6 +887,7 @@ class SessionRunPreviewSchema(BaseModel):
     and the single-run endpoint. Previews are truncated to 280 characters."""
 
     run_id: str = Field(..., description="Unique identifier for the run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID, when this is an agent run")
     team_id: Optional[str] = Field(None, description="Team ID, when this is a team run")
@@ -873,6 +912,7 @@ class SessionRunPreviewSchema(BaseModel):
     def from_run(cls, run: Any) -> "SessionRunPreviewSchema":
         return cls(
             run_id=run.run_id,
+            run_index=getattr(run, "run_index", None),
             parent_run_id=getattr(run, "parent_run_id", None),
             agent_id=getattr(run, "agent_id", None),
             team_id=getattr(run, "team_id", None),
@@ -887,6 +927,7 @@ class SessionRunPreviewSchema(BaseModel):
 
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
@@ -922,10 +963,12 @@ class TeamRunSchema(BaseModel):
         None, description="If this team run was forked from another run, the source run's ID"
     )
     forked_from_message_index: Optional[int] = Field(
-        None, description="If this team run was forked, the message index at which the source was truncated"
+        None,
+        description="If this team run was forked, the message index at which the source was truncated; for a run copied by a session branch and continued, the index where the continued work starts",
     )
     forked_from_session_id: Optional[str] = Field(
-        None, description="If this team run was created via session branch, the source session's ID"
+        None,
+        description="If this team run was created via session branch, the source session's ID; cleared once the copied run is continued in this session",
     )
     regenerated_from: Optional[str] = Field(
         None, description="If this team run was produced via regenerate=true, the source run's ID"
@@ -976,6 +1019,7 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the workflow run")
+    run_index: Optional[int] = Field(None, description="0-based position of the run in its session")
     run_input: Optional[str] = Field(None, description="Input provided to the workflow")
     events: Optional[List[dict]] = Field(None, description="Events generated during the workflow")
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was executed")
@@ -1062,6 +1106,25 @@ class PaginatedResponse(BaseModel, Generic[T]):
 
     data: List[T] = Field(..., description="List of items for the current page")
     meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
+class RunsPageInfo(BaseModel):
+    limit: int = Field(..., description="Maximum number of items in this page", ge=1)
+    total_count: int = Field(..., description="Total count of items matching the filters", ge=0)
+    has_more: bool = Field(..., description="Whether more items exist beyond this page in the paging direction")
+    oldest_run_index: Optional[int] = Field(
+        None, description="Oldest top-level run_index on this page; pass it as before_run_index for the older page"
+    )
+    newest_run_index: Optional[int] = Field(
+        None, description="Newest top-level run_index on this page; pass it as after_run_index for the newer page"
+    )
+
+
+class RunsPage(BaseModel, Generic[T]):
+    """Wrapper for cursor-paginated responses; callers page with a boundary taken from ``data``."""
+
+    data: List[T] = Field(..., description="List of items for the current page")
+    meta: RunsPageInfo = Field(..., description="Pagination metadata")
 
 
 class ComponentType(str, Enum):
@@ -1197,6 +1260,7 @@ class RegistryResourceType(str, Enum):
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
     LEARNING = "learning"
+    SANDBOX = "sandbox"
 
 
 class CallableMetadata(BaseModel):

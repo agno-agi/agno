@@ -390,9 +390,6 @@ class LightRag(VectorDb):
 
         Args:
             query: The search query string
-            num_documents: Number of documents to retrieve (currently unused by LightRAG)
-            mode: Query mode - "local", "global", or "hybrid"
-            lightrag_server_url: URL of the LightRAG server
 
         Returns:
             List of retrieved documents or None if search fails

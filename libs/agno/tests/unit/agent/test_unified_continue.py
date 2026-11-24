@@ -20,7 +20,7 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent import _init, _response, _run, _storage, _tools
-from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
+from agno.agent._run import _apply_continue_modifiers, _fork_run, _truncate_run_to_checkpoint
 from agno.agent.agent import Agent
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
@@ -736,6 +736,13 @@ class TestTruncateHelper:
         assert run.tools == [], "All tools dropped when no messages survive"
         assert run.last_checkpoint_at_message_index == 0
 
+    def test_truncate_before_a_fork_point_lowers_it(self):
+        """A fork cut before the messages it copied keeps only copied messages, so its calls from there are its own."""
+        run = self._build_run_with_tools()
+        run.forked_from_message_index = 5
+        _truncate_run_to_checkpoint(run, 3)
+        assert run.forked_from_message_index == 3
+
     def test_truncate_filters_requirements(self):
         pending_tool = ToolExecution(tool_call_id="tc-late", tool_name="z", tool_args={})
         run = RunOutput(
@@ -881,6 +888,18 @@ class TestForkHelper:
         assert forked.forked_from_run_id == "origin-run"
         assert forked.forked_from_message_index == 3
 
+    def test_fork_at_negative_index_records_every_copied_message(self):
+        original = self._build_run()
+        forked = _fork_run(original, -1)
+        assert len(forked.messages or []) == 4
+        assert forked.forked_from_message_index == 4
+
+    def test_fork_past_the_last_message_records_every_copied_message(self):
+        original = self._build_run()
+        forked = _fork_run(original, 10)
+        assert len(forked.messages or []) == 4
+        assert forked.forked_from_message_index == 4
+
     def test_fork_preserves_session_id(self):
         original = self._build_run()
         forked = _fork_run(original, 2)
@@ -934,6 +953,28 @@ class TestForkHelper:
         forked = _fork_run(self._build_run(), 3)
         forked.metrics.stop_timer()
         assert forked.metrics.duration is not None, "fork run has no duration"
+
+    def test_fork_of_a_run_copied_into_a_forked_session_is_not_a_copy(self):
+        """A regenerated run is new work of its session, so it must not keep the
+        copied run's forked_from_session_id, which the metrics skip."""
+        original = self._build_run()
+        original.forked_from_session_id = "source-session"
+        forked = _fork_run(original, 3)
+        assert forked.forked_from_session_id is None
+        assert original.forked_from_session_id == "source-session"
+
+    def test_continuing_a_run_copied_into_a_forked_session_counts_only_its_new_work(self):
+        """A paused run copied into a forked session continues in place: its copied
+        messages and metrics stay counted in the source session only."""
+        from agno.metrics import RunMetrics
+
+        original = self._build_run()
+        original.forked_from_session_id = "source-session"
+        original.metrics = RunMetrics(total_tokens=120)
+        continued = _apply_continue_modifiers(original, False, None)
+        assert continued.forked_from_session_id is None
+        assert continued.forked_from_message_index == 4
+        assert continued.metrics.total_tokens == 0
 
 
 class TestCheckpointScrubIsolation:
@@ -1790,6 +1831,27 @@ class TestForkSession:
         assert saved.runs[0].forked_from_session_id == "s-root"
         # Session-level forked_from_session_id points at immediate parent.
         assert saved.session_data["forked_from_session_id"] == "s-mid"
+
+    def test_fork_session_leaves_compaction_metrics_in_the_source(self, monkeypatch: pytest.MonkeyPatch):
+        # A compaction's usage is counted in the session it was made in, as its runs are.
+        original_run = RunOutput(
+            run_id="r-orig",
+            session_id="s-orig",
+            messages=[Message(role="user", content="hi")],
+        )
+        source = AgentSession(
+            session_id="s-orig",
+            user_id="u1",
+            runs=[original_run],
+            session_data={"compaction_metrics": {"total_tokens": 740}},
+        )
+        agent = self._make_forking_agent(monkeypatch, source)
+
+        agent.fork_session(source_session_id="s-orig", user_id="u1")
+
+        saved = agent._saved[0]  # type: ignore[attr-defined]
+        assert "compaction_metrics" not in saved.session_data
+        assert source.session_data["compaction_metrics"] == {"total_tokens": 740}
 
 
 # ---------------------------------------------------------------------------
