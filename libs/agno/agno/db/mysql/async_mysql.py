@@ -391,6 +391,10 @@ class AsyncMySQLDb(AsyncBaseDb):
             self._invalidate_table_cache(table_name)
             log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
+        except BaseException:
+            # Cancellation bypasses `except Exception`; unregister the Table here too.
+            self._invalidate_table_cache(table_name)
+            raise
 
     async def _create_all_tables(self):
         """Create all tables for the database."""

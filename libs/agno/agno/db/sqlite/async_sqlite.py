@@ -558,6 +558,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             self._invalidate_table_cache(table_name)
             log_error(f"Could not create table '{table_name}': {str(e)}")
             raise e
+        except BaseException:
+            # Cancellation bypasses `except Exception`; unregister the Table here too.
+            self._invalidate_table_cache(table_name)
+            raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "transcripts":

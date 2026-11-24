@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -122,3 +123,36 @@ def test_failed_table_creation_can_be_retried_mysql():
 
     assert table.name == "retry_table"
     assert attempts["create"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_table_creation_can_be_retried_async_mysql(async_mysql_db):
+    """A cancelled CREATE TABLE on AsyncMySQLDb must unregister the table from MetaData."""
+    async_mysql_db.create_schema = False
+    started = asyncio.Event()
+    attempts = 0
+
+    async def table_exists(table_name):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            started.set()
+            await asyncio.Event().wait()
+        return False
+
+    conn = Mock(run_sync=AsyncMock())
+    begin_ctx = Mock(__aenter__=AsyncMock(return_value=conn), __aexit__=AsyncMock(return_value=None))
+    async_mysql_db.db_engine.begin = Mock(return_value=begin_ctx)
+    async_mysql_db.table_exists = table_exists
+    async_mysql_db.upsert_schema_version = AsyncMock()
+
+    task = asyncio.create_task(async_mysql_db._create_table("retry_table", "knowledge"))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    table = await async_mysql_db._create_table("retry_table", "knowledge")
+
+    assert table.name == "retry_table"
+    assert attempts == 2

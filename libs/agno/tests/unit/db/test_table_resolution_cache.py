@@ -480,3 +480,33 @@ async def test_failed_table_creation_can_be_retried_async_sqlite(tmp_path):
     assert table.name == "test_sessions"
     assert attempts == 2
     await db.db_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_table_creation_can_be_retried_async_sqlite(tmp_path):
+    """A cancelled CREATE TABLE on AsyncSqliteDb must not leave the table registered on MetaData."""
+    import asyncio
+
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "cancel_async.db"), session_table="test_sessions")
+    started = asyncio.Event()
+    real_table_exists = db.table_exists
+
+    async def blocking_table_exists(table_name):
+        started.set()
+        await asyncio.Event().wait()
+
+    db.table_exists = blocking_table_exists
+    task = asyncio.create_task(db._get_table("sessions", create_table_if_not_found=True))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    db.table_exists = real_table_exists
+    table = await db._get_table("sessions", create_table_if_not_found=True)
+
+    assert table.name == "test_sessions"
+    assert await db._get_table("sessions", create_table_if_not_found=True) is table
+    await db.db_engine.dispose()
