@@ -17,6 +17,7 @@ class MigrationManager:
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
         ("v3_0_0", packaging_version.parse("3.0.0")),
+        ("v3_2_2", packaging_version.parse("3.2.2")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -64,6 +65,7 @@ class MigrationManager:
             "tasks": "tasks_table_name",
             "schedule_runs": "schedule_runs_table_name",
             "learnings": "learnings_table_name",
+            "authz_users": "authz_users_table_name",
         }
 
         # Select tables to migrate
@@ -179,6 +181,7 @@ class MigrationManager:
             "tasks": "tasks_table_name",
             "schedule_runs": "schedule_runs_table_name",
             "learnings": "learnings_table_name",
+            "authz_users": "authz_users_table_name",
         }
 
         # Select tables to migrate

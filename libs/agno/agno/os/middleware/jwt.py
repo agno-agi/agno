@@ -22,12 +22,14 @@ from agno.os.auth import (
 )
 from agno.os.middleware.cors import OriginPolicy
 from agno.os.scopes import (
+    DENIES_CLAIM,
     AgentOSScope,
     RouteScopeCheck,
     get_default_scope_mappings,
     get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
+    with_denies,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -413,6 +415,8 @@ class JWTValidator:
             scopes = [scopes]
         elif not isinstance(scopes, list):
             scopes = []
+        # A token's deny scopes override its allows, as on a request
+        scopes = with_denies(scopes, payload.get(DENIES_CLAIM))
 
         return {
             "user_id": payload.get(self.user_id_claim),
@@ -1658,6 +1662,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 scopes = [scopes]
             elif not isinstance(scopes, list):
                 scopes = []
+            # A token's deny scopes (os.agno.com sends a role's per-OS denies) override its allows
+            scopes = with_denies(scopes, payload.get(DENIES_CLAIM))
 
             # Store claims in request.state
             request.state.authenticated = True
@@ -1682,6 +1688,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # app's to assert; we only gate it.
             user_store = getattr(getattr(request.app, "state", None), "user_store", None)
             if user_store is not None and user_id:
+                user_row: Optional[dict] = None
                 try:
                     if getattr(request.app.state, "user_auto_provision", False):
                         # Provisioning already reads the row; read `disabled` off it rather
@@ -1696,6 +1703,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                             name_claim=getattr(request.app.state, "user_name_claim", "name"),
                         )
                         disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
+                        user_row = provisioned
                     else:
                         disabled = await user_store.ais_disabled(user_id)
                 except Exception as e:  # directory unreachable: honour the configured policy
@@ -1722,6 +1730,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         reason="user_disabled",
                     )
                     return self._create_error_response(403, "User is disabled", origin, cors_allowed_origins)
+                # An os.agno.com token marks its user an org user and saves their role and scopes, for the
+                # requests that carry no token, such as a Slack message
+                if getattr(user_store, "org_access_max_age", None):
+                    try:
+                        await user_store.aremember_org_access(user_id, payload, scopes, row=user_row)
+                    except Exception as e:
+                        log_warning(f"could not save the os.agno.com access of {user_id!r}: {e}")
 
             # Extract dependencies claims
             dependencies = {}

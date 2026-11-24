@@ -8,7 +8,7 @@ from weakref import ReferenceType, ref
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
 from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
-from agno.os.interfaces.slack.security import resolve_principal_authorization
+from agno.os.interfaces.slack.security import member_principal, resolve_principal_authorization
 from agno.utils.log import log_debug, log_error, log_warning
 
 # Slack message metadata event type that marks a Task attempt's result as posted
@@ -51,13 +51,24 @@ class CompanyBridge:
     def db(self) -> Any:
         return getattr(self.agent_os, "_company_db", None)
 
-    async def authorize(self, app: Any, principal: str, entity_id: str, roles: Optional[List[str]] = None) -> Any:
+    async def authorize(
+        self,
+        app: Any,
+        principal: str,
+        entity_id: str,
+        roles: Optional[List[str]] = None,
+        disabled: Optional[bool] = None,
+        user: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """The platform authority of a principal to run Super Agent, with roles when given.
 
         None when no authorization applies (neither AgentOS authorization nor an RBAC middleware).
         Raises PermissionError when the principal is disabled or not allowed to run the entity.
+        ``disabled`` and ``user`` are the principal's disabled switch and directory row when already read.
         """
-        return await resolve_principal_authorization(app, principal, "teams", entity_id, roles)
+        return await resolve_principal_authorization(
+            app, principal, "teams", entity_id, roles, disabled=disabled, user=user
+        )
 
 
 class TaskDelivery:
@@ -169,9 +180,13 @@ class TaskDelivery:
                 return True
             # Access is checked again before a delayed post: a revoked person sees nothing more
             try:
-                # A run user equal to a mapped principal counts as mapped; anyone else started with the default role
+                # A run user equal to a mapped principal counts as mapped; anyone else started with the default role.
+                # Under authorize_senders the run's own user is checked with their own roles
                 mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
-                roles = [self.ctx.default_role] if self.ctx.default_role and not mapped else None
+                default_role = (
+                    None if mapped or getattr(self.ctx, "senders_authorized", False) else self.ctx.default_role
+                )
+                roles = [default_role] if default_role else None
                 authority = await self.company.authorize(app, user_id, self.ctx.entity_id, roles)
                 if authority is not None:
                     await authority.arequire("tasks", "read")
@@ -245,6 +260,11 @@ class TaskDelivery:
             sender = (message.get("user") or "", message.get("bot_id") or "")
             self.ctx.lookup_cache.set(key, sender)
         user, bot_id = sender
+        # Under authorize_senders the run's user is the author's directory user, derived as when the run started
+        if getattr(self.ctx, "senders_authorized", False):
+            if not user:
+                return None
+            return await member_principal(self.ctx, client, user, None)
         # A member users= leaves out is derived as without users= when a default role is set
         if self.ctx.users is not None and (self.ctx.default_role is None or (user or bot_id) in self.ctx.users):
             return self.ctx.users.get(user or bot_id)

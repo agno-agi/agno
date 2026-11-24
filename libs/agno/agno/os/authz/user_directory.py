@@ -45,9 +45,42 @@ USER_SEARCH_FIELDS = ("id", "email", "name")
 DEFAULT_USER_SORT_FIELD = "created_at"
 DEFAULT_USER_SORT_ORDER = "desc"
 
+# Who a directory user is. A member of the organization that owns the OS on os.agno.com is an org user,
+# recorded from their platform-signed token; anyone else (an app's end user, a Slack sender who never
+# opened the OS) is an end user. Only ORG_USER is ever written, so a row that predates the column, or a
+# stale write racing the token's, still reads as an end user and can never demote an org user.
+ORG_USER = "org_user"
+END_USER = "end_user"
+USER_TYPES = (ORG_USER, END_USER)
+
+# Where an org user's platform role and scopes are kept in their metadata, for requests that carry no
+# token, such as a Slack message
+ORG_ACCESS_KEY = "org_access"
+DEFAULT_ORG_ACCESS_MAX_AGE = 7 * 24 * 3600
+# Unchanged access is written again at most this often, which keeps its age current without a write per request
+_ORG_ACCESS_REFRESH = 3600
+_ORG_ACTOR = "system:os.agno.com"
+
+
+def user_type_of(row: Optional[dict]) -> str:
+    """A row's user type, with a row written before the column existed read as an end user."""
+    return ORG_USER if row and row.get("user_type") == ORG_USER else END_USER
+
+
+def is_platform_token(claims: Optional[Dict[str, Any]]) -> bool:
+    """Whether verified claims are an os.agno.com token for an OS: the platform signs its org id and OS id in."""
+    if not claims:
+        return False
+    return isinstance(claims.get("org_id"), str) and isinstance(claims.get("os_id"), str)
+
 
 def _now() -> int:
     return int(time.time())
+
+
+def _user_type_value(row: dict) -> Dict[str, str]:
+    """The user type a write stores: only ORG_USER, so no write ever turns an org user back into an end user."""
+    return {"user_type": ORG_USER} if row.get("user_type") == ORG_USER else {}
 
 
 _NEEDS_DB = (
@@ -92,6 +125,7 @@ class UserDirectory:
         email_claim: str = "email",
         name_claim: str = "name",
         fail_closed: bool = True,
+        org_access_max_age: Optional[int] = DEFAULT_ORG_ACCESS_MAX_AGE,
     ):
         """
         Args:
@@ -108,11 +142,20 @@ class UserDirectory:
                 a disabled account: the off switch is a revocation, and a revocation that lapses
                 whenever its store is unreachable is not one. False lets the request through,
                 availability over the kill switch, for a deployment that accepts that trade.
+            org_access_max_age: seconds an org user's platform access counts where no token is sent, such
+                as a Slack message. Each os.agno.com token the OS verifies marks its user an org user and
+                saves the role and scopes it carries, so Slack grants what os.agno.com last granted; they
+                stop counting this long after that user's last request with a token (7 days by default),
+                so a member removed from the organization loses Slack access by then. ``None`` saves and
+                reads none.
         """
         self.auto_provision = auto_provision
         self.email_claim = email_claim
         self.name_claim = name_claim
         self.fail_closed = fail_closed
+        self.org_access_max_age = org_access_max_age
+        # The access this process last saved per user and when, so an unchanged token reads nothing
+        self._org_access_saved: Dict[str, Tuple[Tuple[Any, ...], int]] = {}
         self._audit: Optional["AuditSink"] = None  # handed over by AgentOS from Authorization(audit=)
         self._mem: Optional[Dict[str, dict]] = None
         from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
@@ -201,6 +244,9 @@ class UserDirectory:
     ) -> dict:
         """Create a user, or update the provided fields of an existing one.
 
+        A new user is an end user; only a verified os.agno.com token makes a user an org user
+        (:meth:`remember_org_access`).
+
         Only fields you pass are changed; omitted fields are left as-is on an
         existing user (so a metadata-light update can't blank out an email).
         ``disabled`` is intentionally NOT settable here — use
@@ -217,6 +263,7 @@ class UserDirectory:
                 "created_at": now,
                 "updated_at": now,
                 "metadata": metadata or None,
+                "user_type": END_USER,
             }
             self._write(row, insert=True)
             self._emit("user.created", id, None, [self._summary(row)], actor)
@@ -251,6 +298,7 @@ class UserDirectory:
                 "created_at": now,
                 "updated_at": now,
                 "metadata": None,
+                "user_type": END_USER,
             }
             self._persist_disabled(id, disabled, tombstone=row)
             self._emit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
@@ -452,6 +500,132 @@ class UserDirectory:
 
         return bool(self._db.is_authz_user_disabled(id))
 
+    # ------------------------------------------------------------------ org access
+    def org_access(self, row: Optional[dict]) -> Optional[Dict[str, Any]]:
+        """An org user's saved platform access (``role``, ``scopes``, ``org_id``, ``at``) while it still counts;
+        None for an end user, or when none is saved or it expired."""
+        if not self.org_access_max_age or user_type_of(row) != ORG_USER or row is None:
+            return None
+        saved = (row.get("metadata") or {}).get(ORG_ACCESS_KEY)
+        if not isinstance(saved, dict):
+            return None
+        scopes, at = saved.get("scopes"), saved.get("at")
+        if not isinstance(scopes, list) or not isinstance(at, (int, float)):
+            return None
+        if _now() - at > self.org_access_max_age:
+            return None
+        return {**saved, "scopes": [scope for scope in scopes if isinstance(scope, str)]}
+
+    def org_scopes(self, row: Optional[dict]) -> Optional[List[str]]:
+        """The scopes an org user's last os.agno.com token carried while they still count, its denies included as
+        the scope checks read them; None when there are none."""
+        from agno.os.scopes import with_denies
+
+        access = self.org_access(row)
+        return with_denies(access["scopes"], access.get("denies")) if access is not None else None
+
+    def _org_access_pending(self, id: str, claims: Dict[str, Any], scopes: List[str]) -> Optional[Dict[str, Any]]:
+        """The access to save for a user, or None when saving is off, the token is not the platform's, or this
+        process saved the same access recently."""
+        if not self.org_access_max_age or not id or not is_platform_token(claims):
+            return None
+        role = claims.get("role") if isinstance(claims.get("role"), str) else None
+        denies = claims.get("denies")
+        from agno.os.scopes import DENY_PREFIX
+
+        access = {
+            "role": role,
+            # The allows only: the denies the request's scope list carries are saved from the claim below
+            "scopes": sorted(
+                {scope for scope in scopes if isinstance(scope, str) and not scope.startswith(DENY_PREFIX)}
+            ),
+            # Applied over the allows wherever the saved access is used, as the token's are
+            "denies": sorted({d for d in denies if isinstance(d, str)}) if isinstance(denies, list) else [],
+            "org_id": claims["org_id"],
+        }
+        saved = self._org_access_saved.get(id)
+        if saved is not None and saved[0] == self._org_access_key(access) and _now() - saved[1] < _ORG_ACCESS_REFRESH:
+            return None
+        return access
+
+    @staticmethod
+    def _org_profile(id: str, claims: Dict[str, Any]) -> Dict[str, str]:
+        """The email an os.agno.com token gives its user: its subject is the account email, with no email claim.
+        No name is taken from it, since its username is the email too."""
+        email = claims.get("email") if isinstance(claims.get("email"), str) else (id if "@" in id else None)
+        return {"email": email} if email else {}
+
+    def _with_org_access(
+        self, row: Optional[dict], access: Dict[str, Any], profile: Optional[Dict[str, str]] = None
+    ) -> Optional[dict]:
+        """The row marked an org user with this access, and the profile fields it lacks filled in; None when there is
+        no user, or its saved access is current and its profile complete."""
+        if row is None:
+            return None
+        metadata = row.get("metadata") or {}
+        saved = metadata.get(ORG_ACCESS_KEY)
+        now = _now()
+        # Only an empty field is filled, so a name or email an admin set is kept
+        fills = {k: v for k, v in (profile or {}).items() if not row.get(k)}
+        if user_type_of(row) == ORG_USER and isinstance(saved, dict) and not fills:
+            current = {k: v for k, v in saved.items() if k != "at"}
+            at = saved.get("at")
+            if current == access and isinstance(at, (int, float)) and now - at < _ORG_ACCESS_REFRESH:
+                return None
+        updated = {**row, **fills}
+        updated["user_type"] = ORG_USER
+        updated["metadata"] = {**metadata, ORG_ACCESS_KEY: {**access, "at": now}}
+        return updated
+
+    @staticmethod
+    def _org_access_key(access: Dict[str, Any]) -> Tuple[Any, ...]:
+        return (access["role"], tuple(access["scopes"]), tuple(access["denies"]), access["org_id"])
+
+    @staticmethod
+    def _org_access_change(before: dict, after: dict) -> Optional[Tuple[Optional[List[str]], List[str]]]:
+        """The role and scopes before and after a save when they changed, for the audit; None when only the age moved."""
+
+        def summary(row: dict) -> Optional[List[str]]:
+            saved = (row.get("metadata") or {}).get(ORG_ACCESS_KEY)
+            if user_type_of(row) != ORG_USER or not isinstance(saved, dict):
+                return None
+            return [f"role:{saved.get('role')}", *(saved.get("scopes") or [])]
+
+        old, new = summary(before), summary(after)
+        return None if old == new or new is None else (old, new)
+
+    def _mark_org_access_saved(self, id: str, access: Dict[str, Any], row: dict) -> None:
+        """Remember that this access is saved, so the next hour's tokens skip it. Marked only once the save is done,
+        so a request racing it saves again rather than skipping a save that has not landed."""
+        saved = (row.get("metadata") or {}).get(ORG_ACCESS_KEY) or {}
+        at = saved.get("at")
+        if isinstance(at, (int, float)):
+            self._org_access_saved[id] = (self._org_access_key(access), int(at))
+
+    def remember_org_access(
+        self,
+        id: str,
+        claims: Dict[str, Any],
+        scopes: List[str],
+        row: Optional[dict] = None,
+    ) -> None:
+        """Mark a verified os.agno.com token's user an org user and save the role and scopes it carries, for
+        requests that carry no token. Any other token, or a user not in the directory, saves nothing. ``row`` is
+        the user's row when the caller already read it."""
+        pending = self._org_access_pending(id, claims, scopes)
+        if pending is None:
+            return
+        current = row if row is not None else self.get(id)
+        if current is None:
+            return
+        updated = self._with_org_access(current, pending, self._org_profile(id, claims))
+        if updated is not None:
+            self._write(updated, insert=False)
+            change = self._org_access_change(current, updated)
+            if change is not None:
+                self._emit("user.org_access", id, change[0], change[1], _ORG_ACTOR)
+        self._mark_org_access_saved(id, pending, updated or current)
+
     # ------------------------------------------------------------------ helpers
     @staticmethod
     def _summary(row: dict) -> str:
@@ -471,6 +645,7 @@ class UserDirectory:
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
             "metadata": json.loads(r["user_metadata"]) if r["user_metadata"] else None,
+            "user_type": user_type_of(r),
         }
 
     def _write(self, row: dict, insert: bool = True) -> None:
@@ -489,6 +664,7 @@ class UserDirectory:
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "metadata": row.get("metadata"),
+                **_user_type_value(row),
             },
         )
 
@@ -536,6 +712,7 @@ class UserDirectory:
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "metadata": row.get("metadata"),
+                **_user_type_value(row),
             },
         )
 
@@ -576,6 +753,7 @@ class UserDirectory:
                 "created_at": now,
                 "updated_at": now,
                 "metadata": metadata or None,
+                "user_type": END_USER,
             }
             await self._awrite(row, insert=True)
             await self._aemit("user.created", id, None, [self._summary(row)], actor)
@@ -606,6 +784,7 @@ class UserDirectory:
                 "created_at": now,
                 "updated_at": now,
                 "metadata": None,
+                "user_type": END_USER,
             }
             await self._apersist_disabled(id, disabled, tombstone=row)
             await self._aemit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
@@ -719,3 +898,25 @@ class UserDirectory:
             row = self._mem.get(id)
             return bool(row and row["disabled"])
         return bool(await self._adb("is_authz_user_disabled", id))
+
+    async def aremember_org_access(
+        self,
+        id: str,
+        claims: Dict[str, Any],
+        scopes: List[str],
+        row: Optional[dict] = None,
+    ) -> None:
+        """Async twin of :meth:`remember_org_access`."""
+        pending = self._org_access_pending(id, claims, scopes)
+        if pending is None:
+            return
+        current = row if row is not None else await self.aget(id)
+        if current is None:
+            return
+        updated = self._with_org_access(current, pending, self._org_profile(id, claims))
+        if updated is not None:
+            await self._awrite(updated, insert=False)
+            change = self._org_access_change(current, updated)
+            if change is not None:
+                await self._aemit("user.org_access", id, change[0], change[1], _ORG_ACTOR)
+        self._mark_org_access_saved(id, pending, updated or current)

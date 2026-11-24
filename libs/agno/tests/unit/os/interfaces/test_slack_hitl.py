@@ -631,7 +631,7 @@ class TestRestoredAuthority:
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
-        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1", None, disabled=None)
+        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1", None, disabled=None, user=None)
         assert len(fake.calls) == 1
         assert fake.calls[0]["event_context"].authority is authority
         assert fake.calls[0]["clicker"] == OWNER
@@ -748,7 +748,9 @@ class TestRestoredAuthorityWithoutUsers:
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
         # The resumed run stays the owner's own, with the default role's permissions
-        ctx.company.authorize.assert_awaited_once_with(ctx.app, OWNER, "agent-1", ["slack-bot"])
+        ctx.company.authorize.assert_awaited_once_with(
+            ctx.app, OWNER, "agent-1", ["slack-bot"], disabled=None, user=None
+        )
         assert fake.calls[0]["event_context"].authority is authority
         # The run stays the Slack user's own
         assert fake.calls[0]["event_context"].user_id == OWNER

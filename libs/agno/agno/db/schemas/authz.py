@@ -81,6 +81,10 @@ AUTHZ_USERS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": False, "index": True},
     "user_metadata": {"type": Text, "nullable": True},
+    # "org_user": a member of the organization that owns the OS on os.agno.com, recorded from their
+    # platform-signed token. "end_user": anyone else. Null on rows written before the column existed,
+    # read as "end_user".
+    "user_type": {"type": String, "nullable": True, "index": True},
 }
 
 # The change trail: who changed what. Append-only.

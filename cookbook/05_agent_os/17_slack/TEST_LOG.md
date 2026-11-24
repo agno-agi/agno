@@ -324,3 +324,13 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
   returned ok in both views; an invalid value returned `invalid_arguments`.
 
 ---
+
+### super_agent_org_users.py
+
+**Status:** PASS
+
+**Description:** Tested on 2026-11-24 against a local os.agno.com stack (agent-os-api and the agno-os frontend) and a real Slack workspace, with the same setup served from a local script. Opening the AgentOS on os.agno.com recorded the signed-in member in the user directory as an org user, with the role, scopes and email from their token, and `/users` showed them as an org user with their os.agno.com access. With an earlier build of this change, Super Agent answered that member in Slack as their email and started a Company Task for them. The final build was started from this file, and its Slack behaviour is covered by unit tests: a member run with their scopes, someone not recorded told how to get access, a missing permission, a per-AgentOS deny, expired access and a disabled user.
+
+**Result:** Members are recorded from their own os.agno.com sign-in and run in Slack with that access. A live Slack run of the final build, and of a member whose role lacks a permission, is still to be done.
+
+---

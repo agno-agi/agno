@@ -72,7 +72,7 @@ from pydantic import BaseModel, Field
 
 from agno.os.authz._role_store import RoleChangeRefused
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
-from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
+from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS, user_type_of
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.scopes import AgentOSScope
 
@@ -139,6 +139,26 @@ class RoleSchema(BaseModel):
         )
 
 
+class OrgAccessSchema(BaseModel):
+    """What an org user's last os.agno.com token granted, kept for requests that carry no token."""
+
+    role: Optional[str] = Field(None, description="The user's role in the organization on os.agno.com")
+    scopes: List[str] = Field(default_factory=list, description="The scopes the token carried")
+    denies: List[str] = Field(default_factory=list, description="The deny scopes the token carried")
+    org_id: Optional[str] = Field(None, description="The os.agno.com organization")
+    seen_at: Optional[int] = Field(None, description="When the user last sent an os.agno.com token (epoch seconds)")
+
+    @classmethod
+    def from_saved(cls, saved: Dict[str, Any]) -> "OrgAccessSchema":
+        return cls(
+            role=saved.get("role"),
+            scopes=list(saved.get("scopes") or []),
+            denies=list(saved.get("denies") or []),
+            org_id=saved.get("org_id"),
+            seen_at=saved.get("at"),
+        )
+
+
 class UserSchema(BaseModel):
     """A directory user with their role merged in (one role per user)."""
 
@@ -158,9 +178,29 @@ class UserSchema(BaseModel):
     )
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+    user_type: str = Field(
+        "end_user",
+        description=(
+            "'org_user' for a member of the organization that owns the OS on os.agno.com, recorded from "
+            "their platform-signed token; 'end_user' for anyone else"
+        ),
+    )
+    org_access: Optional[OrgAccessSchema] = Field(
+        None,
+        description=(
+            "An org user's role and scopes from their last os.agno.com token, which apply where no token is "
+            "sent, such as Slack. Null for an end user, or once it expired"
+        ),
+    )
 
     @classmethod
-    def from_user(cls, user: dict, role: Optional[str], role_name: Optional[str] = None) -> "UserSchema":
+    def from_user(
+        cls,
+        user: dict,
+        role: Optional[str],
+        role_name: Optional[str] = None,
+        org_access: Optional[Dict[str, Any]] = None,
+    ) -> "UserSchema":
         return cls(
             id=user["id"],
             email=user.get("email"),
@@ -171,6 +211,8 @@ class UserSchema(BaseModel):
             role_name=(role_name or role) if role is not None else None,
             created_at=user.get("created_at"),
             updated_at=user.get("updated_at"),
+            user_type=user_type_of(user),
+            org_access=OrgAccessSchema.from_saved(org_access) if org_access else None,
         )
 
 
@@ -744,11 +786,12 @@ def get_users_router(
 
     async def _user(user: dict, names: Optional[Dict[str, str]] = None) -> UserSchema:
         role = await _role_of(user["id"])
+        org_access = user_store.org_access(user)
         if role is None:
-            return UserSchema.from_user(user, None)
+            return UserSchema.from_user(user, None, org_access=org_access)
         if names is None:
             names = await _role_names()
-        return UserSchema.from_user(user, role, names.get(role))
+        return UserSchema.from_user(user, role, names.get(role), org_access=org_access)
 
     @router.get("", response_model=PaginatedResponse[UserSchema])
     async def list_users(

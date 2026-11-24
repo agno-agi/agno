@@ -75,8 +75,8 @@ class SlackContext:
 
     @property
     def senders_authorized(self) -> bool:
-        """Whether each sender runs as their own directory user: authorize_senders on an agent, team or workflow."""
-        return self.authorize_senders and self.company is None
+        """Whether each sender runs as their own directory user: authorize_senders, Super Agent included."""
+        return self.authorize_senders
 
 
 def build_context(

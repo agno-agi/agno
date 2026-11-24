@@ -26,7 +26,7 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
 # Keys are the legacy resource names, values are the current names.
@@ -260,6 +260,36 @@ def matches_scope(
     return not user_scope.resource_id or user_scope.is_wildcard_resource
 
 
+# A deny travels in the same scope list as the allows, as "!<scope>". It overrides any allow, an admin scope
+# included, the way a deny row does in a managed role. Code that does not know the prefix sees an unknown scope,
+# which grants nothing, so a deny can never widen access.
+DENY_PREFIX = "!"
+
+
+# The claim os.agno.com puts a token's deny scopes in, next to its allows in "scopes"
+DENIES_CLAIM = "denies"
+
+
+def with_denies(allows: List[str], denies: Any = None) -> List[str]:
+    """One scope list holding the allows and, prefixed, the denies, as the scope checks read it. An allow denied
+    word for word is dropped too, so a check that only looks for a scope string (an admin scope) misses it."""
+    denied = [d for d in denies if isinstance(d, str) and d] if isinstance(denies, list) else []
+    return [a for a in allows if a not in denied] + [f"{DENY_PREFIX}{d}" for d in denied]
+
+
+def _split_denies(user_scopes: List[str], admin_scope: Optional[str]) -> Tuple[List[ParsedScope], List[ParsedScope]]:
+    """The parsed allows and denies of a scope list. A denied admin scope removes admin from the allows rather
+    than denying everything."""
+    allows = [parse_scope(s, admin_scope=admin_scope) for s in user_scopes if not s.startswith(DENY_PREFIX)]
+    denies = [
+        parse_scope(s[len(DENY_PREFIX) :], admin_scope=admin_scope) for s in user_scopes if s.startswith(DENY_PREFIX)
+    ]
+    if any(d.scope_type == "admin" for d in denies):
+        allows = [a for a in allows if a.scope_type != "admin"]
+        denies = [d for d in denies if d.scope_type != "admin"]
+    return allows, denies
+
+
 def has_required_scopes(
     user_scopes: List[str],
     required_scopes: List[str],
@@ -307,11 +337,12 @@ def has_required_scopes(
         return True
 
     # Parse user scopes once
-    parsed_user_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
+    parsed_user_scopes, denied_scopes = _split_denies(user_scopes, admin_scope)
 
-    # Check for admin scope
-    if any(s.scope_type == "admin" for s in parsed_user_scopes):
+    # Check for admin scope; a deny still overrides it
+    if any(s.scope_type == "admin" for s in parsed_user_scopes) and not denied_scopes:
         return True
+    is_admin = any(s.scope_type == "admin" for s in parsed_user_scopes)
 
     # Check each required scope
     for required_scope_str in required_scopes:
@@ -333,6 +364,12 @@ def has_required_scopes(
             required = parse_scope(full_required_scope, admin_scope=admin_scope)
         else:
             required = parse_scope(required_scope_str, admin_scope=admin_scope)
+
+        # A deny for this scope overrides every allow
+        if any(matches_scope(deny, required, resource_id=resource_id) for deny in denied_scopes):
+            return False
+        if is_admin:
+            continue
 
         scope_matched = False
         for user_scope in parsed_user_scopes:
@@ -391,7 +428,14 @@ def get_accessible_resource_ids(
     # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
     allowed_actions = [action] if action else ["read", "run"]
 
-    parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
+    parsed_scopes, denied_scopes = _split_denies(user_scopes, admin_scope)
+    denied_here = [d for d in denied_scopes if d.resource == resource_type and d.action in allowed_actions]
+    # A deny on every resource of this type, for the actions asked about, leaves nothing
+    if any(not d.resource_id or d.is_wildcard_resource for d in denied_here):
+        return set()
+    # A deny on one resource removes it from an explicit list; under a wildcard allow the list cannot name an
+    # exception, so the resource may still be listed, while every route to it is refused
+    denied_ids = {d.resource_id for d in denied_here if d.resource_id}
 
     # Check for admin or global wildcard access
     for scope in parsed_scopes:
@@ -416,7 +460,7 @@ def get_accessible_resource_ids(
             if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
                 accessible_ids.add(scope.resource_id)
 
-    return accessible_ids
+    return accessible_ids - denied_ids
 
 
 def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]:
