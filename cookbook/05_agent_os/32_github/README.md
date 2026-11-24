@@ -6,6 +6,9 @@ interfaces, it doesn't run an agent itself: the handler decides what an event
 becomes, for example a Company Task. AgentOS still needs an agent, team,
 workflow, knowledge base or database to start; `basic.py` passes a database.
 
+To start a run of an agent from an event instead, leave the handler out and
+declare a trigger: see [`../33_triggers/`](../33_triggers/).
+
 What the interface does before calling the handler:
 
 - Refuses deliveries without a valid `X-Hub-Signature-256` signature for the
