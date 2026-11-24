@@ -53,7 +53,7 @@ def main():
         agent = CodexAgent(
             id="media-demo",
             model="gpt-5.6-luna",
-            sandbox="read-only",
+            sandbox_mode="read-only",
             db=SqliteDb(db_file=f"{workdir}/runs.db"),
             cwd=workdir,
         )

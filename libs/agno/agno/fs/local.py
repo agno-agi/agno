@@ -173,7 +173,13 @@ class LocalFileSystem(BaseFS):
                     continue
         return metas
 
-    def delete(self, namespace: str, path: str, *, user_id: str = "") -> bool:
+    def delete(self, namespace: str, path: str, *, user_id: str = "", expected_version: Optional[int] = None) -> bool:
+        if expected_version is not None:
+            raise UnsupportedOperationError(
+                "LocalFileSystem does not support version-guarded deletion",
+                operation="delete",
+                backend="LocalFileSystem",
+            )
         target = self._target(namespace, path, user_id)
         if not target.is_file():
             return False

@@ -116,6 +116,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    continue_post_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -3001,6 +3002,9 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
 
     # Update the checkpoint marker to the new truncation index
     run_response.last_checkpoint_at_message_index = message_index
+    # A fork cut before the messages it copied keeps only copied messages, so the work continued from here is its own
+    if run_response.forked_from_message_index is not None and run_response.forked_from_message_index > message_index:
+        run_response.forked_from_message_index = message_index
 
 
 def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
@@ -3026,11 +3030,16 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     # Snap to a pair-safe boundary so fork metadata matches the truncation that
     # _truncate_run_to_checkpoint will actually perform.
     message_index = safe_truncation_index(run_response.messages or [], message_index)
+    # A negative index, or one past the last message, truncates nothing, so the fork copies every message
+    if message_index < 0 or message_index > len(run_response.messages or []):
+        message_index = len(run_response.messages or [])
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
+    # A new run of this session, counted here: only runs copied from the session it was forked from are counted there
+    forked.forked_from_session_id = None
     # Reset lineage-irrelevant accumulators so the fork reports its own work,
     # not the parent's. Without this, token counts and durations double-count,
     # and (with store_events=True) the fork's events list would be the parent's
@@ -3055,7 +3064,9 @@ def _apply_continue_modifiers(
     """Apply ``fork`` and/or ``message_index`` to a loaded run_response.
 
     Returns the resulting RunOutput — the same instance when only truncating,
-    a new instance when forking. Called from continue_run_dispatch /
+    a new instance when forking. A run copied into a forked session and continued
+    in place has its copied lineage and metrics reset, so only its new work is
+    counted. Called from continue_run_dispatch /
     acontinue_run_dispatch after a run is loaded and before validation, so the
     rest of the dispatch operates on the modified state.
     """
@@ -3064,6 +3075,13 @@ def _apply_continue_modifiers(
         return _fork_run(run_response, idx)
     if message_index is not None:
         _truncate_run_to_checkpoint(run_response, message_index)
+    # A run copied into a forked session is counted in the session it was made in, so only the work continued
+    # here is counted: its own metrics, and its messages from this point on
+    if run_response.forked_from_session_id:
+        run_response.forked_from_session_id = None
+        run_response.forked_from_message_index = len(run_response.messages or [])
+        run_response.metrics = RunMetrics()
+        run_response.metrics.start_timer()
     return run_response
 
 
@@ -3274,6 +3292,10 @@ def _apply_requirement_tools(run_response: RunOutput, requirements: List[Any]) -
         # providers send none and a fallback like call_{i} is used), and a new call
         # sharing an executed call's id must still take its requirement.
         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        # The toolkit is the run's record of which toolkit owns the call, not a client decision
+        for tool in run_response.tools:
+            if tool.result is None and tool.tool_call_id in updated_tools_map:
+                updated_tools_map[tool.tool_call_id].toolkit = tool.toolkit
         run_response.tools = [
             updated_tools_map.get(tool.tool_call_id, tool) if tool.result is None else tool
             for tool in run_response.tools
@@ -3688,15 +3710,19 @@ def _continue_run(
 
     register_run(run_response.run_id)  # type: ignore
 
-    agent.model = cast(Model, agent.model)
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
-    # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+    agent.model = cast(Model, agent.model)
 
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # 1. Handle the updated tools
+                handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3765,7 +3791,7 @@ def _continue_run(
                 if agent.post_hooks is not None:
                     post_hook_iterator = execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         run_context=run_context,
                         session=session,
@@ -3837,6 +3863,9 @@ def _continue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except ValueError:
+                # Validation errors (e.g. a tool still waiting for its external result) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -3910,6 +3939,10 @@ def _continue_run_stream(
     from agno.agent._tools import handle_tool_call_updates_stream
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+    run_response.metrics = run_response.metrics or RunMetrics()
+    run_response.metrics.resume_timer(run_response.created_at)
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -4006,7 +4039,7 @@ def _continue_run_stream(
                 if agent.post_hooks is not None:
                     yield from execute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks),
                         run_output=run_response,
                         session=session,
                         run_context=run_context,
@@ -4932,6 +4965,10 @@ async def _acontinue_run(
                     run_response=run_response,
                 )
 
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
+
                 # Reset the run state
                 run_response.status = RunStatus.running
 
@@ -5018,7 +5055,7 @@ async def _acontinue_run(
                 if agent.post_hooks is not None:
                     async for _ in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,
@@ -5451,6 +5488,10 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                 )
 
+                # Resume the run metrics timer: the run's duration runs from its start to its end, the wait included
+                run_response.metrics = run_response.metrics or RunMetrics()
+                run_response.metrics.resume_timer(run_response.created_at)
+
                 # Reset the run state
                 run_response.status = RunStatus.running
 
@@ -5583,7 +5624,7 @@ async def _acontinue_run_stream(
                 if agent.post_hooks is not None:
                     async for event in aexecute_post_hooks(
                         agent,
-                        hooks=agent.post_hooks,  # type: ignore
+                        hooks=continue_post_hooks(agent.post_hooks, async_mode=True),
                         run_output=run_response,
                         run_context=run_context,
                         session=agent_session,
@@ -6041,7 +6082,7 @@ def persist_run_in_session(
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -6079,7 +6120,7 @@ async def apersist_run_in_session(
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
-    update_session_metrics(agent, session=session, run_response=run_response)
+    update_session_metrics(agent, session=session)
 
     if run_context is not None and run_context.session_state is not None:
         if session.session_data is not None:
@@ -6468,6 +6509,8 @@ def _build_forked_session(source_session: AgentSession, new_user_id: Optional[st
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["forked_from_session_id"] = source_session.session_id
+    # A compaction's usage stays counted in the session it was made in, like the runs this session copied
+    new_session_data.pop("compaction_metrics", None)
 
     return AgentSession(
         session_id=new_session_id,

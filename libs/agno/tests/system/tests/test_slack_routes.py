@@ -341,9 +341,9 @@ class TestSlackSecurity:
             "/slack/local/events",
             json={"type": "url_verification", "challenge": "test"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 403
         data = response.json()
-        assert "Missing Slack headers" in data["detail"]
+        assert "Invalid signature" in data["detail"]
 
     def test_slack_invalid_signature(self, client: httpx.Client):
         """Test that requests with invalid signature are rejected."""

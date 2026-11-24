@@ -195,3 +195,13 @@
 **Result:** 2026-09-29, three live runs with gpt-5.5: the agent declined each time, and every follow-up stayed within Python documentation (docstring conventions, pydoc, library docs); none re-offered the poem. Separately, the prompt builder was checked live on four refusal scenarios in all three count modes (exactly 3, up to 3, 1 to 3), 5 runs each on gpt-5.6-luna and gpt-5.5: 2 to 7 of about 60 suggestions per mode pointed at the declined topic (a weather source, whether a Rust SDK is planned), against 51/60 and 26/60 with the previous prompt, and none re-offered the declined request itself.
 
 ---
+
+### reasoning_agent_events.py
+
+**Status:** PASS
+
+**Description:** Moved the reasoning model off `o3-mini`, which OpenAI shut down on 2026-10-23 (404), to its listed replacement `gpt-5.6-sol`.
+
+**Result:** Reasoning events stream and the final answer prints.
+
+---

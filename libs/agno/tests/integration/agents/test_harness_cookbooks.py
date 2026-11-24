@@ -212,7 +212,7 @@ async def test_live_codex_native_options(tmp_path):
         id="codex-native-options",
         client_options=client_options,
         model=os.getenv("CODEX_MODEL", "gpt-5.6-luna"),
-        sandbox="read-only",
+        sandbox_mode="read-only",
         approval_mode="deny_all",
         reasoning_effort="low",
         thread_options={"model": "invalid-model-overridden-by-named-setting", "ephemeral": True},

@@ -20,7 +20,7 @@ db = SqliteDb(db_file="tmp/codex_sessions.db")
 agent = CodexAgent(
     name="Codex Chat",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     db=db,
 )
 

@@ -21,7 +21,7 @@ from agno.os import AgentOS
 agent = CodexAgent(
     name="Codex Agent",
     model="gpt-5.6-luna",
-    sandbox="workspace-write",
+    sandbox_mode="workspace-write",
     cwd=".",
 )
 

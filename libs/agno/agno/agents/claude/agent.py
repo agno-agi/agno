@@ -20,9 +20,11 @@ from typing import (
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
+from agno.agents._hitl import live_native_run
 from agno.agents._media import (
     accept_media,
     cleanup_run_media,
+    inline_blocks,
     media_prompt_block,
     remember_uploads_root,
     remove_upload_folder,
@@ -37,6 +39,7 @@ from agno.agents.base import (
     ExternalRunResult,
     ExternalRunStructuredOutputEvent,
     ExternalRunWarningEvent,
+    run_coroutine_sync,
 )
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.exceptions import ModelProviderError, RunNotContinuableError
@@ -114,6 +117,41 @@ class ClaudeResultError(RuntimeError):
         self.assistant_error = assistant_error
 
 
+async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
+    """Pause for Claude's AskUserQuestion as user feedback and hand the selections back to Claude.
+
+    Claude reads the answers from the allowed tool input, keyed by question text; a multi-select answer
+    is comma-separated. When every question is skipped, Claude is told the user declined to answer.
+    """
+    from agno.agents._hitl import current_bridge
+
+    questions = arguments.get("questions")
+    if (
+        not isinstance(questions, list)
+        or not questions
+        or not all(isinstance(q, dict) and q.get("question") for q in questions)
+    ):
+        raise ValueError("AskUserQuestion has no questions to ask")
+    asked = [
+        {
+            "question": str(q["question"]),
+            "header": q.get("header"),
+            "options": [
+                {"label": str(o.get("label", "")), "description": o.get("description")}
+                for o in q.get("options") or []
+                if isinstance(o, dict)
+            ],
+            "multi_select": q.get("multiSelect") is True,
+        }
+        for q in questions
+    ]
+    selections = await current_bridge().ask("AskUserQuestion", arguments, native, asked)
+    answers = {q["question"]: ", ".join(selected) for q, selected in zip(asked, selections) if selected}
+    if not answers:
+        return sdk.PermissionResultDeny(message="The user declined to answer these questions")
+    return sdk.PermissionResultAllow(updated_input={**arguments, "answers": answers})
+
+
 @agent_dataclass
 class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
@@ -155,6 +193,11 @@ class ClaudeAgent(BaseExternalAgent):
             and errors that would fail again (authentication, billing, invalid requests) are not retried.
         delay_between_retries: Seconds to wait before each retry.
         exponential_backoff: Double the delay after each failed attempt.
+        require_native_resume: Fail the run when the recorded native conversation cannot be resumed,
+            instead of starting a new one with the history pasted into the prompt.
+        strict_persistence: Fail the run when its row cannot be written, instead of logging the failure.
+        sandbox: Run the whole Claude Code process in a computer from this sandbox each turn,
+            such as DockerSandbox(image). Requires a PostgresDb on the agent or its AgentOS.
 
     Example:
         from agno.agents.claude import ClaudeAgent
@@ -201,6 +244,12 @@ class ClaudeAgent(BaseExternalAgent):
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     _sdk_name: ClassVar[str] = "claude-agent-sdk"
+    _sandbox_runtime: ClassVar[Optional[str]] = "claude"
+    _storable: ClassVar[bool] = True
+    _unstorable_fields: ClassVar[Dict[str, str]] = {
+        "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
+        "options_kwargs": "deprecated; use the named parameters instead",
+    }
     # Key under which the SDK session id is stored in the Agno session.
     _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
@@ -214,6 +263,18 @@ class ClaudeAgent(BaseExternalAgent):
 
     # Fallback Agno session_id -> SDK session id map, used when no db is configured.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+
+    @property
+    def _uses_native_hitl(self) -> bool:
+        opts = self._option_values()
+        mode = self.permission_mode if self.permission_mode is not None else opts.get("permission_mode")
+        mode = self.options_kwargs.get("permission_mode", mode)
+        return (
+            self.db is not None
+            and mode not in ("bypassPermissions", "dontAsk")
+            and not opts.get("can_use_tool")
+            and not opts.get("permission_prompt_tool_name")
+        )
 
     def __post_init__(self) -> None:
         if self.options is not None and self.options_kwargs:
@@ -363,6 +424,19 @@ class ClaudeAgent(BaseExternalAgent):
         store = session_store if session_store is not None else self._transcript_store(agno_session_id)
         if store is not None:
             opts["session_store"] = store
+        if self._uses_native_hitl:
+            from agno.agents._hitl import current_bridge
+
+            async def can_use_tool(name: str, arguments: Dict[str, Any], context: Any) -> Any:
+                native = {"sdk": "claude", "tool_call_id": getattr(context, "tool_use_id", None)}
+                if name == "AskUserQuestion":
+                    return await _ask_user_question(sdk, arguments, native)
+                allowed = await current_bridge().request(name, arguments, native)
+                if allowed:
+                    return sdk.PermissionResultAllow(updated_input=arguments)
+                return sdk.PermissionResultDeny(message="The user rejected this action")
+
+            opts["can_use_tool"] = can_use_tool
         return sdk.ClaudeAgentOptions(**opts)
 
     # ---------------------------------------------------------------------------
@@ -401,8 +475,10 @@ class ClaudeAgent(BaseExternalAgent):
         return self.options_kwargs.get("cwd", cwd)
 
     def _media_kwargs(self, **media: Any) -> Dict[str, Any]:
-        """Images and files are written under cwd/.agno/uploads/<run_id>/ and named in the prompt,
-        so Claude Code opens them with its Read tool. Audio and video are rejected."""
+        """Images and files are written under cwd/.agno/uploads/<run_id>/ and named in the prompt.
+        Images and PDFs also travel inside the message as content blocks, so Claude Code sees them
+        without reading the file back through a tool; other files it opens with its Read tool.
+        Audio and video are rejected."""
         return accept_media(media)
 
     async def _aquery(
@@ -424,6 +500,7 @@ class ClaudeAgent(BaseExternalAgent):
             if staged:
                 remember_uploads_root(kwargs.get("session"), workspace)
             if staged and input is not None:
+                kwargs["inline_media"] = inline_blocks(staged)
                 input = f"{input}{media_prompt_block(staged)}"
             # Restore earlier inputs in this workspace and describe any relocated paths.
             continuation: Optional[ExternalContinuation] = kwargs.get("continuation")
@@ -464,6 +541,7 @@ class ClaudeAgent(BaseExternalAgent):
             resume = await self._afork_sdk_session(continuation.anchor, store)
         else:
             resume = self._get_sdk_session_id(session, session_id)
+        self._check_native_resume(resume, session)
 
         while True:
             if run_state is not None:
@@ -472,6 +550,7 @@ class ClaudeAgent(BaseExternalAgent):
                 streaming=streaming, resume=resume, session_store=store, output_schema=kwargs.get("output_schema")
             )
             prompt = self._build_prompt(input, history, resumed=resume is not None)
+            request = self._prompt_with_media(prompt, kwargs.get("inline_media"))
             received = False
             assistant_error: Optional[str] = None
             run_id = kwargs.get("run_id") or str(uuid4())
@@ -479,7 +558,7 @@ class ClaudeAgent(BaseExternalAgent):
             try:
                 await client.connect()
                 await araise_if_cancelled(run_id)
-                await client.query(prompt)
+                await client.query(request)
                 self._set_run_handle(run_id, client)
                 async for message in client.receive_response():
                     self._record_message_ref(sdk, message, run_state)
@@ -505,7 +584,13 @@ class ClaudeAgent(BaseExternalAgent):
                 return
             except Exception as e:
                 await araise_if_cancelled(run_id)
-                if resume is None or received or continuation is not None or not self._is_missing_session(sdk, e):
+                if (
+                    self.require_native_resume
+                    or resume is None
+                    or received
+                    or continuation is not None
+                    or not self._is_missing_session(sdk, e)
+                ):
                     raise
                 log_warning(
                     f"Claude SDK: could not resume session {resume} for session {session_id}: {e}. Starting a new one."
@@ -522,6 +607,19 @@ class ClaudeAgent(BaseExternalAgent):
     # ---------------------------------------------------------------------------
     # Continue from a message boundary
     # ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _prompt_with_media(prompt: str, blocks: Optional[List[Dict[str, Any]]]) -> Any:
+        """The prompt as the SDK takes it: a string, or with attachments one user message whose
+        content is the text followed by the image and document blocks."""
+        if not blocks:
+            return prompt
+
+        async def stream() -> AsyncIterator[Dict[str, Any]]:
+            content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}, *blocks]
+            yield {"type": "user", "message": {"role": "user", "content": content}}
+
+        return stream()
 
     @staticmethod
     def _tool_result_ids(sdk: Any, message: Any) -> List[str]:
@@ -757,6 +855,10 @@ class ClaudeAgent(BaseExternalAgent):
             tools = [copy.deepcopy(tool) for tool in source.tools or [] if tool.tool_call_id in call_ids] or None
             record_input = input
             before = False
+        forked_from_message_index = source.forked_from_message_index
+        # A fork cut before the messages it copied keeps only copied ones, so the work continued here is its own
+        if forked_from_message_index is not None and forked_from_message_index > len(kept):
+            forked_from_message_index = len(kept)
         continuation = ExternalContinuation(
             messages=kept,
             tools=tools,
@@ -764,7 +866,7 @@ class ClaudeAgent(BaseExternalAgent):
             record_input=record_input,
             anchor={"session_id": ref["session_id"], "uuid": ref["uuid"], "before": before},
             forked_from_run_id=source.run_id if fork else source.forked_from_run_id,
-            forked_from_message_index=index if fork else source.forked_from_message_index,
+            forked_from_message_index=index if fork else forked_from_message_index,
             source_run_id=source.run_id,
         )
         return prompt, str(uuid4()) if fork else str(source.run_id), continuation
@@ -806,6 +908,26 @@ class ClaudeAgent(BaseExternalAgent):
         sibling run. A finished run is always continued as a new sibling run with fork lineage, as native
         agents do, whatever fork is set to. Files the agent changed are not rewound.
         """
+        source = run_response or self.get_run_output(run_id or "", session_id, user_id)
+        if live_native_run(source):
+            from agno.agents._hitl import continue_run, sync_events
+
+            continuation = continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+                stream=stream,
+            )
+            return sync_events(continuation) if stream else run_coroutine_sync(continuation)
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         source = run_response or self.get_run_output(run_id or "", session_id, user_id)
         if source is None:
@@ -842,6 +964,62 @@ class ClaudeAgent(BaseExternalAgent):
         **kwargs: Any,
     ) -> Any:
         """Async continue_run: returns a coroutine, or an async iterator when stream=True."""
+        if regenerate:
+            raise ValueError("Claude continuation does not support regenerate")
+        resolved = kwargs.pop("_hitl_resolved", False)
+        if self._uses_native_hitl and run_response is None and not resolved:
+
+            async def dispatch():
+                source = await self.aget_run_output(run_id or "", session_id, user_id)
+                result = self.acontinue_run(
+                    source,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    requirements=requirements,
+                    updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
+                    stream=stream,
+                    _hitl_resolved=True,
+                    **kwargs,
+                )
+                if stream:
+                    async for event in result:
+                        yield event
+                else:
+                    yield await result
+
+            if stream:
+                return dispatch()
+
+            async def result():
+                async for item in dispatch():
+                    return item
+
+            return result()
+        if live_native_run(run_response):
+            from agno.agents._hitl import continue_run
+
+            return continue_run(
+                self,
+                run_response,
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                requirements=requirements,
+                updated_tools=updated_tools,
+                stream=stream,
+                input=input,
+                fork=fork,
+                regenerate=regenerate,
+                continue_from=continue_from,
+                additional_instructions=additional_instructions,
+            )
         self._check_continue_args(requirements, updated_tools, regenerate, replace_original, additional_instructions)
         kwargs.pop("background_tasks", None)
         call = dict(

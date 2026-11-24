@@ -446,3 +446,24 @@ pre-fix head's GitHub checks were green. The workspace-fix commit requires its
 own CI result. No live model calls, new soak or changes to the cumulative call
 budget. Distributed same-session serialization and final provider release
 acceptance remain separate from this DX merge review.
+
+### Session API SDK metadata (2026-10-12)
+
+**Status:** PASS
+
+**Description:** Verified the session metadata example in `README.md` against
+local sync and async SQLite databases through the actual session router. Reads
+covered `/sessions` with pagination and table selection, session detail, session
+runs, and single-run detail, including session-type auto-detection.
+
+**Result:** External records expose `metadata.sdk` (`codex`, `claude-agent-sdk`,
+`langgraph`, or a custom SDK identifier), matching the agents API. Existing
+`agent_data.framework` records also work. Native/unlabelled records are not
+assigned an SDK. Existing metadata and database records remain unchanged, and
+member runs do not inherit another agent's SDK. The 19 new metadata tests passed;
+existing session/schema, MCP, adapter compatibility, and run-event regression
+tests also passed (200 distinct tests total). Targeted lint, formatting, and
+production type checks passed. The supplied localhost:7777 API was unavailable,
+so its specific stored session could not be checked.
+
+---

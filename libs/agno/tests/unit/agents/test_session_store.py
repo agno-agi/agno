@@ -156,7 +156,7 @@ async def test_missing_transcript_table_is_empty(backend):
     is_async = backend.startswith("async_")
     db._get_table = AsyncMock(return_value=None) if is_async else Mock(return_value=None)
 
-    async def call(name, **kwargs):
+    async def call(name, /, **kwargs):
         result = getattr(db, name)(**kwargs)
         return await result if is_async else result
 
@@ -177,7 +177,7 @@ async def test_session_delete_removes_its_transcripts(db_factory):
 
     db = db_factory()
 
-    async def call(name, *args, **kwargs):
+    async def call(name, /, *args, **kwargs):
         result = getattr(db, name)(*args, **kwargs)
         return await result if isinstance(db, AsyncSqliteDb) else result
 

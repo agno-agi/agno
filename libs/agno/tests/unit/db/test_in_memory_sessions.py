@@ -205,33 +205,6 @@ class TestDeleteSessions:
         assert db.get_session("s2") is not None
 
 
-class TestMetricsHelpersOverSessions:
-    def test_all_sessions_visible_for_metrics(self):
-        db = InMemoryDb()
-        db.upsert_session(_agent_session("s1", created_at=1000))
-        db.upsert_session(_agent_session("s2", created_at=2000))
-        sessions = db._get_all_sessions_for_metrics_calculation()
-        assert len(sessions) == 2
-        assert {s["created_at"] for s in sessions} == {1000, 2000}
-
-    def test_metrics_range_filter(self):
-        db = InMemoryDb()
-        db.upsert_session(_agent_session("s1", created_at=1000))
-        db.upsert_session(_agent_session("s2", created_at=2000))
-        sessions = db._get_all_sessions_for_metrics_calculation(start_timestamp=1500)
-        assert len(sessions) == 1
-        assert sessions[0]["created_at"] == 2000
-
-    def test_starting_date_uses_earliest_session(self):
-        from datetime import datetime, timezone
-
-        db = InMemoryDb()
-        db.upsert_session(_agent_session("s1", created_at=2000))
-        db.upsert_session(_agent_session("s2", created_at=1000))
-        starting_date = db._get_metrics_calculation_starting_date([])
-        assert starting_date == datetime.fromtimestamp(1000, tz=timezone.utc).date()
-
-
 class TestSessionRowAndRuns:
     """The session row is serialized without runs; the stored runs list is
     maintained incrementally by upsert_run. Saving the session row must

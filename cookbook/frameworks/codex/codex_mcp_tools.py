@@ -21,7 +21,7 @@ from agno.agents.codex import CodexAgent
 agent = CodexAgent(
     name="Codex Docs Agent",
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     mcp_servers={"agno_docs": {"url": "https://docs.agno.com/mcp"}},
 )
 

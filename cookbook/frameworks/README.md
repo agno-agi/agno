@@ -4,6 +4,29 @@ Run a coding harness through Agno, inspect its tools, then serve it through
 AgentOS. Start with one provider: [Claude](claude-agent-sdk/README.md) or
 [Codex](codex/README.md). Both review the same small [shipping project](sample_project/README.md).
 
+Session APIs identify external agents with the same `metadata.sdk` value as the
+agents API. For example, a Codex session or run includes:
+
+```json
+{"metadata": {"sdk": "codex"}}
+```
+
+This appears on each item in `GET /sessions`, on `GET /sessions/{session_id}`,
+and on each run in `GET /sessions/{session_id}/runs` (also on single-run reads).
+Claude uses `"claude-agent-sdk"`. Other metadata keys are retained. The value
+comes from stored `agent_data.sdk`, falling back to the older `agent_data.framework`
+field, so existing labelled sessions need no migration or active agent instance.
+Native sessions and older records without an adapter identifier receive no added
+SDK label; absence alone cannot distinguish native sessions from unlabelled history.
+
+For example, after running either AgentOS cookbook:
+
+```bash
+curl 'http://localhost:7777/sessions?type=agent&page=1&limit=25'
+curl 'http://localhost:7777/sessions/SESSION_ID?type=agent'
+curl 'http://localhost:7777/sessions/SESSION_ID/runs?type=agent'
+```
+
 The harness owns its agent loop, tool execution and native context management.
 Agno adapts its output to runs and events. AgentOS adds the HTTP API and run
 storage used in this first exercise.
@@ -83,6 +106,18 @@ Those are test limits, not billing guarantees.
 directory; otherwise it is `tmp/harnesses/<provider>/` under your launch directory.
 Stop the server before removing its disposable local state. That does not
 remove SDK-native session files.
+
+When Claude Code or Codex asks for a native permission, the run pauses for a confirm or reject in the
+chat, like an Agno agent's confirmation tool. See [human in the loop](human_in_the_loop/README.md); it
+covers AgentOS and sandbox execution.
+
+## Harness agents in a team
+
+Claude Code and Codex can be members of an Agno team next to native agents; the leader delegates to them like any member. See [harness_teams](harness_teams/README.md).
+
+## Harness agents in a workflow
+
+Claude Code and Codex can also run as workflow steps, in a `Step` or directly in `Parallel`, `Loop`, `Condition` and `Router`. See [harness_workflows](harness_workflows/README.md).
 
 ## Existing examples and the next exercises
 

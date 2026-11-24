@@ -7,9 +7,14 @@ SDK version in that environment:
 uv pip install 'openai-codex==0.162.1'
 ```
 
-Authenticate through your existing Codex CLI login (`codex login`), or use
-the SDK's API-key login once. If the CLI is not on your PATH, export
-`OPENAI_API_KEY` in your shell and run:
+Export `OPENAI_API_KEY` to authenticate `CodexAgent` automatically. Agno uses
+the key from the Codex process environment, including overrides in `env` or
+`client_options.env`, before starting or resuming a thread or compacting it.
+An existing ChatGPT or other non-API-key login is preserved. Without a key,
+Codex uses its existing authentication (`codex login`).
+
+The native SDK example requires an existing login. To authenticate it directly
+with an API key, run:
 
 ```bash
 python - <<'PY'
@@ -70,7 +75,7 @@ turn_options: TurnOptions = {"effort": "low"}
 
 agent = CodexAgent(
     model="gpt-5.6-luna",
-    sandbox="read-only",
+    sandbox_mode="read-only",
     approval_mode="deny_all",
     client_options=CodexConfig(client_name="shipping_review"),
     thread_options=thread_options,
@@ -119,7 +124,7 @@ Tool Calls panel, and returns the final `RunOutput` with tool results. Expect fe
 The script checks that at least one tool succeeded; the live test also checks
 fixture contents in the returned tool results. Inspect the final explanation yourself.
 
-The thread uses `sandbox="read-only"` and `approval_mode="deny_all"`.
+The thread uses `sandbox_mode="read-only"` and `approval_mode="deny_all"`.
 Shell reads are translated into Agno tool events. Codex can inherit other local
 configuration; this is a local integration exercise, not a tenant-isolation
 demonstration. We do not use full-access mode or auto-approve escalation.
@@ -223,7 +228,7 @@ Codex keeps one conversation per Agno session (the thread); overlapping turns ca
 
 This check is not an atomic claim across agent instances or replicas. Simultaneous requests can race, and a direct foreground run has no in-flight database row before execution. Applications must serialize same-session submissions across replicas; the check alone does not provide distributed mutual exclusion. If the Codex app-server reports "already has an active writer", the adapter maps it to `SessionBusyError`; configured agent retries can retry after backoff. This backstop does not replace application-side serialization.
 
-A run row left pending or running by a crash keeps its session busy until that run is cancelled. The durable queue sweeps crashed queued runs on its own; cancel an orphaned background run through the run cancellation endpoint. With the built-in Postgres, Redis or in-memory queue store, durably queued turns on one session are admitted one at a time in the order the store accepted them: a waiting turn stays queued and spends no attempt or worker slot until the active turn finishes (see `cookbook/frameworks/session_queue/`). A third-party queue store that does not advertise `serializes_sessions = True` falls back to re-driving a busy turn after the retry delay, where attempts can run out before the active turn finishes. Direct, non-queued calls on the same session are not admitted this way; serialize those in the application.
+A run row left pending or running by a crash keeps its session busy until that run is cancelled. The durable queue sweeps crashed queued runs on its own; cancel an orphaned background run through the run cancellation endpoint. With the built-in Postgres, Redis or in-memory queue store, durably queued turns on one session are admitted one at a time in the order the store accepted them: a waiting turn stays queued and spends no attempt or worker slot until the active turn finishes (see `cookbook/05_agent_os/background_tasks/queue_per_session.py`). A third-party queue store that does not advertise `serializes_sessions = True` falls back to re-driving a busy turn after the retry delay, where attempts can run out before the active turn finishes. Direct, non-queued calls on the same session are not admitted this way; serialize those in the application.
 
 ## Background runs and cancellation
 

@@ -134,3 +134,23 @@ those require service and model credentials.
 **Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
+
+### neo4j_tools.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. Ran against Neo4j 5 in Docker on `bolt://localhost:7687`.
+
+**Result:** The agent calls `get_schema` and `run_cypher_query` and describes the schema.
+
+---
+
+### openai_image_tools.py
+
+**Status:** PASS
+
+**Description:** Replaces `dalle_tools.py`, since `DalleTools` is deprecated. Uses `OpenAITools` with only image generation enabled: the default model, a `1536x1024` high-quality image, and `image_n=2`. Ran against the live OpenAI API with `gpt-image-2`.
+
+**Result:** All three agents called `generate_image`. The script saved `tmp/nature_0.png`, `tmp/apple_0.png` and `tmp/apple_1.png` from the returned image bytes.
+
+---
