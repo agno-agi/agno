@@ -1,12 +1,17 @@
+import hashlib
+import mimetypes
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, ClassVar, Dict, Optional, Set
+from pathlib import Path
+from typing import Any, ClassVar, Dict, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from agno.exceptions import ModelAuthenticationError
+from agno.media import File
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import log_warning
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.log import log_error, log_warning
+from agno.utils.openai import audio_to_message, images_to_message
 
 
 @dataclass
@@ -41,6 +46,9 @@ class DeepSeek(OpenAILike):
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.deepseek.com".
         use_thinking (Optional[bool]): Toggle thinking mode. None uses the model default.
+        file_parsing_purpose (str): Files API purpose used when uploading documents (PDF, Word,
+            PowerPoint, images). "text_recognition" (default) parses text only;
+            "rich_layout_recognition" also gives the model the figures in the document.
     """
 
     id: str = "deepseek-v4-flash"
@@ -53,6 +61,14 @@ class DeepSeek(OpenAILike):
     # Toggle thinking mode. None = use the model default (on for thinking-capable models,
     # off for the legacy non-thinking ids). True = force on, False = force off.
     use_thinking: Optional[bool] = None
+
+    # Files API purpose for documents that need parsing (PDF, DOC/DOCX, PPT/PPTX).
+    # "text_recognition" or "rich_layout_recognition".
+    file_parsing_purpose: str = "text_recognition"
+
+    # Uploaded file ids keyed by content hash + purpose, so the same File is not re-uploaded
+    # (and re-billed) every time the conversation history is re-formatted.
+    _uploaded_file_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     # DeepSeek supports JSON mode (response_format={"type": "json_object"}) but not
     # native/json_schema structured outputs, so output_schema needs use_json_mode=True.
@@ -138,6 +154,77 @@ class DeepSeek(OpenAILike):
             client_params.update(self.client_params)
         return client_params
 
+    # Mime types that DeepSeek's Files API accepts under purpose="user_data" (text, sheets, ebooks).
+    # Everything else (PDF, Word, PowerPoint, images) is a "document" and needs a parsing purpose.
+    _USER_DATA_MIME_PREFIXES: ClassVar[Tuple[str, ...]] = ("text/",)
+    _USER_DATA_MIME_TYPES: ClassVar[Set[str]] = {
+        "application/json",
+        "application/x-javascript",
+        "application/x-python",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "application/epub+zip",
+        "application/x-mobipocket-ebook",
+    }
+
+    @staticmethod
+    def _read_file_bytes(file: File) -> Optional[Tuple[bytes, str, Optional[str]]]:
+        """Resolve a File to (bytes, filename, mime_type), or None if it cannot be read."""
+        if file.content is not None:
+            name = file.filename or "file"
+            return file.content, name, file.mime_type or mimetypes.guess_type(name)[0]
+        if file.filepath is not None:
+            path = Path(file.filepath)
+            if not path.is_file():
+                log_error(f"File not found: {path}")
+                return None
+            return path.read_bytes(), path.name, file.mime_type or mimetypes.guess_type(path.name)[0]
+        if file.url is not None:
+            result = file.file_url_content
+            if not result:
+                log_error(f"Failed to fetch file from URL: {file.url}")
+                return None
+            content_bytes, mime_type = result
+            name = Path(urlparse(file.url).path).name or "file"
+            return content_bytes, name, mime_type or file.mime_type or mimetypes.guess_type(name)[0]
+        return None
+
+    def _upload_purpose_for(self, mime_type: Optional[str]) -> str:
+        if mime_type and (
+            mime_type.startswith(self._USER_DATA_MIME_PREFIXES) or mime_type in self._USER_DATA_MIME_TYPES
+        ):
+            return "user_data"
+        return self.file_parsing_purpose
+
+    def _format_file_part(self, file: File) -> Optional[Dict[str, Any]]:
+        """Format a File as a DeepSeek chat-completions file part.
+
+        DeepSeek's file part is flat (``{"type": "file", "file_id": ...}``), not the nested OpenAI
+        shape, and documents can only be referenced by ``file_id``. Files are therefore uploaded
+        through the Files API first. A string in ``file.external`` is treated as an already
+        uploaded DeepSeek ``file_id`` and sent as-is.
+        """
+        if isinstance(file.external, str) and file.external:
+            return {"type": "file", "file_id": file.external}
+
+        resolved = self._read_file_bytes(file)
+        if resolved is None:
+            return None
+        data, filename, mime_type = resolved
+
+        purpose = self._upload_purpose_for(mime_type)
+        cache_key = f"{purpose}:{hashlib.sha256(data).hexdigest()}"
+        file_id = self._uploaded_file_ids.get(cache_key)
+        if file_id is None:
+            try:
+                uploaded = self.get_client().files.create(file=(filename, data), purpose=purpose)  # type: ignore[arg-type]
+            except Exception as e:
+                log_error(f"Failed to upload '{filename}' to the DeepSeek Files API: {e}")
+                return None
+            file_id = uploaded.id
+            self._uploaded_file_ids[cache_key] = file_id
+        return {"type": "file", "file_id": file_id}
+
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -193,7 +280,7 @@ class DeepSeek(OpenAILike):
                 message_dict["content"] = []
             # Insert each file part before text parts
             for file in message.files:
-                file_part = _format_file_for_message(file)
+                file_part = self._format_file_part(file)
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
