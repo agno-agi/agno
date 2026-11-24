@@ -636,6 +636,87 @@ COMPACTIONS_TABLE_SCHEMA = {
 }
 
 
+# A trigger starts a run of an agent, team or workflow when an event arrives from a source.
+TRIGGERS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "source_id": {"type": String, "nullable": False, "index": True},
+    "events": {"type": JSON, "nullable": False},
+    "continue_on": {"type": JSON, "nullable": True},
+    "filters": {"type": JSON, "nullable": True},
+    "target_type": {"type": String, "nullable": False},
+    "target_id": {"type": String, "nullable": False, "index": True},
+    "input": {"type": Text, "nullable": False},
+    "key_path": {"type": String, "nullable": True},
+    # Extra run parameters, and the saved authority of whoever created the trigger.
+    "payload": {"type": JSON, "nullable": True},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "max_retries": {"type": BigInteger, "nullable": False},
+    "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "disabled_reason": {"type": String, "nullable": True},
+    # Owner. NULL for a trigger declared in code, which fires as the system.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    # "code" for a trigger declared in code, plus the runs that wrote the row.
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        # Serves the match of a delivery against the enabled triggers of its source.
+        {"name": "source_enabled", "columns": ["source_id", "enabled"]},
+    ],
+    # Names are unique per owner. NULLs are distinct in a plain unique constraint, so two
+    # partial unique indexes cover the owned and the unowned bucket.
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
+    ],
+}
+
+# One delivery for one trigger, and the run it started.
+TRIGGER_EVENTS_TABLE_SCHEMA = {
+    # Ids sort in the order events were received; events for one key run in that order.
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "source_id": {"type": String, "nullable": False, "index": True},
+    "delivery_id": {"type": String, "nullable": False},
+    # Empty when the event matched no trigger.
+    "trigger_id": {"type": String, "nullable": False, "index": True},
+    "kind": {"type": String, "nullable": False},
+    "event_key": {"type": String, "nullable": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "reason": {"type": Text, "nullable": True},
+    "event": {"type": JSON, "nullable": True},
+    "attempt": {"type": BigInteger, "nullable": False},
+    # The claim of the worker handling the event, and when that worker last renewed it.
+    "claimed_by": {"type": String, "nullable": True},
+    "claimed_at": {"type": BigInteger, "nullable": True},
+    "completed_at": {"type": BigInteger, "nullable": True},
+    "status_code": {"type": BigInteger, "nullable": True},
+    "run_id": {"type": String, "nullable": True},
+    "session_id": {"type": String, "nullable": True},
+    "error": {"type": Text, "nullable": True},
+    "input": {"type": JSON, "nullable": True},
+    "output": {"type": JSON, "nullable": True},
+    "requirements": {"type": JSON, "nullable": True},
+    # Denormalised from the trigger's owner so event reads scope by owner without a JOIN.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "__composite_indexes__": [
+        # Serves the claim: is another event for this trigger and key unfinished.
+        {"name": "trigger_key", "columns": ["trigger_id", "event_key"]},
+    ],
+    # A delivery is stored once for each trigger, so a redelivery starts no second run.
+    "_unique_constraints": [
+        {"name": "uq_delivery", "columns": ["source_id", "delivery_id", "trigger_id"]},
+    ],
+}
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
@@ -686,6 +767,8 @@ def get_table_schema_definition(
         "projects": PROJECTS_TABLE_SCHEMA,
         "tasks": TASKS_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "triggers": TRIGGERS_TABLE_SCHEMA,
+        "trigger_events": TRIGGER_EVENTS_TABLE_SCHEMA,
         "compactions": COMPACTIONS_TABLE_SCHEMA,
         "transcripts": TRANSCRIPTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
