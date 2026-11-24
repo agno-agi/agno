@@ -1,6 +1,8 @@
 """Unit tests for ExaTools class."""
 
 import json
+import time
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -363,6 +365,20 @@ def test_research_with_string_query(exa_tools, mock_exa_client):
     mock_research_client.create_task.assert_called_with(
         instructions="What are the latest AI trends?", model="exa-research", output_infer_schema=True
     )
+
+
+def test_execute_with_timeout_does_not_wait_for_slow_worker():
+    """A timed-out call must return promptly, not block in executor.shutdown(wait=True)."""
+
+    def slow_call():
+        time.sleep(0.5)
+        return "too late"
+
+    helper = SimpleNamespace(timeout=0.05)
+    start = time.monotonic()
+    with pytest.raises(TimeoutError, match="timed out"):
+        ExaTools._execute_with_timeout(helper, slow_call)
+    assert time.monotonic() - start < 0.3
 
 
 def test_research_timeout(exa_tools, mock_exa_client):

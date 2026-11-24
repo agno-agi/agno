@@ -133,14 +133,18 @@ class ExaTools(Toolkit):
 
     def _execute_with_timeout(self, func, *args, **kwargs):
         """Execute a function with a timeout using a temporary ThreadPoolExecutor."""
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
             future = executor.submit(func, *args, **kwargs)
             try:
                 return future.result(timeout=self.timeout)
             except TimeoutError:
-                raise TimeoutError(f"Operation timed out after {self.timeout} seconds")
-            except Exception as e:
-                raise e
+                raise TimeoutError(f"Operation timed out after {self.timeout} seconds") from None
+        finally:
+            # Exiting a `with` block calls shutdown(wait=True), which blocks the
+            # caller until a slow SDK call finishes even after the timeout fired.
+            # Never wait here; cancel queued work and let the timed-out thread end.
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
