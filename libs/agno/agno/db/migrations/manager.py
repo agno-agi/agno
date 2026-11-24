@@ -16,6 +16,9 @@ _COMPANY_TABLE_ATTRS = {
     "tasks": "tasks_table_name",
 }
 
+_COMPANY_RENAME_VERSION = packaging_version.parse("3.2.3")
+_BEFORE_COMPANY_RENAME = packaging_version.parse("3.0.0")
+
 
 class MigrationManager:
     """Manager class to handle database migrations"""
@@ -98,6 +101,14 @@ class MigrationManager:
                 continue
             current_version = packaging_version.parse(raw_version)
 
+            # A Company table created before the rename is stamped current, so its stamp cannot be trusted.
+            if (
+                table_type in _COMPANY_TABLE_ATTRS
+                and current_version >= _COMPANY_RENAME_VERSION <= _target_version
+                and await self._company_rename_pending()
+            ):
+                current_version = _BEFORE_COMPANY_RENAME
+
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
                 log_info(
@@ -143,6 +154,14 @@ class MigrationManager:
                     self.db.upsert_schema_version(table_name, latest_version)
                 log_info(f"Successfully stored version {latest_version} in database for table {table_name}")
             log_info("----------------------------------------------------------")
+
+    async def _company_rename_pending(self) -> bool:
+        """Whether a Company table still has its 3.2.0 name or columns."""
+        from agno.db.migrations.versions import v3_2_3
+
+        if isinstance(self.db, AsyncBaseDb):
+            return await v3_2_3.acompany_rename_pending(self.db)
+        return v3_2_3.company_rename_pending(self.db)
 
     async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.

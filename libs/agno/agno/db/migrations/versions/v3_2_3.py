@@ -26,8 +26,8 @@ others. It acts on the tables and columns the database holds, not on a table's v
 
 A deployment started on this version before the migration leaves two tables behind: a goals table
 holding the Goals it declares, and a details table holding the configured name. When every id in
-that goals table is also in the products table, and that details row was never edited, both are
-dropped and the 3.2.0 tables take their names. Otherwise the migration raises
+that goals table is also in the products table, no Goal there was edited, and that details row was
+never edited, both are dropped and the 3.2.0 tables take their names. Otherwise the migration raises
 ``CompanyGoalsMigrationError`` before it changes anything.
 
 PostgreSQL changes the Company tables in one transaction. SQLite keeps a table or column rename
@@ -41,6 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
+from agno.db.schemas.goals import goal_metadata
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 from agno.db.utils import LEGACY_GOALS_TABLE_NAME
 from agno.utils.log import log_info
@@ -161,17 +162,56 @@ class _Sql:
         )
 
     def rename_index(self, table_name: str, old: str, new: str) -> None:
-        """Give an index the name a new database uses. SQLite cannot rename one, so it is rebuilt."""
+        """Give an index the name a new database uses. SQLite cannot rename one, so it is rebuilt.
+
+        SQLite creates the new index before dropping the old one, so a run that stops between the
+        two leaves the old name for the next run to find.
+        """
         if self.postgres:
             self.sess.execute(text(f"ALTER INDEX {self.ref(old)} RENAME TO {self.quote(new)}"))
             return
         info = self.sess.execute(text(f"PRAGMA index_info({self.quote(old)})")).fetchall()
         indexed = ", ".join(self.quote(row[2]) for row in sorted(info, key=lambda row: row[0]))
+        self.sess.execute(text(f"CREATE INDEX IF NOT EXISTS {self.quote(new)} ON {self.quote(table_name)} ({indexed})"))
         self.sess.execute(text(f"DROP INDEX {self.quote(old)}"))
-        self.sess.execute(text(f"CREATE INDEX {self.quote(new)} ON {self.quote(table_name)} ({indexed})"))
 
     def drop_index(self, name: str) -> None:
         self.sess.execute(text(f"DROP INDEX {self.ref(name)}"))
+
+
+def _goal_rows(sql: _Sql, table_name: str, objective: str) -> Dict[str, Any]:
+    """The rows of a goals table by id, with the objective read from the given column."""
+    rows = table(
+        table_name,
+        column("id"),
+        column("name"),
+        column(objective),
+        column("user_id"),
+        column("metadata", sql.json),
+        column("updated_at"),
+        column("deleted_at"),
+        schema=sql.schema,
+    )
+    found = sql.sess.execute(select(rows)).mappings().all()
+    return {row["id"]: {**row, "objective": row[objective]} for row in found}
+
+
+def _goal_edited(current: Dict[str, Any], stored: Dict[str, Any]) -> bool:
+    """Whether a Goal in the new table holds a change that its 3.2.0 row does not.
+
+    Start-up links Routines, which moves updated_at, so an updated row is compared by content.
+    """
+    if current["updated_at"] is None and current["deleted_at"] is None:
+        return False
+    current_metadata, stored_metadata = goal_metadata(current["metadata"]), goal_metadata(stored["metadata"])
+    linked = set(current_metadata.pop("routine_ids", None) or [])
+    if linked - set(stored_metadata.pop("routine_ids", None) or []):
+        return True
+    return (
+        any(current[field] != stored[field] for field in ("name", "objective", "user_id"))
+        or (current["deleted_at"] is None) != (stored["deleted_at"] is None)
+        or current_metadata != stored_metadata
+    )
 
 
 def _left_by_an_early_start(sql: _Sql, tables: _CompanyTables) -> Tuple[bool, bool]:
@@ -182,14 +222,22 @@ def _left_by_an_early_start(sql: _Sql, tables: _CompanyTables) -> Tuple[bool, bo
     """
     drop_goals = drop_details = False
     if tables.legacy_goals and sql.table_exists(tables.legacy_goals) and sql.table_exists(tables.goals):
-        declared = {row[0] for row in sql.sess.execute(text(f"SELECT id FROM {sql.ref(tables.goals)}")).fetchall()}
-        stored = {row[0] for row in sql.sess.execute(text(f"SELECT id FROM {sql.ref(tables.legacy_goals)}")).fetchall()}
-        only_new = sorted(declared - stored)
+        declared = _goal_rows(sql, tables.goals, "objective")
+        stored = _goal_rows(sql, tables.legacy_goals, "purpose")
+        only_new = sorted(set(declared) - set(stored))
         if only_new:
             raise CompanyGoalsMigrationError(
                 f"Tables {tables.legacy_goals} and {tables.goals} both hold Goals, and {tables.goals} holds ids "
                 f"that {tables.legacy_goals} does not: {only_new}. Nothing was changed. Copy those rows into "
                 f"{tables.legacy_goals} with their old column names, or delete them, then run the migration again."
+            )
+        changed = sorted(id for id, row in declared.items() if _goal_edited(row, stored[id]))
+        if changed:
+            raise CompanyGoalsMigrationError(
+                f"Tables {tables.legacy_goals} and {tables.goals} both hold Goals, and {tables.goals} holds rows "
+                f"that were changed: {changed}. Nothing was changed by the migration. Copy the changes you want "
+                f"to keep into {tables.legacy_goals} with its column names, delete those rows from "
+                f"{tables.goals}, then run the migration again."
             )
         drop_goals = True
     if tables.legacy_details and sql.table_exists(tables.legacy_details) and sql.table_exists(tables.details):
@@ -244,6 +292,36 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
             sql.rename_index(table_name, old_index, new_index)
         changed = True
     return changed
+
+
+def _rename_pending(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
+    """Whether a Company table still has its 3.2.0 name or columns."""
+    sql = _Sql(sess, db_type, tables.schema)
+    legacy = (tables.legacy_goals, tables.legacy_details)
+    if any(name is not None and sql.table_exists(name) for name in legacy):
+        return True
+    old_columns = (
+        (tables.goals, "purpose"),
+        *((n, "product_id") for n in (tables.projects, tables.tasks, tables.sources)),
+    )
+    return any(sql.table_exists(name) and old in sql.columns(name) for name, old in old_columns)
+
+
+def company_rename_pending(db: BaseDb) -> bool:
+    """Whether this database still holds a Company table in its 3.2.0 shape."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    with db.Session() as sess:  # type: ignore
+        return _rename_pending(sess, type(db).__name__, _CompanyTables.of(db))
+
+
+async def acompany_rename_pending(db: AsyncBaseDb) -> bool:
+    """Async version of company_rename_pending."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    tables = _CompanyTables.of(db)
+    async with db.async_session_factory() as sess:  # type: ignore
+        return await sess.run_sync(lambda sync_sess: _rename_pending(sync_sess, type(db).__name__, tables))
 
 
 def _goal_parent(event: Any) -> Any:
@@ -386,6 +464,11 @@ def _sql_step(db: Any, table_type: str) -> Optional[Callable[[Any], bool]]:
     return None
 
 
+def _is_db_type(db: Any, names: Tuple[str, ...]) -> bool:
+    """Whether db is one of the named adapters or a subclass, without importing their drivers."""
+    return any(cls.__name__ in names for cls in type(db).__mro__)
+
+
 def _invalidate_company_tables(db: Any, table_type: str) -> None:
     """The Company tables changed shape together, so each is resolved again on its next use."""
     if table_type in COMPANY_TABLE_TYPES:
@@ -420,7 +503,9 @@ def _rename_mongo(db: BaseDb, table_type: str) -> bool:
             page += 1
     if table_type == "schedule_runs":
         while True:
-            runs, total = db.get_schedule_runs(COMPANY_AUTOMATION_SCHEDULE_ID, limit=100, page=page)
+            runs, total = db.get_schedule_runs(  # type: ignore[call-arg]
+                COMPANY_AUTOMATION_SCHEDULE_ID, limit=100, page=page, raise_on_error=True
+            )
             for run in runs:
                 output = _goal_failure(run.get("output"))
                 if output is not None:
@@ -451,7 +536,9 @@ async def _arename_mongo(db: AsyncBaseDb, table_type: str) -> bool:
             page += 1
     if table_type == "schedule_runs":
         while True:
-            runs, total = await db.get_schedule_runs(COMPANY_AUTOMATION_SCHEDULE_ID, limit=100, page=page)
+            runs, total = await db.get_schedule_runs(  # type: ignore[call-arg]
+                COMPANY_AUTOMATION_SCHEDULE_ID, limit=100, page=page, raise_on_error=True
+            )
             for run in runs:
                 output = _goal_failure(run.get("output"))
                 if output is not None:
@@ -472,10 +559,9 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
-    if db_type in MONGO_DB_TYPES:
+    if _is_db_type(db, MONGO_DB_TYPES):
         return _rename_mongo(db, table_type)
-    step = _sql_step(db, table_type) if db_type in SQL_DB_TYPES else None
+    step = _sql_step(db, table_type) if _is_db_type(db, SQL_DB_TYPES) else None
     if step is None:
         return False
     try:
@@ -494,10 +580,9 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
-    if db_type in MONGO_DB_TYPES:
+    if _is_db_type(db, MONGO_DB_TYPES):
         return await _arename_mongo(db, table_type)
-    step = _sql_step(db, table_type) if db_type in SQL_DB_TYPES else None
+    step = _sql_step(db, table_type) if _is_db_type(db, SQL_DB_TYPES) else None
     if step is None:
         return False
     try:

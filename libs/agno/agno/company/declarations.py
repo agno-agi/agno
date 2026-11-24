@@ -42,6 +42,15 @@ class AcceptanceScope(BaseModel):
         """product_ids is the 3.2.0 name of goal_ids, in declarations and in stored policies."""
         return _renamed(data, "product_ids", "goal_ids")
 
+    @property
+    def product_ids(self) -> Optional[List[str]]:
+        """The 3.2.0 name of goal_ids."""
+        return self.goal_ids
+
+    @product_ids.setter
+    def product_ids(self, value: Optional[List[str]]) -> None:
+        self.goal_ids = value
+
 
 class AcceptanceLimits(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -175,6 +184,15 @@ class Goal(BaseModel):
         """purpose is the 3.2.0 name of objective."""
         return _renamed(data, "purpose", "objective")
 
+    @property
+    def purpose(self) -> Optional[str]:
+        """The 3.2.0 name of objective."""
+        return self.objective
+
+    @purpose.setter
+    def purpose(self, value: Optional[str]) -> None:
+        self.objective = value
+
 
 # The 3.2.0 name of Goal.
 Product = Goal
@@ -191,6 +209,15 @@ class CompanyDeclarations(BaseModel):
     def read_products(cls, data: Any) -> Any:
         """products is the 3.2.0 name of goals."""
         return _renamed(data, "products", "goals")
+
+    @property
+    def products(self) -> List[Goal]:
+        """The 3.2.0 name of goals."""
+        return self.goals
+
+    @products.setter
+    def products(self, value: List[Goal]) -> None:
+        self.goals = value
 
 
 class IntakeProposal(BaseModel):

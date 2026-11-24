@@ -1,6 +1,6 @@
 """Opt-in Company configuration."""
 
-from dataclasses import InitVar, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.company.declarations import Goal
@@ -8,7 +8,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
 
 
-@dataclass
+@dataclass(init=False)
 class CompanyConfig:
     """Company resources. An omitted database inherits AgentOS.db at assembly."""
 
@@ -20,16 +20,43 @@ class CompanyConfig:
     cron_expr: str = "0 * * * *"
     name: str = "Company"
     description: Optional[str] = None
-    # The 3.2.0 name of goals.
-    products: InitVar[Optional[List["Goal"]]] = None
 
-    def __post_init__(self, products: Optional[List["Goal"]]) -> None:
+    def __init__(
+        self,
+        db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        model: Optional[Model] = None,
+        goals: Optional[List["Goal"]] = None,
+        acceptance_checks: Optional[Dict[str, Callable[[Dict[str, Any], Any], Any]]] = None,
+        automation_history_retention_days: int = 30,
+        cron_expr: str = "0 * * * *",
+        name: str = "Company",
+        description: Optional[str] = None,
+        products: Optional[List["Goal"]] = None,
+    ) -> None:
+        # products is the 3.2.0 name of goals.
+        if products is not None and goals:
+            raise ValueError("Give goals or products, not both")
+        self.db = db
+        self.model = model
+        self.goals = products if products is not None else (goals if goals is not None else [])
+        self.acceptance_checks = acceptance_checks if acceptance_checks is not None else {}
+        self.automation_history_retention_days = automation_history_retention_days
+        self.cron_expr = cron_expr
+        self.name = name
+        self.description = description
+        self.__post_init__()
+
+    @property
+    def products(self) -> List["Goal"]:
+        """The 3.2.0 name of goals."""
+        return self.goals
+
+    @products.setter
+    def products(self, value: List["Goal"]) -> None:
+        self.goals = value
+
+    def __post_init__(self) -> None:
         from agno.db.schemas.company import validate_company_details
-
-        if products is not None:
-            if self.goals:
-                raise ValueError("Give goals or products, not both")
-            self.goals = products
 
         validate_company_details({"name": self.name, "description": self.description})
         if (

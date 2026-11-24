@@ -9,6 +9,7 @@ import logging
 import sys
 import types
 import warnings
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -292,6 +293,28 @@ def test_a_component_saved_by_3_2_0_keeps_the_registered_db(tmp_path):
     assert resolve_db_from_config(saved, registry=_Registry()) is registered
 
 
+@pytest.mark.parametrize("cls", [SqliteDb, AsyncSqliteDb])
+def test_a_component_saved_by_3_2_0_keeps_its_table_name_with_a_registry(tmp_path, cls):
+    from agno.db.utils import resolve_db_from_config
+
+    registered = cls(db_file=str(tmp_path / "registered.db"), id="os-db")
+
+    class _Registry:
+        def get_db(self, db_id):
+            return registered
+
+    saved = registered.to_dict()
+    saved["products_table"] = "my_products"
+    del saved["goals_table"]
+
+    resolved = resolve_db_from_config(saved, registry=_Registry())
+
+    assert resolved.goals_table_name == "my_products"
+    assert resolved.company_table_name == "my_products_details"
+    assert resolved.db_engine is registered.db_engine
+    assert "products_table" in saved and "goals_table" not in saved
+
+
 def _headers(scopes):
     token = jwt.encode(
         {
@@ -376,6 +399,42 @@ def test_a_role_stored_by_3_2_0_still_grants_goals(tmp_path):
     db.close()
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("scope", ["products:write", "goals:write", "goals:docs:write"])
+async def test_a_scope_stored_by_3_2_0_can_be_revoked(tmp_path, scope, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    resource = "products/docs" if ":docs:" in scope else "products/*"
+    db.upsert_authz_policy(role="editor", resource=resource, action="write", effect="allow")
+    db.upsert_authz_policy(role="editor", resource=resource, action="read", effect="allow")
+    engine = Authorization(db=db)._store()._engine
+    assert engine.check_resource("goals", "docs", "write", roles=["editor"]) is True
+
+    if use_async:
+        await engine.aremove_scope("editor", scope)
+    else:
+        engine.remove_scope("editor", scope)
+
+    assert engine.check_resource("goals", "docs", "write", roles=["editor"]) is False
+    assert engine.check_resource("goals", "docs", "read", roles=["editor"]) is True
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_deny_stored_by_3_2_0_can_be_changed_to_allow(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="editor", resource="products/*", action="write", effect="deny")
+    engine = Authorization(db=db)._store()._engine
+
+    if use_async:
+        await engine.aadd_scope("editor", "goals:write")
+    else:
+        engine.add_scope("editor", "goals:write")
+
+    assert engine.check_scope("goals:write", roles=["editor"]) is True
+    assert engine.get_role_scopes("editor") == [("goals:write", "allow")]
+    db.close()
+
+
 def test_a_role_saved_with_a_products_scope_grants_goals(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "roles.db"))
     store = Authorization(db=db)
@@ -383,6 +442,45 @@ def test_a_role_saved_with_a_products_scope_grants_goals(tmp_path):
 
     assert store._store()._engine.check_scope("goals:read", roles=["company-reader"]) is True
     db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_stored_products_policies_filter_lists(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
+    db.upsert_authz_policy(role="reader", resource="products/secret", action="read", effect="deny")
+    engine = Authorization(db=db)._store()._engine
+
+    for resource_type in ("goals", "products"):
+        if use_async:
+            allowed = await engine.aaccessible_resource_ids(resource_type, "read", roles=["reader"])
+            denied = await engine.adenied_resource_ids(resource_type, "read", roles=["reader"])
+        else:
+            allowed = engine.accessible_resource_ids(resource_type, "read", roles=["reader"])
+            denied = engine.denied_resource_ids(resource_type, "read", roles=["reader"])
+        assert allowed == {"*"} and denied == {"secret"}
+        assert engine.check_resource(resource_type, "docs", "read", roles=["reader"]) is True
+        assert engine.check_resource(resource_type, "secret", "read", roles=["reader"]) is False
+    db.close()
+
+
+def test_a_stored_system_policy_does_not_match_config():
+    assert not resource_matches("system/*", "config/*")
+
+
+def test_the_3_2_0_names_can_be_read_and_set():
+    goal = Goal(name="Docs", purpose="First")
+    goal.purpose = "Second"
+    assert (goal.purpose, goal.objective) == ("Second", "Second")
+    assert "purpose" not in goal.model_dump()
+    assert AcceptanceScope(goal_ids=["docs"]).product_ids == ["docs"]
+    assert CompanyDeclarations(goals=[goal]).products == [goal]
+
+    config = CompanyConfig()
+    config.products = [goal]
+    config.products.append(goal)
+    assert config.goals == [goal, goal]
+    assert replace(CompanyConfig(products=[goal]), goals=[]).goals == []
 
 
 def test_a_stored_products_policy_matches_only_goals():

@@ -171,6 +171,7 @@ class _Database:
         # database's files has an id no other test uses.
         self.files_goal = f"docs-{uuid.uuid4().hex[:10]}"
         self._opened: List[Any] = []
+        self._patch = pytest.MonkeyPatch()
 
     def _open(self, cls: Any, **tables: Any) -> Any:
         where = {"db_url": POSTGRES_URL, "db_schema": self.location} if self.postgres else {"db_file": self.location}
@@ -188,6 +189,7 @@ class _Database:
         return self._open(PostgresDb if self.postgres else SqliteDb, **tables)
 
     async def close(self) -> None:
+        self._patch.undo()
         for db in self._opened:
             await _call(db.close)
         self._opened.clear()
@@ -583,7 +585,8 @@ def _write_3_2_0(database: _Database) -> None:
 
 
 async def _start_before_migrating(database: _Database) -> None:
-    """What a deployment started on this version, before the migration, writes at start-up."""
+    """What a start before the migration wrote, when nothing yet refused to create the goals tables."""
+    database._patch.setattr("agno.db.utils.legacy_company_table", lambda db, table_type: None)
     db = database.db()
     await _call(db.initialize_company, "Company", None)
     await _call(
@@ -847,6 +850,30 @@ async def test_down_leaves_a_migrated_database_as_it_is(database):
     assert database.describe() == migrated
 
 
+@pytest.mark.parametrize("create", [False, True])
+@pytest.mark.parametrize("table_type", ["goals", "company"])
+async def test_before_the_migration_the_goals_tables_are_refused(database, table_type, create):
+    _write_3_2_0(database)
+    before = database.describe()
+
+    with pytest.raises(MigrationRequiredError, match="MigrationManager"):
+        await _call(database.db()._get_table, table_type, create_table_if_not_found=create)
+
+    assert database.describe() == before
+    await MigrationManager(database.db()).up()
+    assert await _call(database.db().get_goal, GOAL) is not None
+
+
+async def test_stamped_tables_do_not_hide_a_pending_rename(database):
+    _write_3_2_0(database)
+    for name in ("goals", "sources", "projects", "tasks"):
+        await _call(database.db().upsert_schema_version, f"agno_company_{name}", "3.2.3")
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+
+
 # -------------------------------------------------------------------- a start before the migration
 
 
@@ -908,7 +935,87 @@ async def test_edited_details_in_the_new_table_stop_the_migration(database):
     assert database.describe() == before
 
 
+@pytest.mark.parametrize("change", ["objective", "archive", "restored"])
+async def test_a_goal_edited_in_the_new_table_stops_the_migration(database, change):
+    _write_3_2_0(database)
+    await _start_before_migrating(database)
+    if change == "objective":
+        await _call(database.db().update_goal, GOAL, objective="Edited after the upgrade")
+    elif change == "archive":
+        database.execute(f"UPDATE {database._ref('agno_company_goals')} SET deleted_at = 5, updated_at = 5")
+    else:
+        # Archived on 3.2.0 and restored after the upgrade.
+        database.execute(f"UPDATE {database._ref('agno_company_goals')} SET updated_at = 5")
+        database.execute(f"UPDATE {database._ref('agno_company_products')} SET deleted_at = 5")
+    before = database.describe()
+
+    with pytest.raises(v3_2_3.CompanyGoalsMigrationError, match="were changed") as stopped:
+        await MigrationManager(database.db()).up()
+
+    assert GOAL in str(stopped.value)
+    assert database.describe() == before
+
+
+@pytest.mark.parametrize("routine_id, migrates", [(ROUTINE, True), ("linked-after-the-upgrade", False)])
+async def test_a_routine_linked_before_the_migration(database, routine_id, migrates):
+    """Start-up links the stored Routines again, which is not an edit; a new link is one."""
+    _write_3_2_0(database)
+    await _start_before_migrating(database)
+    metadata = {"archive_window_days": 14, "routine_ids": [routine_id]}
+    cast = "CAST(:metadata AS JSONB)" if database.postgres else ":metadata"
+    database.execute(
+        f"UPDATE {database._ref('agno_company_goals')} SET metadata = {cast}, updated_at = 5",
+        metadata=json.dumps(metadata),
+    )
+    if migrates:
+        await MigrationManager(database.db()).up()
+        await _assert_carried_over(database)
+    else:
+        with pytest.raises(v3_2_3.CompanyGoalsMigrationError, match="were changed"):
+            await MigrationManager(database.db()).up()
+
+
+async def test_a_subclassed_adapter_is_migrated(database):
+    _write_3_2_0(database)
+    db = database.db()
+    subclass = type("MyDb", (type(db),), {})
+
+    await MigrationManager(database._open(subclass)).up()
+
+    await _assert_carried_over(database)
+
+
 # ----------------------------------------------------------------------------- a run that stops
+
+
+@pytest.mark.parametrize("stop_at", ["CREATE INDEX", "DROP INDEX"])
+async def test_a_run_that_stops_while_renaming_an_index(databases, monkeypatch, stop_at):
+    database, fresh = databases(), databases()
+    if database.postgres:
+        pytest.skip("PostgreSQL renames an index in one transaction")
+    _write_3_2_0(database)
+    real_text = v3_2_3.text
+
+    def stop(statement: str) -> Any:
+        if statement.startswith(stop_at):
+            raise RuntimeError("stopped at the index")
+        return real_text(statement)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(v3_2_3, "text", stop)
+        with pytest.raises(RuntimeError, match="stopped at the index"):
+            await MigrationManager(database.db()).up()
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    db = fresh.db()
+    for table_type in ("goals", "sources", "projects", "tasks"):
+        await _call(db._get_table, table_type, create_table_if_not_found=True)
+    described, expected = database.describe(rows=False), fresh.describe(rows=False)
+    for name in ("goals", "sources", "projects", "tasks"):
+        name = f"agno_company_{name}"
+        assert described[name]["indexes"] == expected[name]["indexes"]
 
 
 async def test_a_run_that_stops_after_the_table_rename(database, monkeypatch):
@@ -985,7 +1092,7 @@ class MongoDb:
         self.schedules[schedule_id] = {**self.schedules[schedule_id], **changes}
         return self.schedules[schedule_id]
 
-    def get_schedule_runs(self, schedule_id: str, limit: int = 20, page: int = 1):
+    def get_schedule_runs(self, schedule_id: str, limit: int = 20, page: int = 1, raise_on_error: bool = False):
         rows = [run for run in self.runs.values() if run["schedule_id"] == schedule_id]
         return rows[(page - 1) * limit : page * limit], len(rows)
 

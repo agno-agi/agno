@@ -63,6 +63,27 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
 
 # The default name of the Goals table in agno 3.2.0, when a Goal was a Product.
 LEGACY_GOALS_TABLE_NAME = "agno_company_products"
+DEFAULT_GOALS_TABLE_NAME = "agno_company_goals"
+
+
+def legacy_company_table(db: Any, table_type: str) -> Optional[str]:
+    """The agno 3.2.0 name of a Company table this db uses under its default name, else None."""
+    if table_type not in ("goals", "company") or db.goals_table_name != DEFAULT_GOALS_TABLE_NAME:
+        return None
+    return LEGACY_GOALS_TABLE_NAME + ("_details" if table_type == "company" else "")
+
+
+def company_migration_required_error(legacy_table: str, table_name: str) -> MigrationRequiredError:
+    """The error for a Company table that is still stored under its agno 3.2.0 name."""
+    return MigrationRequiredError(
+        table_name=table_name,
+        message=(
+            f"Table {legacy_table} was written by an older version of Agno and must be renamed to {table_name}. "
+            "Apply the pending migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+            "`agno.db.migrations.manager`; await the call directly in async code), or via the AgentOS endpoint "
+            "`POST /databases/all/migrate`."
+        ),
+    )
 
 
 def goals_table_argument(goals_table: Optional[str], products_table: Optional[str]) -> Optional[str]:
@@ -3115,6 +3136,13 @@ def resolve_db_from_config(
     Returns:
         A database instance, or ``None`` if reconstruction fails.
     """
+    if "products_table" in db_data:
+        # A config saved by agno 3.2.0 names the Goals table under its old key.
+        goals_table = goals_table_from_dict(db_data)
+        db_data = {key: value for key, value in db_data.items() if key not in ("goals_table", "products_table")}
+        if goals_table is not None:
+            db_data["goals_table"] = goals_table
+
     db_id = db_data.get("id")
     if registry is not None and db_id:
         registry_db = registry.get_db(db_id)

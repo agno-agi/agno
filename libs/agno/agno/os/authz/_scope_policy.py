@@ -8,7 +8,7 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 ``agent_os:admin`` maps to the all-resources/all-actions wildcard ``("*", "*")``.
 """
 
-from typing import Tuple
+from typing import List, Tuple
 
 ADMIN_SCOPE = "agent_os:admin"
 # The namespace of the admin scope. Not a resource type: no other scope may use it.
@@ -101,6 +101,22 @@ def resource_action_to_scope(resource: str, action: str) -> str:
     return f"{rtype}:{rid}:{action}"
 
 
+# Resource types whose stored policy rows may still carry the old name.
+_RENAMED_POLICY_TYPES = {"products": "goals"}
+
+
+def current_resource(resource: str) -> str:
+    """``resource`` under the current name of its type."""
+    resource_type, separator, rest = resource.partition("/")
+    return _RENAMED_POLICY_TYPES.get(resource_type, resource_type) + separator + rest
+
+
+def legacy_resources(resource: str) -> List[str]:
+    """The spellings of ``resource`` under its renamed types, which a stored policy may still carry."""
+    resource_type, separator, rest = resource.partition("/")
+    return [old + separator + rest for old, new in _RENAMED_POLICY_TYPES.items() if new == resource_type]
+
+
 def resource_matches(pattern: str, request: str) -> bool:
     """Does a policy's ``pattern`` resource match a request's ``request`` resource?
 
@@ -113,15 +129,11 @@ def resource_matches(pattern: str, request: str) -> bool:
       string ``"type"``, which no policy writes,
     - otherwise an exact match.
 
-    A policy stored under a resource type that was since renamed matches the current type.
+    A renamed resource type and its old name are the same type on both sides.
     """
     if pattern == "*":
         return True
-    from agno.os.scopes import LEGACY_RESOURCE_ALIASES
-
-    resource_type, separator, rest = pattern.partition("/")
-    if resource_type in LEGACY_RESOURCE_ALIASES:
-        pattern = LEGACY_RESOURCE_ALIASES[resource_type] + separator + rest
+    pattern, request = current_resource(pattern), current_resource(request)
     if pattern == request:
         return True
     if pattern.endswith("/*"):
