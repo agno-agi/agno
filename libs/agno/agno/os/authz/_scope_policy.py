@@ -122,6 +122,27 @@ def legacy_resources(resource: str) -> List[str]:
     return [old + separator + rest for old, new in _RENAMED_POLICY_TYPES.items() if new == resource_type]
 
 
+def is_legacy_scope(scope: str) -> bool:
+    """Whether ``scope`` is spelled with a resource type's old name."""
+    return scope.partition(":")[0] in _RENAMED_POLICY_TYPES
+
+
+def policies_for_type(rows: List[Tuple[str, str, str, str]], requested_type: str) -> List[Tuple[str, str, str, str]]:
+    """The policy rows that decide a request for ``requested_type``, with renamed types translated.
+
+    A role's row under the current name replaces its own row for the same scope under the old name.
+    The old row still decides requests for an application's own type of that name.
+    """
+    stored = {(role, resource, action) for role, resource, action, _ in rows}
+    current = []
+    for role, resource, action, effect in rows:
+        translated = policy_resource(resource, requested_type)
+        if translated != resource and (role, translated, action) in stored:
+            continue
+        current.append((role, translated, action, effect))
+    return current
+
+
 def resource_matches(pattern: str, request: str) -> bool:
     """Does a policy's ``pattern`` resource match a request's ``request`` resource?
 
