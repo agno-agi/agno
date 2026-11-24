@@ -173,6 +173,19 @@ def test_extract_video_id_accepts_exact_hosts_and_subdomains(url):
     assert extract_video_id(url) == "test_video_id"
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtu.be/watch?v=test_video_id",
+        "https://www.youtube.com/v/test_video_id",
+        "https://www.youtube.com/watch?t=3&v=test_video_id",
+        "test_video_id",
+    ],
+)
+def test_extract_video_id_supports_query_legacy_and_bare_forms(url):
+    assert extract_video_id(url) == "test_video_id"
+
+
 def test_read_video_unicode_content():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 

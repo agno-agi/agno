@@ -33,7 +33,8 @@ def extract_video_id(url: str) -> str:
     host = (parsed.hostname or "").lower()
     segments = [segment for segment in parsed.path.split("/") if segment]
     if _is_host(host, "youtu.be"):
-        if segments:
+        # youtu.be/watch?v=<id> carries the id in the query, not the path.
+        if segments and segments[0] != "watch":
             return segments[0]
     elif _is_host(host, "youtube.com") or _is_host(host, "youtube-nocookie.com"):
         if len(segments) > 1 and segments[0] in _ID_PATH_PREFIXES:
