@@ -42,8 +42,8 @@ from agno.os.authz._db import (
 from agno.os.authz._request_scope import amemoize, memoize
 from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._scope_policy import (
-    current_resource,
     legacy_resources,
+    policy_resource,
     resource_action_to_scope,
     resource_matches,
     scope_to_resource_action,
@@ -286,9 +286,11 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()  # a write must be visible to the rest of this request
         self._db.delete_authz_policy(role=role, resource=resource, action=action)
 
-    def _delete_legacy_policies(self, role: str, resource: str, action: str) -> None:
-        """Drop rows that store the same scope under a resource type's old name."""
+    def _delete_legacy_policies(self, role: str, resource: str, action: str, effect: Optional[str] = None) -> None:
+        """Drop rows that store the same scope under a resource type's old name, only of ``effect`` when given."""
         for legacy in legacy_resources(resource):
+            if effect is not None and (role, legacy, action, effect) not in self._policies_for({role}):
+                continue
             self._delete_policy(role, legacy, action)
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
@@ -327,7 +329,9 @@ class NativePolicyEngine(PolicyEngine):
         resource, action = scope_to_resource_action(scope)  # validate before mutating
         effect = _normalize_effect(effect)
         self._persist_policy(role, resource, action, effect)
-        self._delete_legacy_policies(role, resource, action)
+        if effect == _ALLOW:
+            # A deny stored under the old name would keep overriding this allow.
+            self._delete_legacy_policies(role, resource, action, effect=_DENY)
 
     def remove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
@@ -461,12 +465,11 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
-        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect == _DENY:
                 continue
-            resource = current_resource(resource)
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):
@@ -493,12 +496,11 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
-        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect != _DENY:
                 continue
-            resource = current_resource(resource)
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             # A collection/global deny (``agents/*``, the bare type, or the admin
@@ -622,9 +624,13 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()
         await self._acall("delete_authz_policy", role=role, resource=resource, action=action)
 
-    async def _adelete_legacy_policies(self, role: str, resource: str, action: str) -> None:
+    async def _adelete_legacy_policies(
+        self, role: str, resource: str, action: str, effect: Optional[str] = None
+    ) -> None:
         """Async twin of :meth:`_delete_legacy_policies`."""
         for legacy in legacy_resources(resource):
+            if effect is not None and (role, legacy, action, effect) not in await self._apolicies_for({role}):
+                continue
             await self._adelete_policy(role, legacy, action)
 
     async def _apersist_grouping(self, subject: str, role: str, add: bool) -> None:
@@ -649,7 +655,8 @@ class NativePolicyEngine(PolicyEngine):
         resource, action = scope_to_resource_action(scope)
         effect = _normalize_effect(effect)
         await self._apersist_policy(role, resource, action, effect)
-        await self._adelete_legacy_policies(role, resource, action)
+        if effect == _ALLOW:
+            await self._adelete_legacy_policies(role, resource, action, effect=_DENY)
 
     async def aremove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)
@@ -754,12 +761,11 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
-        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in await self._apolicies_for(principals):
             if effect == _DENY:
                 continue
-            resource = current_resource(resource)
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):
@@ -782,12 +788,11 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
-        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in await self._apolicies_for(principals):
             if effect != _DENY:
                 continue
-            resource = current_resource(resource)
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):

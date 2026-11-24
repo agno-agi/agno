@@ -21,6 +21,7 @@ from agno.company import Goal
 from agno.company.declarations import AcceptanceScope, CompanyDeclarations
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.exceptions import MigrationRequiredError
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from agno.os.authz import Authorization
@@ -462,6 +463,60 @@ async def test_stored_products_policies_filter_lists(tmp_path, use_async):
         assert engine.check_resource(resource_type, "docs", "read", roles=["reader"]) is True
         assert engine.check_resource(resource_type, "secret", "read", roles=["reader"]) is False
     db.close()
+
+
+def test_a_goals_policy_does_not_match_an_application_products_type():
+    assert not resource_matches("goals/*", "products/catalog")
+    assert resource_matches("products/*", "products/catalog")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_granting_goals_keeps_a_stored_products_grant(tmp_path, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
+    engine = Authorization(db=db)._store()._engine
+
+    if use_async:
+        await engine.aadd_scope("reader", "goals:read")
+    else:
+        engine.add_scope("reader", "goals:read")
+
+    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
+    db.close()
+
+
+@pytest.mark.parametrize(
+    "saved, expected", [("custom_products", "custom_products"), ("agno_company_products", "agno_company_goals")]
+)
+def test_the_component_api_reads_products_table(tmp_path, saved, expected):
+    from agno.os.routers.components.components import _resolve_db_in_config
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"), id="os-db")
+    config = _resolve_db_in_config({"db": {"id": "os-db", "products_table": saved}}, db)
+
+    assert config["db"]["goals_table"] == expected
+    assert "products_table" not in config["db"]
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_an_unmigrated_company_database_stops_startup(tmp_path, named):
+    import sqlite3
+
+    path = str(tmp_path / "company.db")
+    table = "my_products" if named else "agno_company_products"
+    with sqlite3.connect(path) as conn:
+        conn.execute(f"CREATE TABLE {table} (id VARCHAR PRIMARY KEY, name VARCHAR, purpose TEXT)")
+    db = SqliteDb(db_file=path, products_table="my_products" if named else None)
+    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
+
+    with pytest.raises(MigrationRequiredError) as refused:
+        with TestClient(app):
+            pass
+
+    # The HTTP migration route is unreachable until the server starts.
+    assert "asyncio.run(MigrationManager(db).up())" in str(refused.value)
+    assert "await MigrationManager(db).up()" in str(refused.value)
+    assert "/databases/all/migrate" not in str(refused.value)
 
 
 def test_a_stored_system_policy_does_not_match_config():

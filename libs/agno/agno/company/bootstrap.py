@@ -205,8 +205,9 @@ def rehydrate_goal(
 @asynccontextmanager
 async def _company_lifespan(app: Any, agent_os: Any):
     if agent_os._company_db is not None:
-        from agno.company.details import _seed_company
+        from agno.company.details import _require_migrated_company, _seed_company
 
+        await _require_migrated_company(agent_os._company_db)
         await _seed_company(agent_os)
     for declaration in agent_os.company.goals:
         goal = declaration if isinstance(declaration, Goal) else Goal.model_validate(declaration)

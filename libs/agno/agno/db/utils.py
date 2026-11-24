@@ -107,6 +107,17 @@ def goals_table_from_dict(data: Dict[str, Any]) -> Optional[str]:
     return None if legacy == LEGACY_GOALS_TABLE_NAME else legacy
 
 
+def with_current_goals_table(data: Dict[str, Any]) -> Dict[str, Any]:
+    """A serialized db with its Goals table named under "goals_table", not the agno 3.2.0 key."""
+    if "products_table" not in data:
+        return data
+    goals_table = goals_table_from_dict(data)
+    current = {key: value for key, value in data.items() if key not in ("goals_table", "products_table")}
+    if goals_table is not None:
+        current["goals_table"] = goals_table
+    return current
+
+
 # Table parameters only some adapters take, beyond BaseDb's. A stored config
 # that overrides one of these must clone the registered db with it too, or
 # the component silently lands on the adapter's default table.
@@ -3136,13 +3147,7 @@ def resolve_db_from_config(
     Returns:
         A database instance, or ``None`` if reconstruction fails.
     """
-    if "products_table" in db_data:
-        # A config saved by agno 3.2.0 names the Goals table under its old key.
-        goals_table = goals_table_from_dict(db_data)
-        db_data = {key: value for key, value in db_data.items() if key not in ("goals_table", "products_table")}
-        if goals_table is not None:
-            db_data["goals_table"] = goals_table
-
+    db_data = with_current_goals_table(db_data)
     db_id = db_data.get("id")
     if registry is not None and db_id:
         registry_db = registry.get_db(db_id)

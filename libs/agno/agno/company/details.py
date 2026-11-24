@@ -6,8 +6,9 @@ from typing import Any, Callable, List
 
 from agno.company.execution import _call
 from agno.db.base import AsyncBaseDb
+from agno.exceptions import MigrationRequiredError
 from agno.run.authorization import _caller_authorization
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 
 def _context(base: List[str], record: Any) -> List[str]:
@@ -69,13 +70,39 @@ def _company_instructions(db: Any, base: List[str]) -> Callable:
     return _CompanyInstructions(db, base)
 
 
+def _startup_migration_error(exc: MigrationRequiredError) -> MigrationRequiredError:
+    """The error without the HTTP migration route, which does not exist until the server starts."""
+    return MigrationRequiredError(
+        table_name=exc.table_name,
+        message=(
+            f"AgentOS cannot start: Company table {exc.table_name} is not ready for this version of Agno. "
+            "If this database was created by an older version of Agno, apply the pending migrations before starting "
+            "AgentOS with `asyncio.run(MigrationManager(db).up())`, or `await MigrationManager(db).up()` in async "
+            "code (import it from `agno.db.migrations.manager`)."
+        ),
+    )
+
+
+async def _require_migrated_company(db: Any) -> None:
+    """Refuse to start on Company tables that a pending migration must change first."""
+    for table_type in ("goals", "sources", "projects", "tasks"):
+        try:
+            await _call(db, "_get_table", table_type, create_table_if_not_found=False)
+        except MigrationRequiredError as exc:
+            raise _startup_migration_error(exc) from exc
+        except Exception as exc:
+            log_debug(f"Company {table_type} table was not checked: {exc}")
+
+
 async def _seed_company(agent_os: Any) -> None:
-    """Apply CompanyConfig at startup; failure only leaves managers without company context."""
+    """Apply CompanyConfig at startup; other than a pending migration, failure only leaves out company context."""
     config = agent_os.company
     try:
         row = await _call(agent_os._company_db, "initialize_company", config.name, config.description)
     except NotImplementedError:
         return
+    except MigrationRequiredError as exc:
+        raise _startup_migration_error(exc) from exc
     except Exception as exc:
         log_warning(f"Company details were not initialized: {exc}")
         return
