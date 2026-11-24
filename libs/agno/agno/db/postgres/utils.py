@@ -209,7 +209,12 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
-        expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+        # An optional column is one a later migration adds, so a table that predates it stays usable until migrated
+        expected_columns = {
+            col_name
+            for col_name, col_config in expected_table_schema.items()
+            if not col_name.startswith("_") and not (isinstance(col_config, dict) and col_config.get("optional"))
+        }
 
         # Get existing columns
         inspector = inspect(db_engine)
@@ -244,7 +249,12 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
-        expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+        # An optional column is one a later migration adds, so a table that predates it stays usable until migrated
+        expected_columns = {
+            col_name
+            for col_name, col_config in expected_table_schema.items()
+            if not col_name.startswith("_") and not (isinstance(col_config, dict) and col_config.get("optional"))
+        }
 
         # Get existing columns from the async engine
         async with db_engine.connect() as conn:

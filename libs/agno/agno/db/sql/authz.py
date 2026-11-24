@@ -20,7 +20,7 @@ Two properties this layer must preserve, because the authorization model depends
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
-from sqlalchemy import case, delete, func, insert, or_, select
+from sqlalchemy import case, delete, false, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -327,13 +327,26 @@ def get_user(engine: Engine, table: Any, user_id: str) -> Optional[Dict[str, Any
 USER_SEARCH_COLUMNS = ("id", "email", "name")
 
 
-def _user_filters(table: Any, include_disabled: bool, search: Optional[str]) -> list:
+# The user type only an os.agno.com token writes; every other row, NULL included, is an end user
+_ORG_USER = "org_user"
+
+
+def _user_filters(table: Any, include_disabled: bool, search: Optional[str], user_type: Optional[str] = None) -> list:
     clauses = []
     if not include_disabled:
         clauses.append(table.c.disabled.is_(False))
     if search:
         pattern = _like_pattern(search)
         clauses.append(or_(*(table.c[c].ilike(pattern, escape=_LIKE_ESCAPE) for c in USER_SEARCH_COLUMNS)))
+    if user_type is not None:
+        if "user_type" not in table.c:
+            # A table from before migration v3.2.2 has recorded no org users, so every row is an end user
+            if user_type == _ORG_USER:
+                clauses.append(false())
+        elif user_type == _ORG_USER:
+            clauses.append(table.c.user_type == _ORG_USER)
+        else:
+            clauses.append(or_(table.c.user_type.is_(None), table.c.user_type != _ORG_USER))
     return clauses
 
 
@@ -346,6 +359,7 @@ def list_users(
     search: Optional[str] = None,
     sort_by: str = "created_at",
     order: str = "desc",
+    user_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     from sqlalchemy import nullslast
 
@@ -353,7 +367,7 @@ def list_users(
     descending = order != "asc"
     stmt = (
         select(table)
-        .where(*_user_filters(table, include_disabled, search))
+        .where(*_user_filters(table, include_disabled, search, user_type))
         # nullslast: backends disagree on NULL placement and email/name are nullable,
         # so pin them last in either direction.
         .order_by(nullslast(column.desc() if descending else column.asc()))
@@ -364,8 +378,14 @@ def list_users(
         return [_user_row(r) for r in conn.execute(stmt).mappings()]
 
 
-def count_users(engine: Engine, table: Any, include_disabled: bool = True, search: Optional[str] = None) -> int:
-    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
+def count_users(
+    engine: Engine,
+    table: Any,
+    include_disabled: bool = True,
+    search: Optional[str] = None,
+    user_type: Optional[str] = None,
+) -> int:
+    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search, user_type))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
 
@@ -430,6 +450,16 @@ def count_users_by_day(
         return [{"date": int(row.date), "count": int(row.users_created)} for row in rows]
 
 
+def _user_payload(table: Any, values: Dict[str, Any]) -> Dict[str, Any]:
+    """The column values a user write stores. A column the table does not have yet (``user_type`` before migration
+    v3.2.2) is left out, so the directory keeps working on a table that predates it."""
+    payload = dict(values)
+    metadata = payload.pop("metadata", None)
+    if metadata is not None:
+        payload["user_metadata"] = json.dumps(metadata)
+    return {column: value for column, value in payload.items() if column in table.c}
+
+
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
     """Write a directory row (email/name/metadata/timestamps).
 
@@ -439,10 +469,7 @@ def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]
     so let a provision/edit racing a :func:`set_user_disabled` silently un-revoke a user
     (a lost update). Disabling is done atomically through :func:`set_user_disabled`.
     """
-    payload = dict(values)
-    metadata = payload.pop("metadata", None)
-    if metadata is not None:
-        payload["user_metadata"] = json.dumps(metadata)
+    payload = _user_payload(table, values)
     update_cols = [c for c in payload if c != "disabled"]
     with engine.begin() as conn:
         _upsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)
@@ -780,6 +807,7 @@ async def alist_users(
     search: Optional[str] = None,
     sort_by: str = "created_at",
     order: str = "desc",
+    user_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     from sqlalchemy import nullslast
 
@@ -787,7 +815,7 @@ async def alist_users(
     descending = order != "asc"
     stmt = (
         select(table)
-        .where(*_user_filters(table, include_disabled, search))
+        .where(*_user_filters(table, include_disabled, search, user_type))
         .order_by(nullslast(column.desc() if descending else column.asc()))
         .limit(limit)
         .offset(offset)
@@ -798,9 +826,13 @@ async def alist_users(
 
 
 async def acount_users(
-    engine: "AsyncEngine", table: Any, include_disabled: bool = True, search: Optional[str] = None
+    engine: "AsyncEngine",
+    table: Any,
+    include_disabled: bool = True,
+    search: Optional[str] = None,
+    user_type: Optional[str] = None,
 ) -> int:
-    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
+    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search, user_type))
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
         return int(result.scalar() or 0)
@@ -831,10 +863,7 @@ async def acount_users_by_day(
 
 
 async def aupsert_user(engine: "AsyncEngine", table: Any, user_id: str, values: Dict[str, Any]) -> None:
-    payload = dict(values)
-    metadata = payload.pop("metadata", None)
-    if metadata is not None:
-        payload["user_metadata"] = json.dumps(metadata)
+    payload = _user_payload(table, values)
     update_cols = [c for c in payload if c != "disabled"]
     async with engine.begin() as conn:
         await _aupsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)

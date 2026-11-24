@@ -96,7 +96,9 @@ class Slack(BaseInterface):
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
             default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
-            authorize_senders: Run each sender as their AgentOS directory user, created on first message
+            authorize_senders: Run each sender as their AgentOS directory user, created on first message, Super Agent
+                included. With resolve_user_identity=True a member's confirmed Slack email is their user, so a member
+                who opened the AgentOS on os.agno.com runs with the role and scopes os.agno.com gave them there
         """
         self.agent = agent
         self.team = team

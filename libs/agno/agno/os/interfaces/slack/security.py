@@ -18,6 +18,24 @@ _SLACK_UNAVAILABLE_MESSAGE = "Sorry, Slack could not be reached to check your ac
 _DIRECTORY_UNAVAILABLE_MESSAGE = "Sorry, the user directory is unavailable. Please try again later."
 _DISABLED_MESSAGE = "Sorry, your account on this AgentOS is disabled."
 _PERMISSION_MESSAGE = "Sorry, you don't have permission to run this. Required scope(s): `{scope}`"
+# Slack matches a member to their os.agno.com account by email, so the hints name the email to sign in with
+_NO_ORG_ACCESS_MESSAGE = (
+    "Sorry, you don't have access to this AgentOS yet. Ask your admin to add you, or if you're in its "
+    "organization on os.agno.com, open this AgentOS there once, signed in with your Slack email, to connect "
+    "your account."
+)
+_ACCESS_CHANGED_HINT = (
+    " Ask your admin for access on os.agno.com. If they just gave it to you, open this AgentOS there once, "
+    "signed in with your Slack email, so Slack picks it up."
+)
+
+
+class NoOrgAccessError(PermissionError):
+    """A refusal of a user with no current os.agno.com access saved, whose own sign-in may be all they need."""
+
+
+class OrgPermissionError(PermissionError):
+    """A refusal of an org user by their saved os.agno.com access, which only their next visit there refreshes."""
 
 
 def resolve_token(token: Optional[str] = None) -> str:
@@ -97,25 +115,47 @@ async def can_stop(ctx: "SlackContext", user: str, event_context: "EventContext"
     return True
 
 
-def refusal(error: PermissionError) -> str:
-    """A refused run's Slack reply: the account is disabled, or the permission it needs."""
+def refusal(error: PermissionError, principal: Optional[str] = None) -> str:
+    """A refused run's Slack reply: the account is disabled, no os.agno.com access yet, or the permission it needs."""
     reason = str(error)
+    # Only a member named by their email can be an org user; a slack: user never signs in on os.agno.com
+    if isinstance(error, NoOrgAccessError) and principal and not principal.startswith("slack:"):
+        return _NO_ORG_ACCESS_MESSAGE
     if reason == "User is disabled":
         return _DISABLED_MESSAGE
     if reason.startswith("Permission required: "):
-        return _PERMISSION_MESSAGE.format(scope=reason.removeprefix("Permission required: "))
+        message = _PERMISSION_MESSAGE.format(scope=reason.removeprefix("Permission required: "))
+        # Slack reads an org user's access as of their last visit, so a change since then needs one more
+        return message + _ACCESS_CHANGED_HINT if isinstance(error, OrgPermissionError) else message
     return f"Sorry, this was not run: {reason}"
 
 
-def principal_authorization(app: Any, principal_id: str, roles: Optional[List[str]] = None) -> Any:
-    """An authority that checks principal_id's roles, or the given roles when set."""
+def principal_authorization(
+    app: Any,
+    principal_id: str,
+    roles: Optional[List[str]] = None,
+    scopes: Optional[List[str]] = None,
+    role: Optional[str] = None,
+) -> Any:
+    """An authority that checks principal_id's roles, or the given roles when set, and scopes as a token's would be.
+
+    ``scopes`` and ``role`` are an org user's saved os.agno.com scopes and role. They count exactly as the same
+    user's token counts over HTTP: the scopes alone without managed roles, next to the user's roles under
+    ``trust_token_scopes``, not at all otherwise; the role as the token's ``role`` claim, read by a
+    ``roles_claim="role"``.
+    """
     from agno.os.auth import resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
     from agno.run.authorization import RunAuthorization
 
     return RunAuthorization(
         resolve_authorization_provider(app),
-        AuthorizationContext(principal_id=principal_id, claims={"sub": principal_id}, roles=roles),
+        AuthorizationContext(
+            principal_id=principal_id,
+            scopes=list(scopes or []),
+            claims={"sub": principal_id, **({"role": role} if role else {})},
+            roles=roles,
+        ),
         enforce_tools=False,
     )
 
@@ -127,16 +167,31 @@ async def resolve_principal_authorization(
     resource_id: str,
     roles: Optional[List[str]] = None,
     disabled: Optional[bool] = None,
+    user: Optional[Dict[str, Any]] = None,
 ) -> Any:
-    """A principal's authority, with roles when given; None with authorization off. Raises if disabled or denied."""
+    """A principal's authority, with roles when given; None with authorization off. Raises if disabled or denied.
+
+    ``user`` is the principal's directory row when the caller already read it. An org user's saved os.agno.com
+    access applies as their token would over HTTP, until it expires; their own roles on the OS apply either way.
+    """
     from agno.os.auth import _authorization_enforced
 
     state = getattr(app, "state", None)
     user_store = getattr(state, "user_store", None)
+    # An org user's os.agno.com scopes are on their row, so the row is read instead of the disabled switch alone
+    keeps_org_access = bool(getattr(user_store, "org_access_max_age", None))
+    row = user
+    if row is not None and disabled is None:
+        disabled = bool(row.get("disabled"))
     # A disabled switch already read, as from the row provisioning returned, is not read again
-    if disabled is None and user_store is not None:
+    if user_store is not None and (disabled is None or (keeps_org_access and row is None)):
         try:
-            disabled = bool(await user_store.ais_disabled(principal_id))
+            if keeps_org_access:
+                row = await user_store.aget(principal_id)
+                if disabled is None:
+                    disabled = bool(row and row.get("disabled"))
+            else:
+                disabled = bool(await user_store.ais_disabled(principal_id))
         except Exception as e:
             # Directory unreachable: honour the configured policy
             fail_closed = bool(getattr(state, "user_directory_fail_closed", False))
@@ -150,9 +205,23 @@ async def resolve_principal_authorization(
     # The middleware is checked here too: one added after get_app() is not in the flag
     if not _authorization_enforced(app):
         return None
+    # An org user's os.agno.com access counts until it expires, as it would lapse for someone removed from the
+    # organization; the roles the OS gives the user are its own and still apply after that.
     # Roles are resolved fresh on every check, so a revoked grant applies to the next message
-    authority = principal_authorization(app, principal_id, roles)
-    await authority.arequire(resource, "run", resource_id)
+    access = user_store.org_access(row) if user_store is not None and keeps_org_access and row else None
+    scopes = user_store.org_scopes(row) if user_store is not None and access is not None else None
+    authority = principal_authorization(app, principal_id, roles, scopes, access.get("role") if access else None)
+    try:
+        await authority.arequire(resource, "run", resource_id)
+    except PermissionError as e:
+        # Someone with no os.agno.com access saved may only need to open the OS there once; only said on an OS that
+        # is opened on os.agno.com, so a self-hosted one names the scope it needs
+        if scopes is None and getattr(user_store, "serves_org_users", False) and not isinstance(e, NoOrgAccessError):
+            raise NoOrgAccessError(str(e)) from e
+        # An org user refused by their saved access may have been granted more since their last visit
+        if scopes is not None and type(e) is PermissionError:
+            raise OrgPermissionError(str(e)) from e
+        raise
     return authority
 
 
@@ -295,6 +364,7 @@ async def authorize_sender(ctx: "SlackContext", event_context: "EventContext", c
         claims["name"] = event_context.display_name
     # Provisioning reads the user's row, so its disabled switch is not read again, as over HTTP
     disabled: Optional[bool] = None
+    provisioned: Optional[Dict[str, Any]] = None
     try:
         provisioned = await provision_sender(ctx, principal, claims, guest=is_guest(member))
         if provisioned is not None:
@@ -309,7 +379,9 @@ async def authorize_sender(ctx: "SlackContext", event_context: "EventContext", c
             return False
         # Failing open skips the disabled switch, as over HTTP; roles still decide
         disabled = False
-    return await authorize_run(ctx, event_context, principal, client, user, thread_ts, disabled=disabled)
+    return await authorize_run(
+        ctx, event_context, principal, client, user, thread_ts, disabled=disabled, user_row=provisioned
+    )
 
 
 async def authorize_unmapped(
@@ -341,18 +413,21 @@ async def authorize_run(
     thread_ts: Optional[str] = None,
     roles: Optional[List[str]] = None,
     disabled: Optional[bool] = None,
+    user_row: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Set the run's platform authority for a principal; a refused principal is told why in an ephemeral."""
     try:
         if ctx.company is not None:
-            event_context.authority = await ctx.company.authorize(ctx.app, principal, ctx.entity_id, roles)
+            event_context.authority = await ctx.company.authorize(
+                ctx.app, principal, ctx.entity_id, roles, disabled=disabled, user=user_row
+            )
         else:
             event_context.authority = await resolve_principal_authorization(
-                ctx.app, principal, ctx.resource, ctx.entity_id, roles, disabled=disabled
+                ctx.app, principal, ctx.resource, ctx.entity_id, roles, disabled=disabled, user=user_row
             )
     except PermissionError as e:
         # A sender checked as their own user is told why in plain words; users= and default_role= keep Not run
-        message = refusal(e) if ctx.senders_authorized else f"Not run: {e}"
+        message = refusal(e, principal) if ctx.senders_authorized else f"Not run: {e}"
         await post_ephemeral(client, event_context.channel, user, message, thread_ts)
         return False
     return True

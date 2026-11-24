@@ -38,6 +38,7 @@ hands each event to the interface. The demo environment installs both.
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
 | `super_agent.py` | Super Agent starts Company Tasks and posts their results back to the thread |
+| `super_agent_org_users.py` | Super Agent runs each os.agno.com member with their os.agno.com role and scopes, no roles in code |
 
 ## Slack App Setup
 
@@ -353,8 +354,11 @@ Slack(team=agent_os.manager, default_role="slack-member")
   - `users=` and `default_role=` are ignored under `authorize_senders`. Without
     AgentOS authorization only the directory applies. Without
     `AgentOS(user_directory=True)` no users are created, so a sender runs only
-    with roles assigned to their ID. Super Agent is not affected. A startup
-    warning names each ignored setting.
+    with roles assigned to their ID. A startup warning names each ignored
+    setting.
+  - Super Agent takes it too (`Slack(team=agent_os.manager, authorize_senders=True)`):
+    its senders run as their own user instead of with no roles. See
+    os.agno.com Members below.
 
 When Slack cannot be reached to look up a sender under `authorize_senders`, the
 message is refused, as a token that cannot be verified is over HTTP. When the
@@ -496,6 +500,43 @@ check permissions there:
 A `JWTMiddleware` you add yourself must list `/slack/*` in
 `excluded_route_paths`, because Slack signs its requests and sends no token; the
 list replaces the defaults, so keep `/health` and `/docs` in it.
+
+### os.agno.com Members
+
+`super_agent_org_users.py` lets the members of the organization that owns the
+AgentOS on os.agno.com use Super Agent in Slack with their os.agno.com access,
+with no roles in code:
+
+```python
+agent_os = AgentOS(..., authorization=True, user_directory=True)
+agent_os.interfaces.append(
+    Slack(team=agent_os.manager, authorize_senders=True, resolve_user_identity=True)
+)
+```
+
+- When a member opens the AgentOS on os.agno.com, any request with their token
+  records them in the user directory as an org user (`user_type="org_user"` in
+  `/users`), with the role, scopes and per-AgentOS denies the token carries.
+  Only the member who signs in is recorded.
+- In Slack the member is matched by their confirmed email, which is the user id
+  their os.agno.com token carries, and runs with those scopes. Denies override
+  the scopes, as they do over HTTP.
+- An admin changes what a member can do on os.agno.com, under Settings, Roles
+  (org-wide or for this AgentOS). Slack uses the change once the member opens
+  the AgentOS again, since a Slack message carries no token.
+- The saved access stops counting 7 days after the member last opened the
+  AgentOS (`UserDirectory(org_access_max_age=...)`), so a member removed from
+  the organization loses Slack access by then; roles the AgentOS gives them
+  itself still apply. Turning the user off in `/users` applies at once.
+- The member's Slack email must be their os.agno.com email; access saved under
+  another email never matches.
+- Someone not recorded is told to ask their admin, or to open the AgentOS on
+  os.agno.com once, signed in with their Slack email. Someone refused a
+  permission is told the same about a change their admin just made. An
+  AgentOS never opened on os.agno.com names the missing scope instead.
+- The `user_type` column comes with migration v3.2.2. Until an existing users
+  table is migrated (`POST /databases/all/migrate`), the AgentOS works as before
+  but records no org users.
 
 ## Limits
 

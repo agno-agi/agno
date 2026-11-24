@@ -1189,11 +1189,7 @@ class AgentOS:
                     key = delivery_key(interface)
                     interface.company = CompanyBridge(self, deliver=key not in delivery_keys)  # type: ignore[attr-defined]
                     delivery_keys.add(key)
-                if getattr(interface, "authorize_senders", False):
-                    log_warning(
-                        "Slack(authorize_senders=True) does not apply to Super Agent, which checks its senders itself"
-                    )
-            elif interface.type == "slack" and getattr(interface, "authorize_senders", False):
+            if interface.type == "slack" and getattr(interface, "authorize_senders", False):
                 # Under authorize_senders each sender is their own user, so these settings are not used
                 if getattr(interface, "default_role", None) is not None:
                     log_warning(
@@ -1207,6 +1203,16 @@ class AgentOS:
                     log_warning(
                         "Slack(approvers=...) is ignored under authorize_senders; only the run's own user decides on it"
                     )
+                # Without the confirmed email each sender is slack:<workspace>:<member>, which no os.agno.com
+                # token ever names
+                if not getattr(interface, "resolve_user_identity", False) and getattr(
+                    self.user_directory, "org_access_max_age", None
+                ):
+                    log_warning(
+                        "Slack(authorize_senders=True) without resolve_user_identity=True runs each sender as "
+                        "slack:<workspace>:<member>, so no sender gets their os.agno.com access; only roles given to "
+                        "those users apply. Set resolve_user_identity=True."
+                    )
             interface_router = interface.get_router()
             if getattr(interface, "authenticates_own_requests", False):
                 self._public_interface_routes.extend(
@@ -1216,24 +1222,32 @@ class AgentOS:
                     for method in route.methods
                 )
             self._add_router(app, interface_router)
-        # Slack interfaces that run each sender as their directory user; Super Agent has its own warning
+        # Slack interfaces that run each sender as their directory user, Super Agent included
         any_senders_authorized = any(
-            interface.type == "slack"
-            and getattr(interface, "authorize_senders", False)
-            and not (interface.team is not None and interface.team is self.manager)
+            interface.type == "slack" and getattr(interface, "authorize_senders", False)
             for interface in self.interfaces
         )
-        # A Slack sender carries no token, so only stored roles or a custom provider can grant it anything
+        # A Slack sender carries no token, so only stored roles, an org user's saved os.agno.com access, or a
+        # custom provider can grant it anything
         if (
             any_senders_authorized
             and self.authorization
             and self._authz_role_store is None
             and not self._authz_provider
         ):
-            log_warning(
-                "Slack(authorize_senders=True) runs each sender with their stored roles, but this AgentOS has "
-                "no managed roles, so every Slack sender is refused. Define roles on Authorization(...)."
-            )
+            if getattr(self.user_directory, "org_access_max_age", None):
+                # Only an OS opened on os.agno.com has org users, so a self-hosted one still hears that no one gets in
+                log_info(
+                    "Slack(authorize_senders=True) runs each sender with the access os.agno.com gives them as a "
+                    "member of the organization that owns this AgentOS, saved when they open it there. This "
+                    "AgentOS has no managed roles, so any other Slack sender is refused; define roles on "
+                    "Authorization(...) to give them access."
+                )
+            else:
+                log_warning(
+                    "Slack(authorize_senders=True) runs each sender with their stored roles, but this AgentOS has "
+                    "no managed roles, so every Slack sender is refused. Define roles on Authorization(...)."
+                )
         if any_senders_authorized and self.db is None and not self.authorization:
             # Each Slack sender's user and roles are stored in the AgentOS database; with authorization on, the
             # missing managed roles are warned about above

@@ -1306,13 +1306,14 @@ def _slack_super_agent(db, authorization, **slack_kwargs):
     return os, interface.ctx.bind(app)
 
 
-def test_slack_super_agent_warns_that_authorize_senders_does_not_apply(db, monkeypatch):
+def test_slack_super_agent_takes_authorize_senders(db, monkeypatch):
     pytest.importorskip("slack_bolt")
     texts = []
     monkeypatch.setattr("agno.os.app.log_warning", texts.append)
-    _slack_super_agent(db, True, authorize_senders=True)
-    # Super Agent checks its senders itself, so the setting is named as ignored
-    assert sum("Slack(authorize_senders=True) does not apply to Super Agent" in text for text in texts) == 1
+    _, ctx = _slack_super_agent(db, True, authorize_senders=True)
+    # Super Agent runs each sender as their own directory user, so the setting is not named as ignored
+    assert not any("does not apply to Super Agent" in text for text in texts)
+    assert ctx.company is not None and ctx.senders_authorized
 
 
 async def _send_slack_message(ctx, text="hello"):

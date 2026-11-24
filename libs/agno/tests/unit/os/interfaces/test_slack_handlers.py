@@ -278,7 +278,7 @@ async def test_handle_message_super_agent_authorizes_through_company():
     with patch(f"{_EXECUTOR}.run_event", new_callable=AsyncMock) as run_event:
         await handle_message(make_event_body(), make_async_client_mock(), ctx)
     # A mapped user runs as their own principal, with its own roles
-    company.authorize.assert_awaited_once_with(None, "alice", "agent-1", None)
+    company.authorize.assert_awaited_once_with(None, "alice", "agent-1", None, disabled=None, user=None)
     # With AgentOS authorization off there is no authority, and the message still runs as the principal
     assert run_event.call_args.args[0].user_id == "alice"
 
@@ -336,9 +336,11 @@ async def test_handle_message_without_users_runs_as_the_slack_user_with_the_defa
         await handle_message(make_event_body(), make_async_client_mock(), ctx)
     # The member acts as themselves; the default role only supplies the permissions
     if super_agent:
-        authorize.assert_awaited_once_with(ctx.app, "U123", "agent-1", ["slack-bot"])
+        authorize.assert_awaited_once_with(ctx.app, "U123", "agent-1", ["slack-bot"], disabled=None, user=None)
     else:
-        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"], disabled=None)
+        authorize.assert_awaited_once_with(
+            ctx.app, "U123", "agents", "agent-1", ["slack-bot"], disabled=None, user=None
+        )
     event_context = run_event.call_args.args[0]
     assert (event_context.user_id, event_context.authority) == ("U123", authority)
 
