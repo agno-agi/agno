@@ -351,3 +351,39 @@ class TestInlineContinueSettlesTicket:
         worker, store = await self._paused_ticket_worker("other")
         await asettle_paused_ticket(worker, "never-queued", RunStatus.completed)  # no ticket: no-op
         assert (await store.get_job("other"))["status"] == "paused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fork,regenerate", [(False, False), (True, False), (False, True)])
+async def test_agent_fork_stream_uses_emitted_run_id(stream, fork, regenerate):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agno.os.routers.agents.router import agent_continue_response_streamer
+    from agno.run.agent import RunCompletedEvent, RunStartedEvent
+
+    await _park_paused(stream, "source")
+    await stream.complete_run("source", RunStatus.completed)
+    original_events = await stream.replay("source")
+    final_run = SimpleNamespace(run_id="branch", status=RunStatus.completed)
+    agent = FakeAgent([RunStartedEvent(run_id="branch"), RunCompletedEvent(run_id="branch")], final_run)
+    queue_worker = SimpleNamespace(store=AsyncMock())
+    frames = [
+        frame
+        async for frame in agent_continue_response_streamer(
+            agent,
+            run_id="source",
+            session_id="s",
+            fork=fork,
+            regenerate=regenerate,
+            queue_worker=queue_worker,
+        )
+    ]
+    assert len(frames) == 2
+    assert await stream.replay("source") == original_events
+    assert await stream.get_run_status("source") == RunStatus.completed
+    assert await stream.get_run_status("branch") == RunStatus.completed
+    branch_events = await stream.replay("branch")
+    assert [event.event for _, event in branch_events] == ["RunStarted", "RunCompleted"]
+    assert all(event.run_id == "branch" for _, event in branch_events)
+    assert not queue_worker.store.mock_calls, "a fork must not settle its source's queue ticket"

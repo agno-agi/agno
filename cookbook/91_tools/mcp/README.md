@@ -57,6 +57,10 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
+14. GetYouTubeTranscript Agent (`getyoutubetranscript.py`)
+
+This example connects to GetYouTubeTranscript's hosted MCP server to read and research YouTube videos: transcripts in any caption language a video has, YouTube search, and channel and playlist data. It shows bearer authentication and quoting with timestamps.
+
 ## Getting Started
 
 ### Prerequisites
@@ -88,6 +92,7 @@ python structured_content.py
 python emem.py
 python peer_cash.py
 python magic_hour.py
+python getyoutubetranscript.py
 ```
 
 ## How It Works

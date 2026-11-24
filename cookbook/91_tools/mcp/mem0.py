@@ -11,7 +11,7 @@ import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ async def run_agent(message: str) -> None:
     async with MCPTools(url=mcp_server_url, transport="sse") as mcp_tools:
         agent = Agent(
             tools=[mcp_tools],
-            model=OpenAIChat(id="o4-mini"),
+            model=OpenAIResponses(id="gpt-5.6-terra"),
             instructions=dedent(
                 """
                 You are a professional code reviewer. You help users keep their code clean and on line with their preferences.

@@ -50,6 +50,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_started = "StepStarted"
     step_completed = "StepCompleted"
+    step_progress = "StepProgress"
     step_paused = "StepPaused"
     step_continued = "StepContinued"
     step_executor_paused = "StepExecutorPaused"
@@ -312,6 +313,18 @@ class StepStartedEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
+
+
+@dataclass
+class StepProgressEvent(BaseWorkflowRunOutputEvent):
+    """Function progress attached to the existing workflow/step and retry attempt."""
+
+    event: str = WorkflowRunEvent.step_progress.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    attempt: int = 1
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -655,6 +668,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
+    StepProgressEvent,
     StepPausedEvent,
     StepContinuedEvent,
     StepExecutorPausedEvent,
@@ -694,6 +708,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_progress.value: StepProgressEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_continued.value: StepContinuedEvent,
     WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
@@ -1097,6 +1112,13 @@ class WorkflowRunOutput:
 
         if "cancellation_stage" in data:
             data["cancellation_stage"] = CancellationStage.coerce(data["cancellation_stage"])
+        # Stored runs carry the status as its string value; readers expect the enum, so a value
+        # that is not one of ours is left as is rather than rejected.
+        if isinstance(data.get("status"), str):
+            try:
+                data["status"] = RunStatus(data["status"])
+            except ValueError:
+                pass
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}

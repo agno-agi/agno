@@ -1,3 +1,4 @@
+import base64
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
@@ -5,7 +6,7 @@ from uuid import uuid4
 from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from openai import OpenAI
@@ -13,20 +14,28 @@ try:
 except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
+from agno.tools.openai import IMAGE_MODEL_OPTIONS, STYLE_DEPRECATION, validate_image_options
+
 
 class DalleTools(Toolkit):
+    """Deprecated: use OpenAITools(enable_transcription=False, enable_speech_generation=False) instead."""
+
     def __init__(
         self,
-        model: str = "dall-e-3",
+        model: str = "gpt-image-2",
         n: int = 1,
-        size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
-        quality: Literal["standard", "hd"] = "standard",
+        size: Optional[str] = "1024x1024",
+        quality: Literal["auto", "low", "medium", "high"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        log_warning(
+            "DalleTools is deprecated and will be removed in a future release, as OpenAI has retired the DALL-E models. "
+            "Use OpenAITools(enable_transcription=False, enable_speech_generation=False) instead."
+        )
         self.model = model
         self.n = n
         self.size = size
@@ -35,18 +44,11 @@ class DalleTools(Toolkit):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
 
         # Validations
-        if model not in ["dall-e-3", "dall-e-2"]:
-            raise ValueError("Invalid model. Please choose from 'dall-e-3' or 'dall-e-2'.")
-        if size not in ["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]:
-            raise ValueError(
-                "Invalid size. Please choose from '256x256', '512x512', '1024x1024', '1792x1024', '1024x1792'."
-            )
-        if quality not in ["standard", "hd"]:
-            raise ValueError("Invalid quality. Please choose from 'standard' or 'hd'.")
-        if not isinstance(n, int) or n <= 0:
-            raise ValueError("Invalid number of images. Please provide a positive integer.")
-        if model == "dall-e-3" and n > 1:
-            raise ValueError("Dall-e-3 only supports a single image generation.")
+        if model not in IMAGE_MODEL_OPTIONS:
+            raise ValueError(f"Invalid model. Please choose from {', '.join(IMAGE_MODEL_OPTIONS)}.")
+        validate_image_options(model, n, size, quality)
+        if style is not None:
+            log_warning(STYLE_DEPRECATION)
 
         if not self.api_key:
             log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
@@ -84,10 +86,6 @@ class DalleTools(Toolkit):
                 "quality": self.quality,
                 "size": self.size,
             }
-            # OpenAI removed the dall-e-3 'style' parameter from the images API
-            # (400 "Unknown parameter"); only forward it when explicitly set.
-            if self.style is not None:
-                request_params["style"] = self.style
             response: ImagesResponse = client.images.generate(**request_params)
             log_debug("Image generated successfully")
 
@@ -104,6 +102,16 @@ class DalleTools(Toolkit):
                         )
                         generated_images.append(image)
                         response_str += f"Image has been generated at the URL {img.url}\n"
+                    elif img.b64_json:
+                        # GPT Image models return base64 data only, never a URL.
+                        image = Image(
+                            id=str(uuid4()),
+                            content=base64.b64decode(img.b64_json),
+                            mime_type=f"image/{getattr(response, 'output_format', None) or 'png'}",
+                            original_prompt=prompt,
+                        )
+                        generated_images.append(image)
+                        response_str += "Image has been generated\n"
 
             return ToolResult(
                 content=response_str or "No images were generated",
