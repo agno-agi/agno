@@ -526,11 +526,17 @@ agent_os.interfaces.append(
   the AgentOS again, since a Slack message carries no token.
 - The saved access stops counting 7 days after the member last opened the
   AgentOS (`UserDirectory(org_access_max_age=...)`), so a member removed from
-  the organization loses Slack access by then. Turning the user off in `/users`
-  applies at once.
+  the organization loses Slack access by then; roles the AgentOS gives them
+  itself still apply. Turning the user off in `/users` applies at once.
+- The member's Slack email must be their os.agno.com email; access saved under
+  another email never matches.
 - Someone not recorded is told to ask their admin, or to open the AgentOS on
-  os.agno.com once. Someone refused a permission is told the same about a
-  change their admin just made.
+  os.agno.com once, signed in with their Slack email. Someone refused a
+  permission is told the same about a change their admin just made. An
+  AgentOS never opened on os.agno.com names the missing scope instead.
+- The `user_type` column comes with migration v3.2.2. Until an existing users
+  table is migrated (`POST /databases/all/migrate`), the AgentOS works as before
+  but records no org users.
 
 ## Limits
 

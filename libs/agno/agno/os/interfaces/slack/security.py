@@ -18,15 +18,15 @@ _SLACK_UNAVAILABLE_MESSAGE = "Sorry, Slack could not be reached to check your ac
 _DIRECTORY_UNAVAILABLE_MESSAGE = "Sorry, the user directory is unavailable. Please try again later."
 _DISABLED_MESSAGE = "Sorry, your account on this AgentOS is disabled."
 _PERMISSION_MESSAGE = "Sorry, you don't have permission to run this. Required scope(s): `{scope}`"
+# Slack matches a member to their os.agno.com account by email, so the hints name the email to sign in with
 _NO_ORG_ACCESS_MESSAGE = (
     "Sorry, you don't have access to this AgentOS yet. Ask your admin to add you, or if you're in its "
-    "organization on os.agno.com, open this AgentOS there once to connect your account."
+    "organization on os.agno.com, open this AgentOS there once, signed in with your Slack email, to connect "
+    "your account."
 )
-
-
 _ACCESS_CHANGED_HINT = (
-    " Ask your admin for access on os.agno.com. If they just gave it to you, open this AgentOS there once "
-    "so Slack picks it up."
+    " Ask your admin for access on os.agno.com. If they just gave it to you, open this AgentOS there once, "
+    "signed in with your Slack email, so Slack picks it up."
 )
 
 
@@ -131,12 +131,18 @@ def refusal(error: PermissionError, principal: Optional[str] = None) -> str:
 
 
 def principal_authorization(
-    app: Any, principal_id: str, roles: Optional[List[str]] = None, scopes: Optional[List[str]] = None
+    app: Any,
+    principal_id: str,
+    roles: Optional[List[str]] = None,
+    scopes: Optional[List[str]] = None,
+    role: Optional[str] = None,
 ) -> Any:
     """An authority that checks principal_id's roles, or the given roles when set, and scopes as a token's would be.
 
-    ``scopes`` are an org user's saved os.agno.com scopes. They count exactly as the same user's token scopes count
-    over HTTP: alone without managed roles, next to the user's roles under ``trust_token_scopes``, not at all otherwise.
+    ``scopes`` and ``role`` are an org user's saved os.agno.com scopes and role. They count exactly as the same
+    user's token counts over HTTP: the scopes alone without managed roles, next to the user's roles under
+    ``trust_token_scopes``, not at all otherwise; the role as the token's ``role`` claim, read by a
+    ``roles_claim="role"``.
     """
     from agno.os.auth import resolve_authorization_provider
     from agno.os.authz.provider import AuthorizationContext
@@ -145,7 +151,10 @@ def principal_authorization(
     return RunAuthorization(
         resolve_authorization_provider(app),
         AuthorizationContext(
-            principal_id=principal_id, scopes=list(scopes or []), claims={"sub": principal_id}, roles=roles
+            principal_id=principal_id,
+            scopes=list(scopes or []),
+            claims={"sub": principal_id, **({"role": role} if role else {})},
+            roles=roles,
         ),
         enforce_tools=False,
     )
@@ -163,10 +172,9 @@ async def resolve_principal_authorization(
     """A principal's authority, with roles when given; None with authorization off. Raises if disabled or denied.
 
     ``user`` is the principal's directory row when the caller already read it. An org user's saved os.agno.com
-    scopes apply as their token's would over HTTP.
+    access applies as their token would over HTTP, until it expires; their own roles on the OS apply either way.
     """
     from agno.os.auth import _authorization_enforced
-    from agno.os.authz.user_directory import ORG_USER, user_type_of
 
     state = getattr(app, "state", None)
     user_store = getattr(state, "user_store", None)
@@ -197,18 +205,18 @@ async def resolve_principal_authorization(
     # The middleware is checked here too: one added after get_app() is not in the flag
     if not _authorization_enforced(app):
         return None
-    # An org user's os.agno.com access lapses once they stop opening the OS, as it would for someone removed from
-    # the organization, and with it every role they got from it: their OS roles do not lapse on their own
-    if user_store is not None and keeps_org_access and user_type_of(row) == ORG_USER and not user_store.org_access(row):
-        raise NoOrgAccessError("os.agno.com access expired")
+    # An org user's os.agno.com access counts until it expires, as it would lapse for someone removed from the
+    # organization; the roles the OS gives the user are its own and still apply after that.
     # Roles are resolved fresh on every check, so a revoked grant applies to the next message
-    scopes = user_store.org_scopes(row) if user_store is not None and keeps_org_access and row else None
-    authority = principal_authorization(app, principal_id, roles, scopes)
+    access = user_store.org_access(row) if user_store is not None and keeps_org_access and row else None
+    scopes = user_store.org_scopes(row) if user_store is not None and access is not None else None
+    authority = principal_authorization(app, principal_id, roles, scopes, access.get("role") if access else None)
     try:
         await authority.arequire(resource, "run", resource_id)
     except PermissionError as e:
-        # Someone with no os.agno.com access saved may only need to open the OS there once
-        if keeps_org_access and scopes is None and not isinstance(e, NoOrgAccessError):
+        # Someone with no os.agno.com access saved may only need to open the OS there once; only said on an OS that
+        # is opened on os.agno.com, so a self-hosted one names the scope it needs
+        if scopes is None and getattr(user_store, "serves_org_users", False) and not isinstance(e, NoOrgAccessError):
             raise NoOrgAccessError(str(e)) from e
         # An org user refused by their saved access may have been granted more since their last visit
         if scopes is not None and type(e) is PermissionError:

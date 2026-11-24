@@ -121,6 +121,22 @@ async def test_unchanged_access_is_not_written_again_within_the_hour(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_short_max_age_writes_unchanged_access_again_before_it_lapses(tmp_path):
+    # Within half the max age, so a visit after a 10-minute expiry is saved again rather than an hour later
+    app = _app(tmp_path, org_access_max_age=600)
+    store = app.state.user_store
+    _open_os(app)
+    later = int(time.time()) + 301
+    with (
+        patch("agno.os.authz.user_directory._now", return_value=later),
+        patch.object(store, "_awrite", wraps=store._awrite) as write,
+    ):
+        _open_os(app)
+    write.assert_called_once()
+    assert (await _user(app))["metadata"][ORG_ACCESS_KEY]["at"] == later
+
+
+@pytest.mark.asyncio
 async def test_a_role_change_on_os_agno_com_replaces_the_saved_access_and_is_audited(tmp_path):
     app = _app(tmp_path)
     store = app.state.user_store
@@ -138,12 +154,11 @@ async def test_a_role_change_on_os_agno_com_replaces_the_saved_access_and_is_aud
 
 
 @pytest.mark.asyncio
-async def test_a_profile_edit_keeps_the_user_an_org_user_and_their_other_metadata(tmp_path):
+async def test_metadata_an_app_writes_keeps_the_saved_org_access(tmp_path):
     app = _app(tmp_path)
     store = app.state.user_store
     _open_os(app)
-    user = await _user(app)
-    await store.aupsert(EMAIL, name="Renamed", metadata={**user["metadata"], "team": "support"})
+    await store.aupsert(EMAIL, name="Renamed", metadata={"team": "support"})
     user = await _user(app)
     assert user_type_of(user) == ORG_USER
     assert user["metadata"]["team"] == "support"
@@ -249,11 +264,18 @@ async def test_an_org_user_runs_in_slack_with_their_os_agno_com_scopes(tmp_path)
     event_context = run_event.call_args.args[0]
     assert event_context.user_id == EMAIL
     assert sorted(event_context.authority.context.scopes) == ["!agents:secret:run", "agents:read", "agents:run"]
+    # The saved role reads as the token's role claim, for an OS that maps roles from it
+    assert event_context.authority.context.claims["role"] == "member"
 
 
 @pytest.mark.asyncio
 async def test_someone_who_never_opened_the_os_is_told_how_to_get_access(tmp_path):
     app = _app(tmp_path)
+    # An OS never opened on os.agno.com, as a self-hosted one, names the scope that is missing
+    run_event, text = await _send(app)
+    assert not run_event.called and text == DENIED
+    # Once it is opened there, someone not recorded yet is told how to connect
+    _open_os(app, sub="colleague@example.com")
     run_event, text = await _send(app)
     assert not run_event.called and text == security._NO_ORG_ACCESS_MESSAGE
 
@@ -315,8 +337,10 @@ def test_a_token_deny_refuses_the_route_over_http(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_expired_org_access_no_longer_counts(tmp_path):
-    app = _app(tmp_path, org_access_max_age=3600)
+async def test_expired_org_access_no_longer_counts_but_the_os_roles_still_do(tmp_path):
+    app = _app(
+        tmp_path, roles={"helper": ["agents:read", "agents:run"]}, trust_token_scopes=True, org_access_max_age=3600
+    )
     _open_os(app)
     store = app.state.user_store
     user = await _user(app)
@@ -324,6 +348,9 @@ async def test_expired_org_access_no_longer_counts(tmp_path):
     await store.aupsert(EMAIL, metadata=user["metadata"])
     run_event, text = await _send(app)
     assert not run_event.called and text == security._NO_ORG_ACCESS_MESSAGE
+    await app.state.role_store.aassign(EMAIL, "helper")
+    run_event, text = await _send(app)
+    assert text is None and run_event.called
 
 
 @pytest.mark.asyncio
@@ -358,6 +385,7 @@ async def test_super_agent_runs_an_org_user_as_their_email_with_their_scopes(tmp
 @pytest.mark.asyncio
 async def test_super_agent_refuses_someone_with_no_os_agno_com_access(tmp_path):
     app = _app(tmp_path)
+    _open_os(app, sub="colleague@example.com")
     run_event, text = await _send(app, ctx=_super_agent_ctx())
     assert not run_event.called and text == security._NO_ORG_ACCESS_MESSAGE
 
@@ -376,23 +404,36 @@ async def test_task_results_go_to_the_author_as_the_same_directory_user(tmp_path
     assert await TaskDelivery(other)._message_author(client, "C1", "1.0", "1.1") == "slack:T123:U123"
 
 
-def test_no_managed_roles_warns_only_when_org_access_is_off(tmp_path):
+def test_startup_says_who_slack_senders_run_as(tmp_path):
     from agno.os.interfaces.slack import Slack
 
-    def warnings(**directory_kwargs):
+    def logs(resolve_user_identity: bool = True, **directory_kwargs):
         agent = Agent(id="agent-1")
+        slack = Slack(
+            agent=agent,
+            token="xoxb-test",
+            signing_secret="secret",
+            authorize_senders=True,
+            resolve_user_identity=resolve_user_identity,
+        )
         agent_os = AgentOS(
             id=OS_ID,
             db=SqliteDb(db_file=str(tmp_path / "warn.db")),
             agents=[agent],
             authorization=Authorization(verification_keys=[SECRET], algorithm="HS256"),
             user_directory=UserDirectory(**directory_kwargs) if directory_kwargs else True,
-            interfaces=[Slack(agent=agent, token="xoxb-test", signing_secret="secret", authorize_senders=True)],
+            interfaces=[slack],
             telemetry=False,
         )
-        with patch("agno.os.app.log_warning") as warn:
+        with patch("agno.os.app.log_warning") as warn, patch("agno.os.app.log_info") as info:
             agent_os.get_app()
-        return [call.args[0] for call in warn.call_args_list if "no managed roles" in call.args[0]]
+        texts = lambda log: [call.args[0] for call in log.call_args_list]  # noqa: E731
+        return texts(warn), texts(info)
 
-    assert warnings() == []
-    assert len(warnings(org_access_max_age=None)) == 1
+    warnings, infos = logs()
+    assert not [w for w in warnings if "no managed roles" in w or "resolve_user_identity" in w]
+    assert [i for i in infos if "no managed roles" in i]
+    warnings, _ = logs(org_access_max_age=None)
+    assert len([w for w in warnings if "no managed roles" in w]) == 1
+    warnings, _ = logs(resolve_user_identity=False)
+    assert len([w for w in warnings if "without resolve_user_identity" in w]) == 1

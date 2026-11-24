@@ -51,13 +51,13 @@ DEFAULT_USER_SORT_ORDER = "desc"
 # stale write racing the token's, still reads as an end user and can never demote an org user.
 ORG_USER = "org_user"
 END_USER = "end_user"
-USER_TYPES = (ORG_USER, END_USER)
 
 # Where an org user's platform role and scopes are kept in their metadata, for requests that carry no
 # token, such as a Slack message
 ORG_ACCESS_KEY = "org_access"
 DEFAULT_ORG_ACCESS_MAX_AGE = 7 * 24 * 3600
-# Unchanged access is written again at most this often, which keeps its age current without a write per request
+# Unchanged access is written again at most this often (or half the max age, when shorter), which keeps its age
+# current without a write per request
 _ORG_ACCESS_REFRESH = 3600
 _ORG_ACTOR = "system:os.agno.com"
 
@@ -76,6 +76,14 @@ def is_platform_token(claims: Optional[Dict[str, Any]]) -> bool:
 
 def _now() -> int:
     return int(time.time())
+
+
+def _keep_org_access(existing: Optional[dict], metadata: dict) -> dict:
+    """Metadata an app writes, with the os.agno.com access saved on the user kept, since only their token writes it."""
+    saved = (existing or {}).get(ORG_ACCESS_KEY)
+    if saved is None or ORG_ACCESS_KEY in metadata:
+        return metadata
+    return {**metadata, ORG_ACCESS_KEY: saved}
 
 
 def _user_type_value(row: dict) -> Dict[str, str]:
@@ -156,6 +164,10 @@ class UserDirectory:
         self.org_access_max_age = org_access_max_age
         # The access this process last saved per user and when, so an unchanged token reads nothing
         self._org_access_saved: Dict[str, Tuple[Tuple[Any, ...], int]] = {}
+        # Whether this process has seen an os.agno.com token or org user, so a refusal only points at os.agno.com
+        # on an OS that is opened there
+        self._org_users_seen = False
+        self._warned_unmigrated = False
         self._audit: Optional["AuditSink"] = None  # handed over by AgentOS from Authorization(audit=)
         self._mem: Optional[Dict[str, dict]] = None
         from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db
@@ -249,6 +261,8 @@ class UserDirectory:
 
         Only fields you pass are changed; omitted fields are left as-is on an
         existing user (so a metadata-light update can't blank out an email).
+        ``metadata`` replaces the user's metadata, except an org user's saved
+        os.agno.com access (its ``org_access`` key), which only their own token writes.
         ``disabled`` is intentionally NOT settable here — use
         :meth:`set_disabled` so enable/disable is an explicit, audited action.
         """
@@ -275,7 +289,7 @@ class UserDirectory:
         if name is not None:
             row["name"] = name
         if metadata is not None:
-            row["metadata"] = metadata
+            row["metadata"] = _keep_org_access(existing.get("metadata"), metadata)
         row["updated_at"] = now
         self._write(row, insert=False)
         self._emit("user.updated", id, [self._summary(existing)], [self._summary(row)], actor)
@@ -506,6 +520,7 @@ class UserDirectory:
         None for an end user, or when none is saved or it expired."""
         if not self.org_access_max_age or user_type_of(row) != ORG_USER or row is None:
             return None
+        self._org_users_seen = True
         saved = (row.get("metadata") or {}).get(ORG_ACCESS_KEY)
         if not isinstance(saved, dict):
             return None
@@ -515,6 +530,18 @@ class UserDirectory:
         if _now() - at > self.org_access_max_age:
             return None
         return {**saved, "scopes": [scope for scope in scopes if isinstance(scope, str)]}
+
+    @property
+    def serves_org_users(self) -> bool:
+        """Whether this OS is opened on os.agno.com, as far as this process has seen: an os.agno.com token or an org
+        user. False on a self-hosted OS whose tokens never come from os.agno.com."""
+        return bool(self.org_access_max_age) and self._org_users_seen
+
+    @property
+    def _org_access_refresh(self) -> int:
+        """How often unchanged access is written again: hourly, or within half the max age so a visit always renews
+        access that would otherwise lapse before the next write."""
+        return min(_ORG_ACCESS_REFRESH, max(1, (self.org_access_max_age or 0) // 2))
 
     def org_scopes(self, row: Optional[dict]) -> Optional[List[str]]:
         """The scopes an org user's last os.agno.com token carried while they still count, its denies included as
@@ -527,12 +554,13 @@ class UserDirectory:
     def _org_access_pending(self, id: str, claims: Dict[str, Any], scopes: List[str]) -> Optional[Dict[str, Any]]:
         """The access to save for a user, or None when saving is off, the token is not the platform's, or this
         process saved the same access recently."""
-        if not self.org_access_max_age or not id or not is_platform_token(claims):
-            return None
-        role = claims.get("role") if isinstance(claims.get("role"), str) else None
-        denies = claims.get("denies")
         from agno.os.scopes import DENY_PREFIX
 
+        if not self.org_access_max_age or not id or not is_platform_token(claims):
+            return None
+        self._org_users_seen = True
+        role = claims.get("role") if isinstance(claims.get("role"), str) else None
+        denies = claims.get("denies")
         access = {
             "role": role,
             # The allows only: the denies the request's scope list carries are saved from the claim below
@@ -544,7 +572,11 @@ class UserDirectory:
             "org_id": claims["org_id"],
         }
         saved = self._org_access_saved.get(id)
-        if saved is not None and saved[0] == self._org_access_key(access) and _now() - saved[1] < _ORG_ACCESS_REFRESH:
+        if (
+            saved is not None
+            and saved[0] == self._org_access_key(access)
+            and _now() - saved[1] < self._org_access_refresh
+        ):
             return None
         return access
 
@@ -570,12 +602,27 @@ class UserDirectory:
         if user_type_of(row) == ORG_USER and isinstance(saved, dict) and not fills:
             current = {k: v for k, v in saved.items() if k != "at"}
             at = saved.get("at")
-            if current == access and isinstance(at, (int, float)) and now - at < _ORG_ACCESS_REFRESH:
+            if current == access and isinstance(at, (int, float)) and now - at < self._org_access_refresh:
                 return None
         updated = {**row, **fills}
         updated["user_type"] = ORG_USER
         updated["metadata"] = {**metadata, ORG_ACCESS_KEY: {**access, "at": now}}
         return updated
+
+    def _unmigrated(self, row: dict) -> bool:
+        """Whether a row comes from a users table from before migration v3.2.2, which has no user_type to record an
+        org user in; said once."""
+        if "user_type" in row:
+            return False
+        if not self._warned_unmigrated:
+            self._warned_unmigrated = True
+            from agno.utils.log import log_warning
+
+            log_warning(
+                "The user directory's table has no user_type column, so os.agno.com members are not recorded and get "
+                "no access in Slack. Apply migration v3.2.2 with POST /databases/all/migrate."
+            )
+        return True
 
     @staticmethod
     def _org_access_key(access: Dict[str, Any]) -> Tuple[Any, ...]:
@@ -594,10 +641,14 @@ class UserDirectory:
         old, new = summary(before), summary(after)
         return None if old == new or new is None else (old, new)
 
-    def _mark_org_access_saved(self, id: str, access: Dict[str, Any], row: dict) -> None:
-        """Remember that this access is saved, so the next hour's tokens skip it. Marked only once the save is done,
-        so a request racing it saves again rather than skipping a save that has not landed."""
-        saved = (row.get("metadata") or {}).get(ORG_ACCESS_KEY) or {}
+    def _mark_org_access_saved(self, id: str, access: Dict[str, Any], current: dict, saved_row: dict) -> None:
+        """Remember that this access is saved, so the next requests within the refresh skip it. Marked only once the
+        save is done, so a request racing it saves again rather than skipping a save that has not landed, and only
+        when the stored row already was an org user: that proves the table has user_type, so a table migrated
+        meanwhile still records the user on their next request."""
+        if user_type_of(current) != ORG_USER:
+            return
+        saved = (saved_row.get("metadata") or {}).get(ORG_ACCESS_KEY) or {}
         at = saved.get("at")
         if isinstance(at, (int, float)):
             self._org_access_saved[id] = (self._org_access_key(access), int(at))
@@ -618,13 +669,15 @@ class UserDirectory:
         current = row if row is not None else self.get(id)
         if current is None:
             return
+        if self._unmigrated(current):
+            return
         updated = self._with_org_access(current, pending, self._org_profile(id, claims))
         if updated is not None:
             self._write(updated, insert=False)
             change = self._org_access_change(current, updated)
             if change is not None:
                 self._emit("user.org_access", id, change[0], change[1], _ORG_ACTOR)
-        self._mark_org_access_saved(id, pending, updated or current)
+        self._mark_org_access_saved(id, pending, current, updated or current)
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
@@ -765,7 +818,7 @@ class UserDirectory:
         if name is not None:
             row["name"] = name
         if metadata is not None:
-            row["metadata"] = metadata
+            row["metadata"] = _keep_org_access(existing.get("metadata"), metadata)
         row["updated_at"] = now
         await self._awrite(row, insert=False)
         await self._aemit("user.updated", id, [self._summary(existing)], [self._summary(row)], actor)
@@ -913,10 +966,12 @@ class UserDirectory:
         current = row if row is not None else await self.aget(id)
         if current is None:
             return
+        if self._unmigrated(current):
+            return
         updated = self._with_org_access(current, pending, self._org_profile(id, claims))
         if updated is not None:
             await self._awrite(updated, insert=False)
             change = self._org_access_change(current, updated)
             if change is not None:
                 await self._aemit("user.org_access", id, change[0], change[1], _ORG_ACTOR)
-        self._mark_org_access_saved(id, pending, updated or current)
+        self._mark_org_access_saved(id, pending, current, updated or current)

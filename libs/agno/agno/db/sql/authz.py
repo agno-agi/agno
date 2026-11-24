@@ -430,6 +430,16 @@ def count_users_by_day(
         return [{"date": int(row.date), "count": int(row.users_created)} for row in rows]
 
 
+def _user_payload(table: Any, values: Dict[str, Any]) -> Dict[str, Any]:
+    """The column values a user write stores. A column the table does not have yet (``user_type`` before migration
+    v3.2.2) is left out, so the directory keeps working on a table that predates it."""
+    payload = dict(values)
+    metadata = payload.pop("metadata", None)
+    if metadata is not None:
+        payload["user_metadata"] = json.dumps(metadata)
+    return {column: value for column, value in payload.items() if column in table.c}
+
+
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
     """Write a directory row (email/name/metadata/timestamps).
 
@@ -439,10 +449,7 @@ def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]
     so let a provision/edit racing a :func:`set_user_disabled` silently un-revoke a user
     (a lost update). Disabling is done atomically through :func:`set_user_disabled`.
     """
-    payload = dict(values)
-    metadata = payload.pop("metadata", None)
-    if metadata is not None:
-        payload["user_metadata"] = json.dumps(metadata)
+    payload = _user_payload(table, values)
     update_cols = [c for c in payload if c != "disabled"]
     with engine.begin() as conn:
         _upsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)
@@ -831,10 +838,7 @@ async def acount_users_by_day(
 
 
 async def aupsert_user(engine: "AsyncEngine", table: Any, user_id: str, values: Dict[str, Any]) -> None:
-    payload = dict(values)
-    metadata = payload.pop("metadata", None)
-    if metadata is not None:
-        payload["user_metadata"] = json.dumps(metadata)
+    payload = _user_payload(table, values)
     update_cols = [c for c in payload if c != "disabled"]
     async with engine.begin() as conn:
         await _aupsert(conn, table, {"id": user_id, **payload}, ["id"], update_cols)

@@ -44,15 +44,24 @@ def _shape(db_file: str):
         conn.close()
 
 
-def test_an_unmigrated_table_says_to_run_the_migration():
-    from agno.db.utils import MigrationRequiredError
+def test_an_unmigrated_table_keeps_working_and_records_org_users_once_migrated():
+    # The directory backs every authenticated request, POST /databases/all/migrate included, so a table that
+    # predates the column must not fail it
+    from agno.os.authz.user_directory import END_USER, ORG_USER, UserDirectory, user_type_of
 
     db = SqliteDb(db_file=_legacy_db_file())
-    try:
-        db.get_authz_user("a@example.com")
-    except MigrationRequiredError:
-        return
-    raise AssertionError("an unmigrated user directory should ask for the migration")
+    _stamp(db)
+    store = UserDirectory(db=db)
+    claims = {"org_id": "org-1", "os_id": "os-1", "role": "member"}
+    store.upsert("b@example.com", email="b@example.com")
+    store.remember_org_access("b@example.com", claims, ["agents:run"])
+    assert user_type_of(store.get("b@example.com")) == END_USER
+    assert store.org_scopes(store.get("b@example.com")) is None
+
+    asyncio.run(MigrationManager(db).up())
+    store.remember_org_access("b@example.com", claims, ["agents:run"])
+    assert user_type_of(store.get("b@example.com")) == ORG_USER
+    assert store.org_scopes(store.get("b@example.com")) == ["agents:run"]
 
 
 def test_up_adds_user_type_and_its_index_and_keeps_rows():

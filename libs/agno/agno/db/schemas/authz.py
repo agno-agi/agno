@@ -83,8 +83,10 @@ AUTHZ_USERS_TABLE_SCHEMA = {
     "user_metadata": {"type": Text, "nullable": True},
     # "org_user": a member of the organization that owns the OS on os.agno.com, recorded from their
     # platform-signed token. "end_user": anyone else. Null on rows written before the column existed,
-    # read as "end_user".
-    "user_type": {"type": String, "nullable": True, "index": True},
+    # read as "end_user". Optional: migration v3.2.2 adds it, and a table that predates it keeps
+    # working (everyone reads as an end user) until migrated, so the directory never blocks the
+    # migrate request itself.
+    "user_type": {"type": String, "nullable": True, "index": True, "optional": True},
 }
 
 # The change trail: who changed what. Append-only.
