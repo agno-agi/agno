@@ -1639,3 +1639,36 @@ def test_backends_with_the_same_names_are_numbered_in_order():
     assert _match_filesystem_id("handbook:MemoryBackend", candidates) == [0]
     assert _match_filesystem_id("handbook:MemoryBackend:2", candidates) == [1]
     assert _match_filesystem_id("handbook", candidates) == [0, 1]
+
+
+def test_a_filesystem_on_an_async_database_is_browsable_on_every_route(tmp_path, client_factory):
+    import asyncio
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    async_db = AsyncSqliteDb(id="async-db", db_file=str(tmp_path / "async.db"))
+    declared = FileSystem(async_db, namespace="handbook")
+    held = FileSystem(async_db, namespace="held")
+
+    async def seed() -> None:
+        await declared.awrite("guides/style.md", "declared needle\n")
+        await held.awrite("guides/style.md", "held needle\n")
+
+    asyncio.run(seed())
+    client = client_factory(Agent(id="keeper", db=async_db, filesystem=held), db=async_db, filesystem=declared)
+
+    for filesystem_id, expected in (("handbook", "declared needle\n"), ("held", "held needle\n")):
+        by_id = {"filesystem_id": filesystem_id}
+        listed = client.get("/filesystem/entries", params=by_id, headers=_headers("alice"))
+        assert listed.status_code == 200, filesystem_id
+        assert [(entry["path"], entry["type"]) for entry in listed.json()["entries"]] == [("guides", "directory")]
+        nested = client.get("/filesystem/entries", params={**by_id, "directory": "guides"}, headers=_headers("alice"))
+        assert [(entry["path"], entry["type"]) for entry in nested.json()["entries"]] == [("guides/style.md", "file")]
+        content = client.get(
+            "/filesystem/content", params={**by_id, "path": "guides/style.md"}, headers=_headers("alice")
+        )
+        assert content.json()["content"] == expected
+        search = client.get("/filesystem/search", params={**by_id, "query": "needle"}, headers=_headers("alice"))
+        assert [entry["path"] for entry in search.json()["entries"]] == ["guides/style.md"]
+        rows = client.get("/filesystem/files", params=by_id, headers=_headers("alice"))
+        assert [row["path"] for row in rows.json()["entries"]] == ["guides/style.md"]

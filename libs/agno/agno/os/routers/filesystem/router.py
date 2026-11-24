@@ -387,13 +387,13 @@ _FILESYSTEM_ID_QUERY = Query(
 )
 
 
-def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntry]:
+async def _list_entries(filesystem: FileSystem, directory: str) -> list[FileSystemEntry]:
     normalized_directory = normalize_directory(directory)
     prefix = f"{normalized_directory}/" if normalized_directory else ""
     directories: Dict[str, FileSystemEntry] = {}
     files: list[FileSystemEntry] = []
 
-    for meta in filesystem.list(normalized_directory):
+    for meta in await filesystem.alist(normalized_directory):
         relative_path = meta.path[len(prefix) :] if prefix and meta.path.startswith(prefix) else meta.path
         name, separator, _ = relative_path.partition("/")
         if separator:
@@ -631,7 +631,7 @@ def get_filesystem_router(
         views = await _apartition_views(filesystem, request, None)
         try:
             normalized_directory = normalize_directory(directory)
-            listings = [await asyncio.to_thread(_list_entries, view, normalized_directory) for view in views]
+            listings = [await _list_entries(view, normalized_directory) for view in views]
             entries = _sort_entries(_merge_entries(listings), sort_by, sort_order)
             usages = [await view.ausage() for view in views]
         except InvalidPathError as e:
