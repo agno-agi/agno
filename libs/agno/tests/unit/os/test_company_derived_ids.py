@@ -57,6 +57,19 @@ def test_a_project_a_routine_proposes_keeps_its_id():
             {"work_scope": {"goal_ids": ["a", "b"], "project_ids": ["p1", None]}},
             "a7c630f17a6723cc885f9b3547976fe235bf1c4b9a92b5789e39d2d7a07eec93",
         ),
+        # The same two policies as agno 3.2.0 stored them.
+        (
+            {
+                "default_executor": "miniagent",
+                "work_scope": {"product_ids": ["this-agentos"], "project_ids": None},
+                "limits": {"max_acceptances": 3, "expires_at": 1893456000},
+            },
+            "947ac5ea20e6a37d57466822eef45953ed206c22ddcf715bd4689813146888f8",
+        ),
+        (
+            {"work_scope": {"product_ids": ["a", "b"], "project_ids": ["p1", None]}},
+            "a7c630f17a6723cc885f9b3547976fe235bf1c4b9a92b5789e39d2d7a07eec93",
+        ),
     ],
 )
 def test_a_policy_keeps_its_fingerprint(policy, fingerprint):

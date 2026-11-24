@@ -61,6 +61,31 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
     }
 )
 
+# The default name of the Goals table in agno 3.2.0, when a Goal was a Product.
+LEGACY_GOALS_TABLE_NAME = "agno_company_products"
+
+
+def goals_table_argument(goals_table: Optional[str], products_table: Optional[str]) -> Optional[str]:
+    """The Goals table name an adapter was constructed with; products_table is its agno 3.2.0 name."""
+    if products_table is None:
+        return goals_table
+    if goals_table is not None:
+        raise ValueError("Give goals_table or products_table, not both")
+    return products_table
+
+
+def goals_table_from_dict(data: Dict[str, Any]) -> Optional[str]:
+    """The Goals table name in a serialized db.
+
+    agno 3.2.0 wrote the name under "products_table" and wrote it on every db, so its default
+    name there means the table was never named.
+    """
+    if data.get("goals_table") is not None:
+        return data["goals_table"]
+    legacy = data.get("products_table")
+    return None if legacy == LEGACY_GOALS_TABLE_NAME else legacy
+
+
 # Table parameters only some adapters take, beyond BaseDb's. A stored config
 # that overrides one of these must clone the registered db with it too, or
 # the component silently lands on the adapter's default table.

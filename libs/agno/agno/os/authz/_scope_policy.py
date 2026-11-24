@@ -112,9 +112,16 @@ def resource_matches(pattern: str, request: str) -> bool:
       itself (what a create or list request is evaluated as), but never the bare
       string ``"type"``, which no policy writes,
     - otherwise an exact match.
+
+    A policy stored under a resource type that was since renamed matches the current type.
     """
     if pattern == "*":
         return True
+    from agno.os.scopes import LEGACY_RESOURCE_ALIASES
+
+    resource_type, separator, rest = pattern.partition("/")
+    if resource_type in LEGACY_RESOURCE_ALIASES:
+        pattern = LEGACY_RESOURCE_ALIASES[resource_type] + separator + rest
     if pattern == request:
         return True
     if pattern.endswith("/*"):

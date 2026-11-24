@@ -22,10 +22,25 @@ class Source(BaseModel):
         return self
 
 
+def _renamed(data: Any, old: str, new: str) -> Any:
+    """Read a field given under the name it had in agno 3.2.0."""
+    if isinstance(data, dict) and old in data:
+        if new in data:
+            raise ValueError(f"Give {new} or {old}, not both")
+        data = {new if key == old else key: value for key, value in data.items()}
+    return data
+
+
 class AcceptanceScope(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     goal_ids: Optional[List[str]] = None
     project_ids: Optional[List[Optional[str]]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_product_ids(cls, data: Any) -> Any:
+        """product_ids is the 3.2.0 name of goal_ids, in declarations and in stored policies."""
+        return _renamed(data, "product_ids", "goal_ids")
 
 
 class AcceptanceLimits(BaseModel):
@@ -154,12 +169,28 @@ class Goal(BaseModel):
     sources: List[Source] = Field(default_factory=list)
     routines: List[Routine] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def read_purpose(cls, data: Any) -> Any:
+        """purpose is the 3.2.0 name of objective."""
+        return _renamed(data, "purpose", "objective")
+
+
+# The 3.2.0 name of Goal.
+Product = Goal
+
 
 class CompanyDeclarations(BaseModel):
     """Validated YAML declarations; runtime dependencies are supplied in code."""
 
     model_config = ConfigDict(extra="forbid")
     goals: List[Goal] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_products(cls, data: Any) -> Any:
+        """products is the 3.2.0 name of goals."""
+        return _renamed(data, "products", "goals")
 
 
 class IntakeProposal(BaseModel):

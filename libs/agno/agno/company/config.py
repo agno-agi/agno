@@ -1,6 +1,6 @@
 """Opt-in Company configuration."""
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.company.declarations import Goal
@@ -20,9 +20,16 @@ class CompanyConfig:
     cron_expr: str = "0 * * * *"
     name: str = "Company"
     description: Optional[str] = None
+    # The 3.2.0 name of goals.
+    products: InitVar[Optional[List["Goal"]]] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, products: Optional[List["Goal"]]) -> None:
         from agno.db.schemas.company import validate_company_details
+
+        if products is not None:
+            if self.goals:
+                raise ValueError("Give goals or products, not both")
+            self.goals = products
 
         validate_company_details({"name": self.name, "description": self.description})
         if (

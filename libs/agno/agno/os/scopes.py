@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Set, Tuple
 # Keys are the legacy resource names, values are the current names.
 LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
+    "products": "goals",
 }
 
 

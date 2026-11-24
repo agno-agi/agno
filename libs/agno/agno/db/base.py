@@ -521,6 +521,8 @@ class BaseDb(ABC):
         """
         Reconstruct using only fields defined in BaseDb. Subclasses should override this.
         """
+        from agno.db.utils import goals_table_from_dict
+
         return cls(
             session_table=data.get("session_table"),
             runs_table=data.get("runs_table"),
@@ -539,7 +541,7 @@ class BaseDb(ABC):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
-            goals_table=data.get("goals_table"),
+            goals_table=goals_table_from_dict(data),
             sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
@@ -2992,6 +2994,8 @@ class AsyncBaseDb(ABC):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AsyncBaseDb":
         """Reconstruct common fields; adapters extend connection configuration."""
+        from agno.db.utils import goals_table_from_dict
+
         return cls(
             id=data.get("id"),
             session_table=data.get("session_table"),
@@ -3009,7 +3013,7 @@ class AsyncBaseDb(ABC):
             components_table=data.get("components_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
-            goals_table=data.get("goals_table"),
+            goals_table=goals_table_from_dict(data),
             sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),

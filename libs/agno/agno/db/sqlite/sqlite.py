@@ -100,6 +100,8 @@ from agno.db.utils import (
     deserialize_sessions,
     filter_context_runs,
     get_months_to_calculate_metrics_for,
+    goals_table_argument,
+    goals_table_from_dict,
     json_serializer,
     learning_search_patterns,
     list_metrics_totals_models,
@@ -193,6 +195,7 @@ class SqliteDb(BaseDb):
         mcp_oauth_refresh_tokens_table: Optional[str] = None,
         mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
+        products_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a SQLite database.
@@ -226,6 +229,7 @@ class SqliteDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             goals_table (Optional[str]): Name of the table to store Company Goals.
+            products_table (Optional[str]): The agno 3.2.0 name of goals_table.
             projects_table (Optional[str]): Name of the table to store Company Projects.
             tasks_table (Optional[str]): Name of the table to store Company Tasks.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
@@ -266,7 +270,7 @@ class SqliteDb(BaseDb):
             component_links_table=component_links_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
-            goals_table=goals_table,
+            goals_table=goals_table_argument(goals_table, products_table),
             sources_table=sources_table,
             projects_table=projects_table,
             tasks_table=tasks_table,
@@ -393,7 +397,7 @@ class SqliteDb(BaseDb):
             component_links_table=data.get("component_links_table"),
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
-            goals_table=data.get("goals_table"),
+            goals_table=goals_table_from_dict(data),
             sources_table=data.get("sources_table"),
             projects_table=data.get("projects_table"),
             tasks_table=data.get("tasks_table"),
