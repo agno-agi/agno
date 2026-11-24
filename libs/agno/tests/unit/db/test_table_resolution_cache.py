@@ -423,3 +423,60 @@ def test_absent_table_read_probe_does_not_take_resolve_lock(db):
     finally:
         if acquired:
             db._resolve_lock.release()
+
+
+def test_failed_table_creation_can_be_retried_sqlite(tmp_path):
+    """A failed CREATE TABLE on SqliteDb must not leave the table registered on MetaData."""
+    from unittest.mock import patch
+    from sqlalchemy import Table
+
+    db = SqliteDb(db_file=str(tmp_path / "retry_sync.db"), session_table="test_sessions")
+    attempts = 0
+    real_create = Table.create
+
+    def failing_create(table, *args, **kwargs):
+        nonlocal attempts
+        if table.name == "test_sessions":
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary DDL outage")
+        return real_create(table, *args, **kwargs)
+
+    with patch.object(Table, "create", failing_create):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            db._create_table("test_sessions", "sessions")
+
+        table = db._create_table("test_sessions", "sessions")
+
+    assert table.name == "test_sessions"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_table_creation_can_be_retried_async_sqlite(tmp_path):
+    """A failed CREATE TABLE on AsyncSqliteDb must not leave the table registered on MetaData."""
+    from unittest.mock import patch
+    from sqlalchemy import Table
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "retry_async.db"), session_table="test_sessions")
+    attempts = 0
+    real_create = Table.create
+
+    def failing_create(table, *args, **kwargs):
+        nonlocal attempts
+        if table.name == "test_sessions":
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary DDL outage")
+        return real_create(table, *args, **kwargs)
+
+    with patch.object(Table, "create", failing_create):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            await db._create_table("test_sessions", "sessions")
+
+        table = await db._create_table("test_sessions", "sessions")
+
+    assert table.name == "test_sessions"
+    assert attempts == 2
+    await db.db_engine.dispose()

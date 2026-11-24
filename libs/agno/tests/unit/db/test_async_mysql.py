@@ -59,3 +59,66 @@ async def test_delete_runs_raises_on_a_backend_failure(async_mysql_db):
 
     with pytest.raises(OSError, match="server closed"):
         await async_mysql_db.delete_runs(["run-1", "run-2"])
+
+
+@pytest.mark.asyncio
+async def test_failed_table_creation_can_be_retried_async_mysql(async_mysql_db):
+    """A failed CREATE TABLE on AsyncMySQLDb must unregister the table from MetaData."""
+    from unittest.mock import patch
+
+    async_mysql_db.create_schema = False
+    attempts = {"create": 0}
+
+    async def run_sync(fn, *args, **kwargs):
+        attempts["create"] += 1
+        if attempts["create"] == 1:
+            raise OSError("temporary DDL outage")
+
+    conn = Mock(run_sync=run_sync)
+    begin_ctx = Mock(__aenter__=AsyncMock(return_value=conn), __aexit__=AsyncMock(return_value=None))
+    async_mysql_db.db_engine.begin = Mock(return_value=begin_ctx)
+
+    with (
+        patch.object(AsyncMySQLDb, "table_exists", AsyncMock(return_value=False)),
+        patch.object(AsyncMySQLDb, "upsert_schema_version", AsyncMock()),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            await async_mysql_db._create_table("retry_table", "knowledge")
+
+        table = await async_mysql_db._create_table("retry_table", "knowledge")
+
+    assert table.name == "retry_table"
+    assert attempts["create"] == 2
+
+
+def test_failed_table_creation_can_be_retried_mysql():
+    """A failed CREATE TABLE on MySQLDb must unregister the table from MetaData."""
+    from unittest.mock import Mock, patch
+    from sqlalchemy import Table
+    from sqlalchemy.engine import Engine
+    from agno.db.mysql.mysql import MySQLDb
+
+    mock_engine = Mock(spec=Engine)
+    mock_engine.url = "fake:///url"
+    mysql_db = MySQLDb(db_engine=mock_engine, db_schema="test_schema", session_table="test_sessions")
+
+    attempts = {"create": 0}
+
+    def failing_create(table, *args, **kwargs):
+        if table.name == "retry_table":
+            attempts["create"] += 1
+            if attempts["create"] == 1:
+                raise OSError("temporary DDL outage")
+
+    with (
+        patch.object(MySQLDb, "table_exists", return_value=False),
+        patch.object(MySQLDb, "upsert_schema_version", Mock()),
+        patch.object(Table, "create", failing_create),
+    ):
+        with pytest.raises(OSError, match="temporary DDL outage"):
+            mysql_db._create_table("retry_table", "knowledge")
+
+        table = mysql_db._create_table("retry_table", "knowledge")
+
+    assert table.name == "retry_table"
+    assert attempts["create"] == 2
