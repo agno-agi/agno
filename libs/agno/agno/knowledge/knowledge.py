@@ -1202,6 +1202,8 @@ class Knowledge(RemoteKnowledge):
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
+            if page_limit == 0:
+                return []
             # The transform applies here too: it is configured on Knowledge, not on a store.
             # Passed as an alternative phrasing rather than replacing the query, so the
             # lexical half still ranks the question as asked.
@@ -1227,7 +1229,9 @@ class Knowledge(RemoteKnowledge):
 
             search_filters = self._inject_instance_scope_filter(filters)
 
-            _max_results = max_results or self.max_results
+            _max_results = max_results if max_results is not None else self.max_results
+            if _max_results == 0:
+                return []
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             # The transform changes what is searched for; reranking still scores against
             # the question the caller asked, not an invented stand-in for it.
@@ -1269,6 +1273,8 @@ class Knowledge(RemoteKnowledge):
             if filters:
                 raise ValueError("Page knowledge does not support filters")
             page_limit = max_results if max_results is not None else self.max_results
+            if page_limit == 0:
+                return []
             # See the matching comment in ``search``.
             # See the matching comment in ``search``.
             transformed = await self._atransformed_query(query, run_response)
@@ -1292,7 +1298,9 @@ class Knowledge(RemoteKnowledge):
 
             search_filters = self._inject_instance_scope_filter(filters)
 
-            _max_results = max_results or self.max_results
+            _max_results = max_results if max_results is not None else self.max_results
+            if _max_results == 0:
+                return []
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             search_limit = self._search_limit(_max_results)
             # See the matching comment in ``search``.
