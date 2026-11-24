@@ -661,6 +661,10 @@ MIGRATABLE_TABLE_TYPES = frozenset(
         "approvals",
         "components",
         "schedules",
+        "goals",
+        "sources",
+        "projects",
+        "tasks",
         "schedule_runs",
         "learnings",
     }

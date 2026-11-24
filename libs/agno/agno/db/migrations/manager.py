@@ -7,6 +7,15 @@ from packaging.version import Version
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info, log_warning
 
+# The Company tables are migrated together and before every other table. Their migration can refuse
+# a database, and a database it refuses is then left as it was.
+_COMPANY_TABLE_ATTRS = {
+    "goals": "goals_table_name",
+    "sources": "sources_table_name",
+    "projects": "projects_table_name",
+    "tasks": "tasks_table_name",
+}
+
 
 class MigrationManager:
     """Manager class to handle database migrations"""
@@ -17,6 +26,7 @@ class MigrationManager:
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
         ("v3_0_0", packaging_version.parse("3.0.0")),
+        ("v3_2_3", packaging_version.parse("3.2.3")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -50,6 +60,7 @@ class MigrationManager:
 
         # Mapping from table_type to db attribute name
         _table_type_to_attr = {
+            **_COMPANY_TABLE_ATTRS,
             "memories": "memory_table_name",
             "sessions": "session_table_name",
             "metrics": "metrics_table_name",
@@ -58,10 +69,6 @@ class MigrationManager:
             "approvals": "approvals_table_name",
             "components": "components_table_name",
             "schedules": "schedules_table_name",
-            "goals": "goals_table_name",
-            "sources": "sources_table_name",
-            "projects": "projects_table_name",
-            "tasks": "tasks_table_name",
             "schedule_runs": "schedule_runs_table_name",
             "learnings": "learnings_table_name",
         }
@@ -165,6 +172,7 @@ class MigrationManager:
 
         # Mapping from table_type to db attribute name
         _table_type_to_attr = {
+            **_COMPANY_TABLE_ATTRS,
             "memories": "memory_table_name",
             "sessions": "session_table_name",
             "metrics": "metrics_table_name",
@@ -173,10 +181,6 @@ class MigrationManager:
             "approvals": "approvals_table_name",
             "components": "components_table_name",
             "schedules": "schedules_table_name",
-            "goals": "goals_table_name",
-            "sources": "sources_table_name",
-            "projects": "projects_table_name",
-            "tasks": "tasks_table_name",
             "schedule_runs": "schedule_runs_table_name",
             "learnings": "learnings_table_name",
         }
