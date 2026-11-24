@@ -578,11 +578,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             cause = getattr(e, "orig", e)
             sqlstate = getattr(cause, "sqlstate", getattr(cause, "pgcode", None))
             try:
-                lost_race = sqlstate in ("42P07", "23505") and await self.table_exists(table_name)
+                lost_create_table_race = sqlstate in ("42P07", "23505") and await self.table_exists(table_name)
             except BaseException:
                 self._invalidate_table_cache(table_name)
                 raise
-            if lost_race:
+            if lost_create_table_race:
                 log_debug(f"Concurrent table creation: {self.db_schema}.{table_name}", log_level=2)
             else:
                 # Unregister the failed Table so a retry isn't rejected as "already defined".
