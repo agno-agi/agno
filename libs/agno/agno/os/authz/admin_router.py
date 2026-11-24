@@ -65,7 +65,7 @@ import time
 from datetime import date as date_type
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -799,6 +799,11 @@ def get_users_router(
         limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
         page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
         search: Optional[str] = Query(default=None, description="Filter by id/email/name (case-insensitive substring)"),
+        user_type: Optional[Literal["org_user", "end_user"]] = Query(
+            default=None,
+            description="Only users of this type: org_user (an os.agno.com member of the organization that owns "
+            "this AgentOS) or end_user (everyone else)",
+        ),
         sort_by: str = Query(default=DEFAULT_USER_SORT_FIELD, description="Field to sort by"),
         sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
     ):
@@ -815,8 +820,9 @@ def get_users_router(
             search=search,
             sort_by=sort_by,
             order=sort_order.value,
+            user_type=user_type,
         )
-        total = await user_store.acount(include_disabled=include_disabled, search=search)
+        total = await user_store.acount(include_disabled=include_disabled, search=search, user_type=user_type)
         names = await _role_names()
         return _paginated(
             [await _user(u, names) for u in rows],

@@ -9143,13 +9143,18 @@ class SqliteDb(BaseDb):
         search: Optional[str] = None,
         sort_by: str = "created_at",
         order: str = "desc",
+        user_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_sql.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
+        return authz_sql.list_users(
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order, user_type
+        )
 
-    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    def count_authz_users(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_sql.count_users(self.db_engine, table, include_disabled, search)
+        return authz_sql.count_users(self.db_engine, table, include_disabled, search, user_type)
 
     def count_authz_users_by_status(self) -> Dict[str, int]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

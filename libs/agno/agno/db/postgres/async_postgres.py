@@ -7455,15 +7455,18 @@ class AsyncPostgresDb(AsyncBaseDb):
         search: Optional[str] = None,
         sort_by: str = "created_at",
         order: str = "desc",
+        user_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return await authz_sql.alist_users(
-            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order
+            self.db_engine, table, limit, offset, include_disabled, search, sort_by, order, user_type
         )
 
-    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    async def count_authz_users(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return await authz_sql.acount_users(self.db_engine, table, include_disabled, search)
+        return await authz_sql.acount_users(self.db_engine, table, include_disabled, search, user_type)
 
     async def count_authz_users_by_status(self) -> Dict[str, int]:
         table = await self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

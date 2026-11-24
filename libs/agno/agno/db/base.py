@@ -2681,12 +2681,16 @@ class BaseDb(ABC):
         search: Optional[str] = None,
         sort_by: str = "created_at",
         order: str = "desc",
+        user_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """A page of directory rows. ``search`` matches id/email/name case-insensitively;
-        NULLs in the sort column sort last in either direction."""
+        ``user_type`` ("org_user" or "end_user") keeps that type only; NULLs in the sort
+        column sort last in either direction."""
         raise NotImplementedError
 
-    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    def count_authz_users(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
@@ -4756,11 +4760,14 @@ class AsyncBaseDb(ABC):
         search: Optional[str] = None,
         sort_by: str = "created_at",
         order: str = "desc",
+        user_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """A page of directory users."""
         raise NotImplementedError
 
-    async def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    async def count_authz_users(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         """Total number of directory users."""
         raise NotImplementedError
 

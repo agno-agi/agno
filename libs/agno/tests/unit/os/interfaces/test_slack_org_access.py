@@ -245,11 +245,20 @@ async def test_the_users_api_shows_the_type_and_the_org_access(tmp_path):
         SECRET,
         algorithm="HS256",
     )
-    body = TestClient(app).get(f"/users/{EMAIL}", headers={"Authorization": f"Bearer {token}"}).json()
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {token}"}
+    body = client.get(f"/users/{EMAIL}", headers=headers).json()
     assert body["user_type"] == ORG_USER
     assert body["org_access"]["role"] == "admin"
     assert body["org_access"]["scopes"] == ["agent_os:admin"]
     assert body["org_access"]["org_id"] == ORG_ID
+    # The list filters by type, with its count matching
+    await app.state.user_store.aupsert("end@example.com")
+    for user_type, ids in ((ORG_USER, [EMAIL]), (END_USER, ["end@example.com"]), (None, ["end@example.com", EMAIL])):
+        params = {"user_type": user_type} if user_type else {}
+        page = client.get("/users", headers=headers, params=params).json()
+        assert sorted(u["id"] for u in page["data"]) == ids and page["meta"]["total_count"] == len(ids)
+    assert client.get("/users", headers=headers, params={"user_type": "admin"}).status_code == 422
 
 
 # ==================== Slack ====================

@@ -398,9 +398,13 @@ class UserDirectory:
 
         return self._db.get_authz_user(id)
 
-    def _filtered_mem_rows(self, include_disabled: bool, search: Optional[str]) -> List[dict]:
+    def _filtered_mem_rows(
+        self, include_disabled: bool, search: Optional[str], user_type: Optional[str] = None
+    ) -> List[dict]:
         """The in-memory equivalent of the SQL filters, for the unbound dev/test store."""
         rows = list((self._mem or {}).values())
+        if user_type is not None:
+            rows = [r for r in rows if user_type_of(r) == user_type]
         if not include_disabled:
             rows = [r for r in rows if not r["disabled"]]
         if search:
@@ -418,12 +422,14 @@ class UserDirectory:
         search: Optional[str] = None,
         sort_by: str = DEFAULT_USER_SORT_FIELD,
         order: str = DEFAULT_USER_SORT_ORDER,
+        user_type: Optional[str] = None,
     ) -> List[dict]:
         """A page of users, optionally excluding disabled ones.
 
         ``offset``/``limit`` page in the store so callers don't materialise the
         whole directory; pair with :meth:`count` for the total. ``search``
         filters case-insensitively by substring across id, email, and name;
+        ``user_type`` (:data:`ORG_USER` or :data:`END_USER`) keeps that type only;
         ``sort_by`` is any of :data:`USER_SORT_FIELDS` (newest first by default)."""
         if sort_by not in USER_SORT_FIELDS:
             raise ValueError(f"sort_by must be one of {USER_SORT_FIELDS}, got {sort_by!r}")
@@ -431,7 +437,7 @@ class UserDirectory:
         if self._mem is not None:
             # Rows missing the field (email/name are optional) go last in either
             # direction, matching the nullslast() on the SQL path.
-            rows = self._filtered_mem_rows(include_disabled, search)
+            rows = self._filtered_mem_rows(include_disabled, search, user_type)
             present = sorted(
                 (r for r in rows if r.get(sort_by) is not None), key=lambda r: r[sort_by], reverse=descending
             )
@@ -445,15 +451,18 @@ class UserDirectory:
             search=search,
             sort_by=sort_by,
             order=order,
+            user_type=user_type,
         )
 
-    def count(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    def count(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         """Total number of users (for pagination), with the same filters as
         :meth:`list`."""
         if self._mem is not None:
-            return len(self._filtered_mem_rows(include_disabled, search))
+            return len(self._filtered_mem_rows(include_disabled, search, user_type))
 
-        return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
+        return int(self._db.count_authz_users(include_disabled=include_disabled, search=search, user_type=user_type))
 
     def _mem_count_by_status(self) -> Dict[str, int]:
         rows = list((self._mem or {}).values())
@@ -895,13 +904,14 @@ class UserDirectory:
         search: Optional[str] = None,
         sort_by: str = DEFAULT_USER_SORT_FIELD,
         order: str = DEFAULT_USER_SORT_ORDER,
+        user_type: Optional[str] = None,
     ) -> List[dict]:
         """Async twin of :meth:`list`."""
         if sort_by not in USER_SORT_FIELDS:
             raise ValueError(f"sort_by must be one of {USER_SORT_FIELDS}, got {sort_by!r}")
         if self._mem is not None:
             descending = order != "asc"
-            rows = self._filtered_mem_rows(include_disabled, search)
+            rows = self._filtered_mem_rows(include_disabled, search, user_type)
             present = sorted(
                 (r for r in rows if r.get(sort_by) is not None), key=lambda r: r[sort_by], reverse=descending
             )
@@ -915,13 +925,18 @@ class UserDirectory:
             search=search,
             sort_by=sort_by,
             order=order,
+            user_type=user_type,
         )
 
-    async def acount(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    async def acount(
+        self, include_disabled: bool = True, search: Optional[str] = None, user_type: Optional[str] = None
+    ) -> int:
         """Async twin of :meth:`count`."""
         if self._mem is not None:
-            return len(self._filtered_mem_rows(include_disabled, search))
-        return int(await self._adb("count_authz_users", include_disabled=include_disabled, search=search))
+            return len(self._filtered_mem_rows(include_disabled, search, user_type))
+        return int(
+            await self._adb("count_authz_users", include_disabled=include_disabled, search=search, user_type=user_type)
+        )
 
     async def acount_by_status(self) -> Dict[str, int]:
         """Async twin of :meth:`count_by_status`."""

@@ -57,11 +57,15 @@ def test_an_unmigrated_table_keeps_working_and_records_org_users_once_migrated()
     store.remember_org_access("b@example.com", claims, ["agents:run"])
     assert user_type_of(store.get("b@example.com")) == END_USER
     assert store.org_scopes(store.get("b@example.com")) is None
+    # Filtering by type works before the migration: nobody is an org user yet
+    assert store.count(user_type=ORG_USER) == 0 and store.count(user_type=END_USER) == 2
 
     asyncio.run(MigrationManager(db).up())
     store.remember_org_access("b@example.com", claims, ["agents:run"])
     assert user_type_of(store.get("b@example.com")) == ORG_USER
     assert store.org_scopes(store.get("b@example.com")) == ["agents:run"]
+    assert [u["id"] for u in store.list(user_type=ORG_USER)] == ["b@example.com"]
+    assert [u["id"] for u in store.list(user_type=END_USER)] == ["a@example.com"]
 
 
 def test_up_adds_user_type_and_its_index_and_keeps_rows():
