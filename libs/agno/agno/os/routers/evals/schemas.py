@@ -195,8 +195,6 @@ class EvalSchema(BaseModel):
             eval_type=EvalType.SUITE,
             eval_data=result.to_dict(),
             eval_input=eval_input,
-            # The stored row stamps its own timestamps; the response carries the
-            # same instant so clients need not refetch to show when it ran.
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
