@@ -387,6 +387,9 @@ class AsyncMySQLDb(AsyncBaseDb):
             return table
 
         except Exception as e:
+            # Unregister the half-built Table so a retry isn't rejected as
+            # "already defined for this MetaData instance" (same as Postgres).
+            self._invalidate_table_cache(table_name)
             log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
