@@ -52,7 +52,7 @@ anywhere else, say you read only that directory.
 
 COMPANY_INSTRUCTIONS = """\
 Company work:
-- A Goal is an area of the company's work and reads from its Sources. Its Projects are outcomes; their
+- A Goal is a standing aim of the company and reads from its Sources. Its Projects are outcomes; their
   Tasks are work for an executor. A Routine is a Goal's saved instructions, run by Mini Agent or a named
   component, never by you. It only proposes work.
 - A plan is a reply: give it here and offer once to record it. Record work only when told to add, create or
