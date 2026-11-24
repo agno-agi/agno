@@ -102,3 +102,29 @@ async def test_page_knowledge_async_search_honors_zero_max_results():
     knowledge.asearch_pages = fail_search_pages
 
     assert await knowledge.asearch("query", max_results=0) == []
+
+
+@pytest.mark.parametrize("tool_name, query", [("grep_file", "matching"), ("list_files", "*")])
+def test_filesystem_tools_explain_zero_max_results(tmp_path, tool_name: str, query: str):
+    """A zero limit must not be reported to the model as a failed search."""
+    (tmp_path / "matching.txt").write_text("matching content")
+    tools = {tool.name: tool for tool in FileSystemKnowledge(base_dir=str(tmp_path)).get_tools()}
+
+    result = tools[tool_name].entrypoint(query, max_results=0)
+
+    assert result == "No results returned because max_results is 0."
+
+
+@pytest.mark.parametrize(
+    "tool_name, query, expected",
+    [
+        ("grep_file", "matching", "No matches found for: matching"),
+        ("list_files", "*", "No files found matching: *"),
+    ],
+)
+def test_filesystem_tools_keep_negative_max_results_behavior(tmp_path, tool_name: str, query: str, expected: str):
+    """Negative limits keep their existing response."""
+    (tmp_path / "matching.txt").write_text("matching content")
+    tools = {tool.name: tool for tool in FileSystemKnowledge(base_dir=str(tmp_path)).get_tools()}
+
+    assert tools[tool_name].entrypoint(query, max_results=-1) == expected

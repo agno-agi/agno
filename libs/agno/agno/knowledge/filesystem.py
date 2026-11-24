@@ -314,6 +314,9 @@ class FileSystemKnowledge:
             Returns:
                 Matching content from files with context around each match.
             """
+            if max_results == 0:
+                return "No results returned because max_results is 0."
+
             docs = self._grep(query, max_results=max_results)
 
             if not docs:
@@ -343,6 +346,9 @@ class FileSystemKnowledge:
             Returns:
                 List of available file paths.
             """
+            if max_results == 0:
+                return "No results returned because max_results is 0."
+
             docs = self._list_files(pattern, max_results=max_results)
 
             if not docs:
