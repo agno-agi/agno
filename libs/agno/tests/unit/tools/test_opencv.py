@@ -1,5 +1,7 @@
 """Unit tests for OpenCVTools class."""
 
+import os
+import tempfile
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -425,6 +427,30 @@ class TestVideoCapture:
         assert isinstance(result, ToolResult)
         assert "Failed to initialize video writer with any codec" in result.content
         assert result.videos is None
+
+    def test_capture_video_codec_failure_removes_temp_file(
+        self, opencv_tools_no_preview, mock_agent, mock_cv2
+    ):
+        """A failed codec must not leave the .mp4 temp file behind."""
+        mock_cv2.VideoWriter.return_value.isOpened.return_value = False
+        created_paths: list[str] = []
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def tracking_temp_file(*args, **kwargs):
+            handle = real_named_temporary_file(*args, **kwargs)
+            created_paths.append(handle.name)
+            return handle
+
+        with (
+            patch("tempfile.NamedTemporaryFile", side_effect=tracking_temp_file),
+            patch("agno.tools.opencv.getattr") as mock_getattr,
+        ):
+            mock_getattr.return_value.return_value = 123456
+            result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Failed to initialize video writer" in result.content
+        assert created_paths
+        assert not os.path.exists(created_paths[0])
 
     def test_capture_video_frame_read_fails(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when frame reading fails."""

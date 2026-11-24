@@ -286,9 +286,6 @@ class OpenCVTools(Toolkit):
                 with open(temp_filepath, "rb") as video_file:
                     video_bytes = video_file.read()
 
-                # Clean up temporary file
-                os.unlink(temp_filepath)
-
                 media_id = str(uuid4())
 
                 # Create VideoArtifact with base64 encoded content
@@ -312,6 +309,18 @@ class OpenCVTools(Toolkit):
             finally:
                 if "cap" in locals():
                     cap.release()
+                if "out" in locals() and out is not None:
+                    out.release()
+                # The temp file is created with delete=False; remove it on every
+                # exit, not just the success path (codec failure, frame read
+                # failure, empty/ missing output, or any exception).
+                if (
+                    "temp_filepath" in locals()
+                    and isinstance(temp_filepath, str)
+                    and "os" in locals()
+                    and os.path.exists(temp_filepath)
+                ):
+                    os.unlink(temp_filepath)
                 cv2.destroyAllWindows()
                 log_debug("Video capture resources released")
 
