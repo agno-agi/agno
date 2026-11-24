@@ -138,6 +138,8 @@ def test_company_checks_in_scheduler_and_db_only_check_provenance():
         ("db/sqlite/async_sqlite.py", "disable_schedules_for_target"),
         ("db/postgres/postgres.py", "_disable_schedules_for_target_in_session"),
         ("db/postgres/async_postgres.py", "disable_schedules_for_target"),
+        # The v3.2.3 migration selects Company routines to rename the Goal keys in their payloads.
+        ("db/migrations/versions/v3_2_3.py", "_rename_routines"),
     }
     found = set()
     for directory in (root / "scheduler", root / "db"):
