@@ -503,7 +503,7 @@ class RoleStore:
     ) -> None:
         """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``
         scopes, leaving every other scope (and the metadata) intact."""
-        from agno.os.authz._scope_policy import scope_to_resource_action
+        from agno.os.authz._scope_policy import scope_to_policy, write_order
 
         before = self.get_role_scope_entries(role) if self._audit else None
         # Stage the upsert deny-wins by policy key, mirroring set_role_scopes: `agents:read`
@@ -513,7 +513,7 @@ class RoleStore:
         staged: dict = {}  # (resource, action) -> (scope_string, effect)
         for entry in upsert or []:
             scope, effect = _normalize_scope(entry)
-            key = scope_to_resource_action(scope)  # validates + collapses aliasing spellings
+            key = scope_to_policy(scope)  # validates + collapses aliasing spellings
             eff = "deny" if str(effect).lower() == "deny" else "allow"
             prev = staged.get(key)
             if prev is not None and (prev[1] == "deny" or eff == "deny"):
@@ -527,12 +527,12 @@ class RoleStore:
         for scope in removals:
             _check_removable(role, scope)  # raises on an unrecognised scope, with nothing written yet
         self._refuse_role_named_after_user(role)
-        staged_entries = list(staged.values())
+        staged_entries = sorted(staged.values(), key=lambda entry: write_order(*entry))
         if _confers_admin(staged_entries) and self.default_role() == role:
             self._refuse_admin_default(role, staged_entries)
         if ADMIN_SCOPE in removals and not _confers_admin(staged_entries):
             self._refuse_if_locks_out(without_role=role)
-        for scope, effect in staged.values():
+        for scope, effect in staged_entries:
             self._engine.add_scope(role, scope, effect)
         for scope in removals:
             self._engine.remove_scope(role, scope)
@@ -1013,13 +1013,13 @@ class RoleStore:
         actor: Optional[str] = None,
     ) -> None:
         """Async twin of :meth:`patch_role_scopes`."""
-        from agno.os.authz._scope_policy import scope_to_resource_action
+        from agno.os.authz._scope_policy import scope_to_policy, write_order
 
         before = await self.aget_role_scope_entries(role) if self._audit else None
         staged: dict = {}
         for entry in upsert or []:
             scope, effect = _normalize_scope(entry)
-            key = scope_to_resource_action(scope)
+            key = scope_to_policy(scope)
             eff = "deny" if str(effect).lower() == "deny" else "allow"
             prev = staged.get(key)
             if prev is not None and (prev[1] == "deny" or eff == "deny"):
@@ -1030,12 +1030,12 @@ class RoleStore:
         for scope in removals:
             _check_removable(role, scope)  # validate before the first write (see the sync twin)
         await self._arefuse_role_named_after_user(role)
-        staged_entries = list(staged.values())
+        staged_entries = sorted(staged.values(), key=lambda entry: write_order(*entry))
         if _confers_admin(staged_entries) and await self.adefault_role() == role:
             await self._arefuse_admin_default(role, staged_entries)
         if ADMIN_SCOPE in removals and not _confers_admin(staged_entries):
             await self._arefuse_if_locks_out(without_role=role)
-        for scope, effect in staged.values():
+        for scope, effect in staged_entries:
             await self._engine.aadd_scope(role, scope, effect)
         for scope in removals:
             await self._engine.aremove_scope(role, scope)

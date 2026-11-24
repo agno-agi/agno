@@ -433,7 +433,10 @@ async def test_a_deny_stored_by_3_2_0_can_be_changed_to_allow(tmp_path, use_asyn
 
     assert engine.check_scope("goals:write", roles=["editor"]) is True
     # The stored deny still protects an application's own products type.
-    assert sorted(engine.get_role_scopes("editor")) == [("goals:write", "allow"), ("products:write", "deny")]
+    assert sorted(engine.get_role_scopes("editor")) == [
+        ("app.products:write", "deny"),
+        ("goals:write", "allow"),
+    ]
     assert engine.denied_resource_ids("goals", "write", roles=["editor"]) == set()
     assert engine.denied_resource_ids("products", "write", roles=["editor"]) == {"*"}
     db.close()
@@ -488,7 +491,7 @@ async def test_granting_goals_keeps_a_stored_products_grant(tmp_path, use_async)
     db.close()
 
 
-@pytest.mark.parametrize("change", ["add", "remove", "replace"])
+@pytest.mark.parametrize("change", ["add", "remove", "resave"])
 @pytest.mark.parametrize("use_async", [False, True])
 async def test_changing_goals_access_keeps_an_application_deny(tmp_path, change, use_async):
     db = SqliteDb(db_file=str(tmp_path / "roles.db"))
@@ -499,16 +502,59 @@ async def test_changing_goals_access_keeps_an_application_deny(tmp_path, change,
     async def call(method, *args):
         return await getattr(engine, "a" + method)(*args) if use_async else getattr(engine, method)(*args)
 
-    if change == "replace":
-        await call("set_role_scopes", "reader", [*engine.get_role_scopes("reader"), ("goals:read", "allow")])
-    else:
-        await call("add_scope", "reader", "goals:read")
+    await call("add_scope", "reader", "goals:read")
+    if change == "resave":
+        await call("set_role_scopes", "reader", engine.get_role_scopes("reader"))
     assert engine.check_scope("goals:read", roles=["reader"]) is True
     if change == "remove":
         await call("remove_scope", "reader", "goals:read")
         assert engine.check_scope("goals:read", roles=["reader"]) is False
 
     assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is False
+    db.close()
+
+
+@pytest.mark.parametrize("stored", [None, "allow", "deny"])
+@pytest.mark.parametrize("method", ["set_role_scopes", "patch_role_scopes"])
+@pytest.mark.parametrize("effects", [("deny", "allow"), ("allow", "deny"), ("allow", "allow")])
+@pytest.mark.parametrize("goals_first", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_the_same_scopes_decide_the_same_on_any_role(tmp_path, stored, method, effects, goals_first, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    if stored is not None:
+        db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect=stored)
+    store = Authorization(db=db)._store()
+    scopes = [{"scope": "products:read", "effect": effects[0]}, {"scope": "goals:read", "effect": effects[1]}]
+    if goals_first:
+        scopes.reverse()
+
+    if use_async:
+        await getattr(store, "a" + method)("reader", scopes)
+    else:
+        getattr(store, method)("reader", scopes)
+
+    assert store._engine.check_scope("goals:read", roles=["reader"]) is (effects == ("allow", "allow"))
+    db.close()
+
+
+@pytest.mark.parametrize("resave", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_revoking_goals_keeps_an_application_grant(tmp_path, resave, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
+    engine = Authorization(db=db)._store()._engine
+
+    async def call(method, *args):
+        return await getattr(engine, "a" + method)(*args) if use_async else getattr(engine, method)(*args)
+
+    await call("remove_scope", "reader", "goals:read")
+    if resave:
+        await call("set_role_scopes", "reader", engine.get_role_scopes("reader"))
+
+    assert engine.check_scope("goals:read", roles=["reader"]) is False
+    assert engine.accessible_resource_ids("goals", "read", roles=["reader"]) == set()
+    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
+    assert engine.accessible_resource_ids("products", "read", roles=["reader"]) == {"*"}
     db.close()
 
 
