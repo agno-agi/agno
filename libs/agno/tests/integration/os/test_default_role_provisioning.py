@@ -3,8 +3,9 @@
 When a user is auto-provisioned (JIT) under managed roles, they are granted the default
 role so they land usable rather than inert. Single-role model (a subject holds one role):
 the default is the role flagged ``is_default`` in the role store (``define_role(...,
-default=True)``), nothing else. If none is flagged the user is left inert and a warning is
-logged, never a silent grant. These exercise the shared choke-point helper
+default=True)`` or ``UserDirectory(default_role=...)``), nothing else. If none is flagged the
+user gets no role and nothing is logged: it is a setup that works, and their token scopes still
+count. These exercise the shared choke-point helper
 (``provision_user_with_default_role``) and the role-store plumbing it relies on.
 """
 
@@ -86,16 +87,16 @@ def test_existing_user_is_not_regranted_on_later_login():
     assert roles.roles_of("carol") == []
 
 
-def test_no_default_leaves_user_inert_and_warns(monkeypatch):
+def test_no_default_leaves_user_without_a_role_and_logs_nothing(monkeypatch):
     roles, users = _roles(), _users()
     roles.set_role_scopes("member", ["agents:*:read"])  # exists, but not flagged default
     warnings: list[str] = []
     monkeypatch.setattr("agno.os.auth.log_warning", lambda msg: warnings.append(msg))
     provision_user_with_default_role(users, roles, "dave", {"email": "d@co"})
-    # user exists (provisioned) but holds no role: inert until an admin assigns one
+    # user exists (provisioned) and holds no role until an admin assigns one
     assert users.get("dave") is not None
     assert roles.roles_of("dave") == []
-    assert any("no default role" in w for w in warnings)
+    assert warnings == []
 
 
 def test_no_role_store_is_a_noop_no_grant_no_warn(monkeypatch):

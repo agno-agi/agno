@@ -5,28 +5,30 @@ Standing up managed roles by hand would mean assembling an audit sink, a role st
 and an ``include_router`` call, and keeping them pointed at the same database.
 :class:`Authorization` owns all of that and wires itself into AgentOS:
 
-    from agno.os import Authorization
+    from agno.os.authz import Authorization, Role, UserDirectory, READ, RUN, PLATFORM
 
-    authz = Authorization(db=db, audit=True, trust_token_scopes=True,
-                          verification_keys=KEYS, audience=OS_ID)
-    authz.define_role("admin", ["agent_os:admin"])
-    authz.define_role("viewer", ["agents:*:read"], default=True)
-    authz.define_role("runner", ["agents:*:read", "agents:*:run"])
+    member = Role("member", scopes=READ + RUN)
+    platform = Role("platform", scopes=READ + RUN + PLATFORM)
+    authz = Authorization(roles=[member, platform], audit=True, verification_keys=KEYS, audience=OS_ID)
+    authz.define_role("admin", ["agent_os:admin"])   # the method form; both forms can be mixed
     authz.seed(admin=ADMIN_SUBJECT)   # bootstrap the admin ROLE
-    authz.assign("carol", "runner")   # give a specific user a non-default role (bootstrap-safe)
+    authz.assign("carol", "platform")   # give a specific user a role (bootstrap-safe)
 
-    agent_os = AgentOS(id=OS_ID, db=db, agents=[...], user_directory=True, authorization=authz)
+    agent_os = AgentOS(id=OS_ID, db=db, agents=[...], authorization=authz,
+                       user_directory=UserDirectory(default_role=member))
 
-Roles are opt-in: ``define_role`` puts roles in play, and a verify-only Authorization defines none.
+The role store and the ``/authz`` admin API are on whenever the bound database can hold roles
+(SQLite or Postgres), with or without a role in code, so an admin can create and assign roles at
+runtime. On any other database, or with none, a setup that defines no role decides on token scopes
+alone and has no ``/authz``.
 The user directory is NOT configured here, and Authorization never touches it. It is a top-level
 ``AgentOS(user_directory=...)`` concern, a peer of ``user_isolation``, and it works with or without
 auth. Seed people on the ``UserDirectory`` itself (``users.upsert(...)``) and give them roles with
 ``assign(subject, role)`` (bootstrap-safe) or the ``/authz`` admin API. Verification lives here because it
-already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``), and
-plenty of setups verify tokens with no roles (isolation, scope-based access, service accounts). So the
+already lives under authorization today (``authorization=True`` + ``AuthorizationConfig(...)``). The
 verify-only case is a one-liner:
 
-    Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles, no ceremony
+    Authorization(verification_keys=KEYS, audience=OS_ID)   # no roles in code
 
 Roles are managed through this object at runtime too: ``set_role``, ``unassign``, ``roles_of``,
 ``set_role_scopes``, ``remove_role``, ``list_roles``, ``can_manage``, ``audit_log``, ``decisions``
@@ -42,7 +44,8 @@ role definitions and the admin seed are buffered and applied once the db binds (
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
-from agno.os.authz._db import is_async_authz_db, resolve_authz_db
+from agno.os.authz._db import is_async_authz_db, resolve_authz_db, supports_authz
+from agno.os.authz.role import Role, ScopeInput
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
@@ -57,10 +60,12 @@ if TYPE_CHECKING:
 _ADMIN_ROLE = "admin"
 
 _WIRED_WITHOUT_ROLES = (
-    "This Authorization was wired into AgentOS without managed roles, so its role API is not live: "
-    "AgentOS decided at wiring that no role store is in play and /authz is not mounted, and nothing "
-    "would read what is written here. Declare roles before AgentOS(...): define_role / seed / assign, "
-    "a runtime write (set_role_scopes, set_role, ...) on the object, or engine= / roles_claim=."
+    "This Authorization was wired into AgentOS without a role store, so its role API is not live: "
+    "/authz is not mounted, and nothing would read what is written here. That is the case when the "
+    "database cannot hold roles (they need SQLite or Postgres), when an authorization_provider= "
+    "decides alone, and with trust_token_scopes=False and no role declared. Declare roles before "
+    "AgentOS(...): roles= / define_role / seed / assign, a runtime write (set_role_scopes, set_role, "
+    "...) on the object, or engine= / roles_claim=."
 )
 _NEEDS_DB = (
     "Authorization needs a SQL database: pass Authorization(db=...) / db_url=..., or hand it to "
@@ -77,8 +82,12 @@ _ASYNC_SETUP_MSG = (
     "An object with no define_role()/seed()/assign() calls works against an async db."
 )
 
-# A scope entry as accepted by set_role_scopes: a scope string, a (scope, effect) pair, or a dict.
-ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
+# UserDirectory(default_role=) is applied while AgentOS is built, which is synchronous.
+_ASYNC_DEFAULT_ROLE_MSG = (
+    "UserDirectory(default_role={role!r}) is applied at setup time and needs a synchronous database, "
+    "but the bound database is async ({db_type}). Flag the default through the roles API instead "
+    "(PATCH /authz/roles/{role} with is_default, or Authorization.aset_role_meta)."
+)
 
 
 class Authorization:
@@ -94,6 +103,7 @@ class Authorization:
         *,
         db: Optional[Any] = None,
         db_url: Optional[str] = None,
+        roles: Optional[List[Role]] = None,
         # --- token verification (carried into the AuthorizationConfig AgentOS builds) ---
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
@@ -105,7 +115,7 @@ class Authorization:
         excluded_route_paths: Optional[List[str]] = None,
         # --- switches ---
         audit: Union[bool, "AuditSink"] = False,
-        trust_token_scopes: bool = False,
+        trust_token_scopes: Optional[bool] = None,
         roles_claim: Optional[str] = None,
         # --- escape hatches (bring your own) ---
         authorization_provider: Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]] = None,
@@ -115,14 +125,20 @@ class Authorization:
         Args:
             db / db_url: the SQL database for roles/users/audit. Optional -- when omitted the
                 object borrows ``AgentOS(db=...)`` at bind time, so you pass a db once.
+            roles: the roles to define, as :class:`~agno.os.authz.role.Role` objects. Same
+                bootstrap rule as :meth:`define_role`: a role that already has scopes in the
+                database is left as it is.
             verification_keys, jwks_file, algorithm, verify_audience, audience, issuer,
                 admin_scope, excluded_route_paths: JWT verification settings. Used with or
                 without roles (verify-only / scope-based / isolation deployments set just these).
             audit: ``True`` builds a ``DbAuditSink`` from the bound db (feeds both the change and
                 decision trails); pass an ``AuditSink`` to use your own; ``False`` disables it.
-            trust_token_scopes: run a scope plane alongside managed roles, so operators authorized
-                by their token scopes and end users authorized by the role store both work
-                (composed with OR). No effect without roles.
+            trust_token_scopes: run a scope plane alongside managed roles, so a request passes if
+                the token's scopes allow it or the caller's stored role does. On unless set to
+                ``False``, which leaves the role store to decide alone once a role is declared in
+                code (with none declared, ``False`` changes nothing: token scopes decide and no
+                store is built). Passing ``True`` also says that administrators live on tokens:
+                the store then stops refusing a change that leaves no stored admin.
             roles_claim: the external-IdP case -- read the caller's role(s) from this token claim
                 (e.g. WorkOS/Auth0 send a ``role`` claim) instead of from stored assignments. You
                 still ``define_role`` what each role may do; the token asserts which role the caller
@@ -159,7 +175,10 @@ class Authorization:
         }
         self._issuer = issuer
         self._audit_arg = audit
-        self._trust_token_scopes = trust_token_scopes
+        self._trust_token_scopes = trust_token_scopes is not False
+        # Only an explicit True says that admins live on tokens. The default trusts token scopes
+        # too, but must not switch off the guard that keeps one stored admin.
+        self._admins_on_tokens = trust_token_scopes is True
         self._roles_claim = roles_claim
         self._provider_override = authorization_provider
         self._engine = engine
@@ -171,8 +190,11 @@ class Authorization:
         # a peer of user_isolation, seeded on the UserDirectory itself. Authorization never touches
         # it -- seed() below bootstraps the admin ROLE only.
 
-        # Roles are in play if any were defined, or a store/engine was supplied.
+        # Roles are in play if any were defined, a store/engine was supplied, or (decided at
+        # bind) the database can hold them.
         self._roles_defined = engine is not None or roles_claim is not None
+        # The role define_role(..., default=True) last flagged, to compare with UserDirectory(default_role=)
+        self._default_declared: Optional[str] = None
         self._wired = False  # set once AgentOS has wired the object; roles cannot be declared after
 
         # Buffers applied at bind time (used when no db is available yet).
@@ -194,6 +216,14 @@ class Authorization:
         self._bound = False
         if self._db is not None:
             self._bind()
+        seen: Set[str] = set()
+        for role in roles or []:
+            if not isinstance(role, Role):
+                raise TypeError(f"Authorization(roles=[...]) takes Role objects; got {type(role).__name__}.")
+            if role.id in seen:
+                raise ValueError(f"Authorization(roles=[...]) defines role {role.id!r} twice.")
+            seen.add(role.id)
+            self.define_role(role.id, role.scopes, name=role.name, description=role.description)
 
     # ------------------------------------------------------------------ authoring
     def define_role(
@@ -217,6 +247,8 @@ class Authorization:
         policy, and moving it to another role in code must take effect. Omitting ``default`` never
         clears an existing default. Chainable."""
         self._declare_roles()
+        if default:
+            self._default_declared = slug
         if self._bound:
             self._apply_role_def(slug, scopes, default, name, description)
         else:
@@ -303,6 +335,14 @@ class Authorization:
         if self._bound:
             return self
         self._db = self._db or os_db
+        # The roles API is on whenever the database can hold roles, with or without a role in
+        # code, so an admin can create and assign roles at runtime. A database that cannot hold
+        # them leaves a setup with no role in code on token scopes alone. Two setups get no store
+        # this way: the full override, where the provider decides alone, and
+        # trust_token_scopes=False with no role in code, where a store deciding alone would
+        # start empty and refuse everyone, the admin who could fill it included.
+        if not self._roles_defined and self._provider_override is None and self._trust_token_scopes:
+            self._roles_defined = supports_authz(self._db)
         # A database is only needed for things that PERSIST and are not already persisted: a role
         # store or directory the object has to build (or was handed unbound), or a DbAuditSink from
         # audit=True. Verify-only / scope-based / custom-provider setups store nothing, and a store
@@ -358,13 +398,14 @@ class Authorization:
             from agno.os.authz._role_store import RoleStore
 
             # The last-admin guard only makes sense when the store is the only place admins
-            # live: with a roles_claim or a token-scope plane alongside, an empty stored admin
-            # set is not a lockout, so the store must not refuse those changes.
+            # live: with a roles_claim, or trust_token_scopes=True passed to say admins are on
+            # tokens, an empty stored admin set is not a lockout, so the store must not refuse
+            # those changes. Token scopes trusted by default do not count: the guard stays on.
             self._role_store = RoleStore(
                 db=self._db,
                 engine=self._engine,
                 roles_claim=self._roles_claim,
-                guard_last_admin=self._roles_claim is None and not self._trust_token_scopes,
+                guard_last_admin=self._roles_claim is None and not self._admins_on_tokens,
             )
         else:
             self._role_store.attach_db(self._db)
@@ -406,7 +447,7 @@ class Authorization:
             role_store,
             admin,
             admin_role,
-            admins_on_tokens=self._roles_claim is not None or self._trust_token_scopes,
+            admins_on_tokens=self._roles_claim is not None or self._admins_on_tokens,
         )
         # Checked once at finalize (authorization_config), so the warning never depends on whether
         # define_role ran before or after this seed.
@@ -434,10 +475,10 @@ class Authorization:
 
         On an engine that cannot enumerate a role's holders, fall back to create-if-absent (grant only
         when the subject has no role at all): a fresh deploy still bootstraps, and a handover we cannot
-        see is not guessed at. The same fallback applies when admins live on tokens (``roles_claim``
-        or ``trust_token_scopes``): the stored set cannot see them, so an empty stored set is not a
-        lockout, and re-granting a demoted bootstrap subject on every restart would undo a handover
-        to a token-based admin.
+        see is not guessed at. The same fallback applies when admins live on tokens (``roles_claim``,
+        or ``trust_token_scopes=True`` passed explicitly): the stored set cannot see them, so an empty
+        stored set is not a lockout, and re-granting a demoted bootstrap subject on every restart
+        would undo a handover to a token-based admin.
 
         A disabled directory user still counts as a stored holder here: the role store knows roles,
         not the directory's off switch. Re-enable the user, or grant admin to another subject, to
@@ -778,16 +819,19 @@ class Authorization:
     def provider(self) -> Optional[Union["AuthorizationProvider", List["AuthorizationProvider"]]]:
         """The provider AgentOS should enforce with: your override, the role store's provider (with
         the scope plane alongside under ``trust_token_scopes``), or None so AgentOS falls back to
-        scope RBAC. A list means several planes composed with OR."""
+        scope RBAC. Only an override can be a list, which means several planes composed with OR."""
         if self._provider_override is not None:
             return self._provider_override
         if not self.uses_roles:
-            return None  # verify-only / scope-based: AgentOS defaults to ScopeAuthorizationProvider
+            return None  # no role store: AgentOS defaults to ScopeAuthorizationProvider
         store = self._store()
         if self._trust_token_scopes:
+            from agno.os.authz._composite import CompositeAuthorizationProvider
             from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
-            return [ScopeAuthorizationProvider(), store.provider]
+            # One provider object either way, so a caller that uses it directly, or lists it
+            # beside others, does not have to know which mode the object is in
+            return CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
         return store.provider
 
     @property
@@ -797,10 +841,10 @@ class Authorization:
 
     @property
     def uses_roles(self) -> bool:
-        """Whether managed roles are in play: a role was defined, a subject seeded or assigned, an
-        engine or ``roles_claim`` given, or the runtime role API written to before wiring. Decided
-        when AgentOS wires the object (it mounts ``/authz`` and provisions default roles only when
-        this is True); a read never changes it."""
+        """Whether managed roles are in play: the bound database can hold roles, or a role was
+        defined, a subject seeded or assigned, an engine or ``roles_claim`` given, or the runtime
+        role API written to before wiring. Decided when AgentOS wires the object (it mounts
+        ``/authz`` and provisions default roles only when this is True); a read never changes it."""
         return self._roles_defined
 
     @property
@@ -839,6 +883,29 @@ class Authorization:
         if self._wired:
             raise ValueError(_WIRED_WITHOUT_ROLES)
         self._roles_defined = True
+
+    def _apply_directory_default(self, role: str) -> None:
+        """Flag ``role`` as the default, for ``UserDirectory(default_role=...)``.
+
+        It is the same stored flag ``define_role(..., default=True)`` sets, so provisioning and the
+        engine read one default. The two spellings naming different roles is a mistake in the code,
+        and so is a role that does not exist: both fail here, while AgentOS is being built."""
+        declared = self._default_declared
+        if declared is not None and declared != role:
+            raise ValueError(
+                f"Two default roles are set: define_role({declared!r}, default=True) and "
+                f"UserDirectory(default_role={role!r}). A new user gets one role; set the default in one place."
+            )
+        if self._db_is_async:
+            raise ValueError(_ASYNC_DEFAULT_ROLE_MSG.format(role=role, db_type=type(self._db).__name__))
+        store = self._store()
+        if store.get_role(role) is None:
+            raise ValueError(
+                f"UserDirectory(default_role={role!r}) is not a defined role. Define it with "
+                f"Authorization(roles=[Role({role!r}, scopes=[...])]), or create it through the /authz API first."
+            )
+        if store.default_role() != role:  # no write, and no audit event, when unchanged
+            store.set_role_meta(role, is_default=True)
 
     def _wire(self, os_db: Optional[Any]) -> "Authorization":
         """What AgentOS calls: bind (lending the OS db) and mark the object wired, after which roles

@@ -1,6 +1,13 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-09-24 (after the low-severity authorization fixes: scope and slug validation,
+Last updated: 2026-11-24 (added `16_roles_and_default_role.py` for roles as objects, the scope
+lists and the default role on the user directory. On this branch the role store and `/authz` are
+on whenever authorization is on, and token scopes count beside roles unless
+`trust_token_scopes=False` is set. Re-ran 01 to 06 and 09 to 15 with the branch's `.venv` and with
+`main`'s: every file exits 0 and prints the same ALLOWED and BLOCKED lines on both. 07 and 08
+serve on a port and were not re-run.)
+
+Earlier (2026-09-24): (after the low-severity authorization fixes: scope and slug validation,
 reserved principals, the approval gate failing closed and the WebSocket PAT decision. Re-ran 01 to
 15 with the demo venv against the branch's `libs/agno`: every file exits 0 end to end, and every
 ALLOWED and BLOCKED line matches the outcome the file explains. 07 and 08 booted with `serve`
@@ -322,6 +329,25 @@ two methods `OpenFGAClient` implements.
 
 **Result:** Exit 0, no traceback. alice read and run allowed via her
 relationship; bob and carol denied.
+
+---
+
+### 16_roles_and_default_role.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (in-process TestClient, throwaway SQLite, no model key)
+
+**Description:** Two roles built from the scope lists (`member` = `READ + RUN`, `platform` =
+`READ + RUN + PLATFORM`) passed as `Authorization(roles=[...])`, with
+`UserDirectory(default_role=member)`. A new user's first request, an admin moving that user to
+`platform` through `/authz`, a token that carries scopes, and a role created at runtime.
+
+**Result:** Exit 0, no traceback. dana's first request created her as a member: reading the agent
+ALLOWED (200), `GET /config` BLOCKED (403). After `POST /authz/subjects/dana@example.com/roles`
+with `platform`, the same token got `GET /config` ALLOWED (200). A token with `config:read` was
+ALLOWED on its scopes, and another new user with no scopes was BLOCKED as a member. The `support`
+role was created (201) and listed beside `member` (default, 8 scopes) and `platform` (43 scopes).
 
 ---
 

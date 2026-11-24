@@ -32,7 +32,9 @@ in-memory when neither is given (fine for tests, not for production).
 import asyncio
 import json
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+
+from agno.os.authz.role import Role
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
@@ -69,6 +71,8 @@ class UserDirectory:
 
         AgentOS(db=db, agents=[...], authorization=authz, user_directory=True)
         AgentOS(db=db, agents=[...], authorization=authz,
+                user_directory=UserDirectory(default_role=member))
+        AgentOS(db=db, agents=[...], authorization=authz,
                 user_directory=UserDirectory(auto_provision=False, fail_closed=False))
 
     ``True`` builds the roster on the OS db with JIT provisioning on. Build it yourself to set the
@@ -92,6 +96,7 @@ class UserDirectory:
         email_claim: str = "email",
         name_claim: str = "name",
         fail_closed: bool = True,
+        default_role: Optional[Union[Role, str]] = None,
     ):
         """
         Args:
@@ -99,20 +104,33 @@ class UserDirectory:
                 you pass to ``AgentOS(db=...)``); ``db_url`` a SQLAlchemy URL. Omit both and the
                 directory is in memory until AgentOS lends it the OS db.
             auto_provision: create a row from the token claims on a subject's first valid request.
-                The role they get is the one flagged ``define_role(..., default=True)``; a subject
-                who already holds a role keeps it. On by default, since a roster that has to be
-                filled by hand before anyone can log in is rarely what a deployment wants.
+                The role they get is the default role, if one is set; a subject who already holds
+                a role keeps it. On by default, since a roster that has to be filled by hand
+                before anyone can log in is rarely what a deployment wants.
             email_claim / name_claim: the token claims JIT provisioning reads the profile from.
             fail_closed: how to treat a directory read that errors while checking the off switch.
                 True (default) rejects with 503, so a directory outage cannot silently re-enable
                 a disabled account: the off switch is a revocation, and a revocation that lapses
                 whenever its store is unreachable is not one. False lets the request through,
                 availability over the kill switch, for a deployment that accepts that trade.
+            default_role: the role a new user gets, as a :class:`~agno.os.authz.role.Role` or its
+                id. With none set, a new user gets no role. It must be a defined role, and it is
+                the same default ``define_role(..., default=True)`` sets: naming two different
+                roles fails at startup. A user already in the directory who holds no role is
+                decided under the default role too. Ignored with authorization off.
         """
         self.auto_provision = auto_provision
         self.email_claim = email_claim
         self.name_claim = name_claim
         self.fail_closed = fail_closed
+        if default_role is not None and not isinstance(default_role, (Role, str)):
+            raise TypeError(
+                f"UserDirectory(default_role=) takes a Role or a role id; got {type(default_role).__name__}."
+            )
+        if default_role == "":
+            raise ValueError("UserDirectory(default_role=) needs a role id; got an empty string.")
+        # The id of the role a new user gets, None for no role
+        self.default_role: Optional[str] = default_role.id if isinstance(default_role, Role) else default_role
         self._audit: Optional["AuditSink"] = None  # handed over by AgentOS from Authorization(audit=)
         self._mem: Optional[Dict[str, dict]] = None
         from agno.os.authz._db import is_async_authz_db, require_authz_db, resolve_authz_db

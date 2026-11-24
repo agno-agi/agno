@@ -362,7 +362,7 @@ def test_job_queue_admin_gate_is_provider_aware():
 
     from agno.os.routers.job_queue.router import _require_queue_admin
 
-    store = Authorization(db_url=_db_url())
+    store = Authorization(db_url=_db_url(), trust_token_scopes=False)
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role("real-admin", "admin")
 

@@ -38,6 +38,7 @@ it runs offline against a simulated issuer.
 | `13_idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `14_custom_policy_engine.py` | `Authorization(engine=...)`: keep managed roles, the audit trail and the `/authz` admin API, but store policy and decide in your own `PolicyEngine` |
 | `15_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
+| `16_roles_and_default_role.py` | Roles as objects built from `READ`, `RUN` and `PLATFORM`, a default role on the user directory, and an admin moving a user to another role through `/authz` |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here

@@ -145,12 +145,12 @@ def provision_user_with_default_role(
     Shared by the three provisioning choke points (HTTP middleware, WebSocket connect, MCP
     identity bridge) so the behaviour is identical wherever a token first arrives.
 
-    Single-role model (a subject holds one role). The default is the role flagged
-    ``define_role(..., default=True)`` in the role store. If none is flagged and a role store is present,
-    the new user is left inert -- denied until an admin assigns a role -- and a warning is
-    logged, never a silent grant. With no role store (the scope plane) roles do not apply, so
-    nothing is granted and nothing is warned. Granting happens only on first creation, so a
-    later login never re-grants and never fights an admin who removed the role.
+    Single-role model (a subject holds one role). The default is the role flagged default in the
+    role store, by ``UserDirectory(default_role=...)`` or ``define_role(..., default=True)``. With
+    none flagged the new user gets no role: their token scopes still count, and an admin can assign
+    a role later. With no role store roles do not apply, so nothing is granted. Granting happens
+    only on first creation, so a later login never re-grants and never fights an admin who removed
+    the role.
 
     Returns the provisioned user row (so the caller can read ``disabled`` off it without a
     second query).
@@ -180,12 +180,6 @@ def provision_user_with_default_role(
                 role_store.assign(subject, role, actor="system:jit")
             except Exception as e:
                 log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
-        else:
-            log_warning(
-                f"auto-provisioned user {subject!r} has no default role "
-                "(flag one with define_role(..., default=True)); "
-                "they are denied until a role is assigned"
-            )
     return user
 
 
@@ -244,12 +238,6 @@ async def aprovision_user_with_default_role(
                     await asyncio.to_thread(role_store.assign, subject, role, actor="system:jit")
             except Exception as e:
                 log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
-        else:
-            log_warning(
-                f"auto-provisioned user {subject!r} has no default role "
-                "(flag one with define_role(..., default=True)); "
-                "they are denied until a role is assigned"
-            )
     return user
 
 
@@ -289,7 +277,8 @@ def create_dev_token(
     Args:
         sub: the user id this token authenticates as (the JWT ``sub``).
         secret: the signing key -- must match a value in ``verification_keys``.
-        scopes: optional scope strings (only meaningful on the scope plane; managed roles ignore them).
+        scopes: optional scope strings. They count beside managed roles too, unless the OS sets
+            ``Authorization(trust_token_scopes=False)``.
         audience: the ``aud`` claim; set it to your ``os_id`` when ``verify_audience=True``.
         email / name: written as claims so ``auto_provision`` can populate the directory row.
         expires_in: token lifetime in seconds (default 1 hour).
@@ -1072,8 +1061,13 @@ def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
     the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
     wrongly blocked from ever resolving an approval.
     """
-    if request is None or caller_scopes_are_authoritative(request):
-        return has_required_scopes(list(user_scopes or []), ["approvals:write"])
+    by_token = request is None or caller_scopes_are_authoritative(request)
+    if by_token and has_required_scopes(list(user_scopes or []), ["approvals:write"]):
+        return True
+    # A service account is measured by its own scopes alone. For anyone else, a plane beside the
+    # token's scopes may hold the grant: an approver by stored role carries no scope on the token.
+    if request is None or _caller_is_service_account(request):
+        return False
     from agno.os.authz.provider import AuthorizationContext
 
     admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)

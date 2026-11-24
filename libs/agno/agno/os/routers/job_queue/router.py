@@ -58,10 +58,10 @@ async def _require_queue_admin(request: Request) -> None:
     # the caller's authority: under a managed-roles/ReBAC plane a token's `agent_os:admin`
     # is ignored everywhere else, so trust it here and this whole surface leaks. Gate the
     # scope path on that, and otherwise ask the provider whether the caller is an admin.
-    if caller_scopes_are_authoritative(request):
-        if not _has_admin_scope(scopes or [], admin_scope=admin_scope):
-            raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
+    if caller_scopes_are_authoritative(request) and _has_admin_scope(scopes or [], admin_scope=admin_scope):
         return
+    # No admin scope that counts: ask the provider. With managed roles beside the scope plane, an
+    # admin by role passes here; under a scope plane alone the provider gives the same refusal.
 
     from agno.os.authz.provider import AuthorizationContext
 

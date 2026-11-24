@@ -48,7 +48,7 @@ def _auth(sub: str) -> dict:
 
 @pytest.fixture
 def client_and_store():
-    store = Authorization(db_url=_db_url())  # in-memory
+    store = Authorization(db_url=_db_url(), trust_token_scopes=False)  # the role store decides alone
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role("alice", "admin")

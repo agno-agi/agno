@@ -482,9 +482,10 @@ class AgentOS:
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
             authorization: The authorization setup. Prefer ``Authorization(...)`` -- one object for
-                verification, roles, the user directory, audit, and the admin API (see
-                ``agno.os.authz.Authorization``). ``True`` keeps today's scope RBAC from token
-                scopes, verifying with ``authorization_config`` or the JWT_* environment variables.
+                verification, roles, audit, and the admin API (see ``agno.os.authz.Authorization``).
+                ``True`` verifies with ``authorization_config`` or the JWT_* environment variables.
+                Either way a token's scopes decide, and when the OS database can hold roles
+                (SQLite or Postgres) the role store and ``/authz`` are on beside them.
             authorization_config: Deprecated. Move its fields onto ``Authorization(...)`` and pass
                 that as ``authorization=``. Still honoured with ``authorization=True`` so existing
                 deployments keep booting; logs a warning once at construction.
@@ -493,7 +494,8 @@ class AgentOS:
             user_directory: A credential-less user directory (roster + disabled kill switch), a
                 peer of authorization that works with or without it. ``True`` builds a UserDirectory
                 from the OS db with auto-provision on; pass a ``UserDirectory`` (from
-                ``agno.os.authz``) for control. Audit is not configured here: it lives on
+                ``agno.os.authz``) for control, such as ``UserDirectory(default_role=member)`` for
+                the role a new user gets. Audit is not configured here: it lives on
                 ``Authorization(audit=...)``, since a change trail without a verified identity has
                 no actor to record.
             cors_allowed_origins: List of allowed CORS origins. Empty or None uses the settings defaults.
@@ -659,6 +661,15 @@ class AgentOS:
             self._authz_provider = authorization.provider
             self._authz_issuer = authorization.issuer
             authorization = True
+        elif authorization:
+            # The bare switch gets the same role store and /authz API as the object, when the OS
+            # database can hold roles. Verification stays with authorization_config and the JWT_*
+            # environment variables. On any other database nothing is built and token scopes
+            # decide alone.
+            switch = _Authorization()._wire(self.db)
+            if switch.uses_roles:
+                self._authz_role_store = switch
+                self._authz_provider = switch.provider
 
         self.authorization = authorization
         self.authorization_config = authorization_config
@@ -678,6 +689,7 @@ class AgentOS:
         # the disabled kill-switch). ``user_directory=True`` is a shorthand: AgentOS builds the
         # UserDirectory on its own db, so callers avoid the manual wiring.
         self.user_directory = self._resolve_user_directory(user_directory)
+        self._apply_default_role()
         # The /users directory API is served whenever a directory is configured. It is admin-gated
         # whenever an auth middleware runs (so callers have a verified identity to gate on) and
         # open only on a no-auth OS, where every route is open. See _admin_api_routers, which
@@ -2700,8 +2712,9 @@ class AgentOS:
     def _admin_api_routers(self) -> List[Any]:
         """The admin-API routers to mount, so there is never a manual ``include_router``.
 
-        ``/authz`` (roles) mounts from an ``Authorization`` object's role store, so it always runs
-        under authorization and stays admin-gated. ``/users`` (directory) mounts from the top-level
+        ``/authz`` (roles) mounts from the role store, which exists whenever authorization is on
+        and the database can hold roles, so it always runs under authorization and stays
+        admin-gated. ``/users`` (directory) mounts from the top-level
         ``AgentOS(user_directory=...)``, with or without authorization: it is admin-gated when
         authorization is on, and open on a no-auth OS (where every route is open and the roster is
         already writable via auto-provision), passed through as ``auth_enabled``."""
@@ -2722,7 +2735,7 @@ class AgentOS:
                 # requires an admin. Keying this on ``self.authorization`` alone left the router open
                 # to every signed token when a JWT key came from the environment with
                 # authorization off: anonymous callers got 401, any token could disable anyone. The
-                # roles router stays gated: it exists only with an Authorization object.
+                # roles router stays gated: it exists only with authorization on.
                 routers.append(
                     get_users_router(
                         served_directory,
@@ -2821,6 +2834,22 @@ class AgentOS:
             )
         return user_directory._bind(self.db)
 
+    def _apply_default_role(self) -> None:
+        """Flag the role ``UserDirectory(default_role=...)`` names as the one a new user gets.
+
+        The role lives in the role store, so this is where the two settings meet. With
+        authorization off no role applies and the setting is ignored."""
+        directory = self.user_directory
+        role = directory.default_role if directory is not None else None
+        if role is None or not self.authorization:
+            return
+        if self._authz_role_store is None:
+            raise ValueError(
+                f"UserDirectory(default_role={role!r}) names a role, and this AgentOS has no role store: "
+                "roles need a SQLite or Postgres database, and an authorization_provider= decides without them."
+            )
+        self._authz_role_store._apply_directory_default(role)
+
     def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
         """Seed the credential-less user directory onto ``app.state`` from
         ``AgentOS(user_directory=...)``.
@@ -2842,20 +2871,11 @@ class AgentOS:
         fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"
         fastapi_app.state.user_name_claim = directory.name_claim if directory is not None else "name"
         fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
-        # The managed role store comes only from the Authorization object (it wires roles as a
-        # provider, and hands the store over for provisioning and the /authz API). This is what the
-        # provisioning choke points read to grant the default role on first login, and the signal
-        # for whether managed roles / the /authz API are active.
+        # The managed role store comes from authorization (it wires roles as a provider, and hands
+        # the store over for provisioning and the /authz API). This is what the provisioning choke
+        # points read to grant the default role on first login, and the signal for whether managed
+        # roles / the /authz API are active. A directory with no role store is a pure roster.
         fastapi_app.state.role_store = self._authz_role_store
-        if fastapi_app.state.role_store is None and directory is not None:
-            # A directory with no role store is valid (a pure roster), but say so once at boot: no
-            # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
-            # is the signal a UI uses to hide role management for this deployment.
-            log_info(
-                "The user directory is configured without managed roles. It works as a roster; roles "
-                "are not available and provisioned users get none. Define roles on Authorization(...) "
-                "to enable roles and the /authz API."
-            )
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

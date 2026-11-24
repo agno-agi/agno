@@ -127,7 +127,7 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
     model = ScriptedModel("run_agent", {"agent_id": "Friendly target", "message": "hello"})
     scopes = ["teams:superagent:run"] + (["agents:allowed:run"] if allowed else [])
     token_headers = headers(scopes)
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test")
+    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", trust_token_scopes=False)
     if identity == "managed_role":
         auth.define_role("caller", scopes)
         auth.assign("alice", "caller")
@@ -581,7 +581,9 @@ def _leader_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", ar
     root.mkdir()
     (root / "example.py").write_text("READABLE_SOURCE_SENTINEL = 42\n")
     (root / ".env").write_text("SECRET_SENTINEL_NEVER_RETURN=synthetic\n")
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True)
+    auth = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True, trust_token_scopes=False
+    )
     request_headers = headers(scopes)
     if identity == "managed":
         auth.define_role("caller", scopes)
