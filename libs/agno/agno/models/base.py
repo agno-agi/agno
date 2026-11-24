@@ -1,5 +1,6 @@
 import asyncio
 import collections.abc
+from copy import deepcopy
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -2130,7 +2131,7 @@ class Model(ABC):
             run_id=run_context.run_id,
             tool_call_id=function_call.call_id or function_call.function.name,
             tool_name=function_call.function.name,
-            tool_args=function_call.arguments,
+            tool_args=deepcopy(function_call.arguments),
             output=text,
             user_id=run_context.user_id,
             shared=function_call.function._team is not None,
@@ -2154,7 +2155,7 @@ class Model(ABC):
             run_id=run_context.run_id,
             tool_call_id=function_call.call_id or function_call.function.name,
             tool_name=function_call.function.name,
-            tool_args=function_call.arguments,
+            tool_args=deepcopy(function_call.arguments),
             output=text,
             user_id=run_context.user_id,
             shared=function_call.function._team is not None,
@@ -2190,7 +2191,7 @@ class Model(ABC):
             content=output if success else function_call.error,
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
-            tool_args=function_call.arguments,
+            tool_args=deepcopy(function_call.arguments),
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
             images=images,
@@ -2221,7 +2222,7 @@ class Model(ABC):
             content=f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again.",
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
-            tool_args=function_call.arguments,
+            tool_args=deepcopy(function_call.arguments),
             tool_call_error=True,
         )
 
@@ -2242,7 +2243,7 @@ class Model(ABC):
                 ToolExecution(
                     tool_call_id=function_call.call_id,
                     tool_name=function_call.function.name,
-                    tool_args=function_call.arguments,
+                    tool_args=deepcopy(function_call.arguments),
                     toolkit=function_call.function.owning_toolkit,
                 )
             ],
@@ -2454,7 +2455,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_confirmation=True,
                         approval_type=fc.function.approval_type,
@@ -2475,7 +2476,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         approval_type=fc.function.approval_type,
@@ -2515,7 +2516,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
@@ -2545,7 +2546,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_feedback_schema=user_feedback_schema,
@@ -2558,7 +2559,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
@@ -2671,7 +2672,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_confirmation=True,
                         approval_type=fc.function.approval_type,
@@ -2691,7 +2692,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         approval_type=fc.function.approval_type,
@@ -2736,7 +2737,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_input_schema=user_input_schema,
@@ -2771,7 +2772,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         requires_user_input=True,
                         user_feedback_schema=user_feedback_schema,
@@ -2783,7 +2784,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                         external_execution_required=True,
                         approval_type=fc.function.approval_type,
@@ -2805,7 +2806,7 @@ class Model(ABC):
                     ToolExecution(
                         tool_call_id=fc.call_id,
                         tool_name=fc.function.name,
-                        tool_args=fc.arguments,
+                        tool_args=deepcopy(fc.arguments),
                         toolkit=fc.function.owning_toolkit,
                     )
                 ],
