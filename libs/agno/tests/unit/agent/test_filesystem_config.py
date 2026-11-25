@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from agno.agent import Agent
@@ -436,6 +438,35 @@ def test_file_paths_that_contain_a_tool_name_stay_as_written(db):
         assert function.description.splitlines()[0] == f"Filesystem namespace: 'guide'. {purpose}"
     assert first.instructions.splitlines()[1] == purpose
     assert second.instructions.splitlines()[1] == "Start from list_files/index.md, then call `fs_2_notes_list_files`."
+
+
+def test_only_the_tools_a_store_registers_get_its_prefix(db):
+    drafts = FileSystem(db, namespace="drafts", description="Save answers with write_file, never delete_file.")
+    handbook = FileSystem(
+        db,
+        namespace="team/handbook",
+        read_only=True,
+        description="Use read_file on the style guide before you call write_file.",
+    )
+    agent = Agent(id="analyst", filesystem=[drafts, handbook])
+
+    first, second = _filesystem_tools(agent)
+
+    # The handbook is read-only: it has no write_file, so the name is not given its prefix.
+    purpose = "Purpose: Use fs_2_team_handbook_read_file on the style guide before you call write_file."
+    for function in [*second.functions.values(), *second.async_functions.values()]:
+        assert function.description.splitlines()[0] == f"Filesystem namespace: 'team/handbook'. {purpose}"
+    assert second.instructions.splitlines()[1] == purpose
+    # The drafts store registers write_file and leaves delete_file out.
+    assert first.instructions.splitlines()[1] == (
+        "Purpose: Save answers with fs_1_drafts_write_file, never delete_file."
+    )
+    registered = set(first.functions) | set(second.functions)
+    for toolkit in (first, second):
+        texts = [toolkit.instructions, *(function.description for function in toolkit.functions.values())]
+        for text in texts:
+            for name in re.findall(r"fs_\d_\w+", text):
+                assert name in registered, name
 
 
 def test_single_filesystem_description_leads_the_instructions(db):

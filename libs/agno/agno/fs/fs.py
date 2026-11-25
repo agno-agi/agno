@@ -145,10 +145,10 @@ class FileSystem:
     different access to one store, create one FileSystem per access level on
     the same backend and namespace.
 
-    ``description`` says what the store is for, in a sentence. The agent reads
-    it in the toolkit's instructions, and an agent holding several stores also
-    reads it on every tool, so it can tell the stores apart by more than their
-    namespace. ``Agent(filesystem=...)`` adds those instructions to the prompt;
+    ``description`` says what the store is for. Keep it to one sentence: it is
+    copied onto every tool of the store when an agent holds several stores, and
+    leads the toolkit's instructions, so the agent can tell the stores apart by
+    more than their namespace. ``Agent(filesystem=...)`` adds those instructions to the prompt;
     with a manually attached toolkit, compose ``toolkit.instructions`` yourself.
 
     Cheap to construct and holds no connections; the backend owns the
