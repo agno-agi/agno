@@ -76,6 +76,7 @@ from agno.db.schemas.service_accounts import (
 )
 from agno.db.sql import authz as authz_sql
 from agno.db.sql import mcp_oauth as mcp_oauth_sql
+from agno.db.sql import triggers as triggers_sql
 from agno.db.utils import (
     AGGREGATE_METRICS_COUNT_COLUMNS,
     HISTORY_SKIP_STATUSES,
@@ -446,6 +447,8 @@ class PostgresDb(BaseDb):
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
             (self.tool_results_table_name, "tool_results"),
+            (self.triggers_table_name, "triggers"),
+            (self.trigger_events_table_name, "trigger_events"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -918,6 +921,20 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.sandbox_table
+
+        if table_type == "triggers":
+            return self._get_or_create_table(
+                table_name=self.triggers_table_name,
+                table_type="triggers",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == "trigger_events":
+            return self._get_or_create_table(
+                table_name=self.trigger_events_table_name,
+                table_type="trigger_events",
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         if table_type == "tool_results":
             self.tool_results_table = self._get_or_create_table(
@@ -8768,6 +8785,165 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
+
+    # -- Trigger methods --
+    # A trigger starts a run when an event arrives from a source; an event row records one delivery
+    # for one trigger and the run it started. The statements are shared by the SQL adapters.
+
+    def _trigger_storage(
+        self,
+        statement: Any,
+        table_types: Tuple[str, ...],
+        *args: Any,
+        create: bool = False,
+        missing: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a shared trigger statement in one transaction. A read before the tables exist answers ``missing``."""
+        try:
+            tables = [self._get_table(table_type=t, create_table_if_not_found=create) for t in table_types]
+        except Exception:
+            if not create:
+                raise
+            # Two processes created the table at the same moment and this one lost: it exists now.
+            tables = [self._get_table(table_type=t, create_table_if_not_found=create) for t in table_types]
+        if any(table is None for table in tables):
+            return missing
+        with self.Session() as sess, sess.begin():
+            return statement(sess, *tables, *args, **kwargs)
+
+    def get_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self._trigger_storage(triggers_sql.get_trigger, ("triggers",), trigger_id, user_id=user_id)
+
+    def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._trigger_storage(
+            triggers_sql.get_trigger_by_name, ("triggers",), name, user_id=user_id, os_id=os_id
+        )
+
+    def get_triggers(
+        self,
+        source_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        managed_by: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        return self._trigger_storage(
+            triggers_sql.get_triggers,
+            ("triggers",),
+            source_id=source_id,
+            enabled=enabled,
+            managed_by=managed_by,
+            limit=limit,
+            page=page,
+            user_id=user_id,
+            os_id=os_id,
+            missing=([], 0),
+        )
+
+    def create_trigger(self, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+        return self._trigger_storage(triggers_sql.create_trigger, ("triggers",), trigger_data, create=True)
+
+    def update_trigger(self, trigger_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        return self._trigger_storage(triggers_sql.update_trigger, ("triggers",), trigger_id, user_id=user_id, **kwargs)
+
+    def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        return self._trigger_storage(triggers_sql.adopt_trigger, ("triggers",), trigger_id, os_id, missing=False)
+
+    def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
+        return self._trigger_storage(
+            triggers_sql.delete_trigger, ("triggers", "trigger_events"), trigger_id, user_id=user_id, create=True
+        )
+
+    def create_trigger_event(self, event_data: Dict[str, Any]) -> bool:
+        try:
+            return self._trigger_storage(
+                triggers_sql.create_trigger_event, ("trigger_events",), event_data, create=True
+            )
+        except triggers_sql.IntegrityError:
+            # The unique constraint refuses a delivery already stored for this trigger. Any other
+            # refusal is an error: answering False for it would drop the event without a trace.
+            if self._trigger_storage(
+                triggers_sql.is_stored_trigger_event, ("trigger_events",), event_data, missing=False
+            ):
+                return False
+            raise
+
+    def get_trigger_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self._trigger_storage(triggers_sql.get_trigger_event, ("trigger_events",), event_id, user_id=user_id)
+
+    def get_trigger_events(
+        self,
+        trigger_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        delivery_id: Optional[str] = None,
+        event_key: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        return self._trigger_storage(
+            triggers_sql.get_trigger_events,
+            ("trigger_events",),
+            trigger_id=trigger_id,
+            source_id=source_id,
+            statuses=statuses,
+            delivery_id=delivery_id,
+            event_key=event_key,
+            limit=limit,
+            page=page,
+            user_id=user_id,
+            started_run=started_run,
+            missing=([], 0),
+        )
+
+    def update_trigger_event(
+        self, event_id: str, held_by: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        return self._trigger_storage(
+            triggers_sql.update_trigger_event, ("trigger_events",), event_id, held_by=held_by, **kwargs
+        )
+
+    def claim_trigger_event(
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if os_id is None:
+            return self._trigger_storage(
+                triggers_sql.claim_trigger_event,
+                ("trigger_events",),
+                worker_id,
+                stale_after_seconds,
+                source_ids=source_ids,
+            )
+        # An event that may run has a trigger, so no triggers table means nothing to claim.
+        return self._trigger_storage(
+            triggers_sql.claim_trigger_event_of,
+            ("trigger_events", "triggers"),
+            worker_id,
+            stale_after_seconds,
+            os_id,
+            source_ids=source_ids,
+        )
+
+    def renew_trigger_event_claim(self, event_id: str, worker_id: str) -> bool:
+        return self._trigger_storage(
+            triggers_sql.renew_trigger_event_claim, ("trigger_events",), event_id, worker_id, missing=False
+        )
+
+    def delete_trigger_events(self, before: int, statuses: List[str]) -> int:
+        return self._trigger_storage(
+            triggers_sql.delete_trigger_events, ("trigger_events",), before, statuses, missing=0
+        )
 
     # -- Job queue methods --
     #

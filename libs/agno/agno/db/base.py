@@ -402,6 +402,8 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.triggers_table_name = "agno_triggers"
+        self.trigger_events_table_name = "agno_trigger_events"
         self.compactions_table_name = "agno_compactions"
         self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
@@ -2368,6 +2370,133 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Triggers (Optional) ---
+    # A trigger starts a run of an agent, team or workflow when an event arrives from a source.
+    # Implemented by PostgreSQL and SQLite. ``user_id`` scopes the user-facing reads, updates and
+    # deletes; ``claim_trigger_event`` takes none, since the poller fires events for every owner.
+
+    def get_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a trigger by ID."""
+        raise NotImplementedError
+
+    def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a trigger by name.
+
+        Names are unique for each AgentOS and, within it, for each owner. ``user_id=None`` matches
+        only an unowned trigger, and ``os_id=None`` only one tied to no AgentOS.
+        """
+        raise NotImplementedError
+
+    def get_triggers(
+        self,
+        source_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        managed_by: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List triggers, newest first.
+
+        With ``os_id``, the triggers that AgentOS takes: its own, and the ones tied to no AgentOS.
+
+        Returns:
+            Tuple of (triggers, total_count)
+        """
+        raise NotImplementedError
+
+    def create_trigger(self, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a trigger. ``trigger_data["user_id"]`` carries the owner."""
+        raise NotImplementedError
+
+    def update_trigger(self, trigger_id: str, user_id: Optional[str] = None, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a trigger by ID. ``user_id`` filters the row; it does not reassign the owner."""
+        raise NotImplementedError
+
+    def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        """Give a trigger that is tied to no AgentOS to one. False when it already belongs to one."""
+        raise NotImplementedError
+
+    def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete a trigger and its events."""
+        raise NotImplementedError
+
+    # --- Trigger Events (Optional) ---
+
+    def create_trigger_event(self, event_data: Dict[str, Any]) -> bool:
+        """Store one delivery for one trigger.
+
+        Returns:
+            False when this delivery is already stored for this trigger, so a redelivery starts no second run.
+        """
+        raise NotImplementedError
+
+    def get_trigger_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a trigger event by ID."""
+        raise NotImplementedError
+
+    def get_trigger_events(
+        self,
+        trigger_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        delivery_id: Optional[str] = None,
+        event_key: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List trigger events, newest first.
+
+        With ``started_run``, only the events that started a run, or only the ones that did not.
+
+        Returns:
+            Tuple of (events, total_count)
+        """
+        raise NotImplementedError
+
+    def update_trigger_event(
+        self, event_id: str, held_by: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a trigger event. With ``held_by``, only while that claim still holds the event.
+
+        Returns:
+            The updated event, or None when it was not found or the claim no longer holds it.
+        """
+        raise NotImplementedError
+
+    def claim_trigger_event(
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest event that may run now.
+
+        An event may run when it is pending, or when its claim has not been renewed for
+        ``stale_after_seconds``. It waits while another event for the same trigger and key is
+        unfinished, so one conversation has one run at a time, in the order events arrived.
+        ``worker_id`` names this one claim; pass it to renew and to guarded updates.
+
+        With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
+        triggers, and the ones tied to no AgentOS. With ``source_ids``, only an event from one of
+        those sources.
+        """
+        raise NotImplementedError
+
+    def renew_trigger_event_claim(self, event_id: str, worker_id: str) -> bool:
+        """Keep a claim alive while its run goes on. False when the claim no longer holds the event."""
+        raise NotImplementedError
+
+    def delete_trigger_events(self, before: int, statuses: List[str]) -> int:
+        """Delete events in the given states stored before the cutoff. Returns the number deleted."""
+        raise NotImplementedError
+
     # --- Tool Results (Optional) ---
     # Optional: the index table for result offloading (agno_tool_results).
     # Implemented by PostgreSQL and SQLite; on any other backend the agent
@@ -2929,6 +3058,8 @@ class AsyncBaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.triggers_table_name = "agno_triggers"
+        self.trigger_events_table_name = "agno_trigger_events"
         self.compactions_table_name = "agno_compactions"
         self.transcripts_table_name = "agno_transcripts"
         self.approvals_table_name = approvals_table or "agno_approvals"
@@ -4512,6 +4643,135 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (runs, total_count)
         """
+        raise NotImplementedError
+
+    # --- Triggers (Optional) ---
+    # A trigger starts a run of an agent, team or workflow when an event arrives from a source.
+    # Implemented by PostgreSQL and SQLite. ``user_id`` scopes the user-facing reads, updates and
+    # deletes; ``claim_trigger_event`` takes none, since the poller fires events for every owner.
+
+    async def get_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a trigger by ID."""
+        raise NotImplementedError
+
+    async def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a trigger by name.
+
+        Names are unique for each AgentOS and, within it, for each owner. ``user_id=None`` matches
+        only an unowned trigger, and ``os_id=None`` only one tied to no AgentOS.
+        """
+        raise NotImplementedError
+
+    async def get_triggers(
+        self,
+        source_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
+        managed_by: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List triggers, newest first.
+
+        With ``os_id``, the triggers that AgentOS takes: its own, and the ones tied to no AgentOS.
+
+        Returns:
+            Tuple of (triggers, total_count)
+        """
+        raise NotImplementedError
+
+    async def create_trigger(self, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a trigger. ``trigger_data["user_id"]`` carries the owner."""
+        raise NotImplementedError
+
+    async def update_trigger(
+        self, trigger_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a trigger by ID. ``user_id`` filters the row; it does not reassign the owner."""
+        raise NotImplementedError
+
+    async def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        """Give a trigger that is tied to no AgentOS to one. False when it already belongs to one."""
+        raise NotImplementedError
+
+    async def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete a trigger and its events."""
+        raise NotImplementedError
+
+    # --- Trigger Events (Optional) ---
+
+    async def create_trigger_event(self, event_data: Dict[str, Any]) -> bool:
+        """Store one delivery for one trigger.
+
+        Returns:
+            False when this delivery is already stored for this trigger, so a redelivery starts no second run.
+        """
+        raise NotImplementedError
+
+    async def get_trigger_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a trigger event by ID."""
+        raise NotImplementedError
+
+    async def get_trigger_events(
+        self,
+        trigger_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        delivery_id: Optional[str] = None,
+        event_key: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List trigger events, newest first.
+
+        With ``started_run``, only the events that started a run, or only the ones that did not.
+
+        Returns:
+            Tuple of (events, total_count)
+        """
+        raise NotImplementedError
+
+    async def update_trigger_event(
+        self, event_id: str, held_by: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a trigger event. With ``held_by``, only while that claim still holds the event.
+
+        Returns:
+            The updated event, or None when it was not found or the claim no longer holds it.
+        """
+        raise NotImplementedError
+
+    async def claim_trigger_event(
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest event that may run now.
+
+        An event may run when it is pending, or when its claim has not been renewed for
+        ``stale_after_seconds``. It waits while another event for the same trigger and key is
+        unfinished, so one conversation has one run at a time, in the order events arrived.
+        ``worker_id`` names this one claim; pass it to renew and to guarded updates.
+
+        With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
+        triggers, and the ones tied to no AgentOS. With ``source_ids``, only an event from one of
+        those sources.
+        """
+        raise NotImplementedError
+
+    async def renew_trigger_event_claim(self, event_id: str, worker_id: str) -> bool:
+        """Keep a claim alive while its run goes on. False when the claim no longer holds the event."""
+        raise NotImplementedError
+
+    async def delete_trigger_events(self, before: int, statuses: List[str]) -> int:
+        """Delete events in the given states stored before the cutoff. Returns the number deleted."""
         raise NotImplementedError
 
     # --- Tool Results (Optional) ---

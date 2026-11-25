@@ -8,5 +8,6 @@ def verify_signature(secret: str, body: bytes, signature_header: Optional[str]) 
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    # Constant-time comparison prevents timing side-channels
-    return hmac.compare_digest(expected, signature_header.removeprefix("sha256="))
+    # Constant-time comparison prevents timing side-channels. Compared as bytes: a header that is
+    # not ASCII is a wrong signature, not an error.
+    return hmac.compare_digest(expected.encode(), signature_header.removeprefix("sha256=").encode())
