@@ -179,6 +179,52 @@ def test_without_tasks_read_the_files_of_tasks_are_left_out_and_refused(system):
     assert (counted(full)[0] - counted(caller)[0], counted(full)[1] - counted(caller)[1]) == (1, 2)
 
 
+def test_an_agent_that_holds_the_company_filesystem_is_read_within_the_callers_company_access(system):
+    ids = written(system)
+    system.writer.filesystem = company_filesystem(system.db)
+    # The writer was initialized before it was given a filesystem.
+    system.os.resync(system.client.app)
+    agent, report = {"agent_id": "writer"}, f"tasks/{ids['task']}/report.md"
+    routes = (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "wiki/people.md"}),
+        ("/filesystem/search", {"query": "needle"}),
+        ("/filesystem/files", {}),
+        ("/filesystem/files", {"query": "needle"}),
+    )
+
+    # Without wiki:read the agent's handle opens nothing of the Company filesystem.
+    for scopes in ([*FILES_ONLY, "agents:read"], [*FILES_ONLY, "agents:read", "tasks:read"]):
+        caller = headers(scopes)
+        for path, params in routes:
+            for address in (agent, {**agent, "namespace": "company"}, {**agent, "filesystem_id": "company"}):
+                refused = system.client.get(path, params={**address, **params}, headers=caller)
+                assert refused.status_code == 403, (scopes, path, address, refused.text)
+                assert "wiki:read" in refused.json()["detail"] and "needle" not in refused.text
+        assert system.client.get("/filesystem/namespaces", params=agent, headers=caller).status_code == 403
+        # Every agent's files, with none named, leave the Company files out.
+        assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+        assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+
+    # With wiki:read and not tasks:read, the files of Tasks are left out and refused.
+    caller = headers([*FILES_ONLY, "agents:read", "wiki:read"])
+    rows = system.client.get("/filesystem/files", params=agent, headers=caller).json()["entries"]
+    assert rows and {row["agent_ids"][0] for row in rows} == {"writer"}
+    assert not [row["path"] for row in rows if row["path"].startswith("tasks/")]
+    found = system.client.get("/filesystem/search", params={**agent, "query": "needle"}, headers=caller)
+    assert report not in [entry["path"] for entry in found.json()["entries"]]
+    assert (
+        system.client.get("/filesystem/content", params={**agent, "path": report}, headers=caller).status_code == 403
+    )
+    full = headers([*COMPANY_READ, "agents:read"])
+    counted = system.client.get("/filesystem/namespaces", params=agent, headers=caller).json()["namespaces"]
+    whole = system.client.get("/filesystem/namespaces", params=agent, headers=full).json()["namespaces"]
+    assert [entry["id"] for entry in counted] == [entry["id"] for entry in whole] == ["company"]
+    assert counted[0]["file_count"] == whole[0]["file_count"] - 1
+    read = system.client.get("/filesystem/content", params={**agent, "path": report}, headers=full)
+    assert read.status_code == 200 and read.json()["content"] == "The report needle"
+
+
 def test_a_declared_filesystem_on_the_company_store_asks_for_the_company_scopes(tmp_path):
     system = System(tmp_path)
     try:

@@ -256,6 +256,7 @@ async def _get_sources(
     request: Request,
     agent_id: Optional[str],
     declared: list[_DeclaredFileSystem],
+    access: CompanyAccess,
 ) -> tuple[dict[tuple, _Source], Optional[dict[tuple, FileSystem]], Optional[HTTPException]]:
     """Every filesystem the request may read, keyed by backend and namespace, and those ``agent_id`` holds.
 
@@ -265,9 +266,12 @@ async def _get_sources(
     loaded. Its errors are raised, and its filesystems are returned as it holds
     them, in its own order. With none named, an agent that fails to load is left
     out and the first failure is returned, for the caller to raise when nothing
-    else answers.
+    else answers. Company files an agent holds are read within ``access``, as
+    those the AgentOS holds itself are: without it they are left out, and a
+    named agent that holds nothing else is refused.
     """
     failure: Optional[HTTPException] = None
+    refused = False
     sources: dict[tuple, _Source] = {
         entry.key: _Source(entry.filesystem, [], entry.forms, set(), entry.declared, entry.company)
         for entry in declared
@@ -286,6 +290,11 @@ async def _get_sources(
             continue
         for filesystem, read_only in agent_filesystems:
             key = _filesystem_key(filesystem)
+            if holds_company_files(filesystem, filesystem.namespace):
+                if not access.wiki:
+                    refused = True
+                    continue
+                filesystem = company_view(filesystem, access, os._company_db)
             if held is not None:
                 held[key] = filesystem
             source = sources.get(key)
@@ -294,6 +303,8 @@ async def _get_sources(
             source.agent_ids.append(candidate_id)
             if read_only:
                 source.read_only_agent_ids.add(candidate_id)
+    if refused and agent_id is not None and not held:
+        raise denied(access)
     return sources, held, failure
 
 
@@ -367,7 +378,7 @@ async def _select_filesystems(
             source = _Source(named[0].filesystem, [], named[0].forms, set(), named[0].declared, named[0].company)
             return [(declared_ids[named[0].key], source)], declared
 
-    sources, held, failure = await _get_sources(os, request, agent_id, declared)
+    sources, held, failure = await _get_sources(os, request, agent_id, declared, access)
     ids = await _source_ids(os, request, sources)
     keys = list(sources)
     if filesystem_id is not None:
@@ -742,9 +753,10 @@ def get_filesystem_router(
     ) -> FileSystemConfig:
         # An empty agent_id names no agent.
         agent_id = agent_id or None
-        held = _get_declared_filesystems(os, request, await get_company_access(request))
+        access = await get_company_access(request)
+        held = _get_declared_filesystems(os, request, access)
         # An agent that cannot be loaded is left out of the list: the other filesystems are still listed.
-        sources, held_by_agent, failure = await _get_sources(os, request, agent_id, held)
+        sources, held_by_agent, failure = await _get_sources(os, request, agent_id, held, access)
         ids = await _source_ids(os, request, sources)
 
         def describe(key: tuple, filesystem: FileSystem, declared: bool, company: bool) -> FileSystemNamespace:
