@@ -101,32 +101,25 @@ def resource_action_to_scope(resource: str, action: str) -> str:
     return f"{rtype}:{rid}:{action}"
 
 
-# Resource types whose policy rows may carry the old name. A row under the old name covers both the
-# current type and an application's own type of the old name.
+# Resource types whose stored policy rows may still carry the old name.
 _RENAMED_POLICY_TYPES = {"products": "goals"}
-# Marks a row that covers only an application's own type of a renamed name.
-_APPLICATION_PREFIX = "app."
 
 
 def policy_resource(resource: str, requested_type: str) -> str:
-    """A stored policy's resource, under ``requested_type`` when the policy covers that type by another name."""
+    """A stored policy's resource, under ``requested_type`` when that is the current name of its type.
+
+    Only the stored side is translated: a request for the old name is an application's own type.
+    """
     resource_type, separator, rest = resource.partition("/")
     if _RENAMED_POLICY_TYPES.get(resource_type) == requested_type:
-        return requested_type + separator + rest
-    if requested_type in _RENAMED_POLICY_TYPES and resource_type == _APPLICATION_PREFIX + requested_type:
         return requested_type + separator + rest
     return resource
 
 
 def legacy_resources(resource: str) -> List[str]:
-    """The spellings of ``resource`` under the old names of its type."""
+    """The spellings of ``resource`` under its renamed types, which a stored policy may still carry."""
     resource_type, separator, rest = resource.partition("/")
     return [old + separator + rest for old, new in _RENAMED_POLICY_TYPES.items() if new == resource_type]
-
-
-def application_resource(legacy: str) -> str:
-    """The resource that keeps a legacy policy for an application's own type only."""
-    return _APPLICATION_PREFIX + legacy
 
 
 def is_legacy_scope(scope: str) -> bool:
@@ -134,19 +127,20 @@ def is_legacy_scope(scope: str) -> bool:
     return scope.partition(":")[0] in _RENAMED_POLICY_TYPES
 
 
-def scope_to_policy(scope: str) -> Tuple[str, str]:
-    """The ``(resource, action)`` a scope is stored under: the old name of a renamed type is kept."""
-    resource, action = scope_to_resource_action(scope)
-    if is_legacy_scope(scope):
-        resource = scope.partition(":")[0] + "/" + resource.partition("/")[2]
-    return resource, action
+def policies_for_type(rows: List[Tuple[str, str, str, str]], requested_type: str) -> List[Tuple[str, str, str, str]]:
+    """The policy rows that decide a request for ``requested_type``, with renamed types translated.
 
-
-def write_order(scope: str, effect: str) -> int:
-    """Where a scope goes in a diff, so that granting a current type cannot rewrite what the diff says of its old name."""
-    if not is_legacy_scope(scope):
-        return 1
-    return 2 if effect == "deny" else 0
+    A role's row under the current name replaces its own row for the same scope under the old name.
+    The old row still decides requests for an application's own type of that name.
+    """
+    stored = {(role, resource, action) for role, resource, action, _ in rows}
+    current = []
+    for role, resource, action, effect in rows:
+        translated = policy_resource(resource, requested_type)
+        if translated != resource and (role, translated, action) in stored:
+            continue
+        current.append((role, translated, action, effect))
+    return current
 
 
 def resource_matches(pattern: str, request: str) -> bool:
