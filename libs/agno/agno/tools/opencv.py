@@ -282,12 +282,10 @@ class OpenCVTools(Toolkit):
                     log_error(error_msg)
                     return ToolResult(content=error_msg)
 
-                # Read the video file and encode to base64
+                # Read the video file and encode to base64. The temp file is
+                # removed by the finally block on every exit path.
                 with open(temp_filepath, "rb") as video_file:
                     video_bytes = video_file.read()
-
-                # Clean up temporary file
-                os.unlink(temp_filepath)
 
                 media_id = str(uuid4())
 
@@ -310,6 +308,17 @@ class OpenCVTools(Toolkit):
                 )
 
             finally:
+                # Every exit after the writer was opened must release it, and
+                # every exit after the temp file was created must delete it.
+                if "out" in locals() and out is not None:
+                    out.release()
+                if "temp_filepath" in locals():
+                    try:
+                        import os
+
+                        os.unlink(temp_filepath)
+                    except OSError:
+                        pass
                 if "cap" in locals():
                     cap.release()
                 cv2.destroyAllWindows()

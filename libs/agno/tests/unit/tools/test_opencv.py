@@ -598,3 +598,39 @@ class TestEdgeCases:
         # Setting should persist
         assert tools_with_preview.show_preview is True
         assert tools_without_preview.show_preview is False
+
+
+class TestCaptureVideoCleanup:
+    """Temp files and writers must be cleaned up on every exit path."""
+
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.unlink")
+    def test_codec_failure_unlinks_temp_file(
+        self, mock_unlink, mock_tempfile, opencv_tools_no_preview, mock_agent, mock_cv2
+    ):
+        mock_temp = Mock()
+        mock_temp.name = "/tmp/failed_video.mp4"
+        mock_tempfile.return_value.__enter__.return_value = mock_temp
+        mock_cv2.VideoWriter.return_value.isOpened.return_value = False
+
+        result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Failed to initialize video writer" in result.content
+        mock_unlink.assert_called_once_with("/tmp/failed_video.mp4")
+
+    @patch("tempfile.NamedTemporaryFile")
+    @patch("os.unlink")
+    def test_frame_read_failure_releases_writer_and_unlinks(
+        self, mock_unlink, mock_tempfile, opencv_tools_no_preview, mock_agent, mock_cv2
+    ):
+        mock_temp = Mock()
+        mock_temp.name = "/tmp/failed_frame.mp4"
+        mock_tempfile.return_value.__enter__.return_value = mock_temp
+        writer = mock_cv2.VideoWriter.return_value
+        mock_cv2.VideoCapture.return_value.read.return_value = (False, None)
+
+        result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Failed to capture video frame" in result.content
+        writer.release.assert_called()
+        mock_unlink.assert_called_once_with("/tmp/failed_frame.mp4")
