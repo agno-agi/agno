@@ -8879,6 +8879,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         page: int = 1,
         user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         return self._trigger_storage(
             triggers_sql.get_trigger_events,
@@ -8891,6 +8892,7 @@ class PostgresDb(BaseDb):
             limit=limit,
             page=page,
             user_id=user_id,
+            started_run=started_run,
             missing=([], 0),
         )
 

@@ -2441,8 +2441,11 @@ class BaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List trigger events, newest first.
+
+        With ``started_run``, only the events that started a run, or only the ones that did not.
 
         Returns:
             Tuple of (events, total_count)
@@ -4703,8 +4706,11 @@ class AsyncBaseDb(ABC):
         limit: int = 20,
         page: int = 1,
         user_id: Optional[str] = None,
+        started_run: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List trigger events, newest first.
+
+        With ``started_run``, only the events that started a run, or only the ones that did not.
 
         Returns:
             Tuple of (events, total_count)

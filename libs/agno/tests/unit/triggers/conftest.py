@@ -380,6 +380,7 @@ async def make_os(database):
         # Short waits, so a test of a failed read or of a run that does not stop takes no real time.
         executor.read_backoff = 0.01
         executor.stop_grace_seconds = 0.2
+        executor.sender_check_backoff = 0.01
         harness = Harness(agent_os=agent_os, app=app, db=db, github=github, model=model, client=client)
         built.append(harness)
         if declare_now:

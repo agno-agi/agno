@@ -84,6 +84,8 @@ class TriggerExecutor(ScheduleExecutor):
         read_attempts: int = 4,
         read_backoff: float = 1.0,
         stop_grace_seconds: float = 30.0,
+        sender_check_attempts: int = 4,
+        sender_check_backoff: float = 2.0,
     ) -> None:
         """
         Args:
@@ -92,6 +94,9 @@ class TriggerExecutor(ScheduleExecutor):
                 is left for a later attempt.
             read_backoff: Seconds before the second of those reads; doubled for each one after.
             stop_grace_seconds: How long a run that was asked to stop is watched for having stopped.
+            sender_check_attempts: How many times a source is asked whether a sender may start a
+                run before the event is left for a later attempt.
+            sender_check_backoff: Seconds before the second of those questions; doubled for each one after.
         """
         super().__init__(
             base_url=base_url,
@@ -103,6 +108,8 @@ class TriggerExecutor(ScheduleExecutor):
         self.read_attempts = read_attempts
         self.read_backoff = read_backoff
         self.stop_grace_seconds = stop_grace_seconds
+        self.sender_check_attempts = sender_check_attempts
+        self.sender_check_backoff = sender_check_backoff
 
     # --- Following a run ---
 
@@ -299,6 +306,26 @@ class TriggerExecutor(ScheduleExecutor):
 
     # --- Handling an event ---
 
+    async def _sender_refusal(self, source: Any, event: Any, event_id: str) -> Optional[str]:
+        """Ask the source whether the sender may start a run; the reason when they may not.
+
+        Only an answer counts. A question that fails is asked again, with a longer wait each time.
+
+        Raises:
+            Deferred: The source gave no answer. The event keeps its claim, so the events behind it
+                for the same key wait, and a later attempt asks again.
+        """
+        error: Optional[Exception] = None
+        for attempt in range(max(1, self.sender_check_attempts)):
+            if attempt:
+                await asyncio.sleep(self.sender_check_backoff * 2 ** (attempt - 1))
+            try:
+                return await source.asender_refusal(event)
+            except Exception as exc:
+                error = exc
+                log_debug(f"Trigger event {event_id}: the sender's access could not be checked: {exc}")
+        raise Deferred(f"the sender's access could not be checked: {error}")
+
     async def execute_event(self, row: Dict[str, Any], db: Any, runtime: Any) -> Dict[str, Any]:
         """Handle one claimed event and return its row as recorded.
 
@@ -383,11 +410,25 @@ class TriggerExecutor(ScheduleExecutor):
         attempt = 0
 
         if result is None:
+            if row["kind"] not in (trigger.get("events") or []):
+                # The event only continues a conversation. Events for one key are handled in the
+                # order they arrived, so the one that opens the conversation is behind us by now:
+                # if it started no run, there is nothing to continue.
+                _, started = await acall_db(
+                    db,
+                    "get_trigger_events",
+                    trigger_id=trigger["id"],
+                    event_key=row.get("event_key"),
+                    started_run=True,
+                    limit=1,
+                )
+                if not started:
+                    key = row.get("event_key") or "this event"
+                    reason = f"{row['kind']} continues a conversation, and {trigger['name']} started none for {key}"
+                    return await finish(EVENT_IGNORED, reason=reason)
+
             if stored.get(CHECK_SENDER_KEY):
-                try:
-                    refusal = await source.asender_refusal(event)
-                except Exception as exc:
-                    refusal = f"the sender's access could not be checked: {exc}"
+                refusal = await self._sender_refusal(source, event, event_id)
                 if refusal:
                     return await finish(EVENT_IGNORED, reason=refusal)
 

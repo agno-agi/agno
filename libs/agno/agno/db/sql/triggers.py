@@ -142,8 +142,11 @@ def get_trigger_events(
     limit: int = 20,
     page: int = 1,
     user_id: Optional[str] = None,
+    started_run: Optional[bool] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     conditions = []
+    if started_run is not None:
+        conditions.append(events.c.run_id.isnot(None) if started_run else events.c.run_id.is_(None))
     if trigger_id is not None:
         conditions.append(events.c.trigger_id == trigger_id)
     if source_id is not None:

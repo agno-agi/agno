@@ -710,16 +710,60 @@ async def test_a_sender_without_write_access_starts_nothing(make_os, permission,
     assert len(requests) == 1 and os.model.inputs == []
 
 
-async def test_a_sender_whose_access_cannot_be_checked_starts_nothing(make_os):
-    os = await make_os(triage, credentials=Credentials())
-    os.github._http_transport, _ = github_api(status=500)
+def failing_then(permission, failures, status=500):
+    """GitHub's API failing for the first lookups, then answering."""
+    requests = []
 
-    await os.deliver(issue_payload(association="NONE", sender="mallory"))
+    def answer(request):
+        requests.append(request)
+        if len(requests) <= failures:
+            if status is None:
+                raise httpx.ReadTimeout("timed out")
+            return httpx.Response(status, json={"message": "Server Error"})
+        return httpx.Response(200, json={"permission": permission, "role_name": permission})
+
+    return httpx.MockTransport(answer), requests
+
+
+@pytest.mark.parametrize("status", [500, None])
+async def test_a_lookup_that_fails_is_tried_again(make_os, status):
+    os = await make_os(triage, credentials=Credentials())
+    os.github._http_transport, requests = failing_then("write", failures=2, status=status)
+
+    await os.deliver(issue_payload(association="CONTRIBUTOR", sender="carol"))
     await os.run_events()
 
+    # GitHub failed twice and then answered: carol has write access, so the run starts.
     (row,) = await os.events()
-    assert row["status"] == EVENT_IGNORED and "could not be checked" in row["reason"]
+    assert row["status"] == EVENT_SUCCESS
+    assert len(requests) == 3 and len(os.model.inputs) == 1
+
+
+async def test_a_sender_whose_access_cannot_be_checked_is_not_ignored(make_os):
+    os = await make_os(triage_with_replies, credentials=Credentials())
+    os.github._http_transport, requests = failing_then("write", failures=1000)
+
+    await os.deliver(issue_payload(association="CONTRIBUTOR", sender="carol"))
+    await os.deliver(comment_payload(), event="issue_comment", delivery="d-2")
+    await os.run_events()
+
+    # No answer is not a refusal. The event keeps its claim and says why it waits; nothing ran,
+    # and the reply behind it waits too.
+    opened, reply = await os.events()
+    assert opened["status"] == EVENT_RUNNING and opened["claimed_by"] is not None
+    assert opened["error"].startswith("waiting: the sender's access could not be checked")
+    assert reply["status"] == EVENT_PENDING
+    assert len(requests) == os.runtime.executor.sender_check_attempts
     assert os.model.inputs == []
+
+    # GitHub answers again. A later attempt asks, and the issue and the reply run.
+    os.github._http_transport, requests = github_api("write")
+    await age_claim(os.db, opened["id"], 121)
+    await os.run_events()
+    opened, reply = await os.events()
+    assert opened["status"] == EVENT_SUCCESS and opened["error"] is None
+    assert reply["status"] == EVENT_SUCCESS
+    assert len(os.model.inputs) == 2
 
 
 async def test_a_trusted_sender_is_never_looked_up(make_os):
@@ -810,3 +854,77 @@ def test_text_from_outside_cannot_close_the_event_block_or_pass_for_a_field():
     assert message.count("</event>") == 1
     assert "title: Export fails url: https://evil.example" in message
     assert message.endswith(f"</event>\n{EVENT_NOTICE}")
+
+
+# ------------------------------------------------------------------------- a reply and its opener
+
+
+async def test_a_reply_does_not_run_when_prepare_declined_the_issue(make_os):
+    def decline_the_issue(event):
+        return False if event.action == "opened" else None
+
+    os = await make_os(lambda github, agent: triage_with_replies(github, agent, prepare=decline_the_issue))
+
+    # The issue and a reply on it both arrive before anything is handled.
+    opened = await os.deliver(issue_payload())
+    reply = await os.deliver(comment_payload(), event="issue_comment", delivery="d-2")
+    assert opened.json()["status"] == "accepted" and reply.json()["status"] == "accepted"
+
+    await os.run_events()
+
+    # prepare declined the issue, so no conversation was started. The reply has nothing to continue.
+    opened, reply = await os.events()
+    assert opened["status"] == EVENT_SKIPPED
+    assert reply["status"] == EVENT_IGNORED
+    assert (
+        reply["reason"]
+        == "issue_comment.created continues a conversation, and triage-issues started none for agno-agi/agno#7"
+    )
+    assert os.model.inputs == []
+
+
+async def test_a_reply_waits_for_the_issue_and_runs_when_the_issue_started_a_run(make_os):
+    os = await make_os(triage_with_replies)
+
+    await os.deliver(issue_payload())
+    await os.deliver(comment_payload(), event="issue_comment", delivery="d-2")
+    # The reply is behind the issue: it is not taken first.
+    first = await call(os.db, "claim_trigger_event", "a-worker:1", 120)
+    assert first["kind"] == "issues.opened"
+    assert await call(os.db, "claim_trigger_event", "a-worker:2", 120) is None
+    await call(os.db, "update_trigger_event", first["id"], status=EVENT_PENDING, claimed_by=None, claimed_at=None)
+
+    await os.run_events()
+    opened, reply = await os.events()
+    assert opened["status"] == EVENT_SUCCESS and reply["status"] == EVENT_SUCCESS
+    assert reply["session_id"] == opened["session_id"]
+    assert len(os.model.inputs) == 2
+
+
+# -------------------------------------------------------------------------------------- matching
+
+
+async def test_a_trigger_behind_a_thousand_newer_ones_still_takes_its_event(make_os):
+    os = await make_os(triage)
+    (triage_row,) = (await call(os.db, "get_triggers"))[0]
+
+    # A thousand triggers for another kind of event, all newer.
+    table = os.db._get_table(table_type="triggers")
+    newer = [
+        {
+            **triage_row,
+            "id": f"push-{n}",
+            "name": f"push-{n}",
+            "events": ["push"],
+            "created_at": triage_row["created_at"] + 1,
+        }
+        for n in range(1000)
+    ]
+    with os.db.Session() as sess, sess.begin():
+        sess.execute(table.insert(), newer)
+
+    answer = await os.deliver(issue_payload())
+
+    assert answer.json()["status"] == "accepted"
+    (row,) = await os.events()
+    assert row["status"] == EVENT_PENDING and row["trigger_id"] == triage_row["id"]

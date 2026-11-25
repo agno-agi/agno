@@ -334,3 +334,16 @@ async def test_a_claim_for_an_agentos_before_any_trigger_is_stored_takes_nothing
     assert await call(db, "claim_trigger_event", "first:1", 120, os_id="first-os") is None
     # With no AgentOS named, any event is taken.
     assert await call(db, "claim_trigger_event", "anyone:1", 120) is not None
+
+
+async def test_events_can_be_listed_by_whether_they_started_a_run(db):
+    started = event_row("d-1", status=EVENT_SUCCESS, run_id="run-1")
+    declined = event_row("d-2", status="skipped")
+    for row in (started, declined):
+        assert await call(db, "create_trigger_event", row)
+
+    rows, total = await call(db, "get_trigger_events", event_key="agno-agi/agno#7", started_run=True)
+    assert total == 1 and rows[0]["id"] == started["id"]
+    rows, total = await call(db, "get_trigger_events", event_key="agno-agi/agno#7", started_run=False)
+    assert total == 1 and rows[0]["id"] == declined["id"]
+    assert (await call(db, "get_trigger_events", event_key="agno-agi/agno#7"))[1] == 2

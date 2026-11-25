@@ -4,6 +4,7 @@ import hashlib
 from typing import Any, Dict, List, Optional, Sequence
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.schemas.scheduler import Schedule as StoredSchedule
 from agno.db.schemas.scheduler import build_run_endpoint
 from agno.db.schemas.triggers import (
     CODE_MANAGED,
@@ -26,6 +27,9 @@ from agno.utils.log import log_debug
 
 # Run metadata key that names the trigger a schedule was declared by.
 SCHEDULE_TRIGGER_METADATA_KEY = "trigger_name"
+
+# How many triggers are read at a time when a delivery is matched.
+MATCH_PAGE_SIZE = 500
 
 # managed_by of a schedule that a trigger declared, followed by the AgentOS that declared it.
 TRIGGER_MANAGED = "trigger"
@@ -141,30 +145,38 @@ async def adeclare_triggers(
 async def _adeclare_schedule(db: Any, schedule_manager: Any, trigger: Trigger, owner: str) -> Any:
     """Store the schedule a trigger declares, and mark it as declared by this AgentOS's triggers."""
     assert isinstance(trigger.on, Schedule)
+    cron, timezone = trigger.on.cron, trigger.on.timezone
+    fields: Dict[str, Any] = {
+        "endpoint": build_run_endpoint(trigger.target_type, trigger.target_id),
+        "description": trigger.description,
+        "payload": {"message": trigger.input, "metadata": {SCHEDULE_TRIGGER_METADATA_KEY: trigger.name}},
+        "timeout_seconds": trigger.timeout_seconds,
+        "max_retries": trigger.max_retries,
+        "retry_delay_seconds": trigger.retry_delay_seconds,
+    }
 
-    async def store() -> Any:
-        return await schedule_manager.acreate(
-            name=trigger.name,
-            cron=trigger.on.cron,  # type: ignore[union-attr]
-            endpoint=build_run_endpoint(trigger.target_type, trigger.target_id),
-            description=trigger.description,
-            payload={"message": trigger.input, "metadata": {SCHEDULE_TRIGGER_METADATA_KEY: trigger.name}},
-            timezone=trigger.on.timezone,  # type: ignore[union-attr]
-            timeout_seconds=trigger.timeout_seconds,
-            max_retries=trigger.max_retries,
-            retry_delay_seconds=trigger.retry_delay_seconds,
-            if_exists="update",
-            provenance={"managed_by": owner},
-        )
+    async def stored() -> Any:
+        row = await acall_db(db, "get_schedule_by_name", trigger.name, user_id=None)
+        return StoredSchedule.from_dict(row) if isinstance(row, dict) else row
 
-    try:
-        schedule = await store()
-    except Exception:
-        # Another replica stored the same schedule between this one's read and its insert, and the
-        # unique name refused the second insert. The row is there now: store over it.
-        if await acall_db(db, "get_schedule_by_name", trigger.name, user_id=None) is None:
-            raise
-        schedule = await store()
+    existing = await stored()
+    if existing is None:
+        try:
+            return await schedule_manager.acreate(
+                name=trigger.name, cron=cron, timezone=timezone, provenance={"managed_by": owner}, **fields
+            )
+        except Exception:
+            # Another replica stored the same schedule between this one's read and its insert, and
+            # the unique name refused the second insert. The row is there now: store over it.
+            existing = await stored()
+            if existing is None:
+                raise
+    if existing.cron_expr != cron or existing.timezone != timezone:
+        # A new cadence has a new next run.
+        fields.update(cron_expr=cron, timezone=timezone)
+    # Otherwise the stored next run stands: a schedule that came due while the app was down runs
+    # now, and is not pushed to its next slot by the restart.
+    schedule = await schedule_manager.aupdate(existing.id, method="POST", **fields) or existing
     # A schedule of this name that no control plane manages, or that an AgentOS's triggers declared
     # before, becomes this AgentOS's. One managed by something else keeps its manager.
     unmanaged = schedule.managed_by is None or str(schedule.managed_by).startswith(f"{TRIGGER_MANAGED}:")
@@ -214,6 +226,26 @@ class TriggerRuntime:
 
     async def astop(self) -> None:
         await self.poller.stop()
+
+    async def _triggers_of(self, source_id: str) -> List[Dict[str, Any]]:
+        """Every enabled trigger of a source that this AgentOS takes, however many there are."""
+        found: Dict[str, Dict[str, Any]] = {}
+        page = 1
+        while True:
+            rows, _ = await acall_db(
+                self.db,
+                "get_triggers",
+                source_id=source_id,
+                enabled=True,
+                limit=MATCH_PAGE_SIZE,
+                page=page,
+                os_id=self.os_id,
+            )
+            # Keyed by id: a trigger created while the pages are read can show up on two of them.
+            found.update({row["id"]: row for row in rows})
+            if len(rows) < MATCH_PAGE_SIZE:
+                return list(found.values())
+            page += 1
 
     async def _handled(self, trigger_id: str, key: Optional[str]) -> bool:
         """Whether this trigger already accepted an event for this key."""
@@ -269,10 +301,7 @@ class TriggerRuntime:
         if delivery.ignore_reason is not None:
             rows.append(self._row(delivery, None, EVENT_IGNORED, delivery.ignore_reason))
         else:
-            triggers, _ = await acall_db(
-                self.db, "get_triggers", source_id=delivery.source_id, enabled=True, limit=1000, os_id=self.os_id
-            )
-            for trigger in triggers:
+            for trigger in await self._triggers_of(delivery.source_id):
                 starts = delivery.kind in (trigger.get("events") or [])
                 continues = delivery.kind in (trigger.get("continue_on") or [])
                 if not starts and not continues:

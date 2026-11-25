@@ -1,7 +1,9 @@
 # Test Log: 33_triggers
 
-Tested 2026-11-24 with `.venv/bin/python` in a worktree of `feat/triggers`
-(from main at `bd24f44997`), SQLite, `gpt-5.6-luna`.
+Tested 2026-11-25 with `.venv/bin/python` in a worktree of `feat/triggers`
+(from main at `bd24f44997`), SQLite, `gpt-5.6-luna`. First tested 2026-11-24;
+run again after the fixes to how an event's run is followed and to which
+AgentOS a trigger belongs.
 
 ### github_issues.py
 
