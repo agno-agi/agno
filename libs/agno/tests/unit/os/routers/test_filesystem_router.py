@@ -1236,7 +1236,7 @@ def test_two_agents_on_one_namespace_and_two_backends_are_read_by_id(tmp_path, d
     for path in ("/filesystem/entries", "/filesystem/files"):
         ambiguous = client.get(path, params={"filesystem_id": "notes"}, headers=_headers("alice"))
         assert ambiguous.status_code == 409, path
-        assert "/config" in ambiguous.json()["detail"]
+        assert "/filesystem/namespaces" in ambiguous.json()["detail"]
 
 
 def test_a_longer_form_of_an_id_names_the_same_filesystem(db, client_factory):

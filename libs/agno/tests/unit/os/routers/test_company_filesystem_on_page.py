@@ -306,6 +306,84 @@ def test_the_list_sees_the_agents_the_browse_routes_see(tmp_path):
         files_db.close()
 
 
+def test_an_id_from_config_can_name_two_stores_that_the_list_tells_apart(tmp_path):
+    main = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    code_store, factory_store = FileSystem(main, namespace="notes"), FileSystem(archive, namespace="notes")
+    code_store.write("state.md", "the code agent's")
+    factory_store.write("state.md", "the factory agent's")
+    factory = AgentFactory(
+        id="factory-agent",
+        db=main,
+        factory=lambda ctx: Agent(id="factory-agent", db=main, filesystem=factory_store),
+    )
+    agent_os = AgentOS(
+        db=main, agents=[Agent(id="code-agent", db=main, filesystem=code_store), factory], telemetry=False
+    )
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            # /config describes the agent declared in code alone, so its store is named by the namespace.
+            config = client.get("/config").json()["filesystem"]["namespaces"]
+            assert [entry["id"] for entry in config] == ["notes"]
+            # The routes also see the factory agent's store. There the namespace names two stores.
+            by_config_id = client.get("/filesystem/entries", params={"filesystem_id": "notes"})
+            assert by_config_id.status_code == 409
+            assert "/filesystem/namespaces" in by_config_id.json()["detail"]
+
+            # The list gives each store the id the routes take.
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            assert [(entry["id"], entry["agents"]) for entry in listed] == [
+                ("notes:archive-db", [{"id": "factory-agent"}]),
+                ("notes:main-db", [{"id": "code-agent"}]),
+            ]
+            for filesystem_id, content in (
+                ("notes:main-db", "the code agent's"),
+                ("notes:archive-db", "the factory agent's"),
+            ):
+                read = client.get("/filesystem/content", params={"filesystem_id": filesystem_id, "path": "state.md"})
+                assert read.status_code == 200 and read.json()["content"] == content
+            # A store has the same id when the list or a listing of files is narrowed to one agent.
+            for agent_id, filesystem_id in (("code-agent", "notes:main-db"), ("factory-agent", "notes:archive-db")):
+                of_agent = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
+                assert [(entry["id"], entry["agents"]) for entry in of_agent] == [(filesystem_id, [{"id": agent_id}])]
+                rows = client.get("/filesystem/files", params={"agent_id": agent_id}).json()["entries"]
+                assert [(row["filesystem_id"], row["path"]) for row in rows] == [(filesystem_id, "state.md")]
+    finally:
+        main.close()
+        archive.close()
+
+
+def test_the_company_id_with_an_agent_opens_it_only_when_that_agent_holds_it(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    holder = Agent(
+        id="holder", db=db, filesystem=FileSystem(db, namespace="company", user_scoped=False, read_only=True)
+    )
+    other = Agent(id="other", db=db, filesystem=FileSystem(db, namespace="other-notes"))
+    agent_os = AgentOS(db=db, agents=[holder, other], company=CompanyConfig(), telemetry=False)
+    try:
+        company_filesystem(db).write("wiki/people.md", "Ada")
+        with TestClient(agent_os.get_app()) as client:
+
+            def opened(**params) -> tuple:
+                response = client.get("/filesystem/entries", params=params)
+                return response.status_code, response.json().get("filesystem_id")
+
+            assert opened(filesystem_id="company") == (200, "company")
+            assert opened(filesystem_id="company", agent_id="holder") == (200, "company")
+            # The other agent does not hold the Company filesystem, so the two name nothing.
+            assert opened(filesystem_id="company", agent_id="other") == (404, None)
+            assert opened(agent_id="other") == (200, "other-notes")
+
+            def listed(agent_id: str) -> list:
+                entries = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
+                return [(entry["id"], entry["company"], entry["agents"]) for entry in entries]
+
+            assert listed("holder") == [("company", True, [{"id": "holder", "access": "read_only"}])]
+            assert listed("other") == [("other-notes", False, [{"id": "other"}])]
+    finally:
+        db.close()
+
+
 def test_the_list_describes_each_filesystem_as_config_does(tmp_path):
     db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
     shared = FileSystem(db, namespace="shared")

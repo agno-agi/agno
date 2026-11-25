@@ -55,8 +55,8 @@ combined on one agent.
 AgentOS discovers filesystems from both the setting and `tools`. `/config` lists
 each namespace's linked `agents`, with `access: "read_only"` on read-only agents
 and omitted `access` defaulting to `"full"`. To browse one of an
-agent's several stores, pass its `id` from `/config` to the `/filesystem` routes
-as `filesystem_id`.
+agent's several stores, pass its `id` from `GET /filesystem/namespaces` to the
+`/filesystem` routes as `filesystem_id`.
 
 ## File systems declared on AgentOS
 
@@ -202,6 +202,12 @@ linked agents with access in `agents`. `namespace` filters it to one namespace a
 `filesystem` setting, the Company filesystem and concrete local agents. Factory and
 stored agents are not included there. When identity is unavailable, placeholders
 remain in the namespace; browsing requires the missing identity.
+
+Take ids from `GET /filesystem/namespaces`, not from `/config`. An id is the
+shortest name no other visible filesystem shares. `/config` does not see the
+store of a factory or stored agent, so it can give a store the id `notes` where
+the routes, which see another `notes` store, need `notes:main-db`. The routes
+answer 409 to an id that names two stores.
 
 With Company on, the Company filesystem is one entry: namespace `company`, with
 `wiki/`, `goals/<goal-id>/`, `tasks/<task-id>/` and `notes/` under it. `filesystem:read`

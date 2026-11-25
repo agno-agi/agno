@@ -154,7 +154,9 @@ async def _get_agent_filesystem_access(os: "AgentOS", agent_id: str, request: Re
     return list(resolved.values())
 
 
-_AMBIGUOUS_ID_DETAIL = "Several filesystems match this filesystem_id; pass the id /config lists for the one to read"
+_AMBIGUOUS_ID_DETAIL = (
+    "Several filesystems match this filesystem_id; pass the id /filesystem/namespaces lists for the one to read"
+)
 
 
 class _DeclaredFileSystem(NamedTuple):
@@ -452,7 +454,8 @@ _USER_ID_QUERY = Query(
     description="User partition to browse: your own, or any user's for an admin. An admin who names none sees every partition",
 )
 _FILESYSTEM_ID_QUERY = Query(
-    None, description="Id of the filesystem to browse, as /config lists it. It needs no namespace or agent_id"
+    None,
+    description="Id of the filesystem to browse, as /filesystem/namespaces lists it. It needs no namespace or agent_id",
 )
 
 
@@ -644,7 +647,9 @@ def get_filesystem_router(
         description=(
             "List every filesystem the caller can reach: those declared on the AgentOS, the Company "
             "filesystem, and those of the agents the caller may read, stored and factory agents included. "
-            "Each entry carries its namespace and the id the other /filesystem routes take as filesystem_id."
+            "Each entry carries its namespace and the id the other /filesystem routes take as filesystem_id. "
+            "Take ids from this list: /config describes only the agents declared in code, so an id it gives "
+            "can name two filesystems here."
         ),
     )
     async def list_filesystems(
@@ -709,7 +714,9 @@ def get_filesystem_router(
     )
     async def list_filesystem_files(
         request: Request,
-        filesystem_id: Optional[str] = Query(None, description="Filter by filesystem id, as /config lists it"),
+        filesystem_id: Optional[str] = Query(
+            None, description="Filter by filesystem id, as /filesystem/namespaces lists it"
+        ),
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
         query: Optional[str] = Query(None, min_length=1, max_length=200, description="Search file contents"),
