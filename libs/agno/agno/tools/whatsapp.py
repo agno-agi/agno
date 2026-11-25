@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import httpx
 from pydantic import BaseModel, Field
@@ -93,12 +93,119 @@ class WhatsAppTools(Toolkit):
     def _get_messages_url(self) -> str:
         return f"{self.base_url}/{self.version}/{self.phone_number_id}/messages"
 
+    @staticmethod
+    def _normalize_recipient(target: str) -> str:
+        cleaned = target.strip()
+        if "@" in cleaned:
+            return cleaned
+        if cleaned.startswith("+"):
+            cleaned = cleaned[1:]
+        filtered = "".join(c for c in cleaned if c.isdigit())
+        separators = {" ", "-", "(", ")", "."}
+        if filtered and all(c.isdigit() or c in separators for c in cleaned):
+            return filtered
+        return cleaned
+
     def _resolve_recipient(self, recipient: Optional[str]) -> Optional[str]:
-        if recipient:
-            return recipient
-        if self.default_recipient:
-            return self.default_recipient
-        return None
+        target = recipient or self.default_recipient
+        if not target:
+            return None
+        return self._normalize_recipient(target) or None
+
+    def _coerce_reply_buttons(self, buttons: Any) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+        """Normalize and validate reply buttons from either ReplyButton models or dicts."""
+        if isinstance(buttons, dict):
+            items = [buttons]
+        elif isinstance(buttons, list):
+            items = buttons
+        else:
+            return None, "WhatsApp requires 1-3 reply buttons"
+
+        if not items or len(items) > 3:
+            return None, "WhatsApp requires 1-3 reply buttons"
+
+        action_buttons: List[Dict[str, Any]] = []
+        for btn in items:
+            if isinstance(btn, ReplyButton):
+                btn_id = btn.id
+                btn_title = btn.title
+            elif isinstance(btn, dict):
+                btn_id = btn.get("id")
+                btn_title = btn.get("title")
+            else:
+                return None, f"Invalid reply button type: {type(btn).__name__}"
+
+            if not btn_id or not btn_title:
+                return None, "Each reply button must have non-empty 'id' and 'title'"
+
+            action_buttons.append({"type": "reply", "reply": {"id": str(btn_id), "title": str(btn_title)[:20]}})
+
+        return action_buttons, None
+
+    def _coerce_list_sections(self, sections: Any) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+        """Normalize and validate list sections from either ListSection models or dicts."""
+        if isinstance(sections, dict):
+            items = [sections]
+        elif isinstance(sections, list):
+            items = sections
+        else:
+            return None, "WhatsApp requires 1-10 sections"
+
+        if not items or len(items) > 10:
+            return None, "WhatsApp requires 1-10 sections"
+
+        sections_payload: List[Dict[str, Any]] = []
+        total_rows = 0
+
+        for section in items:
+            if isinstance(section, ListSection):
+                sec_title = section.title
+                sec_rows = section.rows
+            elif isinstance(section, dict):
+                sec_title = section.get("title")
+                sec_rows = section.get("rows")
+            else:
+                return None, f"Invalid list section type: {type(section).__name__}"
+
+            if not sec_title:
+                return None, "Each section must have a non-empty 'title'"
+
+            if isinstance(sec_rows, dict):
+                sec_rows = [sec_rows]
+            elif not isinstance(sec_rows, list) or not sec_rows:
+                return None, f"Section '{sec_title}' must contain a non-empty list of rows"
+
+            total_rows += len(sec_rows)
+            rows: List[Dict[str, Any]] = []
+            for row in sec_rows:
+                if isinstance(row, ListRow):
+                    row_id = row.id
+                    row_title = row.title
+                    row_desc = row.description
+                elif isinstance(row, dict):
+                    row_id = row.get("id")
+                    row_title = row.get("title")
+                    row_desc = row.get("description")
+                else:
+                    return None, f"Invalid list row type: {type(row).__name__}"
+
+                if not row_id or not row_title:
+                    return None, "Each list row must have non-empty 'id' and 'title'"
+
+                row_data: Dict[str, Any] = {"id": str(row_id), "title": str(row_title)[:24]}
+                if row_desc:
+                    row_data["description"] = str(row_desc)[:72]
+                rows.append(row_data)
+
+            sections_payload.append({"title": str(sec_title)[:24], "rows": rows})
+
+        if total_rows > 10:
+            return (
+                None,
+                f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows.",
+            )
+
+        return sections_payload, None
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
@@ -216,10 +323,9 @@ class WhatsAppTools(Toolkit):
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
 
-            if not buttons or len(buttons) > 3:
-                return json.dumps({"error": "WhatsApp requires 1-3 reply buttons"})
-
-            action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title[:20]}} for btn in buttons]
+            action_buttons, error = self._coerce_reply_buttons(buttons)
+            if error:
+                return json.dumps({"error": error})
 
             interactive: Dict[str, Any] = {
                 "type": "button",
@@ -271,27 +377,9 @@ class WhatsAppTools(Toolkit):
             if not to:
                 return json.dumps({"error": "No recipient provided and no default recipient set"})
 
-            if not sections or len(sections) > 10:
-                return json.dumps({"error": "WhatsApp requires 1-10 sections"})
-
-            total_rows = sum(len(s.rows) for s in sections)
-            if total_rows > 10:
-                return json.dumps(
-                    {
-                        "error": f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows."
-                    }
-                )
-
-            # Build payload with truncation without mutating caller's models
-            sections_payload = []
-            for section in sections:
-                rows = []
-                for row in section.rows:
-                    row_data: Dict[str, Any] = {"id": row.id, "title": row.title[:24]}
-                    if row.description:
-                        row_data["description"] = row.description[:72]
-                    rows.append(row_data)
-                sections_payload.append({"title": section.title, "rows": rows})
+            sections_payload, error = self._coerce_list_sections(sections)
+            if error:
+                return json.dumps({"error": error})
 
             interactive: Dict[str, Any] = {
                 "type": "list",
