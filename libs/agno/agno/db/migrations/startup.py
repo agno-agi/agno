@@ -25,6 +25,8 @@ from agno.db.utils import legacy_company_table
 
 try:
     from sqlalchemy import select, text
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.ext.asyncio import AsyncEngine
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -119,12 +121,31 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
     return pending, behind
 
 
-def _sqlite_lock_path(db: Any) -> Optional[str]:
-    """The file that holds the migration lock of a SQLite database. None for one kept in memory."""
-    path = db.db_engine.url.database
-    if not path or path == ":memory:" or path.startswith("file:"):
-        return None
-    return f"{path}.migration-lock"
+async def _sqlite_lock_path(db: Any) -> Optional[str]:
+    """The file that holds the migration lock of a SQLite database. None for one kept in memory.
+
+    SQLite is asked for the file it has open, so a path, a ``file:`` URI and a relative path to one
+    database all share the lock.
+    """
+    conn = await _call(db.db_engine.connect)
+    try:
+        rows = (await _call(conn.execute, text("PRAGMA database_list"))).all()
+    finally:
+        await _call(conn.close)
+    path = next((row[2] for row in rows if row[1] == "main"), None)
+    return f"{os.path.realpath(path)}.migration-lock" if path else None
+
+
+def _lock_engine(db: Any) -> Any:
+    """An engine that connects as the database's own does, outside its pool.
+
+    The lock is held while the migration runs, and the pool may have no second connection to give.
+    """
+    if isinstance(db, AsyncBaseDb):
+        engine = db.db_engine.sync_engine  # type: ignore[attr-defined]
+        return AsyncEngine(Engine(engine.pool.recreate(), engine.dialect, engine.url))
+    engine = db.db_engine
+    return Engine(engine.pool.recreate(), engine.dialect, engine.url)
 
 
 async def _wait_for(acquire: Any) -> bool:
@@ -144,7 +165,12 @@ async def _postgres_lock(db: Any) -> AsyncIterator[bool]:
     """A session advisory lock on one connection. PostgreSQL releases it when the connection ends."""
     acquire, release = "SELECT pg_try_advisory_lock(hashtext(:name))", "SELECT pg_advisory_unlock(hashtext(:name))"
     params = {"name": _LOCK_NAME}
-    conn = await _call(db.db_engine.connect)
+    engine = _lock_engine(db)
+    try:
+        conn = await _call(engine.connect)
+    except BaseException:
+        await _call(engine.dispose)
+        raise
     held = False
     try:
 
@@ -163,15 +189,15 @@ async def _postgres_lock(db: Any) -> AsyncIterator[bool]:
             await _call(conn.invalidate)
         finally:
             await _call(conn.close)
+            await _call(engine.dispose)
 
 
 @asynccontextmanager
-async def _sqlite_lock(db: Any) -> AsyncIterator[bool]:
+async def _sqlite_lock(path: Optional[str]) -> AsyncIterator[bool]:
     """An exclusive transaction on a lock file beside the database. SQLite releases it when the process ends.
 
     The database file itself cannot hold the lock: the migration writes to it on other connections.
     """
-    path = _sqlite_lock_path(db)
     if path is None:
         yield True
         return
@@ -220,11 +246,11 @@ async def _migrate(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
     if not pending:
         return StartupMigration("current")
     postgres = _is_db_type(db, _POSTGRES_DB_TYPES)
-    async with _postgres_lock(db) if postgres else _sqlite_lock(db) as held:
+    lock_path = None if postgres else await _sqlite_lock_path(db)
+    async with _postgres_lock(db) if postgres else _sqlite_lock(lock_path) as held:
         if not held:
             return StartupMigration("skipped", f"another process held the migration lock for {LOCK_WAIT_SECONDS:.0f}s")
         result = await _migrate_locked(db)
-    lock_path = None if postgres else _sqlite_lock_path(db)
     if lock_path is not None and not result.pending:
         # Nothing is left to migrate, so the lock file has no more use. A process that still waits
         # on it takes the lock next and finds the same.

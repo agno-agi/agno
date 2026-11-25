@@ -12,10 +12,14 @@ from typing import Any, List
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from agno.company import Goal, Routine
 from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.startup import StartupMigration, _call, _sqlite_lock_path, migrate_at_startup
 from agno.db.migrations.versions import v3_3_0
+from agno.db.postgres import AsyncPostgresDb, PostgresDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from agno.utils.log import log_error
@@ -444,3 +448,43 @@ def test_a_stored_routine_says_the_migration_is_needed(databases, logged):
 
         assert [routine["id"] for routine in client.get("/company/routines").json()["data"]] == [routine_id]
         assert client.get(f"/company/routines/{routine_id}").json()["name"] == "docs.weekly"
+
+
+# ------------------------------------------------------------------------------ the migration lock
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_pool_of_one_connection_is_migrated(database, use_async):
+    if not database.postgres:
+        pytest.skip("The PostgreSQL lock takes a connection; the SQLite lock takes a file")
+    _write_3_2_0_database(database)
+    make_engine, adapter = (create_async_engine, AsyncPostgresDb) if use_async else (create_engine, PostgresDb)
+    engine = make_engine(database.url, pool_size=1, max_overflow=0, pool_timeout=5)
+    db = adapter(db_engine=engine, db_schema=database.schema)
+
+    assert await migrate_at_startup(db) == StartupMigration("migrated")
+
+    _assert_renamed(database)
+    await _call(engine.dispose)
+
+
+async def test_every_name_of_a_sqlite_file_shares_its_lock(tmp_path):
+    path = str((tmp_path / "company.db").resolve())
+    link = tmp_path / "link.db"
+    SqliteDb(db_file=path)._create_all_tables()
+    link.symlink_to(path)
+    uri = f"file:{path}?uri=true"
+
+    for db in (
+        SqliteDb(db_file=path),
+        SqliteDb(db_url=f"sqlite:///{uri}"),
+        AsyncSqliteDb(db_url=f"sqlite+aiosqlite:///{uri}"),
+        SqliteDb(db_url=f"sqlite:///{link}"),
+    ):
+        assert await _sqlite_lock_path(db) == path + ".migration-lock"
+        await _call(db.close)
+
+
+@pytest.mark.parametrize("url", ["sqlite://", "sqlite:///file:shared?mode=memory&cache=shared&uri=true"])
+async def test_a_sqlite_database_in_memory_has_no_lock_file(url):
+    assert await _sqlite_lock_path(SqliteDb(db_url=url)) is None
