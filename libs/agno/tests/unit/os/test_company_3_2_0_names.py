@@ -994,44 +994,73 @@ def test_model_copy_reads_the_3_2_0_names():
 
 
 def test_a_mapping_for_a_renamed_route_keeps_its_place():
-    from agno.os.scopes import get_required_scopes_for_route, with_renamed_routes
+    from agno.os.scopes import get_required_scopes_for_route
 
-    mappings = with_renamed_routes(
-        {
-            "GET /company/products/open": [],
-            "GET /company/products*": ["custom:read"],
-            "GET /*": [],
-        }
-    )
+    mappings = {
+        "GET /company/products/open": [],
+        "GET /company/products*": ["custom:read"],
+        "GET /*": [],
+    }
 
     for path, scopes in (("/open", []), ("", ["custom:read"]), ("/docs", ["custom:read"])):
         assert get_required_scopes_for_route(mappings, "GET", "/company/products" + path) == scopes
         assert get_required_scopes_for_route(mappings, "GET", "/company/goals" + path) == scopes
-    # A mapping written for the current path keeps its own place and scopes.
+    # A mapping written for the current path decides for it.
     written = {"GET /company/goals/*": ["a"], "GET /company/products/*": ["b"]}
-    assert with_renamed_routes(written) == written
+    assert get_required_scopes_for_route(written, "GET", "/company/goals/docs") == ["a"]
+    assert get_required_scopes_for_route(written, "GET", "/company/products/docs") == ["b"]
 
 
 def test_a_renamed_mapping_does_not_shadow_one_written_for_the_current_path():
-    from agno.os.scopes import get_required_scopes_for_route, with_renamed_routes
+    from agno.os.scopes import get_required_scopes_for_route
 
     # Half renamed: the operator wrote some mappings under the current path only.
-    mappings = with_renamed_routes(
-        {
-            "GET /company/products/*": ["goals:read"],
-            "GET /company/goals/*/wiki": ["wiki:read"],
-            "POST /company/goals/*/restore": ["agent_os:admin"],
-            "POST /company/products/*": ["goals:write"],
-            "GET /company/*": ["agent_os:admin"],
-        }
-    )
+    mappings = {
+        "GET /company/products/*": ["goals:read"],
+        "GET /company/goals/*/wiki": ["wiki:read"],
+        "POST /company/goals/*/restore": ["agent_os:admin"],
+        "POST /company/products/*": ["goals:write"],
+    }
 
     assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs/wiki") == ["wiki:read"]
     assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs") == ["goals:read"]
     assert get_required_scopes_for_route(mappings, "POST", "/company/goals/docs/restore") == ["agent_os:admin"]
     assert get_required_scopes_for_route(mappings, "POST", "/company/goals/docs") == ["goals:write"]
-    # A copy still comes before the broader mappings that followed its old one.
-    assert list(mappings).index("GET /company/goals/*") < list(mappings).index("GET /company/*")
+
+
+def test_a_renamed_mapping_guards_ahead_of_a_broader_fallback():
+    from agno.os.scopes import get_required_scopes_for_route
+
+    mappings = {
+        "GET /company/products/*": ["goals:read"],
+        "GET /company/*": [],
+        "GET /company/goals/*/wiki": ["wiki:read"],
+    }
+
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs") == ["goals:read"]
+    # The wiki mapping comes after the fallback, so the fallback shadows it, and the old mapping guards.
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs/wiki") == ["goals:read"]
+    assert get_required_scopes_for_route(mappings, "GET", "/company/details") == []
+    # A fallback the operator put first still decides, as it did for the old path.
+    first = {"GET /company/*": ["agent_os:admin"], "GET /company/products/*": ["goals:read"]}
+    assert get_required_scopes_for_route(first, "GET", "/company/products/docs") == ["agent_os:admin"]
+    assert get_required_scopes_for_route(first, "GET", "/company/goals/docs") == ["agent_os:admin"]
+
+
+def test_a_mapping_for_an_old_path_overrides_the_default_for_the_current_path():
+    from agno.os.scopes import get_default_scope_mappings, get_required_scopes_for_route, without_renamed_defaults
+
+    written = {"GET /company/products/*": ["agent_os:admin"]}
+    mappings = without_renamed_defaults(get_default_scope_mappings(company=True), written)
+    mappings.update(written)
+
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs") == ["agent_os:admin"]
+    # Defaults the old mapping does not name are kept.
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs/wiki") == ["wiki:read"]
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals") == ["goals:read"]
+    # A mapping written for the current path keeps its default overridden only by itself.
+    both = {"GET /company/products/*": ["agent_os:admin"], "GET /company/goals/*": ["goals:read"]}
+    assert "GET /company/goals/*" in without_renamed_defaults(get_default_scope_mappings(company=True), both)
 
 
 @pytest.mark.parametrize("use_async", [False, True])
