@@ -242,37 +242,106 @@ def test_super_agent_without_company_does_not_read_or_write_notes_past_the_ones_
     reader.close()
 
 
-@pytest.mark.parametrize("where", ["company/notes", "company"])
-@pytest.mark.parametrize("os_async", [False, True])
-def test_agentos_starts_with_notes_left_in_its_database_and_notes_are_refused_until_they_move(
-    tmp_path, where, os_async
-):
-    from fastapi.testclient import TestClient
+def _statements(db, seen: list, label: str) -> None:
+    from sqlalchemy import event
 
-    from agno.db.migrations.versions.v3_3_0 import move_company_notes
+    @event.listens_for(db.db_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany):
+        seen.append((label, " ".join(statement.split())))
 
+
+def _notes_left_in_the_agentos_database(tmp_path, where: str) -> tuple:
+    """Notes written before 3.3.0 in the AgentOS database, and a Company database kept apart from it."""
     os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
     os_reader, company_db = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
-    # Notes written before 3.3.0: where 3.2.0 kept them, or where the migration of the AgentOS database put them.
+    # Where 3.2.0 kept them, or where the migration of the AgentOS database put them.
     if where == "company/notes":
         FileSystem(os_reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
     else:
         FileSystem(os_reader, namespace="company", user_scoped=False).write("notes/ideas.md", "A note")
-    company_filesystem(company_db).write("wiki/people.md", "Ada")
-    os_db = AsyncSqliteDb(db_file=os_file) if os_async else SqliteDb(db_file=os_file)
-    agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+    FileSystem(company_db, namespace="company", user_scoped=False).write("wiki/people.md", "Ada")
+    return os_file, os_reader, company_db
 
-    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
-        # Only notes/ waits: the rest of the Company file system is served.
-        assert client.get("/company/wiki/people.md").json()["content"] == "Ada"
-        for url in ("/company/notes", "/company/notes/ideas.md"):
-            message = _refused(client.get(url))
-            assert "move_company_notes" in message and "agno.db.migrations.versions.v3_3_0" in message
-            assert "amove_company_notes" in message
-        # The call the error names is the whole remedy, and the same AgentOS then serves the note.
-        assert move_company_notes(os_reader, company_db) == 1
+
+@pytest.mark.parametrize("where", ["company/notes", "company"])
+@pytest.mark.parametrize("os_async", [False, True])
+def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, os_async):
+    from fastapi.testclient import TestClient
+
+    os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, where)
+    seen: list = []
+    _statements(os_reader, seen, "os")
+
+    def start() -> AgentOS:
+        os_db = AsyncSqliteDb(db_file=os_file) if os_async else os_reader
+        return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+
+    with TestClient(start().get_app(), raise_server_exceptions=False) as client:
         served = client.get("/company/notes/ideas.md")
         assert served.status_code == 200 and served.json()["content"] == "A note"
+        assert [row["path"] for row in client.get("/company/notes").json()["data"]] == ["ideas.md"]
+    # The note left the AgentOS database: it is in one place.
+    assert stored(company_db) == {"notes/ideas.md": "A note", "wiki/people.md": "Ada"}
+    assert FileSystem(os_reader, namespace="company", user_scoped=False).list() == []
+    assert FileSystem(os_reader, namespace="company/notes", user_scoped=False).list() == []
+
+    # A second start moves nothing and writes nothing to the file table.
+    with TestClient(start().get_app()) as client:
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
+    assert stored(company_db) == {"notes/ideas.md": "A note", "wiki/people.md": "Ada"}
+    os_reader.close()
+    company_db.close()
+
+
+@pytest.mark.parametrize("reason", ["provisioning is off", "another note is in the way"])
+@pytest.mark.parametrize("os_async", [False, True])
+def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(tmp_path, reason, os_async):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from agno.db.migrations.versions.v3_3_0 import move_company_notes
+
+    os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, "company/notes")
+    in_the_way = FileSystem(company_db, namespace="company", user_scoped=False)
+    if reason == "another note is in the way":
+        in_the_way.write("notes/ideas.md", "Written on this version")
+    os_db = AsyncSqliteDb(db_file=os_file) if os_async else SqliteDb(db_file=os_file)
+    agent_os = AgentOS(
+        db=os_db,
+        company=CompanyConfig(db=company_db),
+        auto_provision_dbs=reason != "provisioning is off",
+        telemetry=False,
+    )
+    errors: list = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            errors.append(record.getMessage())
+
+    handler = Collect(level=logging.ERROR)
+    logging.getLogger("agno").addHandler(handler)
+    try:
+        # AgentOS starts either way. Only notes/ waits: the rest of the Company file system is served.
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            assert client.get("/company/wiki/people.md").json()["content"] == "Ada"
+            for url in ("/company/notes", "/company/notes/ideas.md"):
+                message = _refused(client.get(url))
+                assert "move_company_notes" in message and "agno.db.migrations.versions.v3_3_0" in message
+                assert "amove_company_notes" in message
+            not_moved = [message for message in errors if "Notes were not moved" in message]
+            if reason == "another note is in the way":
+                # The start says once why it moved nothing.
+                assert len(not_moved) == 1 and "notes/ideas.md" in not_moved[0]
+                in_the_way.delete("notes/ideas.md")
+            else:
+                assert not_moved == []
+            # The call the error names is the whole remedy, and the same AgentOS then serves the note.
+            assert move_company_notes(os_reader, company_db) == 1
+            served = client.get("/company/notes/ideas.md")
+            assert served.status_code == 200 and served.json()["content"] == "A note"
+    finally:
+        logging.getLogger("agno").removeHandler(handler)
     os_reader.close()
     company_db.close()
     if not os_async:
@@ -342,14 +411,6 @@ def test_agentos_serves_notes_when_none_is_left_behind(tmp_path):
         assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
     for db in (os_db, company_db, single, twin):
         db.close()
-
-
-def _statements(db, seen: list, label: str) -> None:
-    from sqlalchemy import event
-
-    @event.listens_for(db.db_engine, "before_cursor_execute")
-    def record(conn, cursor, statement, parameters, context, executemany):
-        seen.append((label, " ".join(statement.split())))
 
 
 def test_the_check_for_waiting_files_runs_at_first_use_and_stops_once_nothing_waits(tmp_path):
@@ -1133,3 +1194,26 @@ def test_a_write_on_an_asynchronous_database_is_held_to_the_same_limits(tmp_path
             await db.db_engine.dispose()
 
     assert asyncio.run(write()) == 1
+
+
+def test_notes_are_not_moved_at_the_start_while_a_database_is_not_migrated(tmp_path):
+    from fastapi.testclient import TestClient
+
+    os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, "company/notes")
+    # The Company database has a table behind an older migration, which the start leaves for an operator.
+    company_db._get_table("sessions", create_table_if_not_found=True)
+    company_db._get_table("memories", create_table_if_not_found=True)
+    company_db.upsert_schema_version(company_db.session_table_name, "2.5.0")
+    company_db.upsert_schema_version(company_db.memory_table_name, "3.0.0")
+    agent_os = AgentOS(db=os_reader, company=CompanyConfig(db=company_db), telemetry=False)
+
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+        assert id(company_db) in agent_os._unmigrated_dbs
+        # The note is where it was, in one place, and notes/ says what to run.
+        assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
+    assert [meta.path for meta in FileSystem(os_reader, namespace="company/notes", user_scoped=False).list()] == [
+        "ideas.md"
+    ]
+    assert "notes/ideas.md" not in stored(company_db)
+    os_reader.close()
+    company_db.close()

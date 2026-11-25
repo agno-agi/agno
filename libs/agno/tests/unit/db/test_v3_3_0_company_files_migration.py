@@ -783,6 +783,75 @@ def test_a_note_changed_in_the_company_database_after_the_copy_stays_in_the_agen
     company_reader.db_engine.dispose()
 
 
+def test_two_moves_of_the_same_notes_at_once_move_each_note_once(databases):
+    import threading
+
+    os_db, os_reader = databases.new()
+    company_db, company_reader = databases.new()
+    for index in range(20):
+        in_store(os_reader).write(f"notes/n{index}.md", f"Note {index}")
+        in_store(os_reader).write(f"notes/n{index}.md", f"Note {index}, again")
+    before = rows(os_reader)
+    kind = type(os_reader)
+    where = (
+        (lambda reader: {"db_file": reader.db_file})
+        if databases.kind.endswith("sqlite")
+        else (lambda reader: {"db_url": reader.db_url})
+    )
+    handles = [(kind(**where(os_reader)), kind(**where(company_reader))) for _ in range(2)]
+    start = threading.Barrier(2)
+    moved: list = []
+    failed: list = []
+
+    def move(source, company) -> None:
+        start.wait()
+        try:
+            moved.append(move_company_notes(source, company))
+        except Exception as exc:  # noqa: BLE001
+            failed.append(exc)
+
+    threads = [threading.Thread(target=move, args=pair) for pair in handles]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for source, company in handles:
+        source.db_engine.dispose()
+        company.db_engine.dispose()
+
+    # Neither move fails, and between them every note is in the Company database once, as it was.
+    assert failed == []
+    assert rows(company_reader) == before and rows(os_reader) == {}
+    assert sum(moved) == 20
+
+
+def test_a_move_that_loses_the_race_to_store_a_note_finishes_with_what_is_stored(databases, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    from agno.db.migrations.versions import v3_3_0
+
+    os_db, os_reader = databases.new()
+    company_db, company_reader = databases.new()
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    before = rows(os_reader)
+    write = v3_3_0._write_notes
+    calls: list = []
+
+    def another_move_stores_it_first(sess, db, notes) -> None:
+        calls.append(len(notes))
+        if len(calls) == 1:
+            # What the losing side of two moves at once gets from the database.
+            write(sess, db, notes)
+            raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+        write(sess, db, notes)
+
+    monkeypatch.setattr(v3_3_0, "_write_notes", another_move_stores_it_first)
+
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
+    assert calls == [1, 1]
+    assert rows(company_reader) == before and rows(os_reader) == {}
+
+
 # ------------------------------------------------------------------ a user's own files
 
 
@@ -1246,3 +1315,43 @@ def test_the_migration_reports_a_store_that_ends_over_its_limit(databases, caplo
         assert "100 bytes" in report[0] and "90 bytes" in report[0] and "max_filesystem_bytes" in report[0]
     else:
         assert report == []
+
+
+def test_a_step_refused_because_another_connection_writes_is_tried_again(databases, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from agno.db.migrations.versions import v3_3_0
+
+    os_db, os_reader = databases.new()
+    company_db, company_reader = databases.new()
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    before = rows(os_reader)
+    monkeypatch.setattr(v3_3_0, "_BUSY_WAIT_SECONDS", 0)
+    write = v3_3_0._write_notes
+    calls: list = []
+
+    def busy_twice(sess, db, notes) -> None:
+        calls.append(len(notes))
+        if len(calls) < 3:
+            # What SQLite answers a writer while another connection writes.
+            raise OperationalError("INSERT", {}, Exception("database is locked"))
+        write(sess, db, notes)
+
+    monkeypatch.setattr(v3_3_0, "_write_notes", busy_twice)
+
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
+    assert calls == [1, 1, 1]
+    assert rows(company_reader) == before and rows(os_reader) == {}
+    # Any other failure of the database is not tried again.
+    in_store(os_reader).write("notes/more.md", "More")
+    calls.clear()
+
+    def broken(sess, db, notes) -> None:
+        calls.append(len(notes))
+        raise OperationalError("INSERT", {}, Exception("disk I/O error"))
+
+    monkeypatch.setattr(v3_3_0, "_write_notes", broken)
+    with pytest.raises(OperationalError, match="disk I/O error"):
+        databases.run(move_company_notes, amove_company_notes, os_db, company_db)
+    assert calls == [1]
+    assert ("company", "notes/more.md") in rows(os_reader)

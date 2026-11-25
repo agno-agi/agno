@@ -70,11 +70,14 @@ trust that stamp while ``company_files_pending`` finds a file to move. Until the
 Company file system refuses every use with ``MigrationRequiredError``: files left in the namespaces
 from before would look like an empty store. AgentOS starts, so the migration can be run through it.
 
-Notes were stored in the AgentOS database. A deployment with a separate Company database calls
-``move_company_notes`` once to move them into the Company database. Until it has, notes/ is refused
-with ``MigrationRequiredError``: notes left in the AgentOS database would look empty.
+Notes were stored in the AgentOS database. For a deployment with a separate Company database,
+AgentOS moves them into the Company database as it starts, after it has migrated both, with
+``move_company_notes``. Where it could not, notes/ is refused with ``MigrationRequiredError`` until
+that call has run: notes left in the AgentOS database would look empty.
 """
 
+import asyncio
+import time
 from dataclasses import dataclass
 from inspect import signature
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -90,6 +93,7 @@ from agno.utils.log import log_info, log_warning
 try:
     from sqlalchemy import JSON, column, select, table, text, update
     from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.exc import IntegrityError, OperationalError
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -1009,17 +1013,40 @@ def _files_left(sess: Any, db: Any) -> List[Dict[str, Any]]:
     return _paths_left(conn, backend.table, left) if left else []
 
 
+# SQLite refuses a writer while another connection writes, where PostgreSQL makes it wait. A step is one
+# transaction that is safe to run again, so it is tried again for this long.
+_BUSY_TRIES = 100
+_BUSY_WAIT_SECONDS = 0.1
+
+
+def _busy(exc: BaseException, attempt: int) -> bool:
+    return attempt < _BUSY_TRIES - 1 and "database is locked" in str(exc)
+
+
 def _in_session(db: Any, step: Callable[[Any], Any]) -> Any:
-    with db.Session() as sess, sess.begin():
-        return step(sess)
+    """Run a step in one transaction of a database."""
+    for attempt in range(_BUSY_TRIES):
+        try:
+            with db.Session() as sess, sess.begin():
+                return step(sess)
+        except OperationalError as exc:
+            if not _busy(exc, attempt):
+                raise
+            time.sleep(_BUSY_WAIT_SECONDS)
 
 
 async def _ain_session(db: Any, step: Callable[[Any], Any]) -> Any:
-    """Run a step on a session of a database, asynchronous or not."""
+    """Run a step in one transaction of a database, asynchronous or not."""
     if not isinstance(db, AsyncBaseDb):
         return _in_session(db, step)
-    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
-        return await sess.run_sync(step)
+    for attempt in range(_BUSY_TRIES):
+        try:
+            async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+                return await sess.run_sync(step)
+        except OperationalError as exc:
+            if not _busy(exc, attempt):
+                raise
+            await asyncio.sleep(_BUSY_WAIT_SECONDS)
 
 
 def company_files_pending(db: BaseDb) -> bool:
@@ -1296,7 +1323,11 @@ def move_company_notes(source_db: BaseDb, company_db: BaseDb) -> int:
     notes = _in_session(source_db, lambda sess: _take_notes(sess, source_db))
     if not notes:
         return 0
-    _in_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    try:
+        _in_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    except IntegrityError:
+        # Another move stored a note at the same moment. What the Company database holds now decides.
+        _in_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
     stored = _in_session(company_db, lambda sess: _notes_held(sess, company_db, notes))
     if not stored:
         return 0
@@ -1317,7 +1348,10 @@ async def amove_company_notes(source_db: Any, company_db: Any) -> int:
     notes = await _ain_session(source_db, lambda sess: _take_notes(sess, source_db))
     if not notes:
         return 0
-    await _ain_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    try:
+        await _ain_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    except IntegrityError:
+        await _ain_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
     stored = await _ain_session(company_db, lambda sess: _notes_held(sess, company_db, notes))
     if not stored:
         return 0

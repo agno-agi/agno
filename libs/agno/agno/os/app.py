@@ -230,6 +230,7 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
         await agent_os._migrate_databases()
+        await agent_os._move_company_notes()
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
@@ -3083,6 +3084,32 @@ class AgentOS:
                 log_error(message)
             else:
                 log_debug(message)
+
+    async def _move_company_notes(self) -> None:
+        """Move notes from the AgentOS database into a Company database that is kept apart from it.
+
+        Before 3.3.0 notes were stored in the AgentOS database. Runs after both databases are migrated.
+        AgentOS starts whatever the outcome: where the notes could not be moved, notes/ is refused at
+        first use with the call that moves them.
+        """
+        if self._company_db is None or self.db is None or self._company_db is self.db:
+            return
+        if id(self.db) in self._unmigrated_dbs or id(self._company_db) in self._unmigrated_dbs:
+            return
+        from agno.db.migrations.versions.v3_3_0 import amove_company_notes
+
+        try:
+            moved = await amove_company_notes(self.db, self._company_db)
+        except Exception as exc:
+            log_error(
+                f"Notes were not moved from the AgentOS database to the Company database: {exc} "
+                "notes/ is refused until they are. Move them with `move_company_notes(agent_os_db, company_db)` "
+                "(import it from `agno.db.migrations.versions.v3_3_0`; use `await amove_company_notes(...)` when "
+                "either database is asynchronous)."
+            )
+            return
+        if moved:
+            log_info(f"Moved {moved} notes from the AgentOS database to the Company database")
 
     def _initialize_sync_databases(self) -> None:
         """Initialize sync databases."""
