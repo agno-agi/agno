@@ -7,6 +7,7 @@ from agno.agent import Agent
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
 from agno.os.auth import (
+    afilter_resources_by_access,
     build_insufficient_permissions_detail,
     check_resource_access,
     get_accessible_resources,
@@ -26,8 +27,8 @@ from agno.os.routers.filesystem.schema import (
 from agno.os.routers.filesystem.utils import (
     _filesystem_backend_key,
     _filesystem_id_forms,
-    _filesystem_ids,
     _filesystem_key,
+    _listed_filesystem_ids,
     _match_filesystem_id,
 )
 from agno.os.schema import (
@@ -41,6 +42,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import resolve_agent
+from agno.registry._reserved import _listed
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
@@ -270,15 +272,16 @@ async def _select_filesystems(
     without loading an agent; any other is found among the filesystems of the
     agents the caller may read. ``namespace`` keeps the filesystems resolving to
     it, and ``agent_id`` keeps those that agent holds, read as the agent holds
-    them. Ids are given over every filesystem the caller may read before either
+    them. Ids come from the function /config takes them from, before either
     narrows the result, so ``filesystem_id`` and ``agent_id`` together select a
     filesystem only when they name the same one.
     """
     declared = _get_declared_filesystems(os, request)
-    declared_forms = [(entry.key, entry.forms) for entry in declared]
+    user_id = _caller_user_id(request)
 
     if filesystem_id is not None and agent_id is None:
-        declared_ids = _filesystem_ids(declared_forms)
+        # The ids of declared filesystems depend on the declarations alone.
+        declared_ids = _listed_filesystem_ids(os, user_id, ())
         named = [
             declared[index]
             for index in _match_filesystem_id(
@@ -297,7 +300,11 @@ async def _select_filesystems(
     sources, held, failure = await _get_sources(
         os, request, agent_id, declared, skip_failed=filesystem_id is None and bool(declared)
     )
-    ids = _filesystem_ids(declared_forms, [(key, source.forms) for key, source in sources.items()])
+    # The agents /config describes to the caller, so that its ids are the ids here.
+    agents = _listed(os.agents)
+    if getattr(request.state, "authorization_enabled", False):
+        agents = await afilter_resources_by_access(request, agents, "agents")
+    ids = _listed_filesystem_ids(os, user_id, agents, [(key, source.forms) for key, source in sources.items()])
     keys = list(sources)
     if filesystem_id is not None:
         positions = _match_filesystem_id(filesystem_id, [(ids[key], sources[key].forms) for key in keys])

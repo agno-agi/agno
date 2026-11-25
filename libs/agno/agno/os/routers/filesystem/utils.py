@@ -2,11 +2,12 @@ import os
 from collections import Counter
 from hashlib import sha1
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
+    from agno.os.app import AgentOS
 
 # Never part of a namespace, so an id that carries a backend cannot be read as another namespace.
 _ID_SEPARATOR = ":"
@@ -172,21 +173,64 @@ def _assign_filesystem_ids(
     return assigned
 
 
-def _filesystem_ids(
-    declared: Sequence[Tuple[tuple, Tuple[str, ...]]], held: Sequence[Tuple[tuple, Tuple[str, ...]]] = ()
-) -> Dict[tuple, str]:
+def _filesystem_ids(*groups: Iterable[Tuple[tuple, Tuple[str, ...]]]) -> Dict[tuple, str]:
     """An id for each store, keyed as given: its namespace, with the backend added when two would share it.
 
-    ``declared`` and ``held`` are ``(key, forms)`` pairs. The ids of declared
-    stores depend on the declarations alone, so they stay the same whatever
-    agents come and go. A store only agents hold takes the shortest form no
-    declared store can be named by.
+    Each group is ``(key, forms)`` pairs, and the first pair given for a store
+    names it. The ids of a group depend on that group and the groups before it
+    alone: a store takes the shortest form that can name no store of an earlier
+    group. So the ids of declared stores stay the same whatever agents come and go.
     """
-    declared_forms: Dict[tuple, Tuple[str, ...]] = dict(declared)
-    held_forms = {key: forms for key, forms in held if key not in declared_forms}
-    ids = _assign_filesystem_ids(declared_forms)
-    ids.update(_assign_filesystem_ids(held_forms, declared_forms.values(), list(ids.values())))
+    ids: Dict[tuple, str] = {}
+    earlier: List[Tuple[str, ...]] = []
+    for group in groups:
+        forms_by_key: Dict[tuple, Tuple[str, ...]] = {}
+        for key, forms in group:
+            if key not in ids:
+                forms_by_key.setdefault(key, forms)
+        ids.update(_assign_filesystem_ids(forms_by_key, earlier, list(ids.values())))
+        earlier.extend(forms_by_key.values())
     return ids
+
+
+def _listed_filesystem_ids(
+    os: "AgentOS",
+    user_id: Optional[str],
+    agents: Iterable[Any],
+    others: Iterable[Tuple[tuple, Tuple[str, ...]]] = (),
+) -> Dict[tuple, str]:
+    """The id of each store a caller is shown, for /config and for the /filesystem routes alike.
+
+    The stores /config lists are named first: those declared on the AgentOS,
+    then those the ``agents`` declared in code hold, in the order of their ids,
+    each with its namespace resolved for the caller. ``others`` are the
+    ``(key, forms)`` of stores only the routes see, held by agents built for a
+    request or stored. They are named last, so an id /config lists names the
+    same store on the routes whatever those agents hold.
+    """
+    from agno.agent import Agent
+    from agno.fs import InvalidPathError
+
+    declared: List[Tuple[tuple, Tuple[str, ...]]] = []
+    held: List[Tuple[tuple, Tuple[str, ...]]] = []
+
+    def name(group: List[Tuple[tuple, Tuple[str, ...]]], filesystem: "FileSystem", agent_id: Optional[str]) -> None:
+        try:
+            namespace = filesystem.resolve(user_id=user_id, agent_id=agent_id).namespace
+        except InvalidPathError:
+            # The caller's identity cannot be part of the namespace: there is no store of theirs to name.
+            return
+        group.append((_filesystem_key(filesystem, namespace), _filesystem_id_forms(filesystem, namespace)))
+
+    for filesystem in os._served_filesystems():
+        # Only an agent holding the store fills {agent_id} or {team_id}.
+        if all(placeholder == "user_id" for placeholder in filesystem._placeholders):
+            name(declared, filesystem, None)
+    roster = [agent for agent in agents if isinstance(agent, Agent) and agent.id]
+    for agent in sorted(roster, key=lambda agent: str(agent.id)):
+        for filesystem, _ in agent.filesystems:
+            name(held, filesystem, agent.id)
+    return _filesystem_ids(declared, held, others)
 
 
 def _match_filesystem_id(filesystem_id: str, candidates: List[Tuple[str, Tuple[str, ...]]]) -> List[int]:

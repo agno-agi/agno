@@ -2286,6 +2286,80 @@ def test_a_team_namespace_held_by_an_agent_is_listed_as_written_and_cannot_be_op
     assert client.get("/filesystem/files", headers=_headers("alice")).json()["entries"] == []
 
 
+# --- /config and the routes give a filesystem one id ---
+
+
+def _opened_by_config_id(client) -> dict:
+    """For each id /config lists: the status of the listing it opens, the id that answers, and the files."""
+    headers = _headers("alice", ["config:read", "agents:read", "filesystem:read"])
+    opened = {}
+    for entry in _config_entries(client, headers):
+        listed = client.get("/filesystem/entries", params={"filesystem_id": entry["id"]}, headers=headers)
+        body = listed.json()
+        opened[entry["id"]] = (
+            listed.status_code,
+            body.get("filesystem_id"),
+            [row["path"] for row in body.get("entries", [])],
+        )
+    return opened
+
+
+@pytest.mark.parametrize("held_by", ["factory", "stored"])
+def test_an_id_config_lists_opens_that_filesystem_when_an_agent_only_the_routes_see_shares_its_namespace(
+    db, archive_db, held_by, client_factory
+):
+    in_code = FileSystem(db, namespace="notes")
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    in_code.write("a.md", "in code\n")
+    elsewhere.write("b.md", "elsewhere\n")
+    if held_by == "factory":
+        other = AgentFactory(id="other", db=db, factory=lambda ctx: Agent(id="other", db=db, filesystem=elsewhere))
+        client = client_factory(Agent(id="in-code", db=db, filesystem=in_code), other)
+    else:
+        Agent(id="other", db=db, filesystem=elsewhere).save()
+        client = client_factory(
+            Agent(id="in-code", db=db, filesystem=in_code), db=db, registry=Registry(dbs=[archive_db])
+        )
+
+    # /config lists the agents declared in code, and the id it gives is the one the routes open.
+    assert _opened_by_config_id(client) == {"notes": (200, "notes", ["a.md"])}
+    # The store only the routes see takes an id that names it alone.
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["filesystem_id"], row["path"], row["agent_ids"]) for row in rows] == [
+        ("notes", "a.md", ["in-code"]),
+        ("notes:archive-db", "b.md", ["other"]),
+    ]
+    by_agent = client.get("/filesystem/entries", params={"agent_id": "other"}, headers=_headers("alice"))
+    assert (by_agent.status_code, by_agent.json()["filesystem_id"]) == (200, "notes:archive-db")
+
+
+@pytest.mark.parametrize("reached_by", ["declarations", "agents"])
+def test_one_table_reached_through_two_database_ids_has_the_id_config_lists(
+    tmp_path, archive_db, reached_by, client_factory
+):
+    one, two = (SqliteDb(id=name, db_file=str(tmp_path / "shared.db")) for name in ("one", "two"))
+    first, second = FileSystem(one, namespace="notes"), FileSystem(two, namespace="notes")
+    # Another store shares the namespace, so an id names its database.
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    if reached_by == "declarations":
+        client = client_factory(filesystem=[first, second, elsewhere])
+        other_id = "notes:archive-db"
+    else:
+        client = client_factory(
+            Agent(id="a", db=one, filesystem=first), Agent(id="b", db=one, filesystem=second), filesystem=elsewhere
+        )
+        other_id = "notes"
+    first.write("a.md", "one table\n")
+
+    # The first to reach the table names it, in /config and on the routes.
+    assert _opened_by_config_id(client) == {
+        "notes:one": (200, "notes:one", ["a.md"]),
+        other_id: (200, other_id, []),
+    }
+    for database in (one, two):
+        database.db_engine.dispose()
+
+
 # --- A database whose connection arguments cannot be read ---
 
 
