@@ -213,9 +213,7 @@ def test_an_agent_that_holds_the_company_filesystem_is_read_within_the_callers_c
     assert not [row["path"] for row in rows if row["path"].startswith("tasks/")]
     found = system.client.get("/filesystem/search", params={**agent, "query": "needle"}, headers=caller)
     assert report not in [entry["path"] for entry in found.json()["entries"]]
-    assert (
-        system.client.get("/filesystem/content", params={**agent, "path": report}, headers=caller).status_code == 403
-    )
+    assert system.client.get("/filesystem/content", params={**agent, "path": report}, headers=caller).status_code == 403
     full = headers([*COMPANY_READ, "agents:read"])
     counted = system.client.get("/filesystem/namespaces", params=agent, headers=caller).json()["namespaces"]
     whole = system.client.get("/filesystem/namespaces", params=agent, headers=full).json()["namespaces"]
@@ -654,8 +652,14 @@ def test_while_company_files_wait_the_list_still_names_the_company_entry_and_oth
             assert client.get("/filesystem/entries", params={"filesystem_id": "handbook"}).status_code == 200
             rows = client.get("/filesystem/files", params={"filesystem_id": "handbook"})
             assert [row["path"] for row in rows.json()["entries"]] == ["style.md"]
-            # The Company file system answers with the migration to run, and so does a listing of every file.
-            for params in ({"filesystem_id": "company"}, {}):
+            # A listing of every file leaves the Company file system out and gives the others.
+            every = client.get("/filesystem/files")
+            assert every.status_code == 200
+            assert [(row["filesystem_id"], row["path"]) for row in every.json()["entries"]] == [
+                ("handbook", "style.md")
+            ]
+            # The Company file system itself answers with the migration to run.
+            for params in ({"filesystem_id": "company"}, {"namespace": "company"}):
                 refused = client.get("/filesystem/files", params=params)
                 assert refused.status_code == 500, params
                 assert refused.json()["error_id"] == "migration_required_error"

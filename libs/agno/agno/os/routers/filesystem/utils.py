@@ -143,9 +143,7 @@ def _filesystem_ids(
         for key, forms in group:
             if key not in ids:
                 forms_by_key.setdefault(key, forms)
-        ids.update(
-            _assign_filesystem_ids(forms_by_key, earlier, list(ids.values()), unnumbered_first=unnumbered_first)
-        )
+        ids.update(_assign_filesystem_ids(forms_by_key, earlier, list(ids.values()), unnumbered_first=unnumbered_first))
         earlier.extend(forms_by_key.values())
     return ids
 

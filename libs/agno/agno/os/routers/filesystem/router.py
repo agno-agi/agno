@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, NamedTuple, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.agent import Agent
+from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
 from agno.os.auth import (
@@ -629,12 +630,20 @@ async def _get_global_files(
     sources: list[tuple[str, _Source]],
     *,
     query: Optional[str],
+    skip_waiting_company: bool = False,
 ) -> list[FileSystemTableEntry]:
+    """The files of every source. ``skip_waiting_company`` leaves out Company files that wait for a migration."""
+
     async def _read_files(filesystem_id: str, source: _Source) -> list[FileSystemTableEntry]:
         views = await _apartition_views(source.filesystem, request, None)
         rows: list[FileSystemTableEntry] = []
-        for view in views:
-            rows.extend(await _read_view(view, filesystem_id, sorted(source.agent_ids)))
+        try:
+            for view in views:
+                rows.extend(await _read_view(view, filesystem_id, sorted(source.agent_ids)))
+        except MigrationRequiredError:
+            if skip_waiting_company and isinstance(source.filesystem.backend, CompanyPageBackend):
+                return []
+            raise
         return rows
 
     async def _read_view(
@@ -840,7 +849,11 @@ def get_filesystem_router(
     ) -> FileSystemTableResponse:
         # An empty agent_id or filesystem_id names nothing.
         sources, _ = await _select_filesystems(os, request, agent_id or None, namespace, filesystem_id or None)
-        entries = await _get_global_files(request, sources, query=query.strip() if query else None)
+        # A listing of every filesystem still gives the others while Company files wait for a migration.
+        unfiltered = not (agent_id or namespace or filesystem_id)
+        entries = await _get_global_files(
+            request, sources, query=query.strip() if query else None, skip_waiting_company=unfiltered
+        )
         entries = _sort_entries(entries, sort_by, sort_order)
         total_count = len(entries)
         total_pages = (total_count + limit - 1) // limit if total_count else 0
