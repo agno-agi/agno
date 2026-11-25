@@ -18,6 +18,11 @@ Serve for a repository webhook or a GitHub App (see README.md):
     .venvs/demo/bin/python cookbook/05_agent_os/33_triggers/github_issues.py
     # In another terminal; the webhook's payload URL is <ngrok URL>/github/events:
     ngrok http 7777
+
+Print the stored events, with the run each started or the reason it started none:
+    .venvs/demo/bin/python cookbook/05_agent_os/33_triggers/github_issues.py --events
+
+REAL_GITHUB.md lists the checks to run against GitHub itself.
 """
 
 import hashlib
@@ -37,6 +42,7 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.github import GitHub, GitHubEvent
 from agno.triggers import Schedule, Trigger, TriggerManager, TriggerRun
+from agno.utils.github_auth import GitHubAppCredentials
 
 check = "--check" in sys.argv
 CHECK_PORT = 7791
@@ -99,8 +105,12 @@ def report(event: GitHubEvent, run: TriggerRun) -> None:
 # ---------------------------------------------------------------------------
 # Create the triggers
 # ---------------------------------------------------------------------------
+# With a GitHub App's credentials, a sender the payload does not show as a member is looked up on
+# GitHub when the event is claimed, and starts a run with write access to the repository.
+credentials = GitHubAppCredentials() if getenv("GITHUB_APP_ID") and not check else None
+
 # With no handler, GitHub hands its deliveries to triggers. It goes in interfaces=[...].
-github = GitHub(repositories=repository, webhook_secret=secret)
+github = GitHub(repositories=repository, webhook_secret=secret, credentials=credentials)
 
 triggers = [
     Trigger(
@@ -112,6 +122,14 @@ triggers = [
         # A reply on an issue this trigger handled is a new turn in the same session.
         continue_on="issue_comment.created",
         prepare=has_a_description,
+        on_complete=report,
+    ),
+    Trigger(
+        name="triage-labeled",
+        # Adding a label takes triage access, so the label is the gate, whoever opened the issue.
+        on=github.on("issues.labeled", labels=["agent"]),
+        agent=triage_agent,
+        input="A maintainer asked for this issue to be triaged: choose a label and write a comment for its author.",
         on_complete=report,
     ),
     Trigger(
@@ -137,6 +155,17 @@ agent_os = AgentOS(
     telemetry=False,
 )
 app = agent_os.get_app()
+
+
+def print_events() -> None:
+    """Print the stored events, oldest first."""
+    names = {stored.id: stored.name for stored in TriggerManager(db).list(limit=1000)}
+    for stored in sorted(TriggerManager(db).get_events(limit=200), key=lambda e: e.id):
+        why = stored.reason or stored.error or ""
+        print(
+            f"{stored.delivery_id} | {stored.kind} | {stored.event_key} | "
+            f"{names.get(stored.trigger_id, '-')} | {stored.status} | session {stored.session_id} | {why}"
+        )
 
 
 def run_check() -> None:
@@ -261,5 +290,7 @@ def run_check() -> None:
 if __name__ == "__main__":
     if check:
         run_check()
+    elif "--events" in sys.argv:
+        print_events()
     else:
         agent_os.serve(app="github_issues:app", port=7777, reload=False)

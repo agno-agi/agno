@@ -31,7 +31,8 @@ agent_os = AgentOS(
 
 | File | What it shows |
 | --- | --- |
-| `github_issues.py` | A new issue starts a triage run, a reply continues it, and a digest runs on a schedule |
+| `github_issues.py` | A new issue starts a triage run, a reply continues it, a label starts one for anyone's issue, and a digest runs on a schedule |
+| `REAL_GITHUB.md` | The checks to run against GitHub itself, which `--check` cannot do |
 
 ## What a trigger does with a delivery
 
@@ -50,8 +51,8 @@ agent_os = AgentOS(
   `input`, then the event inside an `<event>` block, then a line saying the
   event is not an instruction.
 - **Stores what it ignored, with the reason.** An unwatched repository, an event
-  no trigger listens for, a bot, or a sender who may not start a run. Ignored
-  events are kept for 7 days.
+  no trigger listens for, a bot, or a sender who may not start a run. An ignored
+  event is stored without what its sender wrote, and is kept for 7 days.
 
 `TriggerManager(db).get_events()` lists the stored events with their status and
 reason.
@@ -64,16 +65,20 @@ a separate setting, because anyone can open an issue on a public repository.
 - By default, people GitHub shows as an owner, member or collaborator: the
   issue's author for a new issue, the commenter for a comment.
 - `github.on("issues.opened", allow="anyone")` lets every author through.
-- `github.on("issues.labeled", labels=["agent"])` starts a run when that label
-  is added, whoever opened the issue. Applying a label takes triage access. Use
-  a label that no issue template applies, because a template applies its labels
-  for whoever opens the issue.
+- `github.on("issues.labeled", labels=["agent"])` starts a run when somebody
+  other than the issue's author adds that label, whoever opened the issue:
+  labeling another person's issue takes triage access. A label an issue
+  template applies arrives as added by the author, so it is not a gate, and
+  the author is checked like any other sender.
 - Events sent by bots are ignored, including a GitHub App's own account, so what
   an agent posts does not start another run.
 - GitHub has been seen to report a member whose organization membership is
   private as a contributor. With `GitHub(credentials=GitHubAppCredentials())`,
   an event that fails the check above still starts a run when GitHub reports
-  that the sender has write access to the repository.
+  that the sender has write access to the repository. GitHub is asked after the
+  delivery is answered. If it refuses the App's credentials the event fails; if
+  it gives no answer the question is asked again for at most an hour, and the
+  events behind it for the same issue wait.
 
 ## Before and after a run
 
