@@ -80,6 +80,16 @@ Earlier config output in this log records the previous schema.
 
 ---
 
+### os_level_filesystem.py (the list route)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/27_filesystem/os_level_filesystem.py`, served on port 7777, after `GET /filesystem/namespaces` was added. No model call.
+
+**Result:** `/filesystem/namespaces` listed the four file systems, each with its `namespace` and `id`: `handbook` (`declared: true`, no agents), `shared` (`declared: true`, agents `editor` read-only and `writer`), `drafts` and `notes-agent` (`declared: false`). None is marked `company`, since this example has no Company. `?namespace=shared` returned that entry alone. `/filesystem/entries` returned 200 by `filesystem_id=handbook` and by `namespace=handbook`.
+
+---
+
 ### os_level_filesystem.py (after the review fixes)
 
 **Status:** PASS

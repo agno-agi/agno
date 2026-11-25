@@ -297,6 +297,11 @@ the AgentOS database.
   `move_company_files(db, owners={namespace: id})` moves a namespace to the
   owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
 
+**On the File System page.** With Company on, the Company file system is one entry
+of the page: namespace `company`, with `wiki/`, `goals/`, `tasks/` and `notes/` under
+it. `GET /filesystem/namespaces` lists it, and `filesystem:read` is enough to browse
+it there. The Company routes above keep their own scopes.
+
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
 Super Agent saved in one person's chat can be read in another person's chat.

@@ -405,6 +405,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
                 "max_namespace_bytes": 20_000_000,
                 "id": "notes",
                 "declared": False,
+                "company": False,
                 "agents": [{"id": "notes"}],
             }
         ]
@@ -802,6 +803,7 @@ def _declared_entry(namespace: str, **overrides) -> dict:
         "max_namespace_bytes": 20_000_000,
         "id": namespace,
         "declared": True,
+        "company": False,
         "agents": [],
         **overrides,
     }
@@ -1468,6 +1470,7 @@ def test_filesystem_routes_are_read_only(db, client_factory):
         "/filesystem/content": {"get"},
         "/filesystem/entries": {"get"},
         "/filesystem/files": {"get"},
+        "/filesystem/namespaces": {"get"},
         "/filesystem/search": {"get"},
     }
     admin = _headers("root", ["agent_os:admin"])

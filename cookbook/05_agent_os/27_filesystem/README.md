@@ -147,14 +147,15 @@ normalized to lowercase and percent-encoded.
 In isolated mode the user id comes from trusted run/request context and missing
 identity fails closed. AgentOS exposes read-only browser routes:
 
+- `GET /filesystem/namespaces` — list every filesystem the caller can reach
 - `GET /filesystem/files` — list or search across every filesystem the caller can reach
 - `GET /filesystem/entries` — files and directories directly under one directory
 - `GET /filesystem/content` — a preview of one file
 - `GET /filesystem/search` — content search within one filesystem
 
-A filesystem is addressed by its id. `GET /config` lists every filesystem the
-caller can reach in `filesystem.namespaces`, each with an `id`. Pass it to
-`entries`, `content` and `search` as `filesystem_id`:
+A filesystem is addressed by its id. `GET /filesystem/namespaces` lists every
+filesystem the caller can reach, each with its `namespace` and its `id`. Pass the id
+to `entries`, `content` and `search` as `filesystem_id`:
 
 ```bash
 curl "http://localhost:7777/filesystem/entries?filesystem_id=handbook"
@@ -190,13 +191,25 @@ caller's filesystems and user scope. Every row carries its `filesystem_id`. Shar
 files are returned once with their accessible `agent_ids`. Remote agents are skipped
 in a global listing; selecting one explicitly returns an unsupported response.
 
-`GET /config` exposes `filesystem.namespaces` discovered from the AgentOS
-`filesystem` setting and from concrete local agents. Each entry includes its `id`,
-whether it is `declared`, backend metadata, limits, linked agents with access in
-`agents`, and the canonical namespace resolved for the caller. When identity is
-unavailable, placeholders remain in config; browsing requires the missing identity.
-Factory and stored agents are resolved when browsing but are not included in config
-discovery.
+`GET /filesystem/namespaces` is the list the File System page opens on. It sees the
+agents the browse routes see: agents declared in code, factory agents and agents
+stored in the database. Each entry includes its `id`, its `namespace`, whether it is
+`declared`, whether it is the `company` filesystem, backend metadata, limits, and
+linked agents with access in `agents`. `namespace` filters it to one namespace and
+`agent_id` to one agent. An agent that cannot be loaded is left out of the list.
+
+`GET /config` carries the same entries in `filesystem.namespaces` for the AgentOS
+`filesystem` setting, the Company filesystem and concrete local agents. Factory and
+stored agents are not included there. When identity is unavailable, placeholders
+remain in the namespace; browsing requires the missing identity.
+
+With Company on, the Company filesystem is one entry: namespace `company`, with
+`wiki/`, `goals/<goal-id>/`, `tasks/<task-id>/` and `notes/` under it. `filesystem:read`
+is enough to browse it here. The Company routes keep their own scopes.
+
+A path's length is limited when a file is written: 512 characters, 16 names, 128
+characters a name. A file that is stored is listed and read whatever the length of
+its path.
 
 With authorization enabled, file routes require `filesystem:read`. A declared
 filesystem needs nothing more. A filesystem only an agent holds also needs

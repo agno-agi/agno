@@ -239,6 +239,7 @@ class FileSystemNamespace(FileSystemSummary):
         ),
     )
     declared: bool = Field(False, description="Whether the filesystem is declared on the AgentOS")
+    company: bool = Field(False, description="Whether this is the Company filesystem")
     agents: List[FileSystemAgent] = Field(
         ...,
         description="Agents using this filesystem namespace and their access; empty when no agent holds it",
@@ -266,7 +267,7 @@ def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[st
     ``agent`` is the agent holding it, or None for a filesystem declared on the AgentOS.
     """
     # Partitioned by the run's user, or isolated by a namespace naming the user.
-    user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
+    user_isolation = bool(filesystem.user_scoped) or filesystem._namespace_carries_user
     filesystem = filesystem.resolve(user_id=user_id, agent_id=getattr(agent, "id", None))
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)

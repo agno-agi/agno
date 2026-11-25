@@ -1468,6 +1468,17 @@ class AgentOS:
             )
         )
 
+    def _company_filesystem(self) -> Optional["FileSystem"]:
+        """The Company filesystem, when Company is on and its database can hold files."""
+        if self._company_db is None:
+            return None
+        from agno.company.filesystem import company_filesystem
+
+        try:
+            return company_filesystem(self._company_db)
+        except NotImplementedError:
+            return None
+
     def _served_filesystems(self) -> List["FileSystem"]:
         """The declared filesystems as this AgentOS serves them.
 
@@ -3452,7 +3463,7 @@ class AgentOS:
         declared: List[tuple] = []
         held: List[tuple] = []
 
-        def describe(filesystem: Any, agent: Optional[Agent] = None) -> FileSystemNamespace:
+        def describe(filesystem: Any, agent: Optional[Agent] = None, company: bool = False) -> FileSystemNamespace:
             """The entry of one store: every filesystem on one backend and namespace joins it."""
             summary = _extract_filesystem(filesystem, agent, user_id=user_id)
             key = _filesystem_key(filesystem, summary.namespace)
@@ -3460,8 +3471,9 @@ class AgentOS:
             namespace_config = namespaces.get(key)
             if namespace_config is None:
                 namespace_config = namespaces[key] = FileSystemNamespace(
-                    **summary.model_dump(), id=summary.namespace, declared=agent is None, agents=[]
+                    **summary.model_dump(), id=summary.namespace, declared=agent is None and not company, agents=[]
                 )
+            namespace_config.company = namespace_config.company or company
             return namespace_config
 
         # Declared filesystems come first and stand without an agent; an agent
@@ -3475,6 +3487,11 @@ class AgentOS:
             except InvalidPathError:
                 # The caller's identity cannot be part of a namespace: the store is not theirs to browse.
                 continue
+
+        # The Company filesystem is listed when Company is on. It needs no agent either.
+        company_store = self._company_filesystem()
+        if company_store is not None:
+            describe(company_store, company=True)
 
         # ``agents`` is the caller's roster when /config filters by access; the
         # filesystem section must not describe agents the caller cannot see.

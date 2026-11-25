@@ -964,3 +964,12 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 
 ---
 
+### 16_company_file_tree.py (the Company file system on the File System page)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after the script gained a look at the File System page: it lists the file systems, finds the Company one and reads a Task file through it. No model call.
+
+**Result:** `/filesystem/namespaces` held one entry marked `company`, namespace `company` with id `company`. `/filesystem/entries?filesystem_id=company` listed `goals/`, `notes/`, `tasks/` and `wiki/`, and `/filesystem/content` returned the Task's `changes.md` with the content the Company route returns. The rest of the script printed what it printed before, and it ended with "Company file tree example passed".
+
+---
