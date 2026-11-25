@@ -593,6 +593,22 @@ def test_delete_by_id(mock_pgvector, sample_documents):
         assert result is True
 
 
+def test_delete_by_id_returns_false_when_no_row_matched(mock_pgvector):
+    """Deleting a missing id must report False, not a blanket success."""
+    session = mock_pgvector.Session.return_value.__enter__.return_value
+    session.execute.return_value.rowcount = 0
+
+    assert mock_pgvector.delete_by_id("id-not-in-table") is False
+
+
+def test_delete_by_id_returns_true_when_row_deleted(mock_pgvector):
+    """A matching DELETE must still report True."""
+    session = mock_pgvector.Session.return_value.__enter__.return_value
+    session.execute.return_value.rowcount = 1
+
+    assert mock_pgvector.delete_by_id("existing-id") is True
+
+
 def test_delete_by_name(mock_pgvector, sample_documents):
     """Test deleting documents by name"""
     # Mock insert and get_count

@@ -1752,8 +1752,13 @@ class PgVector(VectorDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.id == id)
-                sess.execute(stmt)
+                result = sess.execute(stmt)
                 sess.commit()
+                if result.rowcount == 0:
+                    log_info(
+                        f"No records with id '{id}' found in table '{self.table.fullname}'."
+                    )
+                    return False
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
