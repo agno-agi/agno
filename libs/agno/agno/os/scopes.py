@@ -20,6 +20,9 @@ Examples:
 Backwards compatibility:
 - Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
+- A held ``products:*`` scope also satisfies a ``goals:*`` requirement, so tokens issued
+  when a Company Goal was a Product continue to work. A ``products:*`` requirement is an
+  application's own and only a ``products:*`` scope satisfies it.
 """
 
 import fnmatch
@@ -29,11 +32,26 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
-# Keys are the legacy resource names, values are the current names.
+# Keys are the legacy resource names, values are the current names. The alias is applied
+# wherever a scope is parsed, so a held scope and a required scope read the same.
 LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
+}
+
+# Resource types that were renamed while an application may use the old name for a type of
+# its own. Keys are the old names, values are the current names. A held scope under the old
+# name also covers the current type. A required scope under the old name is the application's
+# and is matched as written, so a scope on the current type never satisfies it.
+RENAMED_RESOURCE_TYPES: Dict[str, str] = {
     "products": "goals",
 }
+
+
+def _covers_resource_type(held: Optional[str], required: Optional[str]) -> bool:
+    """Whether a held scope's resource type covers a required resource type."""
+    if held == required:
+        return True
+    return held is not None and required is not None and RENAMED_RESOURCE_TYPES.get(held) == required
 
 
 class AgentOSScope(str, Enum):
@@ -236,8 +254,8 @@ def matches_scope(
     if user_scope.scope_type == "unknown" or required_scope.scope_type == "unknown":
         return False
 
-    # Resource type must match
-    if user_scope.resource != required_scope.resource:
+    # Resource type must match. A held scope under a renamed type's old name covers the current type.
+    if not _covers_resource_type(user_scope.resource, required_scope.resource):
         return False
 
     # Action must match
@@ -400,7 +418,7 @@ def get_accessible_resource_ids(
             return {"*"}
 
         # Check if resource type matches
-        if scope.resource == resource_type:
+        if _covers_resource_type(scope.resource, resource_type):
             # Global resource scope (no resource_id) grants access to all
             if not scope.resource_id and scope.action in allowed_actions:
                 return {"*"}
@@ -412,7 +430,7 @@ def get_accessible_resource_ids(
     accessible_ids: Set[str] = set()
     for scope in parsed_scopes:
         # Check if resource type matches
-        if scope.resource == resource_type:
+        if _covers_resource_type(scope.resource, resource_type):
             # Specific resource ID
             if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
                 accessible_ids.add(scope.resource_id)
