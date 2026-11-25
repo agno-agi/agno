@@ -594,3 +594,35 @@ def test_a_task_accepted_with_plain_scopes_is_still_picked_up(tmp_path):
     assert done["status"] == "in_review"
     assert done["result"]["invoked"][0]["status"] == "COMPLETED"
     system.db.close()
+
+
+@pytest.mark.usefixtures("unavailable_manager_docs")
+def test_a_task_accepted_with_authorization_off_is_picked_up(tmp_path):
+    import asyncio
+
+    from agno.company.routines import _CompanyScheduleExecutor
+
+    from .test_mini_agent_tasks import ScriptedModel
+    from .test_mini_agent_tasks import System as TaskSystem
+
+    # With authorization off nobody's authority is saved with the acceptance
+    system = TaskSystem(tmp_path, authorization=False)
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    task = system.db.get_task(proposal["id"])
+    assert task["transitions"][-1][AUTHORIZATION_KEY] is None
+
+    system.mini.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})])
+    executor = _CompanyScheduleExecutor(
+        system.os, system.app, base_url="http://test", internal_service_token=system.os._internal_service_token
+    )
+
+    async def pick_up():
+        await executor._dispatch(system.db.get_task(proposal["id"]))
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(pick_up())
+    done = system.db.get_task(proposal["id"])
+    assert done["status"] == "in_review"
+    system.db.close()

@@ -1280,11 +1280,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             raise ValueError("Only Ready Tasks or pending submissions can be picked up")
         # This is the ordinary manual Task route, which reserves the attempt,
         # checks the registry and run scope, and enters the executor's run route.
-        # The acceptance is loaded from the Task, where it was stored when a person accepted it
-        headers = {
-            "Authorization": "Bearer " + self.internal_service_token,
-            AUTHORIZATION_HEADER: json.dumps({**snapshot, "saved": True}),
-        }
+        # The acceptance is loaded from the Task, where it was stored when a person accepted it.
+        # With authorization off none was stored, and the null is sent as it is.
+        saved = {**snapshot, "saved": True} if isinstance(snapshot, dict) else snapshot
+        headers = {"Authorization": "Bearer " + self.internal_service_token, AUTHORIZATION_HEADER: json.dumps(saved)}
         if task.get("accepted_by") is not None:
             headers[SCHEDULE_OWNER_HEADER] = quote(task["accepted_by"], safe="")
         current = await _call(os._company_db, "get_task", task["id"])

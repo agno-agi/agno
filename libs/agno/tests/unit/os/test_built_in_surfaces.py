@@ -545,6 +545,55 @@ def test_the_file_listing_leaves_a_built_in_out_unless_it_is_named(system, by):
     assert listed(system.holding(by, ["filesystem:read"] + PLAIN + NAMED)) == ["notes/ordinary.md", "work/built-in.md"]
 
 
+def test_the_file_listing_keeps_a_built_in_for_a_provider_that_allows_everything(tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS, CompanyConfig, OSManager
+    from agno.os.authz.provider import AuthorizationProvider
+
+    from .test_built_in_wildcards import OS_ID, SECRET
+
+    class AllowAll(AuthorizationProvider):
+        """A provider of the deployment's own. Its "*" means every resource, the built-ins included."""
+
+        def check(self, ctx):
+            return True
+
+        def accessible_resource_ids(self, ctx):
+            return {"*"}
+
+        def authorize_route(self, ctx, required_scopes):
+            return True
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    notes = Agent(id="notes", name="Notes", model=_FixtureModel(), db=db, filesystem=True)
+    agent_os = AgentOS(
+        id=OS_ID,
+        db=db,
+        agents=[notes],
+        manager=OSManager(model=_FixtureModel(), access_docs=False),
+        company=CompanyConfig(model=_FixtureModel()),
+        authorization=Authorization(verification_keys=[SECRET], algorithm="HS256", authorization_provider=AllowAll()),
+        telemetry=False,
+    )
+    mini_agent = agent_os._mini_agent
+    mini_agent.filesystem = True
+    notes.filesystem_instance.write("notes/ordinary.md", "ordinary")
+    mini_agent.filesystem_instance.write("work/built-in.md", "built in")
+    try:
+        client = TestClient(agent_os.get_app())
+        headers = _auth("someone@example.com", [])
+        # Asking for Mini Agent's files by its id is allowed, so the listing of every agent holds them too
+        assert client.get("/filesystem/files", params={"agent_id": MINI_AGENT_ID}, headers=headers).status_code == 200
+        response = client.get("/filesystem/files", headers=headers)
+        assert response.status_code == 200, response.text
+        assert sorted(entry["path"] for entry in response.json()["entries"]) == [
+            "notes/ordinary.md",
+            "work/built-in.md",
+        ]
+    finally:
+        db.close()
+
+
 # ----------------------------------------------------------------- the configuration
 
 
