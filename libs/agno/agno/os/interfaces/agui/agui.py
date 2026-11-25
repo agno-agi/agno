@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.agui.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
+from agno.os.scopes import is_built_in
 from agno.team import Team
 from agno.team.remote import RemoteTeam
 
@@ -52,4 +53,9 @@ class AGUI(BaseInterface):
     def get_scope_mappings(self) -> dict:
         # Agent-wins precedence must match router dispatch (entity = agent or team)
         family = "agents" if self.agent is not None else "teams"
+        entity_id = getattr(self.agent or self.team, "id", None)
+        # The route has no id in its path, so a built-in component is asked for by name here:
+        # a type-wide run scope does not reach it
+        if isinstance(entity_id, str) and is_built_in(family, entity_id):
+            return {f"POST {self.prefix}/agui": [f"{family}:{entity_id}:run"]}
         return {f"POST {self.prefix}/agui": [f"{family}:run"]}

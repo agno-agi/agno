@@ -519,7 +519,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         acceptance = acceptances[-1] if acceptances else {}
         snapshot = acceptance.get(AUTHORIZATION_KEY)
         if snapshot is not None:
-            authority.acceptance = restore_authorization(worker.authorization_app, snapshot)
+            authority.acceptance = restore_authorization(worker.authorization_app, snapshot, saved=True)
         elif AUTHORIZATION_KEY not in acceptance or authority.original is not None:
             # Legacy or unscoped acceptance is not a grant to an authenticated starter.
             authority.run_components = []
