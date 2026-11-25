@@ -473,6 +473,96 @@ class QueueCapabilities(BaseModel):
     )
 
 
+class AuthorizationReport(BaseModel):
+    """How requests to this AgentOS are authenticated and authorized.
+
+    Reported as EFFECTIVE behavior, not constructor arguments: each value is read from
+    what the running app enforces. `enabled`, `mode` and `user_isolation` are returned to
+    every caller that can read /config. The remaining fields are returned only to an
+    administrator of this AgentOS, so their absence beside a present `enabled` means the
+    caller may not see them, while an absent block means the server predates the report.
+
+    Every field is optional so a client parses responses from servers that omit it.
+    Holds no keys, key counts, key locations, audience or issuer values, or role scopes."""
+
+    enabled: Optional[bool] = Field(
+        None,
+        description="Scopes or roles are enforced on requests. False when callers are only authenticated, or not at all",
+    )
+    mode: Optional[Literal["none", "security_key", "jwt"]] = Field(
+        None, description="Authentication mode on the REST/WS plane, the same value /info reports as `auth_mode`"
+    )
+    user_isolation: Optional[bool] = Field(
+        None, description="Per-user data isolation is switched on, the same value /info reports"
+    )
+    managed_roles: Optional[bool] = Field(
+        None,
+        description="Roles managed on this AgentOS decide requests. False under scope-only authorization "
+        "and when a custom authorization provider decides alone. Administrators only",
+    )
+    default_role: Optional[str] = Field(
+        None,
+        description="Name of the role a newly provisioned user receives; absent when no default is set. "
+        "Administrators only",
+    )
+    token_scopes_trusted: Optional[bool] = Field(
+        None,
+        description="The scopes carried on a caller's token count toward access decisions: true only when "
+        "a scope plane actually runs, alone or beside managed roles. Administrators only",
+    )
+    audience_verified: Optional[bool] = Field(
+        None,
+        description="A token's audience claim is checked against this AgentOS before the token is accepted. "
+        "Administrators only",
+    )
+
+
+class FeatureStatus(BaseModel):
+    """Whether one optional AgentOS feature is running."""
+
+    enabled: Optional[bool] = Field(None, description="The feature is running on this AgentOS")
+
+
+class UserDirectoryStatus(FeatureStatus):
+    """The user directory: the roster of users and the switch that disables one."""
+
+    auto_provision: Optional[bool] = Field(None, description="A user is added to the directory on their first request")
+    fail_closed: Optional[bool] = Field(
+        None, description="A request is refused when the directory cannot be read to check the user"
+    )
+
+
+class AuditStatus(FeatureStatus):
+    """The audit trails: changes to roles and users, and access decisions.
+
+    `enabled` means events are being recorded. The `*_readable` fields say whether the
+    matching trail can be read back through this AgentOS: a trail is recorded but not
+    readable when the sink only writes (a log sink) or the routes that serve it are not
+    mounted."""
+
+    changes_readable: Optional[bool] = Field(
+        None, description="GET /authz/audit serves the change trail instead of answering 404"
+    )
+    decisions_readable: Optional[bool] = Field(
+        None, description="GET /authz/decisions serves the decision trail instead of answering 404"
+    )
+
+
+class FeaturesReport(BaseModel):
+    """Which optional features run on this AgentOS, so a client can show or hide their
+    pages without probing each route. Reported as EFFECTIVE behavior: a feature that was
+    requested but could not start is reported off. Readable by any caller that can read
+    /config. Every field is optional so a client parses responses from servers that omit it."""
+
+    user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory")
+    audit: Optional[AuditStatus] = Field(None, description="Audit trails")
+    tracing: Optional[FeatureStatus] = Field(None, description="Runs are traced and the spans stored by this AgentOS")
+    scheduler: Optional[FeatureStatus] = Field(None, description="Scheduled runs are polled and executed")
+    mcp: Optional[FeatureStatus] = Field(
+        None, description="The MCP server is served; /info carries its path and OAuth details"
+    )
+
+
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
@@ -503,6 +593,10 @@ class ConfigResponse(BaseModel):
     # Optional for CLIENT compatibility (the SDK parses this same schema, and
     # older servers omit the field); the server always populates it.
     queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
+    authorization: Optional[AuthorizationReport] = Field(
+        None, description="How requests are authenticated and authorized; detail fields for administrators only"
+    )
+    features: Optional[FeaturesReport] = Field(None, description="Which optional features are running")
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
