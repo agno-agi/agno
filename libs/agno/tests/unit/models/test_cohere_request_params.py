@@ -1,11 +1,32 @@
 """Unit tests for Cohere request params: zero-valued sampling params
 must not be silently dropped by a truthiness check."""
 
+from unittest.mock import patch
+
 import pytest
 
 pytest.importorskip("cohere")
 
 from agno.models.cohere.chat import Cohere
+
+
+def test_client_params_forwarded_to_sync_client():
+    model = Cohere(
+        api_key="key", client_params={"timeout": 12.5, "base_url": "https://example.test"}
+    )
+    with patch("agno.models.cohere.chat.CohereClient") as client:
+        model.get_client()
+    kwargs = client.call_args.kwargs
+    assert kwargs["timeout"] == 12.5
+    assert kwargs["base_url"] == "https://example.test"
+    assert kwargs["api_key"] == "key"
+
+
+def test_client_params_forwarded_to_async_client():
+    model = Cohere(api_key="key", client_params={"max_retries": 7})
+    with patch("agno.models.cohere.chat.CohereAsyncClient") as client:
+        model.get_async_client()
+    assert client.call_args.kwargs["max_retries"] == 7
 
 
 def test_temperature_zero_included():

@@ -60,7 +60,9 @@ class Cohere(Model):
         if self.client:
             return self.client
 
-        _client_params: Dict[str, Any] = {}
+        # Honour caller-supplied SDK options (timeout, base_url, max_retries, ...)
+        # as the base kwargs; explicit api_key/http_client below take precedence.
+        _client_params: Dict[str, Any] = dict(self.client_params or {})
 
         self.api_key = self.api_key or getenv("CO_API_KEY")
         if not self.api_key:
@@ -84,7 +86,9 @@ class Cohere(Model):
         if self.async_client:
             return self.async_client
 
-        _client_params: Dict[str, Any] = {}
+        # Honour caller-supplied SDK options (timeout, base_url, max_retries, ...)
+        # as the base kwargs; explicit api_key/http_client below take precedence.
+        _client_params: Dict[str, Any] = dict(self.client_params or {})
 
         self.api_key = self.api_key or getenv("CO_API_KEY")
 
