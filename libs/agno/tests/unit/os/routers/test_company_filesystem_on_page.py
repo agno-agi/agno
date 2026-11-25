@@ -384,6 +384,76 @@ def test_the_company_id_with_an_agent_opens_it_only_when_that_agent_holds_it(tmp
         db.close()
 
 
+def test_every_id_the_list_gives_opens_on_every_route(tmp_path):
+    db = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain needle")
+    held = FileSystem(db, namespace="held")
+    held.write("draft.md", "held needle")
+    # Two stores under one namespace, one of them only a factory agent holds: each needs a longer id.
+    notes_here, notes_there = FileSystem(db, namespace="notes"), FileSystem(archive, namespace="notes")
+    notes_here.write("a.md", "here needle")
+    notes_there.write("b.md", "there needle")
+    factory = AgentFactory(
+        id="factory-agent", db=db, factory=lambda ctx: Agent(id="factory-agent", db=db, filesystem=notes_there)
+    )
+    agents = [Agent(id="keeper", db=db, filesystem=held), Agent(id="noter", db=db, filesystem=notes_here), factory]
+    agent_os = AgentOS(db=db, agents=agents, company=CompanyConfig(), filesystem=handbook, telemetry=False)
+    # Goals whose ids are not plain names: each folder of the Company file system is the id as one segment.
+    manager = CompanyManager(db)
+    for goal_id in ("Docs Team", "team/growth", "launch"):
+        manager.create(name=goal_id, id=goal_id)
+        manager.write_wiki(goal_id=goal_id, path="status.md", content=f"{goal_id} needle", expected_version=1)
+    company_filesystem(db).write("notes/ideas.md", "a note needle")
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            ids = [entry["id"] for entry in listed]
+            assert sorted(ids) == ["company", "handbook", "held", "notes:archive-db", "notes:main-db"]
+            assert [entry["id"] for entry in listed if entry["company"]] == ["company"]
+
+            for filesystem_id in ids:
+                by_id = {"filesystem_id": filesystem_id}
+                rows = client.get("/filesystem/files", params=by_id)
+                assert rows.status_code == 200, filesystem_id
+                paths = [row["path"] for row in rows.json()["entries"]]
+                assert paths and {row["filesystem_id"] for row in rows.json()["entries"]} == {filesystem_id}
+                opened = client.get("/filesystem/entries", params=by_id)
+                assert (opened.status_code, opened.json()["filesystem_id"]) == (200, filesystem_id)
+                found = client.get("/filesystem/search", params={**by_id, "query": "needle"})
+                assert found.status_code == 200 and found.json()["filesystem_id"] == filesystem_id
+                matched = {entry["path"] for entry in found.json()["entries"]}
+                assert matched and matched <= set(paths)
+                # Every path a listing gives is read back under the same id.
+                for path in paths:
+                    read = client.get("/filesystem/content", params={**by_id, "path": path})
+                    assert read.status_code == 200, (filesystem_id, path)
+                    assert read.json()["filesystem_id"] == filesystem_id
+                    assert ("needle" in read.json()["content"]) is (path in matched)
+
+            # In the Company entry a Goal's folder is its id as one segment, and the pages under it open.
+            goals = client.get("/filesystem/entries", params={"filesystem_id": "company", "directory": "goals"})
+            assert sorted(entry["path"] for entry in goals.json()["entries"]) == [
+                "goals/Docs%20Team",
+                "goals/launch",
+                "goals/team%2fgrowth",
+            ]
+            for folder, goal_id in (("goals/Docs%20Team", "Docs Team"), ("goals/team%2fgrowth", "team/growth")):
+                pages = client.get("/filesystem/entries", params={"filesystem_id": "company", "directory": folder})
+                assert sorted(entry["path"] for entry in pages.json()["entries"]) == [
+                    f"{folder}/brief.md",
+                    f"{folder}/status.md",
+                ]
+                page = client.get(
+                    "/filesystem/content", params={"filesystem_id": "company", "path": f"{folder}/status.md"}
+                )
+                assert page.status_code == 200 and page.json()["content"] == f"{goal_id} needle"
+    finally:
+        db.close()
+        archive.close()
+
+
 def test_the_list_describes_each_filesystem_as_config_does(tmp_path):
     db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
     shared = FileSystem(db, namespace="shared")
