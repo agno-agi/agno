@@ -326,6 +326,15 @@ class TriggerRuntime:
 
         results = []
         for row in rows:
+            if row["status"] == EVENT_PENDING and row["event_key"]:
+                # Events of one conversation run in id order, and ids come from the clock of the
+                # replica that receives them. Storing this one after the newest already stored
+                # keeps a reply behind its issue when the clocks disagree.
+                newest, _ = await acall_db(
+                    self.db, "get_trigger_events", trigger_id=row["trigger_id"], event_key=row["event_key"], limit=1
+                )
+                if newest and newest[0]["id"] >= row["id"]:
+                    row["id"] = new_trigger_event_id(after=newest[0]["id"])
             created = await acall_db(self.db, "create_trigger_event", row)
             results.append({"trigger_id": row["trigger_id"] or None, "status": row["status"], "duplicate": not created})
             if row["reason"]:

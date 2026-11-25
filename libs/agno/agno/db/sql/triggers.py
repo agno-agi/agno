@@ -172,10 +172,14 @@ def get_trigger_events(
 def update_trigger_event(
     sess: Any, events: Any, event_id: str, held_by: Optional[str] = None, **kwargs: Any
 ) -> Optional[Dict[str, Any]]:
-    """Update an event. With held_by, only while that claim still holds the event."""
+    """Update an event. With held_by, only while that claim holds the event and it is being handled.
+
+    The claim stays named on an event that has ended, so a write its worker makes late, such as
+    handing the event back on shutdown, must not reopen it.
+    """
     stmt = update(events).where(events.c.id == event_id)
     if held_by is not None:
-        stmt = stmt.where(events.c.claimed_by == held_by)
+        stmt = stmt.where(events.c.claimed_by == held_by, events.c.status == EVENT_RUNNING)
     if sess.execute(stmt.values(**kwargs)).rowcount == 0:
         return None
     return get_trigger_event(sess, events, event_id)

@@ -78,12 +78,23 @@ async def test_a_run_waiting_on_a_person_is_the_events_result():
     assert methods(requests) == ["GET"]
 
 
-@pytest.mark.parametrize("status", ["CANCELLED", "ERROR"])
-async def test_a_run_known_to_have_stopped_may_be_run_again(status):
-    executor, requests = executor_seeing((200, {"status": status}))
+async def test_a_run_cancelled_with_its_worker_may_be_run_again():
+    executor, requests = executor_seeing(CANCELLED)
 
+    # A process that shuts down cancels the runs it has in flight. The event is run again.
     assert await executor._recorded_run(ENDPOINT, ROW, 3600) is None
     # Nothing is left to stop.
+    assert methods(requests) == ["GET"]
+
+
+async def test_a_run_that_had_already_failed_is_the_attempts_result():
+    executor, requests = executor_seeing((200, {"status": "ERROR", "error": "the model is down"}))
+
+    result = await executor._recorded_run(ENDPOINT, ROW, 3600)
+
+    # It counts as the attempt it was, so the trigger's retries decide whether another is made.
+    assert result is not None and result["status"] == "failed" and result["error"] == "the model is down"
+    assert result.get("resubmit") is not False
     assert methods(requests) == ["GET"]
 
 

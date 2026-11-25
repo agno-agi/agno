@@ -6,9 +6,12 @@ import time
 from contextvars import ContextVar
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
+import httpx
+
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, build_run_endpoint
 from agno.db.schemas.triggers import (
     CODE_MANAGED,
+    EVENT_CANCELLED,
     EVENT_FAILED,
     EVENT_IGNORED,
     EVENT_PAUSED,
@@ -17,9 +20,19 @@ from agno.db.schemas.triggers import (
     EVENT_SUCCESS,
 )
 from agno.scheduler.executor import ScheduleExecutor, terminal_run_status
-from agno.triggers.source import CHECK_SENDER_KEY, CHECK_SENDER_SINCE_KEY, SenderCheckFailed, render_input
+from agno.triggers.source import (
+    CHECK_SENDER_KEY,
+    CHECK_SENDER_SINCE_KEY,
+    RUN_ENDPOINT_KEY,
+    RUN_UNREAD_SINCE_KEY,
+    SenderCheckFailed,
+    render_input,
+)
 from agno.triggers.trigger import TriggerRun
 from agno.utils.log import log_debug, log_error
+
+# Raised when a request was never sent: no connection was made, so the app started nothing.
+_NEVER_REACHED = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 # Called with the run id and session id as soon as a run is accepted. False when the worker no
 # longer holds the event.
@@ -283,8 +296,9 @@ class TriggerExecutor(ScheduleExecutor):
         it would have followed it: nothing is submitted while it may be alive, and it is asked to
         stop only when its timeout passes. How it ends is the result.
 
-        A run that had already ended: its result, when it completed or is waiting on a person. None
-        when it failed or was cancelled, which is most likely with its worker: the event is run again.
+        A run that had already ended is how the event's attempt ended, with one exception. A run
+        that was cancelled stopped with its worker, as the runs in flight do when a process shuts
+        down: None is returned for it, and the event is run again.
 
         Raises:
             Deferred: The run could not be read, so nothing is known about it. The event keeps its
@@ -312,9 +326,27 @@ class TriggerExecutor(ScheduleExecutor):
                 match.group(1), match.group(2), run_id, session_id, timeout_seconds, remaining=remaining
             )
         result = self._result(data, run_id, session_id)
-        return result if result["status"] in (EVENT_SUCCESS, EVENT_PAUSED) else None
+        return None if result["status"] == EVENT_CANCELLED else result
 
     # --- Handling an event ---
+
+    @staticmethod
+    async def _waiting_since(db: Any, row: Dict[str, Any], key: str) -> int:
+        """When this event first waited for the answer ``key`` names, in epoch seconds.
+
+        The time is kept on the event itself, so the waiting has an end whichever worker takes
+        the event up next.
+        """
+        stored = row.get("event") or {}
+        since = stored.get(key)
+        if isinstance(since, (int, float)):
+            return int(since)
+        since = int(time.time())
+        marked = {**stored, key: since}
+        if await acall_db(db, "update_trigger_event", row["id"], held_by=row["claimed_by"], event=marked) is None:
+            raise ClaimLost()
+        row["event"] = marked
+        return since
 
     async def _sender_refusal(self, source: Any, event: Any, row: Dict[str, Any], db: Any) -> Optional[str]:
         """Ask the source whether the sender may start a run; the reason when they may not.
@@ -328,7 +360,7 @@ class TriggerExecutor(ScheduleExecutor):
             Deferred: The source gave no answer yet. The event keeps its claim, so the events
                 behind it for the same key wait, and a later attempt asks again.
         """
-        event_id, claim = row["id"], row["claimed_by"]
+        event_id = row["id"]
         error: Optional[Exception] = None
         for attempt in range(max(1, self.sender_check_attempts)):
             if attempt:
@@ -341,16 +373,8 @@ class TriggerExecutor(ScheduleExecutor):
                 error = exc
                 log_debug(f"Trigger event {event_id}: the sender's access could not be checked: {exc}")
 
-        stored = row.get("event") or {}
-        now = int(time.time())
-        since = stored.get(CHECK_SENDER_SINCE_KEY)
-        if not isinstance(since, (int, float)):
-            # The first question that went unanswered. It is kept on the event, so the asking ends.
-            since = now
-            marked = {**stored, CHECK_SENDER_SINCE_KEY: since}
-            if await acall_db(db, "update_trigger_event", event_id, held_by=claim, event=marked) is None:
-                raise ClaimLost()
-        if now - since >= self.sender_check_seconds:
+        since = await self._waiting_since(db, row, CHECK_SENDER_SINCE_KEY)
+        if time.time() - since >= self.sender_check_seconds:
             raise SenderCheckFailed(
                 f"the sender's access could not be checked for {self.sender_check_seconds}s: {error}"
             )
@@ -365,9 +389,11 @@ class TriggerExecutor(ScheduleExecutor):
             runtime: Where the declared sources and triggers are found.
         """
         event_id, claim = row["id"], row["claimed_by"]
+        # What the handling has in flight, for a worker that is stopped part way through.
+        progress: Dict[str, Any] = {}
         renewal = asyncio.create_task(self._renew(db, event_id, claim))
         try:
-            return await self._handle(row, db, runtime)
+            return await self._handle(row, db, runtime, progress)
         except ClaimLost:
             log_debug(f"Trigger event {event_id} is held by another worker; this one stopped")
             return row
@@ -379,24 +405,56 @@ class TriggerExecutor(ScheduleExecutor):
             except Exception as update_exc:
                 log_debug(f"Trigger event {event_id}: the reason it waits was not recorded: {update_exc}")
             return row
-        except asyncio.CancelledError:
-            # The process is stopping. Hand the event back so another worker, or this one after a
-            # restart, runs it without waiting for the claim to go stale.
+        except Exception as exc:
+            # What raised here would raise again. Left as it is, the event would be taken up each
+            # time its claim went stale and fail the same way, with every later event for its key
+            # waiting behind it. So it ends, with what was raised.
+            log_error(f"Trigger event {event_id} could not be handled: {type(exc).__name__}: {exc}")
+            ended = {
+                "status": EVENT_FAILED,
+                "completed_at": int(time.time()),
+                "error": f"the event could not be handled: {type(exc).__name__}: {exc}",
+            }
             try:
-                await acall_db(
-                    db,
-                    "update_trigger_event",
-                    event_id,
-                    held_by=claim,
-                    status=EVENT_PENDING,
-                    claimed_by=None,
-                    claimed_at=None,
-                )
-            except Exception as exc:
-                log_debug(f"Trigger event {event_id} could not be released on shutdown: {exc}")
+                await acall_db(db, "update_trigger_event", event_id, held_by=claim, **ended)
+            except Exception as update_exc:
+                # Storage is not answering either. The claim goes stale and the event is tried again.
+                log_error(f"Trigger event {event_id}: its failure was not recorded: {update_exc}")
+            return {**row, **ended}
+        except asyncio.CancelledError:
+            await self._give_up(db, row, progress)
             raise
         finally:
             renewal.cancel()
+
+    async def _give_up(self, db: Any, row: Dict[str, Any], progress: Dict[str, Any]) -> None:
+        """Leave an event because the process is stopping."""
+        event_id, claim = row["id"], row["claimed_by"]
+        unrecorded = progress.get("unrecorded")
+        if progress.get("in_flight"):
+            # The run request went out and was not answered. The app may have accepted it, so the
+            # event cannot be handed back: whoever took it would start a second run.
+            fields: Dict[str, Any] = {
+                "status": EVENT_FAILED,
+                "completed_at": int(time.time()),
+                "error": "the worker stopped while the run request was in flight, and the run may have been "
+                "accepted; the event was not run again",
+            }
+        else:
+            # Hand the event back so another worker, or this one after a restart, takes it without
+            # waiting for the claim to go stale.
+            fields = {"status": EVENT_PENDING, "claimed_by": None, "claimed_at": None}
+            if unrecorded is not None:
+                # The run was accepted and its id is not on the event yet. Name it now, so the
+                # worker that takes the event follows this run and starts no other.
+                fields.update(run_id=unrecorded[0], session_id=unrecorded[1])
+        try:
+            await acall_db(db, "update_trigger_event", event_id, held_by=claim, **fields)
+        except Exception as exc:
+            log_debug(f"Trigger event {event_id} could not be released on shutdown: {exc}")
+            if unrecorded is not None:
+                # Nothing names the run, so the next worker would start one beside it.
+                await self._request_stop(unrecorded[2], unrecorded[1])
 
     async def _renew(self, db: Any, event_id: str, claim: str) -> None:
         """Renew the claim until the event is finished or another worker holds it."""
@@ -408,7 +466,7 @@ class TriggerExecutor(ScheduleExecutor):
             except Exception as exc:
                 log_debug(f"Trigger event {event_id}: claim renewal failed: {exc}")
 
-    async def _handle(self, row: Dict[str, Any], db: Any, runtime: Any) -> Dict[str, Any]:
+    async def _handle(self, row: Dict[str, Any], db: Any, runtime: Any, progress: Dict[str, Any]) -> Dict[str, Any]:
         event_id, claim = row["id"], row["claimed_by"]
 
         async def finish(status: str, **fields: Any) -> Dict[str, Any]:
@@ -419,36 +477,68 @@ class TriggerExecutor(ScheduleExecutor):
             return {**row, **updates}
 
         trigger = await acall_db(db, "get_trigger", row["trigger_id"])
-        if trigger is None:
-            return await finish(EVENT_SKIPPED, reason="the trigger no longer exists")
-        if not trigger.get("enabled"):
-            return await finish(EVENT_SKIPPED, reason="the trigger is disabled")
         source = runtime.sources.get(row["source_id"])
-        if source is None:
-            return await finish(EVENT_FAILED, error=f"source {row['source_id']} is not declared on this AgentOS")
-
-        stored = row.get("event") or {}
-        event = source.load(stored)
-        # prepare and on_complete are code: only a trigger declared in code has them.
-        declared = runtime.declared.get(trigger["name"]) if trigger.get("managed_by") == CODE_MANAGED else None
-        endpoint = build_run_endpoint(trigger["target_type"], trigger["target_id"])
-        timeout_seconds = trigger.get("timeout_seconds") or self.timeout
-
-        max_attempts = max(1, int(trigger.get("max_retries") or 0) + 1)
-        retry_delay = trigger.get("retry_delay_seconds")
+        endpoint = build_run_endpoint(trigger["target_type"], trigger["target_id"]) if trigger is not None else None
+        timeout_seconds = (trigger or {}).get("timeout_seconds") or self.timeout
+        max_attempts = max(1, int((trigger or {}).get("max_retries") or 0) + 1)
+        retry_delay = (trigger or {}).get("retry_delay_seconds")
         retry_delay = 60 if retry_delay is None else retry_delay
 
-        # An earlier claim may have started a run for this event. It is read before anything else:
-        # an event that already has its run is not checked, prepared or started a second time.
-        result = await self._recorded_run(endpoint, row, timeout_seconds) if row.get("run_id") else None
-        # A run this worker followed to its end was the attempt the event records.
-        attempt = int(row.get("attempt") or 0) if result is not None else 0
+        # An earlier claim may have started a run for this event. It is read before anything else,
+        # and where it was started: the trigger may have been turned off or pointed elsewhere since,
+        # and an event that already has its run is not checked, prepared or started a second time.
+        result: Optional[Dict[str, Any]] = None
+        attempt = 0
+        run_endpoint = (row.get("event") or {}).get(RUN_ENDPOINT_KEY) or endpoint
+        if row.get("run_id") and run_endpoint:
+            try:
+                result = await self._recorded_run(run_endpoint, row, timeout_seconds)
+            except Deferred:
+                # The run cannot be read. That may pass, so the event waits; but not for longer
+                # than the run itself was given, and then nothing is started in its place.
+                since = await self._waiting_since(db, row, RUN_UNREAD_SINCE_KEY)
+                if time.time() - since < timeout_seconds:
+                    raise
+                result = self._not_run_again(
+                    row["run_id"],
+                    row.get("session_id"),
+                    f"Run {row['run_id']}, started by an earlier worker, could not be read for {timeout_seconds}s",
+                )
+            # The recorded run was the attempt the event counts, unless it was cancelled with its
+            # worker: taking an event over earns no retries beyond the ones the trigger allows.
+            attempt = int(row.get("attempt") or 0)
+            if result is None:
+                attempt = max(attempt - 1, 0)
 
         # Only a run known to have failed is tried again, and only as often as the trigger allows.
         def retried(outcome: Dict[str, Any]) -> bool:
             return outcome["status"] == EVENT_FAILED and outcome.get("resubmit") is not False and attempt < max_attempts
 
-        if result is None or retried(result):
+        # Why no run may be started now, when none may.
+        blocked: Optional[Tuple[str, str, str]] = None
+        if trigger is None:
+            blocked = (EVENT_SKIPPED, "reason", "the trigger no longer exists")
+        elif not trigger.get("enabled"):
+            blocked = (EVENT_SKIPPED, "reason", "the trigger is disabled")
+        elif source is None:
+            blocked = (EVENT_FAILED, "error", f"source {row['source_id']} is not declared on this AgentOS")
+
+        starts = result is None or retried(result)
+        if starts and blocked is not None:
+            if result is None:
+                return await finish(blocked[0], **{blocked[1]: blocked[2]})
+            # The run this event had has failed and none may be started in its place: its failure stands.
+            starts = False
+
+        stored = row.get("event") or {}
+        event = source.load(stored) if source is not None else None
+        # prepare and on_complete are code: only a trigger declared in code has them.
+        declared = None
+        if trigger is not None and source is not None and trigger.get("managed_by") == CODE_MANAGED:
+            declared = runtime.declared.get(trigger["name"])
+
+        if starts:
+            assert trigger is not None and source is not None and endpoint is not None
             if row["kind"] not in (trigger.get("events") or []):
                 # The event only continues a conversation. Events for one key are handled in the
                 # order they arrived, so the one that opens the conversation is behind us by now:
@@ -514,16 +604,37 @@ class TriggerExecutor(ScheduleExecutor):
                 user_id=trigger.get("user_id"),
             )
 
+            run_target = RUN_ENDPOINT_RE.match(endpoint)
+
             async def accepted(run_id: str, session_id: str) -> bool:
-                try:
-                    held = await acall_db(
-                        db, "update_trigger_event", event_id, held_by=claim, run_id=run_id, session_id=session_id
-                    )
-                except Exception as exc:
-                    # The run is going and this worker follows it. Only the record of it is missing.
-                    log_error(f"Trigger event {event_id}: run {run_id} could not be recorded on it: {exc}")
-                    return True
-                return held is not None
+                # The request was answered: a run exists. Until its id is on the event, a worker
+                # that is stopped here must still be able to name it.
+                run_url = self._run_url(run_target.group(1), run_target.group(2), run_id) if run_target else ""
+                progress["unrecorded"] = (run_id, session_id, run_url)
+                progress["in_flight"] = False
+                # Where the run was started goes on the event with it: the trigger can change later.
+                marked = {**(row.get("event") or {}), RUN_ENDPOINT_KEY: endpoint}
+                for tried in range(3):
+                    try:
+                        held = await acall_db(
+                            db,
+                            "update_trigger_event",
+                            event_id,
+                            held_by=claim,
+                            run_id=run_id,
+                            session_id=session_id,
+                            event=marked,
+                        )
+                    except Exception as exc:
+                        log_error(f"Trigger event {event_id}: run {run_id} could not be recorded on it: {exc}")
+                        await asyncio.sleep(self.read_backoff * (tried + 1))
+                        continue
+                    progress.pop("unrecorded", None)
+                    if held is not None:
+                        row["event"] = marked
+                    return held is not None
+                # The run is going and this worker follows it. Only the record of it is missing.
+                return True
 
             while True:
                 if result is not None:
@@ -533,20 +644,36 @@ class TriggerExecutor(ScheduleExecutor):
                 # Only the worker that holds the event starts its run.
                 if await acall_db(db, "update_trigger_event", event_id, held_by=claim, attempt=attempt) is None:
                     raise ClaimLost()
+                # From here until the app answers, nobody knows whether a run exists.
+                progress["in_flight"] = True
                 token = _on_accepted.set(accepted)
                 try:
                     result = await self._call_endpoint(call)
                 except (ClaimLost, Deferred):
+                    progress["in_flight"] = False
                     raise
-                except Exception as exc:
-                    # Raised before a run was accepted: an accepted run is followed, whatever happens.
+                except _NEVER_REACHED as exc:
+                    # No connection was made, so the app started nothing: this attempt may be retried.
                     log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} failed: {exc}")
                     result = {"status": EVENT_FAILED, "error": str(exc)}
+                except Exception as exc:
+                    # The request went out and no answer came back. The app may have accepted the
+                    # run, and nothing here can tell: sending it again could start a second one.
+                    log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} got no answer: {exc}")
+                    result = {
+                        "status": EVENT_FAILED,
+                        "error": f"the run request got no answer and may have been accepted "
+                        f"({type(exc).__name__}: {exc}); the event was not run again",
+                        "resubmit": False,
+                    }
                 finally:
                     _on_accepted.reset(token)
+                progress["in_flight"] = False
                 if not retried(result):
                     break
 
+        # Either the recorded run gave a result, or a run was started and gave one.
+        assert result is not None
         recorded: Dict[str, Any] = {
             "status_code": result.get("status_code"),
             "run_id": result.get("run_id") or row.get("run_id"),
@@ -556,7 +683,7 @@ class TriggerExecutor(ScheduleExecutor):
             "output": result.get("output"),
             "requirements": result.get("requirements"),
         }
-        if declared is not None and declared.on_complete is not None:
+        if declared is not None and declared.on_complete is not None and event is not None and trigger is not None:
             # Only the worker that holds the event reports how its run ended.
             if not await acall_db(db, "renew_trigger_event_claim", event_id, claim):
                 raise ClaimLost()

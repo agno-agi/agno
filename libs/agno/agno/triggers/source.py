@@ -14,6 +14,10 @@ CHECK_SENDER_KEY = "check_sender"
 # When the source first failed to answer that question, in epoch seconds. The asking ends an
 # hour after it.
 CHECK_SENDER_SINCE_KEY = "check_sender_since"
+# When the run an earlier worker started for the event first could not be read, in epoch seconds.
+RUN_UNREAD_SINCE_KEY = "run_unread_since"
+# The run endpoint the event's run was started on. The trigger may be pointed elsewhere later.
+RUN_ENDPOINT_KEY = "run_endpoint"
 
 
 class SenderCheckFailed(Exception):

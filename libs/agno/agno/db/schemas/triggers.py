@@ -89,15 +89,25 @@ _last_timestamp = 0
 _lock = Lock()
 
 
-def new_trigger_event_id() -> str:
+def new_trigger_event_id(after: Optional[str] = None) -> str:
     """An id that sorts in the order events were received.
 
     Events for one key run in id order. The nanosecond prefix orders them across workers, and the
     local counter keeps two events received in the same reading apart.
+
+    Args:
+        after: The id of the newest event already stored for the same conversation. The new id
+            sorts after it even when this process's clock is behind the one that stored it.
     """
     global _last_timestamp
+    earliest = 0
+    if after:
+        try:
+            earliest = int(after.split("_")[1]) + 1
+        except (IndexError, ValueError):
+            earliest = 0
     with _lock:
-        _last_timestamp = max(time.time_ns(), _last_timestamp + 1)
+        _last_timestamp = max(time.time_ns(), _last_timestamp + 1, earliest)
         timestamp = _last_timestamp
     return f"te_{timestamp:020d}_{uuid4()}"
 

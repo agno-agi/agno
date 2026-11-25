@@ -374,3 +374,20 @@ async def test_trigger_names_are_unique_within_one_agentos(db):
         with pytest.raises(Exception):
             await call(db, "create_trigger", again)
     assert (await call(db, "get_triggers"))[1] == 4
+
+
+async def test_a_claim_cannot_write_to_an_event_once_it_has_ended(db):
+    row = event_row("d-1")
+    assert await call(db, "create_trigger_event", row)
+    claimed = await call(db, "claim_trigger_event", "worker:1", 120)
+    assert claimed["id"] == row["id"]
+
+    # The worker records the end. Its claim stays named on the row.
+    ended = await call(db, "update_trigger_event", row["id"], held_by="worker:1", status=EVENT_SUCCESS)
+    assert ended["status"] == EVENT_SUCCESS and ended["claimed_by"] == "worker:1"
+
+    # A late write by that same claim, such as handing the event back on shutdown, changes nothing.
+    assert await call(db, "update_trigger_event", row["id"], held_by="worker:1", status=EVENT_PENDING) is None
+    assert (await call(db, "get_trigger_event", row["id"]))["status"] == EVENT_SUCCESS
+    # A write that names no claim is the caller's own business.
+    assert await call(db, "update_trigger_event", row["id"], reason="noted") is not None
