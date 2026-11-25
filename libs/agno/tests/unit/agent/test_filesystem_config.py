@@ -1,5 +1,3 @@
-import re
-
 import pytest
 
 from agno.agent import Agent
@@ -392,81 +390,60 @@ def test_multiple_filesystems_show_each_description_on_tools_and_instructions(db
         (first, "drafts", "Your working drafts. Write and revise here."),
         (second, "handbook", "The company handbook."),
     ):
-        header = f"Filesystem namespace: {namespace!r}. Purpose: {description}"
+        header = f"Filesystem namespace: {namespace!r}. Description: {description}"
         assert toolkit.functions and toolkit.async_functions
         for function in [*toolkit.functions.values(), *toolkit.async_functions.values()]:
             assert function.description.splitlines()[0] == header
         assert toolkit.instructions.splitlines()[:2] == [
             f"Filesystem namespace: {namespace!r}.",
-            f"Purpose: {description}",
+            f"Description: {description}",
         ]
     # A store with no description reads as before.
     for function in third.functions.values():
         assert function.description.splitlines()[0] == "Filesystem namespace: 'scratch'."
-    assert "Purpose:" not in third.instructions
+    assert "Description:" not in third.instructions
 
 
-def test_description_names_tools_by_their_qualified_names(db):
-    drafts = FileSystem(db, namespace="drafts", description="Save every answer here with write_file.")
-    agent = Agent(id="analyst", filesystem=[drafts, FileSystem(db, namespace="handbook", read_only=True)])
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_count", [1, 2])
+@pytest.mark.parametrize("async_tools", [False, True])
+async def test_description_reaches_the_model_as_written(db, store_count, async_tools):
+    # A bare tool name, a file path that contains one, and another store's tool name.
+    description = "Open manuals/read_file.md with read_file, then save with fs_2_drafts_write_file."
+    stores = [FileSystem(db, namespace="guide", read_only=True, description=description)]
+    if store_count == 2:
+        stores.append(FileSystem(db, namespace="drafts"))
+    agent = Agent(id="analyst", filesystem=stores)
 
-    toolkit = _filesystem_tools(agent)[0]
+    if async_tools:
+        tools = await agent.aget_tools(
+            run_response=RunOutput(run_id="run", session_id="described"),
+            run_context=RunContext(run_id="run", session_id="described"),
+            session=AgentSession(session_id="described", session_data={}),
+        )
+        guide = [tool for tool in tools if isinstance(tool, FileSystemTools)][0]
+        functions = guide.get_async_functions()
+    else:
+        guide = _filesystem_tools(agent)[0]
+        functions = guide.get_functions()
 
-    expected = "Purpose: Save every answer here with fs_1_drafts_write_file."
-    assert expected in toolkit.functions["fs_1_drafts_read_file"].description
-    assert expected in toolkit.instructions
-
-
-def test_file_paths_that_contain_a_tool_name_stay_as_written(db):
-    guide = FileSystem(
-        db,
-        namespace="guide",
-        read_only=True,
-        description="See manuals/read_file.md and read_file.txt. Open them with read_file.",
-    )
-    notes = FileSystem(
-        db,
-        namespace="notes",
-        instructions="Start from list_files/index.md, then call `list_files`.",
-    )
-    agent = Agent(id="analyst", filesystem=[guide, notes])
-
-    first, second = _filesystem_tools(agent)
-
-    purpose = "Purpose: See manuals/read_file.md and read_file.txt. Open them with fs_1_guide_read_file."
-    for function in [*first.functions.values(), *first.async_functions.values()]:
-        assert function.description.splitlines()[0] == f"Filesystem namespace: 'guide'. {purpose}"
-    assert first.instructions.splitlines()[1] == purpose
-    assert second.instructions.splitlines()[1] == "Start from list_files/index.md, then call `fs_2_notes_list_files`."
-
-
-def test_only_the_tools_a_store_registers_get_its_prefix(db):
-    drafts = FileSystem(db, namespace="drafts", description="Save answers with write_file, never delete_file.")
-    handbook = FileSystem(
-        db,
-        namespace="team/handbook",
-        read_only=True,
-        description="Use read_file on the style guide before you call write_file.",
-    )
-    agent = Agent(id="analyst", filesystem=[drafts, handbook])
-
-    first, second = _filesystem_tools(agent)
-
-    # The handbook is read-only: it has no write_file, so the name is not given its prefix.
-    purpose = "Purpose: Use fs_2_team_handbook_read_file on the style guide before you call write_file."
-    for function in [*second.functions.values(), *second.async_functions.values()]:
-        assert function.description.splitlines()[0] == f"Filesystem namespace: 'team/handbook'. {purpose}"
-    assert second.instructions.splitlines()[1] == purpose
-    # The drafts store registers write_file and leaves delete_file out.
-    assert first.instructions.splitlines()[1] == (
-        "Purpose: Save answers with fs_1_drafts_write_file, never delete_file."
-    )
-    registered = set(first.functions) | set(second.functions)
-    for toolkit in (first, second):
-        texts = [toolkit.instructions, *(function.description for function in toolkit.functions.values())]
-        for text in texts:
-            for name in re.findall(r"fs_\d_\w+", text):
-                assert name in registered, name
+    line = f"Description: {description}"
+    assert functions and guide.instructions is not None
+    if store_count == 1:
+        assert guide.instructions.splitlines()[0] == line
+        assert sorted(functions) == ["list_files", "read_file", "search_content"]
+    else:
+        assert guide.instructions.splitlines()[:2] == ["Filesystem namespace: 'guide'.", line]
+        assert sorted(functions) == [
+            "fs_1_guide_list_files",
+            "fs_1_guide_read_file",
+            "fs_1_guide_search_content",
+        ]
+        for function in functions.values():
+            assert function.description.splitlines()[0] == f"Filesystem namespace: 'guide'. {line}"
+    # The built-in guidance under the description still names this store's tools.
+    read_tool = "read_file" if store_count == 1 else "fs_1_guide_read_file"
+    assert read_tool in guide.instructions.split(line, 1)[1]
 
 
 def test_single_filesystem_description_leads_the_instructions(db):
@@ -476,10 +453,10 @@ def test_single_filesystem_description_leads_the_instructions(db):
 
     toolkit = _filesystem_tools(Agent(id="reader", filesystem=described))[0]
 
-    assert toolkit.instructions == "Purpose: The company handbook.\n" + FileSystem.instructions(read_only=True)
+    assert toolkit.instructions == "Description: The company handbook.\n" + FileSystem.instructions(read_only=True)
     # One store keeps the plain tool names and descriptions.
     assert "read_file" in toolkit.functions
-    assert custom.tools().instructions == "Purpose: The company handbook.\nCustom guidance."
+    assert custom.tools().instructions == "Description: The company handbook.\nCustom guidance."
     assert plain.tools().instructions == FileSystem.instructions(read_only=True)
 
 

@@ -49,8 +49,13 @@ agent config.
 An agent with several stores lists them, `filesystem=[drafts, handbook]`, and each
 store's tools get a distinct name (`multiple_stores_agent.py`). Give each store a
 `description`, `FileSystem(db, namespace="team/handbook", description="The team
-handbook.")`: the agent reads it on every tool of that store and at the top of
-the store's instructions, so it knows what each store is for. To attach the
+handbook.")`: one sentence on what the store is for and when to use it. The
+agent reads it on every tool of that store and at the top of the store's
+instructions, as `Description: The team handbook.`. It is shown as written, so
+to point at a tool, write the name the agent sees, such as
+`fs_2_team_handbook_read_file`. Known limit: custom `instructions` that contain
+a file path with a tool name in it, such as `manuals/read_file.md`, are still
+rewritten when the agent holds several stores. To attach the
 toolkit yourself instead, use `tools=[fs.tools(...)]`; `tools()` defaults to the
 FileSystem's own options. The setting and a manually attached toolkit cannot be
 combined on one agent.

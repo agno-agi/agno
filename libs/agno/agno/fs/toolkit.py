@@ -167,8 +167,8 @@ class FileSystemTools(Toolkit):
         if instructions is None:
             instructions = FileSystem.instructions(read_only=read_only)
         if fs.description:
-            # The default text is the same for every store, so the purpose leads.
-            instructions = f"Purpose: {fs.description}\n{instructions}"
+            # The default text is the same for every store, so the description leads.
+            instructions = f"{self.description_line}\n{instructions}"
 
         if kwargs.get("include_tools") is not None:
             # include_tools is a fully explicit whitelist over the whole
@@ -207,6 +207,11 @@ class FileSystemTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
+
+    @property
+    def description_line(self) -> str:
+        """The store's description as the model reads it, or an empty string."""
+        return f"Description: {self.fs.description}" if self.fs.description else ""
 
     @property
     def can_write(self) -> bool:
