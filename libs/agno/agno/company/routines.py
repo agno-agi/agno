@@ -1283,7 +1283,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         # The acceptance is loaded from the Task, where it was stored when a person accepted it
         headers = {
             "Authorization": "Bearer " + self.internal_service_token,
-            AUTHORIZATION_HEADER: json.dumps({**snapshot, "saved": True}),
+            # None when the Task was accepted with authorization off; it is sent on as null
+            AUTHORIZATION_HEADER: json.dumps({**snapshot, "saved": True} if snapshot is not None else None),
         }
         if task.get("accepted_by") is not None:
             headers[SCHEDULE_OWNER_HEADER] = quote(task["accepted_by"], safe="")
