@@ -98,6 +98,22 @@ def resolve_expected_audience(
     return audience or os_id
 
 
+def verification_keys_from_env(algorithm: str) -> List[str]:
+    """The verification keys in ``JWT_VERIFICATION_KEY``.
+
+    For an asymmetric algorithm the value may hold several keys separated by commas, so one
+    AgentOS can verify tokens from several issuers, each with its own key. PEM and base64 text
+    hold no comma. An HMAC secret can, and splitting it would turn one secret into several
+    shorter ones that each verify a token, so with an HS algorithm the whole value is one key.
+    """
+    value = getenv("JWT_VERIFICATION_KEY", "")
+    if not value:
+        return []
+    if (algorithm or "").upper().startswith("HS"):
+        return [value]
+    return [key.strip() for key in value.split(",") if key.strip()]
+
+
 def _route_action(required_scopes: List[str]) -> Optional[str]:
     """The single action a route requires (``read`` / ``run`` / ``write`` / ...),
     or None when the route's required scopes span more than one action.
@@ -172,6 +188,9 @@ class JWTValidator:
             verification_keys: List of keys for verifying JWT signatures.
                               For asymmetric algorithms (RS256, ES256), these should be public keys.
                               For symmetric algorithms (HS256), these are shared secrets.
+                              The keys in the JWT_VERIFICATION_KEY env var are added to this list:
+                              several keys separated by commas for an asymmetric algorithm, one
+                              secret for a symmetric one.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
             algorithm: JWT algorithm (default: RS256).
             validate: Whether to validate the JWT token (default: True).
@@ -200,10 +219,10 @@ class JWTValidator:
         if verification_keys:
             self.verification_keys.extend(verification_keys)
 
-        # Add key from environment variable if not already provided
-        env_key = getenv("JWT_VERIFICATION_KEY", "")
-        if env_key and env_key not in self.verification_keys:
-            self.verification_keys.append(env_key)
+        # Add the keys from the environment variable that were not already provided
+        for env_key in verification_keys_from_env(algorithm):
+            if env_key not in self.verification_keys:
+                self.verification_keys.append(env_key)
 
         # JWKS configuration - load keys from JWKS file or environment variable.
         self.jwks_keys: "Dict[str, PyJWK]" = {}
@@ -627,7 +646,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                               For symmetric algorithms (HS256), these are shared secrets.
                               Each key will be tried in order until one successfully validates the token.
                               Useful when accepting tokens signed by different private keys.
-                              If not provided, will use JWT_VERIFICATION_KEY env var (as a single-item list).
+                              If not provided, will use the JWT_VERIFICATION_KEY env var, which may
+                              hold several comma-separated keys for an asymmetric algorithm.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
                       The file should contain a JSON object with a "keys" array.
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
