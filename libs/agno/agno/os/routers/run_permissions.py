@@ -15,7 +15,11 @@ async def _require_endpoint_permission(
     request: Request, endpoint: str, method: str, *, action: Literal["schedule", "accept"] = "schedule"
 ) -> None:
     """Require the caller's run permission before scheduling or accepting work."""
-    from agno.os.auth import build_insufficient_permissions_detail, caller_scopes_are_authoritative
+    from agno.os.auth import (
+        build_insufficient_permissions_detail,
+        caller_scopes_are_authoritative,
+        planes_beside_token_scopes,
+    )
 
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
     parts = path.strip("/").split("/")
@@ -58,19 +62,22 @@ async def _require_endpoint_permission(
 
     resource_type, resource_id = match.group(1), match.group(2)
     required_scope = f"{resource_type}:run"
-    if scopes_decide and has_required_scopes(
-        list(caller_scopes),
-        [required_scope],
-        resource_type=resource_type,
-        resource_id=resource_id,
-        admin_scope=admin_scope,
-    ):
-        return
+    if scopes_decide:
+        if has_required_scopes(
+            list(caller_scopes),
+            [required_scope],
+            resource_type=resource_type,
+            resource_id=resource_id,
+            admin_scope=admin_scope,
+        ):
+            return
+        if not planes_beside_token_scopes(request):
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail([required_scope]))
     # Decide the target the same way its own route gate would -- through the provider -- so
     # write permission cannot target a component the caller may not run themselves. This is the
     # only question under a managed-roles/ReBAC/custom plane, which ignores the token's scopes.
-    # Where token scopes count too, it is asked after them: a caller whose token does not carry
-    # the scope can still hold the target through a stored role.
+    # Where token scopes count beside another plane, it is asked after them: a caller whose
+    # token does not carry the scope can still hold the target through a stored role.
     from agno.os.auth import _provider_for
     from agno.os.authz.provider import AuthorizationContext
 

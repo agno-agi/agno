@@ -41,7 +41,11 @@ async def _require_queue_admin(request: Request) -> None:
     carries a JWT identity (scopes/user_id stamped by JWTMiddleware) requires
     the admin scope. Deployments without JWT enforcement (security-key or
     open) pass, matching how the run routes treat scope enforcement."""
-    from agno.os.auth import caller_scopes_are_authoritative, resolve_authorization_provider
+    from agno.os.auth import (
+        caller_scopes_are_authoritative,
+        planes_beside_token_scopes,
+        resolve_authorization_provider,
+    )
     from agno.os.middleware.user_scope import _has_admin_scope
 
     scopes = getattr(request.state, "scopes", None)
@@ -58,10 +62,12 @@ async def _require_queue_admin(request: Request) -> None:
     # the caller's authority: under a managed-roles/ReBAC plane a token's `agent_os:admin`
     # is ignored everywhere else, so trust it here and this whole surface leaks. Gate the
     # scope path on that, and otherwise ask the provider whether the caller is an admin.
-    if caller_scopes_are_authoritative(request) and _has_admin_scope(scopes or [], admin_scope=admin_scope):
-        return
-    # No admin scope that counts: ask the provider. With managed roles beside the scope plane, an
-    # admin by role passes here; under a scope plane alone the provider gives the same refusal.
+    if caller_scopes_are_authoritative(request):
+        if _has_admin_scope(scopes or [], admin_scope=admin_scope):
+            return
+        # With another plane beside the token's scopes, an admin by stored role is asked below
+        if not planes_beside_token_scopes(request):
+            raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
 
     from agno.os.authz.provider import AuthorizationContext
 

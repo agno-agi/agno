@@ -8,9 +8,9 @@ user's ``db=`` / ``db_url=`` argument and that contract:
 * :func:`db_from_url` turns a SQLAlchemy URL into the matching agno database, so
   ``Authorization(db_url=...)`` keeps working without the caller having to build a
   ``SqliteDb`` or ``PostgresDb`` themselves.
-* :func:`supports_authz` asks whether a database implements the contract by CALLING it
-  rather than by inspecting it -- a backend that inherits the stubs raises
-  ``NotImplementedError`` and answers False.
+* :func:`supports_authz` asks whether a database implements the contract: a backend opts in
+  by overriding the stubs, and one that inherits them answers False. It reads nothing, so the
+  answer does not depend on the database being reachable.
 
 The previous version of this module reached past the contract entirely: it duck-typed
 any object for a ``.db_engine`` and the authz components then built and queried their own
@@ -67,16 +67,12 @@ def db_from_url(db_url: str) -> Any:
 def supports_authz(db: Any) -> bool:
     """Whether ``db`` implements the authorization contract.
 
-    For a sync backend this is determined by calling the cheapest read and seeing whether
-    it raises ``NotImplementedError``, so a backend opts in by implementing the methods
-    rather than by appearing on a list here. Any OTHER exception (a connection error, say)
-    means the database is real and configured for authz but currently unreachable, which is
-    not the same as unsupported.
-
-    An async backend can't be probed by calling -- its ``async def`` stub returns a
-    coroutine rather than raising ``NotImplementedError`` until awaited -- so it opts in by
-    OVERRIDING the method off the ``AsyncBaseDb`` stub. That check is synchronous (no
-    coroutine is created), so this stays a plain sync predicate for both worlds.
+    A backend opts in by OVERRIDING the stub off ``BaseDb`` / ``AsyncBaseDb``, rather than by
+    appearing on a list here; one that inherits the stub, which raises ``NotImplementedError``,
+    answers False. The answer comes from the class and nothing is read: a database that is
+    configured for authz but currently unreachable still supports it, and asking it a question
+    here would open a connection and create its tables while AgentOS is being built, before
+    anything uses them.
     """
     if db is None:
         return False
@@ -85,17 +81,9 @@ def supports_authz(db: Any) -> bool:
     if isinstance(db, AsyncBaseDb):
         return type(db).authz_name_is_role is not AsyncBaseDb.authz_name_is_role
     if not isinstance(db, BaseDb):
-        # Not an agno database: there is no contract to implement, so this is "unsupported",
-        # not "reachable but down". The generic except below used to swallow the resulting
-        # AttributeError as "supported", so a stray object passed boot and failed per request.
+        # Not an agno database: there is no contract to implement, so this is "unsupported"
         return False
-    try:
-        db.authz_name_is_role("__agno_authz_probe__")
-    except NotImplementedError:
-        return False
-    except Exception:
-        return True
-    return True
+    return type(db).authz_name_is_role is not BaseDb.authz_name_is_role
 
 
 def is_async_authz_db(db: Any) -> bool:

@@ -357,6 +357,21 @@ def caller_scopes_are_authoritative(request: Any) -> bool:
     return _caller_is_service_account(request) or token_scopes_are_authoritative(request)
 
 
+def planes_beside_token_scopes(request: Any) -> bool:
+    """Whether another plane decides beside the token's scopes for this caller.
+
+    True where AgentOS runs several planes at once (managed roles with token scopes trusted, or a
+    list of providers): a request the token's scopes do not allow may still be allowed by a stored
+    role. A gate that measures the caller by token scopes asks the provider as well, then. False
+    for a service account, which is measured by its own scopes alone, and on any single plane,
+    where the token's scopes either are the whole answer or are not consulted at all."""
+    from agno.os.authz._composite import CompositeAuthorizationProvider
+
+    if _caller_is_service_account(request):
+        return False
+    return isinstance(resolve_authorization_provider(request), CompositeAuthorizationProvider)
+
+
 def _provider_for(request: Any) -> AuthorizationProvider:
     """The provider that decides for *this caller*.
 
@@ -1061,13 +1076,13 @@ def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
     the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
     wrongly blocked from ever resolving an approval.
     """
-    by_token = request is None or caller_scopes_are_authoritative(request)
-    if by_token and has_required_scopes(list(user_scopes or []), ["approvals:write"]):
-        return True
-    # A service account is measured by its own scopes alone. For anyone else, a plane beside the
-    # token's scopes may hold the grant: an approver by stored role carries no scope on the token.
-    if request is None or _caller_is_service_account(request):
-        return False
+    if request is None or caller_scopes_are_authoritative(request):
+        if has_required_scopes(list(user_scopes or []), ["approvals:write"]):
+            return True
+        # Another plane beside the token's scopes may hold the grant: an approver by stored role
+        # carries no scope on the token.
+        if request is None or not planes_beside_token_scopes(request):
+            return False
     from agno.os.authz.provider import AuthorizationContext
 
     admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)

@@ -141,7 +141,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
-        from agno.os.auth import _caller_is_service_account, caller_scopes_are_authoritative
+        from agno.os.auth import caller_scopes_are_authoritative, planes_beside_token_scopes
 
         if caller_scopes_are_authoritative(request):
             effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
@@ -150,10 +150,10 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             scopes = [scope for scope in scopes if not _caller_holds_scope(caller_scopes, scope, admin_scope)]
             if not scopes:
                 return
-            # A service account is measured by its own scopes alone. For anyone else, a scope the
-            # token does not carry may still be held through a plane beside it (a stored role),
-            # so only those scopes go on to the provider below.
-            if _caller_is_service_account(request):
+            # With another plane beside the token's scopes, a scope the token does not carry may
+            # still be held through it (a stored role), so only those scopes go on to the
+            # provider below. A service account is measured by its own scopes alone.
+            if not planes_beside_token_scopes(request):
                 raise HTTPException(
                     status_code=403,
                     detail=f"Cannot grant scope(s) you do not hold: {', '.join(scopes)}",

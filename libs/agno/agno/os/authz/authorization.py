@@ -195,6 +195,8 @@ class Authorization:
         self._roles_defined = engine is not None or roles_claim is not None
         # The role define_role(..., default=True) last flagged, to compare with UserDirectory(default_role=)
         self._default_declared: Optional[str] = None
+        # The store is on only because the database can hold roles: nothing in code declared one
+        self._store_is_implicit = False
         self._wired = False  # set once AgentOS has wired the object; roles cannot be declared after
 
         # Buffers applied at bind time (used when no db is available yet).
@@ -302,7 +304,16 @@ class Authorization:
         resources = [f"{family}/{old}" for family in ("agents", "teams", "workflows") for old in FORMER_MANAGER_IDS]
         # A custom policy engine owns its own storage, which this check cannot read.
         read = getattr(self._store()._engine, "_acall", None)
-        rows = await read("get_authz_policies_for_resources", resources) if read is not None else []
+        try:
+            rows = await read("get_authz_policies_for_resources", resources) if read is not None else []
+        except Exception as e:
+            if not self._store_is_implicit:
+                raise
+            # No role is declared in code, so this AgentOS never needed the role tables to start,
+            # and a database that cannot be read now must not stop it. The role plane grants
+            # nothing while it cannot be read, and token scopes decide as they did before.
+            log_debug(f"Stored role policies could not be read at startup; not checked: {e}")
+            return
         if rows:
             found = ", ".join(
                 sorted(f"{role}: {resource} {action} ({effect})" for role, resource, action, effect in rows)
@@ -342,7 +353,7 @@ class Authorization:
         # trust_token_scopes=False with no role in code, where a store deciding alone would
         # start empty and refuse everyone, the admin who could fill it included.
         if not self._roles_defined and self._provider_override is None and self._trust_token_scopes:
-            self._roles_defined = supports_authz(self._db)
+            self._roles_defined = self._store_is_implicit = supports_authz(self._db)
         # A database is only needed for things that PERSIST and are not already persisted: a role
         # store or directory the object has to build (or was handed unbound), or a DbAuditSink from
         # audit=True. Verify-only / scope-based / custom-provider setups store nothing, and a store
@@ -878,6 +889,7 @@ class Authorization:
         """Put managed roles in play. Whether roles are enforced (and /authz mounted) is decided when
         AgentOS wires the object, so a first declaration after wiring would land in a store nothing
         reads: refuse it. Re-declaring on an object already using roles is fine at any time."""
+        self._store_is_implicit = False
         if self._roles_defined:
             return
         if self._wired:

@@ -352,6 +352,40 @@ def test_a_database_that_cannot_hold_roles_leaves_token_scopes_to_decide(databas
     assert client.get("/config", headers=_auth("op@example.com", ["agents:read"])).status_code == 403
 
 
+class _UnreachableDb(SqliteDb):
+    """A database that can hold roles and cannot be read, counting each attempt."""
+
+    reads = 0
+
+    def _get_table(self, *args, **kwargs):
+        self.reads += 1
+        raise ConnectionError("database is unreachable")
+
+
+@pytest.mark.parametrize("switch", [True, False])
+def test_an_unreachable_database_does_not_stop_an_os_with_no_role_in_code(tmp_path, switch):
+    db = _UnreachableDb(db_file=str(tmp_path / "down.db"))
+    if switch:
+        config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256")
+        agent_os = _os(db, True, authorization_config=config, auto_provision_dbs=False)
+    else:
+        agent_os = _os(db, _verified(), auto_provision_dbs=False)
+    app = agent_os.get_app()
+    # Building the OS asks the database nothing, and the role store is there for when it is back
+    assert db.reads == 0 and app.state.role_store is not None
+
+    with TestClient(app) as client:  # startup runs
+        assert client.get("/config", headers=_auth("op@example.com", ["config:read"])).status_code == 200
+        # The role plane cannot answer, so a request the token's scopes do not allow is refused
+        assert client.get("/config", headers=_auth("op@example.com", ["agents:read"])).status_code == 403
+
+
+def test_a_role_in_code_needs_the_database_at_startup(tmp_path):
+    member, _ = _roles()
+    with pytest.raises(ConnectionError):
+        _os(_UnreachableDb(db_file=str(tmp_path / "down.db")), _verified(roles=[member]))
+
+
 def test_a_role_in_code_still_needs_a_database_that_can_hold_it():
     member, _ = _roles()
     with pytest.raises(RuntimeError, match="does not support authorization storage"):
