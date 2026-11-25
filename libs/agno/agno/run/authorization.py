@@ -32,8 +32,9 @@ class RunAuthorization:
     enforce_tools: bool = True
     # A schedule fired this run with the saved authority of the person who created it. Nobody is present.
     scheduled: bool = False
-    # Restored from an authority that was saved with a Routine, a Task or a schedule, not built
-    # from a live request.
+    # Loaded from an authority that was stored with a schedule, a Routine or a Task acceptance,
+    # not built from a live request. A live caller's authority that only passes through the job
+    # queue or an internal hop is not saved.
     saved: bool = False
 
     def _saved_scopes_reach_mini_agent(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
@@ -46,6 +47,9 @@ class RunAuthorization:
         or editing a Routine, or accepting a Task, asks for Mini Agent by name. Mini Agent runs
         nothing but Routines and Tasks, so no other work is reached this way."""
         if not self.saved or not getattr(self.provider, "enforces_token_scopes", False):
+            return False
+        # Running a Routine or a Task starts Mini Agent and reads the run back. Nothing else is asked
+        if ctx.action not in ("run", "read"):
             return False
         from agno.os.scopes import has_required_scopes
         from agno.registry._reserved import MANAGER_RESOURCES, MINI_AGENT_ID
@@ -95,6 +99,8 @@ class RunAuthorization:
             "service_account": self.service_account,
             "enforce_tools": self.enforce_tools,
             **({"scheduled": True} if self.scheduled else {}),
+            # A saved authority stays saved when its run goes through the job queue or an internal hop
+            **({"saved": True} if self.saved else {}),
         }
 
 
@@ -291,10 +297,21 @@ def stamp_authorization(
     return cleaned if cleaned or payload is not None else None
 
 
-def require_schedule_target(endpoint: str, method: str = "POST") -> None:
+def _run_endpoint_target(endpoint: str, method: str) -> Any:
+    """The (type, id) a schedule endpoint runs, read from the path as the server will route it."""
+    import posixpath
+    from urllib.parse import unquote, urlsplit
+
     from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
 
-    match = RUN_ENDPOINT_RE.fullmatch(endpoint) if method.upper() == "POST" else None
+    if method.upper() != "POST":
+        return None
+    # Decoded and normalised first: "/agents/mini%61gent/runs" reaches the same agent as its plain form
+    return RUN_ENDPOINT_RE.fullmatch(posixpath.normpath(unquote(urlsplit(endpoint).path)))
+
+
+def require_schedule_target(endpoint: str, method: str = "POST") -> None:
+    match = _run_endpoint_target(endpoint, method)
     if match is None:
         require_permission("agent_os", "admin")
     else:
@@ -302,9 +319,7 @@ def require_schedule_target(endpoint: str, method: str = "POST") -> None:
 
 
 async def arequire_schedule_target(endpoint: str, method: str = "POST") -> None:
-    from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
-
-    match = RUN_ENDPOINT_RE.fullmatch(endpoint) if method.upper() == "POST" else None
+    match = _run_endpoint_target(endpoint, method)
     if match is None:
         await arequire_permission("agent_os", "admin")
     else:

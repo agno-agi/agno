@@ -96,7 +96,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
         return admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
-    def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
+    async def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
         """Reject unknown scopes, gate privileged scopes behind the explicit flag, and
         enforce the subset rule: a caller with scopes can only grant scopes it holds."""
         admin_scope = _get_admin_scope(request)
@@ -141,7 +141,11 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
-        from agno.os.auth import caller_scopes_are_authoritative, planes_beside_token_scopes
+        from agno.os.auth import (
+            caller_scopes_are_authoritative,
+            planes_beside_token_scopes,
+            scopes_left_for_the_provider,
+        )
 
         if caller_scopes_are_authoritative(request):
             effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
@@ -179,7 +183,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         principal_id = getattr(request.state, "user_id", None)
         caller_claims = getattr(request.state, "claims", None) or {}
 
-        def _caller_holds_via_provider(scope: str) -> bool:
+        async def _caller_holds_via_provider(scope: str) -> bool:
             try:
                 resource, action = scope_to_resource_action(scope)
             except ValueError:
@@ -188,10 +192,10 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 resource_type, resource_id = "*", "*"  # agent_os:admin
             else:
                 resource_type, _, resource_id = resource.partition("/")
-            return provider.check(
+            return await provider.acheck(
                 AuthorizationContext(
                     principal_id=principal_id,
-                    scopes=list(caller_scopes or []),
+                    scopes=scopes_left_for_the_provider(request, caller_scopes),
                     claims=caller_claims,
                     resource_type=resource_type,
                     resource_id=resource_id,
@@ -200,7 +204,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 )
             )
 
-        scopes_not_held = [scope for scope in scopes if not _caller_holds_via_provider(scope)]
+        scopes_not_held = [scope for scope in scopes if not await _caller_holds_via_provider(scope)]
         if scopes_not_held:
             raise HTTPException(
                 status_code=403,
@@ -216,7 +220,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         """Mint a service account token. The plaintext token is returned exactly once."""
         requested_scopes = body.scope_strings()
         scopes = requested_scopes if requested_scopes is not None else list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
-        _validate_requested_scopes(request, body, scopes)
+        await _validate_requested_scopes(request, body, scopes)
 
         existing = await _db_call("get_service_account_by_name", body.name)
         if existing is not None:

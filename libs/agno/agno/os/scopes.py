@@ -287,12 +287,17 @@ def matches_scope(
 
     # If required scope has a resource_id, check it
     if required_scope.resource_id:
+        # The component asked about: the one the request names, else the one the required scope
+        # itself names (a route with no id in its path, mapped to one component's scope)
+        target_id = resource_id
+        if target_id is None and not required_scope.is_wildcard_resource:
+            target_id = required_scope.resource_id
         # User has wildcard resource access, or global resource access (no resource_id in user
         # scope). Neither reaches a built-in component: only its own scope does.
         if user_scope.is_wildcard_resource or not user_scope.resource_id:
-            return not is_built_in(user_scope.resource, resource_id)
+            return not is_built_in(user_scope.resource, target_id)
         # User has specific resource access - must match
-        return user_scope.resource_id == resource_id
+        return user_scope.resource_id == target_id
 
     # Required scope is global (no resource_id), user scope matches if:
     # - User has global scope (no resource_id), OR

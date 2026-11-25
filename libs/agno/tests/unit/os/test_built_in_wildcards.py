@@ -23,7 +23,7 @@ from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.auth import INTERNAL_SERVICE_SCOPES
 from agno.os.authz import PLATFORM, READ, RUN, Authorization, Role, ScopeAuthorizationProvider
 from agno.os.authz._composite import CompositeAuthorizationProvider
-from agno.os.authz._scope_policy import resource_matches
+from agno.os.authz._scope_policy import resource_matches, scope_to_resource_action
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.scopes import (
     _built_in_resources,
@@ -433,3 +433,164 @@ def test_saved_scopes_do_not_count_where_the_role_store_decides_alone(tmp_path):
         action="run",
     )
     assert RunAuthorization(provider, plain, saved=True).authorizes_route(plain, ["agents:run"]) is False
+
+
+# ----------------------------------------------------------------- what "saved" means, and its limits
+
+
+def test_a_live_callers_authority_is_not_saved_by_passing_through_the_queue(system):
+    from agno.os.authz.run_context import restore_authorization
+    from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope, stamp_authorization
+
+    provider = system.client.app.state.authorization_provider
+    plain = AuthorizationContext(principal_id="op@example.com", scopes=["agents:run", "teams:superagent:run"])
+
+    def through_the_queue(authority):
+        """Stamp the authority on a job as the queue does, then restore it as the worker does."""
+        with authorization_scope(lambda: authority):
+            job = stamp_authorization({}, include_trusted=True)
+        return restore_authorization(system.app, job[AUTHORIZATION_KEY])
+
+    # A run sent with background=true is its caller's own request: it must name Mini Agent
+    live = through_the_queue(RunAuthorization(provider, plain))
+    assert live.saved is False
+    with pytest.raises(PermissionError):
+        live.require("agents", "run", MINI_AGENT_ID)
+    # An authority loaded from a schedule stays saved when its run is queued
+    queued = through_the_queue(RunAuthorization(provider, plain, saved=True))
+    assert queued.saved is True
+    queued.require("agents", "run", MINI_AGENT_ID)
+    # Stored with a schedule, a Routine or an acceptance: the loader says so, whatever the snapshot holds
+    stored = RunAuthorization(provider, plain).snapshot()
+    assert "saved" not in stored
+    assert restore_authorization(system.app, stored).saved is False
+    assert restore_authorization(system.app, stored, saved=True).saved is True
+
+
+@pytest.mark.parametrize("action, reached", [("run", True), ("read", True), ("write", False), ("delete", False)])
+def test_saved_plain_scopes_run_and_read_mini_agent_and_nothing_more(system, action, reached):
+    provider = system.client.app.state.authorization_provider
+    ctx = AuthorizationContext(
+        principal_id="op@example.com",
+        scopes=[f"agents:{action}"],
+        resource_type="agents",
+        resource_id=MINI_AGENT_ID,
+        action=action,
+    )
+    assert RunAuthorization(provider, ctx, saved=True).authorizes_route(ctx, [f"agents:{action}"]) is reached
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["/agents/mini%61gent/runs", "/agents/./miniagent/runs", "/agents/miniagent/runs/"]
+)
+def test_an_encoded_or_padded_endpoint_names_the_same_built_in(system, endpoint):
+    from agno.run.authorization import require_schedule_target
+
+    plain = _auth("op@example.com", ["agents:run", "agents:read", "schedules:write"])
+    named = _auth("op@example.com", ["agents:run", f"agents:{MINI_AGENT_ID}:run", "schedules:write"])
+    body = {"name": "encoded", "cron_expr": "0 9 * * *", "endpoint": endpoint, "payload": {"message": "tick"}}
+    assert system.client.post("/schedules", json=body, headers=plain).status_code == 403
+    assert system.client.post("/schedules", json=body, headers=named).status_code != 403
+    # The same check for a schedule made by a tool
+    provider = system.client.app.state.authorization_provider
+    from agno.run.authorization import authorization_scope
+
+    authority = RunAuthorization(provider, AuthorizationContext(principal_id="op@example.com", scopes=["agents:run"]))
+    with authorization_scope(lambda: authority), pytest.raises(PermissionError):
+        require_schedule_target(endpoint)
+
+
+@pytest.mark.parametrize(
+    "held, required, allowed",
+    [
+        # A route with no id in its path, mapped to one component's scope
+        ("teams:run", "teams:superagent:run", False),
+        ("teams:*:run", "teams:superagent:run", False),
+        ("teams:superagent:run", "teams:superagent:run", True),
+        ("agent_os:admin", "teams:superagent:run", True),
+        ("teams:run", "teams:support:run", True),
+        ("teams:*:run", "teams:support:run", True),
+        ("teams:support:run", "teams:support:run", True),
+        ("teams:other:run", "teams:support:run", False),
+    ],
+)
+def test_a_required_scope_that_names_a_component_is_read_the_same_by_both_matchers(held, required, allowed):
+    from agno.os.scopes import has_required_scopes
+
+    assert has_required_scopes([held], [required], admin_scope="agent_os:admin") is allowed
+    # The role matcher, asked about the component the required scope names
+    resource, action = scope_to_resource_action(required)
+    if held == "agent_os:admin":
+        return
+    held_resource, held_action = scope_to_resource_action(held)
+    assert (held_action == action and resource_matches(held_resource, resource)) is allowed
+
+
+@pytest.mark.parametrize("by", ["role", "token"])
+def test_agui_serving_super_agent_asks_for_it_by_name(tmp_path, by):
+    from agno.os.interfaces.agui import AGUI
+
+    system = _System(tmp_path)
+    interface = AGUI(team=system.os.manager, prefix="/sa")
+    assert interface.get_scope_mappings() == {"POST /sa/agui": [f"teams:{MANAGER_TEAM_ID}:run"]}
+    system.os.interfaces.append(interface)
+    client = TestClient(system.os.get_app())
+
+    def run(who):
+        # Each caller has a thread of their own
+        body = {"threadId": f"thread-{who}", "runId": "r1", "state": {}, "messages": [], "tools": [], "context": []}
+        return client.post("/sa/agui", json={**body, "forwardedProps": {}}, headers=system.caller(who, by))
+
+    # A member can run every team they built, and not Super Agent through this door either
+    assert run("member").status_code == 403
+    assert run("platform").status_code == 200
+    assert run("admin").status_code == 200
+
+
+def test_agui_serving_a_team_you_built_keeps_the_type_wide_scope():
+    from agno.os.interfaces.agui import AGUI
+
+    team = Team(id="support", name="Support", members=[], model=_FixtureModel())
+    assert AGUI(team=team).get_scope_mappings() == {"POST /agui": ["teams:run"]}
+
+
+@pytest.mark.usefixtures("unavailable_manager_docs")
+def test_a_task_accepted_with_plain_scopes_is_still_picked_up(tmp_path):
+    import asyncio
+
+    from agno.company.routines import _CompanyScheduleExecutor
+
+    from .test_mini_agent_tasks import SCOPES as TASK_SCOPES
+    from .test_mini_agent_tasks import ScriptedModel
+    from .test_mini_agent_tasks import System as TaskSystem
+
+    system = TaskSystem(tmp_path)
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    # As a Task accepted before built-ins needed their own scope is stored: the scopes the
+    # accepting person's token carried then, with Mini Agent not named
+    task = system.db.get_task(proposal["id"])
+    transitions = [dict(entry) for entry in task["transitions"]]
+    accepted = dict(transitions[-1][AUTHORIZATION_KEY])
+    plain = [scope for scope in TASK_SCOPES if scope != f"agents:{MINI_AGENT_ID}:run"] + ["agents:run"]
+    accepted["context"] = {**accepted["context"], "scopes": plain}
+    transitions[-1][AUTHORIZATION_KEY] = accepted
+    table = system.db._get_table(table_type="tasks")
+    with system.db.Session() as session, session.begin():
+        session.execute(table.update().where(table.c.id == task["id"]).values(transitions=transitions))
+
+    system.mini.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})])
+    executor = _CompanyScheduleExecutor(
+        system.os, system.app, base_url="http://test", internal_service_token=system.os._internal_service_token
+    )
+
+    async def pick_up():
+        await executor._dispatch(system.db.get_task(proposal["id"]))
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(pick_up())
+    done = system.db.get_task(proposal["id"])
+    assert done["status"] == "in_review"
+    assert done["result"]["invoked"][0]["status"] == "COMPLETED"
+    system.db.close()
