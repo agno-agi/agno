@@ -298,7 +298,10 @@ async def _select_filesystems(
         agents = await afilter_resources_by_access(request, agents, "agents")
     ids = _listed_filesystem_ids(os, user_id, agents, [(key, source.forms) for key, source in sources.items()])
     keys = list(sources)
-    if filesystem_id is not None:
+    if filesystem_id is not None and filesystem_id in ids.values():
+        # The id of a store names that store alone: when the request does not read it, nothing is found.
+        keys = [key for key in keys if ids[key] == filesystem_id]
+    elif filesystem_id is not None:
         positions = _match_filesystem_id(filesystem_id, [(ids[key], sources[key].forms) for key in keys])
         keys = [keys[index] for index in positions]
     if held is not None:

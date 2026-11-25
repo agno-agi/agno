@@ -2463,3 +2463,45 @@ def test_an_agent_whose_file_tools_cannot_be_built_fails_only_the_requests_that_
         ("handbook", []),
         ("own", ["writer"]),
     ]
+
+
+# --- An id names one store, whatever agent is named with it ---
+
+
+def test_the_id_of_a_store_the_named_agent_does_not_hold_opens_no_other_store(db, archive_db, client_factory):
+    in_code = FileSystem(db, namespace="notes")
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    in_code.write("style.md", "in code needle\n")
+    elsewhere.write("style.md", "elsewhere needle\n")
+    other = AgentFactory(id="other", db=db, factory=lambda ctx: Agent(id="other", db=db, filesystem=elsewhere))
+    client = client_factory(Agent(id="in-code", db=db, filesystem=in_code), other)
+
+    def content(**params) -> tuple:
+        response = client.get("/filesystem/content", params={"path": "style.md", **params}, headers=_headers("alice"))
+        return response.status_code, response.json().get("filesystem_id"), response.json().get("content")
+
+    # /config gives the bare namespace to the store of the agent declared in code.
+    assert content(filesystem_id="notes") == (200, "notes", "in code needle\n")
+    assert content(filesystem_id="notes", agent_id="in-code") == (200, "notes", "in code needle\n")
+    # The other agent holds the same namespace on another database. The id does not name its store.
+    for route, params in ONE_FILESYSTEM_ROUTES:
+        named = client.get(
+            route, params={**params, "filesystem_id": "notes", "agent_id": "other"}, headers=_headers("alice")
+        )
+        assert named.status_code == 404, route
+        assert "needle" not in named.text
+    rows = client.get(
+        "/filesystem/files", params={"filesystem_id": "notes", "agent_id": "other"}, headers=_headers("alice")
+    )
+    assert rows.status_code == 200 and rows.json()["entries"] == []
+    # Its own id opens it, and so does a longer form of it, which is no store's id.
+    assert content(filesystem_id="notes:archive-db", agent_id="other") == (
+        200,
+        "notes:archive-db",
+        "elsewhere needle\n",
+    )
+    assert content(filesystem_id="notes:archive-db:agno_fs", agent_id="other") == (
+        200,
+        "notes:archive-db",
+        "elsewhere needle\n",
+    )
