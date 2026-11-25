@@ -70,6 +70,26 @@ Earlier config output in this log records the previous schema.
 
 ---
 
+### os_level_filesystem.py
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/27_filesystem/os_level_filesystem.py`, served on port 7777, and requested with curl. No model call. The AgentOS declares two file systems, `handbook` and `shared`. Four agents are served: the writer holds `shared`, the editor holds `drafts` and `shared` read-only, the notes agent uses `filesystem=True`, and the plain agent holds none.
+
+**Result:** `/config` listed four entries, each with an `id`: `handbook` (`declared: true`, `agents: []`), `shared` (`declared: true`, agents `editor` read-only and `writer`), `drafts` and `notes-agent` (`declared: false`). `/filesystem/entries?filesystem_id=handbook` listed the `onboarding` directory with `agent_ids: []`, `/filesystem/content?filesystem_id=handbook&path=onboarding/welcome.md` returned the seeded page, `/filesystem/search?filesystem_id=shared&query=filesystem` found `notes/standup.md`, and `/filesystem/files` listed the three seeded files, each row with its `filesystem_id`. `namespace=handbook` and `agent_id=editor` still returned 200, and an id nothing uses returned 404. `/agents` reported no file system for the plain agent. Agent runs against a model were not exercised.
+
+---
+
+### os_level_filesystem.py (after the review fixes)
+
+**Status:** PASS
+
+**Description:** Requested on 2026-11-25 through a FastAPI test client on the cookbook's `app`, not on a served port. No model call. The same stores and agents as above.
+
+**Result:** `/config` listed the same four entries. `agent_id=editor` opened `drafts`, and `agent_id=editor&filesystem_id=shared` opened `shared` with `agent_ids` `editor`, the agent the request names. `agent_id=editor&filesystem_id=handbook` returned 404: the editor does not hold the handbook. `/filesystem/files?agent_id=editor` listed the editor's two files under the ids `drafts` and `shared`, the ids the unfiltered listing gives them.
+
+---
+
 ### multiple_stores_agent.py (store descriptions)
 
 **Status:** PASS
