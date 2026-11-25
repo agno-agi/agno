@@ -446,6 +446,28 @@ async def test_a_deny_stored_by_3_2_0_can_be_changed_to_allow(tmp_path, use_asyn
     db.close()
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_role_stored_by_3_2_0_reads_back_under_the_goals_name(tmp_path, use_async):
+    # A client draws a role against the scope catalog, which lists goals: a row shown as products
+    # would look like a permission the role lacks.
+    db = (AsyncSqliteDb if use_async else SqliteDb)(db_file=str(tmp_path / "authz.db"))
+    for resource, action, effect in (
+        ("products/*", "read", "allow"),
+        ("products/docs", "write", "allow"),
+        ("products/*", "delete", "allow"),
+        ("goals/*", "delete", "deny"),
+    ):
+        stored = db.upsert_authz_policy(role="editor", resource=resource, action=action, effect=effect)
+        if use_async:
+            await stored
+    engine = Authorization(db=db)._store()._engine
+
+    scopes = await engine.aget_role_scopes("editor") if use_async else engine.get_role_scopes("editor")
+
+    # One entry for each permission, and a deny under either name is the one shown.
+    assert sorted(scopes) == [("goals:delete", "deny"), ("goals:docs:write", "allow"), ("goals:read", "allow")]
+
+
 def test_a_role_saved_with_a_products_scope_grants_goals(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "roles.db"))
     store = Authorization(db=db)

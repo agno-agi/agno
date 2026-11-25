@@ -89,6 +89,19 @@ def _normalize_effect(effect: str) -> str:
     return e
 
 
+def _read_back(rows: List[_PolicyRow]) -> List[ScopeEntry]:
+    """A role's stored rows as scopes, each under the current name of its resource type.
+
+    A row stored under a renamed type and a row under the current one are the same permission, so
+    they read back as one entry, and a deny on either is the one shown, as it is the one enforced.
+    """
+    effects: Dict[str, str] = {}
+    for _, resource, action, effect in rows:
+        scope = resource_action_to_scope(current_resource(resource), action)
+        effects[scope] = _DENY if _DENY in (effect, effects.get(scope)) else effect
+    return list(effects.items())
+
+
 class NativePolicyEngine(PolicyEngine):
     """agno-native :class:`PolicyEngine`. Queries the DB fresh per decision. A DB is
     required (``db`` or ``db_url``); without one — and until AgentOS adopts the OS DB
@@ -335,7 +348,7 @@ class NativePolicyEngine(PolicyEngine):
         self._delete_legacy_policies(role, resource, action)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
-        return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
+        return _read_back(self._policies_for({role}))
 
     def remove_role(self, role: str) -> None:
         # One call: the db drops policy, assignments and metadata in a single transaction,
@@ -657,7 +670,7 @@ class NativePolicyEngine(PolicyEngine):
         await self._adelete_legacy_policies(role, resource, action)
 
     async def aget_role_scopes(self, role: str) -> List[ScopeEntry]:
-        return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in await self._apolicies_for({role})]
+        return _read_back(await self._apolicies_for({role}))
 
     async def aremove_role(self, role: str) -> None:
         await self._adelete_grouping_role(role)

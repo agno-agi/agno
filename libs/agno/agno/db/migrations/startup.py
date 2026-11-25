@@ -110,8 +110,11 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
     if pending:
         # A table from before versions were stamped is behind too. Looked for only now, so a
         # database with nothing to migrate costs the one read above.
+        # A migration that stopped after the goals table was renamed leaves it under its new name
+        # with the stamp still under the old one. That table is pending, not behind.
+        stopped = getattr(db, "goals_table_name", None) if legacy_company_table(db, "goals") in stamps else None
         for name in unstamped:
-            if name in names and await _call(db.table_exists, name):  # type: ignore[union-attr]
+            if name in names and name != stopped and await _call(db.table_exists, name):  # type: ignore[union-attr]
                 behind.append(f"{name} has no version")
     return pending, behind
 
@@ -236,7 +239,7 @@ async def migrate_at_startup(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration
     """Apply the newest migration to ``db`` when it is the only one pending. Never raises.
 
     Runs on SQLite and PostgreSQL, with the sync and the async adapter. Any other database is
-    reported as current: the newest migration changes no table there.
+    reported as current and left for the operator to migrate.
     """
     if not _is_db_type(db, _SQL_DB_TYPES):
         return StartupMigration("current")

@@ -58,6 +58,8 @@ COMPANY_TABLE_TYPES = ("goals", "sources", "projects", "tasks")
 GOALS_TABLE_NAME = "agno_company_goals"
 SQL_DB_TYPES = ("PostgresDb", "SqliteDb", "AsyncPostgresDb", "AsyncSqliteDb")
 MONGO_DB_TYPES = ("MongoDb", "AsyncMongoDb")
+# How long a statement of the migration waits for a table lock on PostgreSQL before it fails.
+LOCK_TIMEOUT_SECONDS = 10
 
 
 class CompanyGoalsMigrationError(RuntimeError):
@@ -590,6 +592,17 @@ async def _arename_mongo(db: AsyncBaseDb, table_type: str) -> bool:
     return False
 
 
+def _limit_lock_wait(sess: Any) -> None:
+    """On PostgreSQL, stop waiting for a table lock after LOCK_TIMEOUT_SECONDS, for this transaction.
+
+    A rename waits for every session that has read the table in an open transaction, and every
+    later query on the table waits behind the rename. Without a limit, one session left open keeps
+    the migration, and an AgentOS that migrates as it starts, waiting for as long as it stays open.
+    """
+    if sess.bind.dialect.name == "postgresql":
+        sess.execute(text(f"SET LOCAL lock_timeout = '{int(LOCK_TIMEOUT_SECONDS)}s'"))
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
     Rename the storage of Company Products to Goals. See the module docstring for the changes.
@@ -606,6 +619,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
         return False
     try:
         with db.Session() as sess, sess.begin():  # type: ignore
+            _limit_lock_wait(sess)
             return step(sess)
     finally:
         _invalidate_company_tables(db, table_type)
@@ -627,6 +641,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
         return False
     try:
         async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+            await sess.run_sync(_limit_lock_wait)
             return await sess.run_sync(step)
     finally:
         _invalidate_company_tables(db, table_type)

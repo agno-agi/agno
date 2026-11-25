@@ -11,6 +11,7 @@ from typing import Any, List
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 
 from agno.company import Goal, Routine
 from agno.db.migrations.manager import MigrationManager
@@ -232,6 +233,53 @@ def test_a_migration_that_stops_partway_is_finished_by_the_endpoint(database, up
         assert client.get("/company/goals/declared").json()["objective"] == "Start late."
     finally:
         starting.__exit__(None, None, None)
+    _assert_renamed(database)
+
+
+def test_a_migration_that_stops_partway_is_finished_by_the_next_start(database, ups, logged, monkeypatch):
+    _write_3_2_0_database(database)
+
+    def stop(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("stopped partway")
+
+    # SQLite keeps the table rename that ran before the stop; PostgreSQL takes it back.
+    with monkeypatch.context() as patch:
+        patch.setattr(v3_3_0, "_rename_column", stop)
+        with TestClient(_agent_os(database).get_app()) as client:
+            _assert_refused(client.get("/company/goals"))
+    ups.clear()
+    logged.clear()
+
+    with TestClient(_agent_os(database).get_app()) as client:
+        assert GOAL in _goal_ids(client)
+
+    assert len(ups) == 1
+    assert _errors(logged) == []
+    _assert_renamed(database)
+
+
+def test_a_table_another_session_holds_does_not_keep_agent_os_from_starting(database, logged, monkeypatch):
+    if not database.postgres:
+        pytest.skip("SQLite has no lock on one table; a locked file fails the migration at once")
+    _write_3_2_0_database(database)
+    monkeypatch.setattr(v3_3_0, "LOCK_TIMEOUT_SECONDS", 1)
+    engine = create_engine(database.url)
+    reader = engine.connect()
+    try:
+        # A dump, or a session left open in a transaction, has read the table the migration renames.
+        reader.execute(text(f"SELECT count(*) FROM {database._ref('agno_company_products')}"))
+        with TestClient(_agent_os(database).get_app()) as client:
+            errors = _errors(logged)
+            assert any("was not migrated" in error and "lock timeout" in error for error in errors), errors
+            assert client.get("/health").status_code == 200
+            _assert_refused(client.get("/company/goals"))
+
+            reader.rollback()
+            assert client.post("/databases/all/migrate").status_code == 200
+            assert GOAL in _goal_ids(client)
+    finally:
+        reader.close()
+        engine.dispose()
     _assert_renamed(database)
 
 
