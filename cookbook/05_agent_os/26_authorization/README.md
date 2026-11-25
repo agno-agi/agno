@@ -39,6 +39,7 @@ it runs offline against a simulated issuer.
 | `14_custom_policy_engine.py` | `Authorization(engine=...)`: keep managed roles, the audit trail and the `/authz` admin API, but store policy and decide in your own `PolicyEngine` |
 | `15_fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
 | `16_roles_and_default_role.py` | Roles as objects built from `READ`, `RUN` and `PLATFORM`, a default role on the user directory, and an admin moving a user to another role through `/authz` |
+| `17_built_ins_need_their_own_scope.py` | Super Agent and its helpers are never reached by a wildcard or type-wide scope: `teams:run` runs every team but Super Agent, which needs `teams:superagent:run`, `PLATFORM` or `agent_os:admin` |
 | `console.html` | A small browser console for driving the `/authz` admin API by hand |
 
 ## Start Here

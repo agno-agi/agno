@@ -564,8 +564,10 @@ def test_manager_run_discovery_and_session_permissions_remain_separate(tmp_path)
     assert client.get(f"/teams/{manager_id}", headers=run_headers).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=run_headers).status_code == 403
 
-    read_headers = headers(["teams:read"])
+    # Super Agent is read through its own scope: a type-wide teams:read does not reach it
+    read_headers = headers([f"teams:{manager_id}:read"])
     assert client.get(f"/teams/{manager_id}", headers=read_headers).status_code == 200
+    assert client.get(f"/teams/{manager_id}", headers=headers(["teams:read"])).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=read_headers).status_code == 403
     assert client.post(f"/teams/{manager_id}/runs", headers=read_headers, data={"message": "hi"}).status_code == 403
 
@@ -1015,7 +1017,8 @@ async def test_mcp_preserves_ordinary_studio_access_and_enforces_manager_tools(t
             authorization_enabled=True,
             user_id="alice",
             claims={"sub": "alice"},
-            scopes=["agents:run", "teams:run"],
+            # The built-ins are named: a plain agents:run or teams:run does not reach them
+            scopes=["agents:run", "teams:run", f"agents:{builder.id}:run", f"teams:{MANAGER_TEAM_ID}:run"],
         ),
     )
     monkeypatch.setattr(dependencies, "get_http_request", lambda: request)

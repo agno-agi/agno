@@ -43,6 +43,7 @@ from agno.os.authz._request_scope import amemoize, memoize
 from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
+from agno.os.scopes import built_in_ids
 
 # Message shown when a sync engine method is used against an async database: the
 # async ``*_authz_*`` methods return coroutines, so the sync path cannot drive them.
@@ -379,7 +380,8 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, action, effect in self._policies_for(principals):
             if action != "*" and action != request_action:
                 continue
-            if not resource_matches(resource, request_resource):
+            # A wildcard grant stops short of a built-in component; a wildcard deny still covers it
+            if not resource_matches(resource, request_resource, grant=effect != _DENY):
                 continue
             if effect == _DENY:
                 deny = True
@@ -439,9 +441,10 @@ class NativePolicyEngine(PolicyEngine):
         subject: Optional[str] = None,
         roles: Optional[List[str]] = None,
     ) -> Set[str]:
-        """Resource ids of ``resource_type`` the identity may access for ``action``
-        (``{"*"}`` = wildcard/collection grant). Mirrors :meth:`_enforce`: roles
-        take precedence, else the subject's stored assignments; deny rows skipped."""
+        """Resource ids of ``resource_type`` the identity may access for ``action``.
+        ``"*"`` in the set is a wildcard/collection grant: every resource of the type that is not
+        a built-in component, which is in the set only by its own id. Mirrors :meth:`_enforce`:
+        roles take precedence, else the subject's stored assignments; deny rows skipped."""
         if not resource_type:
             return set()
         principals = self._principals_for(subject, roles)
@@ -454,9 +457,13 @@ class NativePolicyEngine(PolicyEngine):
                 continue
             if action is not None and policy_action != action and policy_action != "*":
                 continue
-            if resource in ("*", f"{resource_type}/*", resource_type):
-                return {"*"}
-            if resource.startswith(prefix):
+            if resource == "*":
+                # The admin wildcard reaches everything, the built-in components included
+                return {"*", *built_in_ids(resource_type)}
+            if resource in (f"{resource_type}/*", resource_type):
+                # Every resource of the type that is not built in; a built-in is added by its own row
+                ids.add("*")
+            elif resource.startswith(prefix):
                 ids.add(resource[len(prefix) :])
         return ids
 
@@ -670,7 +677,8 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, action, effect in await self._apolicies_for(principals):
             if action != "*" and action != request_action:
                 continue
-            if not resource_matches(resource, request_resource):
+            # A wildcard grant stops short of a built-in component; a wildcard deny still covers it
+            if not resource_matches(resource, request_resource, grant=effect != _DENY):
                 continue
             if effect == _DENY:
                 deny = True
@@ -736,9 +744,13 @@ class NativePolicyEngine(PolicyEngine):
                 continue
             if action is not None and policy_action != action and policy_action != "*":
                 continue
-            if resource in ("*", f"{resource_type}/*", resource_type):
-                return {"*"}
-            if resource.startswith(prefix):
+            if resource == "*":
+                # The admin wildcard reaches everything, the built-in components included
+                return {"*", *built_in_ids(resource_type)}
+            if resource in (f"{resource_type}/*", resource_type):
+                # Every resource of the type that is not built in; a built-in is added by its own row
+                ids.add("*")
+            elif resource.startswith(prefix):
                 ids.add(resource[len(prefix) :])
         return ids
 
