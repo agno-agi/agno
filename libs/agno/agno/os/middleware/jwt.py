@@ -28,6 +28,7 @@ from agno.os.scopes import (
     get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
+    is_built_in,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -1874,6 +1875,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return self._create_error_response(
                     403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
                 )
+        elif self.authorization and is_built_in(*get_resource_context_from_path(path)):
+            # No saved authority, so nobody can be shown to hold the built-in's own scope
+            await self._arecord_decision(
+                request,
+                allowed=False,
+                method=method,
+                path=path,
+                principal=unquote(request.headers.get(SCHEDULE_OWNER_HEADER) or "") or None,
+                required_scopes=self._get_required_scopes(method, path),
+                scopes=[],
+                reason="scheduled_built_in_without_authority",
+            )
+            return self._create_error_response(
+                403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
+            )
 
         raw = request.headers.get(SCHEDULE_OWNER_HEADER)
         if raw is None:
