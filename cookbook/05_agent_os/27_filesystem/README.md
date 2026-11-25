@@ -174,7 +174,9 @@ filesystem keeps its id whatever agents hold.
 - `agent_id` alone browses that agent's first filesystem (the setting, then `tools` order).
 - Both together pick one of an agent's several filesystems.
 
-A filesystem has one id, with or without `agent_id`. `filesystem_id` with
+A filesystem `/config` lists has one id, with or without `agent_id`. For a store
+`/config` does not list, a request with `agent_id` can return a shorter id than
+the unfiltered listing. `filesystem_id` with
 `agent_id` opens a filesystem only when that agent holds the one the id names;
 otherwise the request returns 404. A request that names an agent reads the
 store with that agent's limits.
@@ -182,7 +184,8 @@ store with that agent's limits.
 A filesystem only an agent holds is reachable through the agents the caller may
 read: one none of them holds returns 404, the same as one that does not exist.
 Responses carry the `filesystem_id`, the resolved `namespace` and the accessible
-`agent_ids` holding it. A declared filesystem read by `filesystem_id` loads no
+`agent_ids` holding it; a request with `agent_id` names only that agent. A declared
+filesystem read by `filesystem_id` loads no
 agent, so its `agent_ids` is empty; `/config` names the agents that hold it.
 
 `GET /filesystem/files` accepts optional `filesystem_id`, `agent_id`, `namespace`, and
