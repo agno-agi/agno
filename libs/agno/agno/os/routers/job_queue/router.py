@@ -45,6 +45,7 @@ async def _require_queue_admin(request: Request) -> None:
         caller_scopes_are_authoritative,
         planes_beside_token_scopes,
         resolve_authorization_provider,
+        scopes_left_for_the_provider,
     )
     from agno.os.middleware.user_scope import _has_admin_scope
 
@@ -74,14 +75,14 @@ async def _require_queue_admin(request: Request) -> None:
     provider = resolve_authorization_provider(request)
     ctx = AuthorizationContext(
         principal_id=user_id,
-        scopes=list(scopes or []),
+        scopes=scopes_left_for_the_provider(request, scopes),
         claims=getattr(request.state, "claims", None) or {},
         resource_type="*",
         resource_id="*",
         action="*",
         admin_scope=admin_scope,
     )
-    if not provider.check(ctx):
+    if not await provider.acheck(ctx):
         raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
 
 

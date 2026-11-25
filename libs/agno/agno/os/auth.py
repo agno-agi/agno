@@ -1067,15 +1067,20 @@ def require_approval_resolved(db: Any) -> Any:
     return dependency
 
 
-def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
-    """Does the caller hold approval-admin authority (``approvals:write``)?
+def scopes_left_for_the_provider(request: Any, scopes: Optional[List[str]]) -> List[str]:
+    """The token scopes a gate hands the provider after its own token-scope rule has decided.
 
-    Provider-aware: a token's ``approvals:write`` / admin scope only counts when scopes
-    are the caller's authority (a scope plane, or a service-account/PAT). Under a
-    managed-roles/ReBAC plane, ask the provider instead -- so a raw JWT scope cannot bypass
-    the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
-    wrongly blocked from ever resolving an approval.
-    """
+    A gate that measures the caller by token scopes first has already given those scopes their
+    answer. When it then asks the provider, because another plane decides beside them, the scopes
+    are left out: the scope plane matches more loosely than a gate's own rule, and must not grant
+    what the gate has just refused. Where token scopes are not the caller's authority the gate
+    never measured them, and they are passed on as before for the provider to use or ignore."""
+    return [] if caller_scopes_are_authoritative(request) else list(scopes or [])
+
+
+def _approval_admin_question(request: Any, user_scopes: List[str]) -> Any:
+    """The answer the token's scopes give about approval-admin authority, or the context to ask
+    the provider with when they do not settle it."""
     if request is None or caller_scopes_are_authoritative(request):
         if has_required_scopes(list(user_scopes or []), ["approvals:write"]):
             return True
@@ -1086,17 +1091,38 @@ def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
     from agno.os.authz.provider import AuthorizationContext
 
     admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)
-    provider = resolve_authorization_provider(request)
-    ctx = AuthorizationContext(
+    return AuthorizationContext(
         principal_id=getattr(request.state, "user_id", None),
-        scopes=list(user_scopes or []),
+        scopes=scopes_left_for_the_provider(request, user_scopes),
         claims=getattr(request.state, "claims", None) or {},
         resource_type="approvals",
         resource_id="*",
         action="write",
         admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
     )
-    return provider.check(ctx)
+
+
+def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
+    """Does the caller hold approval-admin authority (``approvals:write``)?
+
+    Provider-aware: a token's ``approvals:write`` / admin scope only counts when scopes
+    are the caller's authority (a scope plane, or a service-account/PAT). Under a
+    managed-roles/ReBAC plane, ask the provider instead -- so a raw JWT scope cannot bypass
+    the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
+    wrongly blocked from ever resolving an approval.
+    """
+    question = _approval_admin_question(request, user_scopes)
+    if isinstance(question, bool):
+        return question
+    return resolve_authorization_provider(request).check(question)
+
+
+async def _acaller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
+    """Async twin of :func:`_caller_is_approval_admin`, so a role store on an async database answers."""
+    question = _approval_admin_question(request, user_scopes)
+    if isinstance(question, bool):
+        return question
+    return await resolve_authorization_provider(request).acheck(question)
 
 
 async def run_continuation_blocked_reason(
@@ -1126,7 +1152,7 @@ async def run_continuation_blocked_reason(
     # Approval-admins (approvals:write) bypass this gate — they can force-continue a run
     # for operational or debugging purposes. Decided provider-aware (see helper) so the
     # bypass can't be spoofed by a raw token scope under a managed-roles plane.
-    if _caller_is_approval_admin(request, user_scopes):
+    if await _acaller_is_approval_admin(request, user_scopes):
         return None
 
     fn = getattr(db, "get_approvals", None)
