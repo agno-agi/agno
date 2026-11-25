@@ -31,7 +31,7 @@ class DalleTools(Toolkit):
         model: str = DEFAULT_IMAGE_MODEL,
         n: int = 1,
         size: Optional[str] = "1024x1024",
-        quality: Literal["auto", "low", "medium", "high"] = "auto",
+        quality: Literal["auto", "low", "medium", "high", "xhigh", "max"] = "auto",
         style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,

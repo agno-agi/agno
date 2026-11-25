@@ -37,19 +37,23 @@ OpenAIVoice = Literal[
 # Models served by /v1/audio/speech. OpenAI shuts every one of them down on
 # January 6, 2027 and names no replacement on that endpoint, so speech now
 # defaults to an audio chat model instead.
-OpenAISpeechAPIModel = Literal["tts-1", "tts-1-hd", "gpt-4o-mini-tts", "gpt-4o-mini-tts-2025-12-15"]
-# Models that take text and return audio over /v1/chat/completions.
-OpenAIAudioChatModel = Literal["gpt-audio-1.5"]
-OpenAITTSModel = Literal[
+OpenAISpeechAPIModel = Literal[
     "tts-1",
     "tts-1-hd",
     "gpt-4o-mini-tts",
+    "gpt-4o-mini-tts-2025-03-20",
     "gpt-4o-mini-tts-2025-12-15",
-    "gpt-audio-1.5",
 ]
+# Models that take text and return audio over /v1/chat/completions.
+OpenAIAudioChatModel = Literal["gpt-audio-1.5"]
+# Literal flattens nested literals, so this stays in step with the two lists above.
+OpenAITTSModel = Literal[OpenAISpeechAPIModel, OpenAIAudioChatModel]
 OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 
 SPEECH_API_MODELS = frozenset(get_args(OpenAISpeechAPIModel))
+# generate_speech routes to chat completions only for these, so a model it has never
+# heard of keeps using /v1/audio/speech rather than being sent somewhere it cannot work.
+AUDIO_CHAT_MODELS = frozenset(get_args(OpenAIAudioChatModel))
 # /v1/chat/completions names raw PCM "pcm16" where /v1/audio/speech calls it "pcm".
 ChatAudioFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm16"]
 _CHAT_AUDIO_FORMATS: Dict[OpenAITTSFormat, ChatAudioFormat] = {
@@ -72,8 +76,10 @@ RETIRING_MODELS: Dict[str, Tuple[str, str]] = {
     "tts-1": ("January 6, 2027", DEFAULT_TTS_MODEL),
     "tts-1-hd": ("January 6, 2027", DEFAULT_TTS_MODEL),
     "gpt-4o-mini-tts": ("January 6, 2027", DEFAULT_TTS_MODEL),
+    "gpt-4o-mini-tts-2025-03-20": ("January 6, 2027", DEFAULT_TTS_MODEL),
     "gpt-4o-mini-tts-2025-12-15": ("January 6, 2027", DEFAULT_TTS_MODEL),
     "gpt-audio": ("January 20, 2027", DEFAULT_TTS_MODEL),
+    "gpt-audio-2025-08-28": ("January 20, 2027", DEFAULT_TTS_MODEL),
     "gpt-audio-mini": ("January 20, 2027", DEFAULT_TTS_MODEL),
     "gpt-audio-mini-2025-12-15": ("January 20, 2027", DEFAULT_TTS_MODEL),
     "whisper-1": ("February 26, 2027", DEFAULT_TRANSCRIPTION_MODEL),
@@ -170,7 +176,9 @@ def transcript_text(response: Any) -> str:
         text = response.get("text")
     else:
         text = getattr(response, "text", None)
-    return text if isinstance(text, str) else str(response)
+    if not isinstance(text, str):
+        raise ValueError(f"the transcription response carried no text (got {type(response).__name__})")
+    return text
 
 
 class OpenAITools(Toolkit):
@@ -183,7 +191,10 @@ class OpenAITools(Toolkit):
         enable_speech_generation (bool): Enable speech generation functionality. Default is True.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         transcription_model (str): Model to use for transcription. Default is "gpt-transcribe".
-        text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
+        text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy". Which voices a
+            model accepts depends on the endpoint it is served by, and OpenAI's own reference and SDK
+            disagree on the chat completions list, so the voice is passed through for the API to
+            accept or reject rather than being checked here.
         text_to_speech_model (str): Model to use for TTS. Default is "gpt-audio-1.5", which is served
             by the chat completions endpoint. The /v1/audio/speech models ("tts-1", "tts-1-hd",
             "gpt-4o-mini-tts") are still accepted and routed to that endpoint, but OpenAI shuts
@@ -213,9 +224,11 @@ class OpenAITools(Toolkit):
         image_model: Optional[str] = DEFAULT_IMAGE_MODEL,
         image_quality: Optional[str] = None,
         image_size: Optional[str] = None,
-        image_complexity: Optional[Literal["low", "medium", "high"]] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
         image_n: int = 1,
+        # Keyword-only, and after image_n, so the positional slots callers already use do not move.
+        *,
+        image_complexity: Optional[Literal["low", "medium", "high"]] = None,
         **kwargs,
     ):
         self.api_key = api_key or getenv("OPENAI_API_KEY")
@@ -284,13 +297,16 @@ class OpenAITools(Toolkit):
             prompt (str): The text prompt to generate the image from.
         """
         try:
-            extra_params = {
+            extra_params: Dict[str, Any] = {
                 "n": self.image_n,
                 "size": self.image_size,
                 "quality": self.image_quality,
-                "complexity": self.image_complexity,
             }
             extra_params = {k: v for k, v in extra_params.items() if v is not None}
+            # complexity is newer than the openai floor this package supports (>=1.106.0),
+            # so it goes in the request body directly rather than as a named argument.
+            if self.image_complexity is not None:
+                extra_params["extra_body"] = {"complexity": self.image_complexity}
 
             # Image models return base64 only and reject response_format and style, so neither is sent.
             response = OpenAIClient(api_key=self.api_key).images.generate(
@@ -370,10 +386,10 @@ class OpenAITools(Toolkit):
         """
         try:
             client = OpenAIClient(api_key=self.api_key)
-            if self.tts_model in SPEECH_API_MODELS:
-                audio_data = self._speech_from_speech_api(client, text_input)
-            else:
+            if self.tts_model in AUDIO_CHAT_MODELS:
                 audio_data = self._speech_from_audio_chat(client, text_input)
+            else:
+                audio_data = self._speech_from_speech_api(client, text_input)
 
             # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())

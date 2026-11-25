@@ -1,6 +1,7 @@
 """Unit tests for OpenAITools (agno.tools.openai)."""
 
 import base64
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,10 +9,12 @@ import pytest
 pytest.importorskip("openai")
 
 from agno.tools.openai import (  # noqa: E402
+    AUDIO_CHAT_MODELS,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_TRANSCRIPTION_MODEL,
     DEFAULT_TTS_MODEL,
     RETIRING_MODELS,
+    SPEECH_API_MODELS,
     OpenAITools,
 )
 
@@ -137,6 +140,18 @@ def test_transcript_is_read_from_any_response_shape(audio_file, response, expect
         assert tools.transcribe_audio(audio_file) == expected
 
 
+@pytest.mark.parametrize("response", [{"no_text": 1}, object()])
+def test_a_response_without_text_is_reported_not_stringified(audio_file, response):
+    """Handing the model an object repr as if it were the transcript would be worse than failing."""
+    tools = _build_tools()
+    with patch("agno.tools.openai.OpenAIClient") as mock_client:
+        mock_client.return_value.audio.transcriptions.create.return_value = response
+        result = tools.transcribe_audio(audio_file)
+
+    assert "Failed to transcribe audio" in result
+    assert "carried no text" in result
+
+
 def test_default_image_model_is_current():
     """gpt-image-2 shuts down on February 10, 2027, so the default must be its replacement."""
     assert OpenAITools(api_key="test-key").image_model == "gpt-image-2.6-sunburst"
@@ -215,21 +230,35 @@ def test_sunburst_and_flare_accept_the_two_extra_quality_levels(quality):
 
 
 @pytest.mark.parametrize("complexity", ["low", "medium", "high"])
-def test_image_complexity_is_sent_when_set(complexity):
+def test_image_complexity_is_sent_in_extra_body(complexity):
+    """complexity postdates the openai floor this package supports, so it is not a named argument."""
     fake_client = _fake_image_client([_b64_item(b"one")])
     with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
         OpenAITools(api_key="test-key", image_complexity=complexity).generate_image(prompt="a yak")
 
-    assert fake_client.images.generate.call_args.kwargs["complexity"] == complexity
+    kwargs = fake_client.images.generate.call_args.kwargs
+    assert kwargs["extra_body"] == {"complexity": complexity}
+    assert "complexity" not in kwargs
+
+
+def test_image_complexity_is_accepted_by_the_installed_sdk_signature():
+    """A named complexity argument would raise TypeError; extra_body is accepted on every version."""
+    from openai.resources.images import Images
+
+    parameters = inspect.signature(Images.generate).parameters
+    assert "extra_body" in parameters
+    assert "complexity" not in parameters
 
 
 def test_image_complexity_is_omitted_when_unset():
-    """Left unset, the model applies its own default, so the key is not sent at all."""
+    """Left unset, the model applies its own default, so nothing is sent at all."""
     fake_client = _fake_image_client([_b64_item(b"one")])
     with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
         OpenAITools(api_key="test-key").generate_image(prompt="a yak")
 
-    assert "complexity" not in fake_client.images.generate.call_args.kwargs
+    kwargs = fake_client.images.generate.call_args.kwargs
+    assert "complexity" not in kwargs
+    assert "extra_body" not in kwargs
 
 
 @pytest.mark.parametrize("size", ["1792x1024", "2048x1152", "2048x2048"])
@@ -271,6 +300,54 @@ def test_unknown_image_model_is_not_validated():
         image_complexity="extreme",
     )
     assert tools.image_model == "gpt-image-3"
+
+
+def test_legacy_positional_arguments_still_bind_to_the_same_parameters():
+    """image_complexity is keyword-only, so it cannot displace image_style or image_n."""
+    fake_client = _fake_image_client([_b64_item(b"one"), _b64_item(b"two")])
+    with patch("agno.tools.openai.log_warning"):
+        tools = OpenAITools(
+            "test-key",
+            True,
+            True,
+            True,
+            False,
+            "whisper-1",
+            "alloy",
+            "tts-1",
+            "mp3",
+            "gpt-image-2",
+            None,
+            None,
+            "vivid",
+            2,
+        )
+
+    assert (tools.image_style, tools.image_n, tools.image_complexity) == ("vivid", 2, None)
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        tools.generate_image(prompt="a yak")
+    assert fake_client.images.generate.call_args.kwargs["n"] == 2
+
+
+def test_image_complexity_cannot_be_passed_positionally():
+    with pytest.raises(TypeError):
+        OpenAITools(
+            "test-key",
+            True,
+            True,
+            True,
+            False,
+            "gpt-transcribe",
+            "alloy",
+            "gpt-audio-1.5",
+            "mp3",
+            None,
+            None,
+            None,
+            None,
+            1,
+            "high",
+        )
 
 
 def test_image_options_are_not_validated_when_image_generation_is_disabled():
@@ -340,7 +417,7 @@ def test_generate_speech_reports_a_response_without_audio():
     assert result.audios is None
 
 
-@pytest.mark.parametrize("model", ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
+@pytest.mark.parametrize("model", sorted(SPEECH_API_MODELS))
 def test_speech_api_models_still_use_the_speech_endpoint(model):
     """A pinned /v1/audio/speech model keeps working until OpenAI shuts it down."""
     fake_client = MagicMock()
@@ -398,3 +475,46 @@ def test_a_retiring_model_for_a_disabled_tool_does_not_warn():
         OpenAITools(api_key="test-key", enable_speech_generation=False, text_to_speech_model="tts-1")
 
     assert log_warning.call_args_list == []
+
+
+def test_only_known_audio_chat_models_leave_the_speech_endpoint():
+    """The two sets must not overlap, or a model would be routed to an endpoint it is not served by."""
+    assert AUDIO_CHAT_MODELS.isdisjoint(SPEECH_API_MODELS)
+    assert DEFAULT_TTS_MODEL in AUDIO_CHAT_MODELS
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-mini-tts-2025-03-20", "some-future-speech-model"])
+def test_an_unlisted_model_keeps_using_the_speech_endpoint(model):
+    """Routing is an allowlist, so a model this version has not heard of cannot be sent somewhere new."""
+    fake_client = MagicMock()
+    fake_client.audio.speech.create.return_value = MagicMock(content=b"audio")
+    with patch("agno.tools.openai.OpenAIClient", return_value=fake_client):
+        with patch("agno.tools.openai.log_warning"):
+            tools = OpenAITools(api_key="test-key", text_to_speech_model=model)
+        result = tools.generate_speech(agent=None, text_input="hello")
+
+    assert fake_client.audio.speech.create.call_args.kwargs["model"] == model
+    fake_client.chat.completions.create.assert_not_called()
+    assert result.audios[0].content == b"audio"
+
+
+@pytest.mark.parametrize(
+    "model, shutdown_date",
+    [
+        ("gpt-4o-mini-tts-2025-03-20", "January 6, 2027"),
+        ("gpt-audio-2025-08-28", "January 20, 2027"),
+    ],
+)
+def test_dated_snapshots_are_in_the_retirement_table(model, shutdown_date):
+    """A snapshot id retires on its own schedule and has to be listed in its own right."""
+    assert RETIRING_MODELS[model][0] == shutdown_date
+
+    with patch("agno.tools.openai.log_warning") as log_warning:
+        OpenAITools(api_key="test-key", text_to_speech_model=model)
+
+    assert any(shutdown_date in call.args[0] for call in log_warning.call_args_list)
+
+
+def test_every_speech_api_model_is_in_the_retirement_table():
+    """They all shut down on January 6, 2027, so none may be missing a warning."""
+    assert all(model in RETIRING_MODELS for model in SPEECH_API_MODELS)
