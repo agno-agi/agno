@@ -115,3 +115,54 @@ def test_unsupported_database(db):
         ("post", "/company/projects/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
     ]:
         assert c.request(method, path, json=body).status_code == 503
+
+
+def bulk(client, items, target="active"):
+    return client.post("/company/projects/transitions", json={"target": target, "reason": "Reviewed", "items": items})
+
+
+def test_bulk_transition_reports_each_project(client):
+    first, second, decided = create(client), create(client), create(client)
+    assert transition(client, "/company/projects/" + decided["id"], "cancelled").status_code == 200
+    response = bulk(
+        client,
+        [
+            {"id": first["id"], "expected_status": "proposed"},
+            {"id": second["id"], "expected_status": "proposed"},
+            # Rejected by someone else after the caller loaded it.
+            {"id": decided["id"], "expected_status": "proposed"},
+            {"id": "missing", "expected_status": "proposed"},
+        ],
+    )
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [(r["id"], r["ok"], r["status_code"]) for r in results] == [
+        (first["id"], True, 200),
+        (second["id"], True, 200),
+        (decided["id"], False, 409),
+        ("missing", False, 404),
+    ]
+    assert results[0]["project"]["status"] == "active"
+    assert results[2]["detail"] == "Project is cancelled, not proposed"
+    assert client.get("/company/projects/" + decided["id"]).json()["status"] == "cancelled"
+
+
+def test_bulk_transition_runs_the_single_route_rules(client):
+    record = create(client)
+    # Done needs an active Project, exactly as on the single route.
+    result = bulk(client, [{"id": record["id"], "expected_status": "proposed"}], "done").json()["results"][0]
+    assert (result["ok"], result["status_code"]) == (False, 409)
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        [],
+        [{"id": "a", "expected_status": "proposed"}] * 2,
+        [{"id": str(i), "expected_status": "proposed"} for i in range(101)],
+        [{"id": "a"}],
+    ],
+    ids=["empty", "duplicate", "over-cap", "no-expected-status"],
+)
+def test_bulk_transition_validates_items(client, items):
+    assert bulk(client, items).status_code == 422

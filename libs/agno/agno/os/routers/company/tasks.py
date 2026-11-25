@@ -9,7 +9,15 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    TaskBulkTransition,
+    TaskBulkTransitionResponse,
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -271,11 +279,13 @@ def get_tasks_router(
             raise HTTPException(status_code=409, detail="Task is not archived")
         return await task_response(request, task)
 
-    @router.post("/tasks/{task_id}/transitions", response_model=TaskResponse)
-    async def transition_task(
-        task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
+    async def _transition(
+        task_id: str, body: TaskTransition, request: Request, expected_status: Optional[str] = None
     ) -> Dict[str, Any]:
+        """One Task transition with every check; the single and bulk routes share it."""
         existing = await _existing(task_id)
+        if expected_status is not None and existing["status"] != expected_status:
+            raise HTTPException(status_code=409, detail=f"Task is {existing['status']}, not {expected_status}")
         if body.target == "in_progress":
             detail = f"Start a run with POST /company/tasks/{task_id}/runs to enter In progress"
             # Runs start only on accepted work, so other stages go through Ready first.
@@ -301,21 +311,54 @@ def get_tasks_router(
                 raise HTTPException(
                     status_code=409, detail=task_transition_blocker(existing, body.target, run_holding=True)
                 )
+        # Resolved per Task, never written back to body: a bulk request shares one body across Tasks.
+        executor_type, executor_id = body.executor_type, body.executor_id
         if body.target == "ready":
-            if body.executor_type is None:
+            if executor_type is None:
                 # No executor named: the Task keeps its own. A Task that has none runs on Mini Agent.
                 stored = existing.get("executor_type"), existing.get("executor_id")
-                body.executor_type, body.executor_id = stored if all(stored) else ("agent", MINI_AGENT_ID)
-            await _require_accept(request, body.executor_type, body.executor_id)
+                executor_type, executor_id = stored if all(stored) else ("agent", MINI_AGENT_ID)
+            await _require_accept(request, executor_type, executor_id)
         record = await _call(
             "transition_task",
             task_id=task_id,
-            **body.model_dump(),
+            target=body.target,
+            reason=body.reason,
+            executor_type=executor_type,
+            executor_id=executor_id,
             user_id=None,
             accepted_by=getattr(request.state, "user_id", None),
+            expected_status=expected_status,
         )
         if record is None:
             raise HTTPException(status_code=409, detail="Task changed while transitioning")
-        return await task_response(request, record)
+        return record
+
+    @router.post("/tasks/{task_id}/transitions", response_model=TaskResponse)
+    async def transition_task(
+        task_id: str, body: TaskTransition, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await task_response(request, await _transition(task_id, body, request))
+
+    @router.post("/tasks/transitions", response_model=TaskBulkTransitionResponse)
+    async def transition_tasks(
+        body: TaskBulkTransition, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        """Move several Tasks; each is checked and reported on its own, so one refusal leaves the rest moved."""
+        results: List[Dict[str, Any]] = []
+        moved: List[Dict[str, Any]] = []
+        for item in body.items:
+            try:
+                record = await _transition(item.id, body, request, expected_status=item.expected_status)
+            except HTTPException as exc:
+                results.append({"id": item.id, "ok": False, "status_code": exc.status_code, "detail": str(exc.detail)})
+                continue
+            results.append({"id": item.id, "ok": True, "status_code": 200})
+            moved.append(record)
+        responses = {task["id"]: task for task in await task_responses(request, moved)} if moved else {}
+        for result in results:
+            if result["ok"]:
+                result["task"] = responses[result["id"]]
+        return {"results": results}
 
     return router
