@@ -31,8 +31,8 @@ lists the six checks against GitHub itself, and none of them has been run.
 
 **Status:** PASS
 
-**Description:** Run with `--check` on 2026-11-25. The app is served in the same
-process on port 7792 with its real startup, with a GitHub source and no trigger
+**Description:** Run with `--check` on 2026-11-25, and again after the branch was
+rebased and reviewed. The app is served in the same process on port 7792 with its real startup, with a GitHub source and no trigger
 in code. Over HTTP: the sources are listed; a signed issue is delivered before
 any trigger exists; a trigger is created with `POST /triggers`; a trigger on a
 source that is not declared is tried; the issue is delivered again; its event is
@@ -46,5 +46,29 @@ second delivery started a run that ended as success, and the replay was a second
 event with a run of its own in the same session. The agent created
 `review-pull-requests` for `pull_request.opened` aimed at the triage agent.
 Serving for a real webhook was not run.
+
+---
+
+### super_agent_triggers.py
+
+**Status:** PASS
+
+**Description:** Run with `--check` on 2026-11-25, SQLite, `gpt-5.6-luna` for
+Super Agent and the triage agent. An AgentOS with a GitHub source and an
+`OSManager` is driven through `POST /teams/superagent/runs` in one session,
+with six messages in plain words: create a trigger for new issues, list the
+triggers, turn it off, delete it, create one aimed at `platform-builder`, and
+then try that last one anyway. The script confirms a tool call when the run
+pauses for it. After each message the triggers are read back from
+`GET /triggers`.
+
+**Result:** Super Agent created `triage-new-issues` for `issues.opened` aimed
+at `issue-triage`, listed it by name, and turned it off. The delete paused for
+confirmation of `delete_trigger`; once confirmed, no trigger was left. Asked for
+a trigger on `platform-builder`, it declined without calling the tool. Asked to
+try anyway, it called the tool and reported the answer: "Manager specialists
+are internal. Give the trigger Super Agent as its target instead." No trigger
+was created. One run of the conversation, with a real model: another run may
+word its answers differently.
 
 ---

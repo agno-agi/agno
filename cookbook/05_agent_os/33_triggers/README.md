@@ -33,6 +33,7 @@ agent_os = AgentOS(
 | --- | --- |
 | `github_issues.py` | A new issue starts a triage run, a reply continues it, a label starts one for anyone's issue, and a digest runs on a schedule |
 | `stored_triggers.py` | A trigger is created over REST and another by an agent with `TriggerTools`; an event is replayed |
+| `super_agent_triggers.py` | Super Agent, asked in words, creates a trigger, lists it, turns it off and deletes it |
 | `REAL_GITHUB.md` | The checks to run against GitHub itself, which `--check` cannot do |
 
 ## What a trigger does with a delivery
@@ -137,8 +138,10 @@ can be created while the app runs, on the sources that are declared.
 
 The scopes are `triggers:read`, `triggers:write` and `triggers:delete`. Creating
 a trigger also needs the right to run its target, and the trigger's runs act as
-the person who created it. A trigger declared in code is changed in code: the
-API can turn it off and on, and cannot edit or delete it.
+the person who created it. So does changing what it runs or what may start it:
+the target, the input, the source, the events and the filters. A trigger
+declared in code is changed in code: the API can turn it off and on, and cannot
+edit or delete it.
 
 `TriggerTools` gives an agent the same operations:
 
