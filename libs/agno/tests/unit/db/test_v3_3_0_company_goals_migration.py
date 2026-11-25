@@ -1,4 +1,4 @@
-"""A Company database written by agno 3.2.0 carries over through the v3.2.3 migration.
+"""A Company database written by agno 3.2.0 carries over through the v3.3.0 migration.
 
 agno 3.2.0 stored a Goal as a Product. The fixture here is a database in the 3.2.0 shape: its
 Company tables are built from the table definitions at the v3.2.0 tag, and its rows are the rows
@@ -30,7 +30,7 @@ from agno.company.scheduler import CompanyScheduleExecutor
 from agno.company.summary import _summary_state_filesystem
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
-from agno.db.migrations.versions import v3_2_3
+from agno.db.migrations.versions import v3_3_0
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, Schedule
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
@@ -650,8 +650,8 @@ async def test_a_3_2_0_database_carries_over(database):
     versions = database.versions()
     assert "agno_company_products" not in versions and "agno_company_products_details" not in versions
     for name in ("agno_company_goals", "agno_company_sources", "agno_company_projects", "agno_company_tasks"):
-        assert versions[name] == "3.2.3"
-    assert versions["agno_schedules"] == "3.2.3" and versions["agno_schedule_runs"] == "3.2.3"
+        assert versions[name] == "3.3.0"
+    assert versions["agno_schedules"] == "3.3.0" and versions["agno_schedule_runs"] == "3.3.0"
     assert versions["agno_company_goals_details"] == "3.0.0"
 
 
@@ -852,6 +852,27 @@ async def test_a_second_run_changes_nothing(database):
     assert database.describe() == first
 
 
+async def test_a_database_stamped_by_a_development_build_moves_to_the_release_stamp(database):
+    _write_3_2_0(database)
+    await MigrationManager(database.db()).up()
+    migrated = database.describe(versions=False)
+    # Before the release was numbered, a build of this migration stamped the tables 3.2.3.
+    stamped = [name for name, version in database.versions().items() if version == "3.3.0"]
+    assert "agno_company_goals" in stamped and "agno_schedules" in stamped
+    for name in stamped:
+        await _call(database.db().upsert_schema_version, name, "3.2.3")
+
+    await MigrationManager(database.db()).up()
+
+    assert database.describe(versions=False) == migrated
+    versions = database.versions()
+    for name in ("goals", "sources", "projects", "tasks"):
+        assert versions[f"agno_company_{name}"] == "3.3.0"
+    assert versions["agno_schedules"] == "3.3.0" and versions["agno_schedule_runs"] == "3.3.0"
+    # A table the manager does not migrate keeps the stamp it has. Nothing reads that stamp.
+    assert versions["agno_runs"] == "3.2.3"
+
+
 async def test_a_new_database_gets_only_the_goal_names(database):
     db = database.db()
 
@@ -921,7 +942,7 @@ async def test_before_the_migration_the_goals_tables_are_refused(database, table
 async def test_stamped_tables_do_not_hide_a_pending_rename(database):
     _write_3_2_0(database)
     for name in ("goals", "sources", "projects", "tasks"):
-        await _call(database.db().upsert_schema_version, f"agno_company_{name}", "3.2.3")
+        await _call(database.db().upsert_schema_version, f"agno_company_{name}", "3.3.0")
 
     await MigrationManager(database.db()).up()
 
@@ -935,14 +956,14 @@ async def test_a_start_before_the_migration_is_migrated(database):
     _write_3_2_0(database)
     await _start_before_migrating(database)
     # The table that start-up created is stamped with the newest version.
-    assert database.versions()["agno_company_goals"] == "3.2.3"
+    assert database.versions()["agno_company_goals"] == "3.3.0"
     assert database.versions()["agno_company_products"] == "3.0.0"
 
     await MigrationManager(database.db()).up()
 
     await _assert_carried_over(database)
     versions = database.versions()
-    assert versions["agno_company_goals"] == "3.2.3" and "agno_company_products" not in versions
+    assert versions["agno_company_goals"] == "3.3.0" and "agno_company_products" not in versions
 
 
 async def test_a_goal_only_in_the_new_table_stops_the_migration(database):
@@ -964,7 +985,7 @@ async def test_a_goal_only_in_the_new_table_stops_the_migration(database):
     )
     before = database.describe()
 
-    with pytest.raises(v3_2_3.CompanyGoalsMigrationError) as stopped:
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError) as stopped:
         await MigrationManager(db).up()
 
     message = str(stopped.value)
@@ -981,7 +1002,7 @@ async def test_edited_details_in_the_new_table_stop_the_migration(database):
     await _call(db.update_company, details["updated_at"], name="Renamed after the upgrade")
     before = database.describe()
 
-    with pytest.raises(v3_2_3.CompanyGoalsMigrationError) as stopped:
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError) as stopped:
         await MigrationManager(db).up()
 
     message = str(stopped.value)
@@ -1003,7 +1024,7 @@ async def test_a_goal_edited_in_the_new_table_stops_the_migration(database, chan
         database.execute(f"UPDATE {database._ref('agno_company_products')} SET deleted_at = 5")
     before = database.describe()
 
-    with pytest.raises(v3_2_3.CompanyGoalsMigrationError, match="were changed") as stopped:
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="were changed") as stopped:
         await MigrationManager(database.db()).up()
 
     assert GOAL in str(stopped.value)
@@ -1025,7 +1046,7 @@ async def test_a_routine_linked_before_the_migration(database, routine_id, migra
         await MigrationManager(database.db()).up()
         await _assert_carried_over(database)
     else:
-        with pytest.raises(v3_2_3.CompanyGoalsMigrationError, match="were changed"):
+        with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="were changed"):
             await MigrationManager(database.db()).up()
 
 
@@ -1048,7 +1069,7 @@ async def test_a_run_that_stops_while_renaming_an_index(databases, monkeypatch, 
     if database.postgres:
         pytest.skip("PostgreSQL renames an index in one transaction")
     _write_3_2_0(database)
-    real_text = v3_2_3.text
+    real_text = v3_3_0.text
 
     def stop(statement: str) -> Any:
         if statement.startswith(stop_at):
@@ -1056,7 +1077,7 @@ async def test_a_run_that_stops_while_renaming_an_index(databases, monkeypatch, 
         return real_text(statement)
 
     with monkeypatch.context() as patch:
-        patch.setattr(v3_2_3, "text", stop)
+        patch.setattr(v3_3_0, "text", stop)
         with pytest.raises(RuntimeError, match="stopped at the index"):
             await MigrationManager(database.db()).up()
 
@@ -1080,7 +1101,7 @@ async def test_a_run_that_stops_after_the_table_rename(database, monkeypatch):
         raise RuntimeError("stopped after the table rename")
 
     with monkeypatch.context() as patch:
-        patch.setattr(v3_2_3, "_rename_column", stop)
+        patch.setattr(v3_3_0, "_rename_column", stop)
         with pytest.raises(RuntimeError, match="stopped after the table rename"):
             await MigrationManager(database.db()).up()
 
@@ -1177,8 +1198,8 @@ def test_routines_in_mongodb_are_renamed_through_the_adapter():
     # More than one page of each.
     db = MongoDb([_stored_routine(index) for index in range(150)], [_stored_failure(index) for index in range(150)])
 
-    assert v3_2_3.up(db, "schedules", "agno_schedules") is True
-    assert v3_2_3.up(db, "schedule_runs", "agno_schedule_runs") is True
+    assert v3_3_0.up(db, "schedules", "agno_schedules") is True
+    assert v3_3_0.up(db, "schedule_runs", "agno_schedule_runs") is True
 
     for routine in db.schedules.values():
         assert routine["payload"]["metadata"]["goal_id"] == GOAL
@@ -1189,13 +1210,13 @@ def test_routines_in_mongodb_are_renamed_through_the_adapter():
         assert run["output"]["automation_failure"]["goal_id"] == GOAL
         assert "product_id" not in run["output"]["automation_failure"]
     # A second run finds nothing to rename.
-    assert v3_2_3.up(db, "schedules", "agno_schedules") is False
-    assert v3_2_3.up(db, "schedule_runs", "agno_schedule_runs") is False
-    assert v3_2_3.up(db, "goals", "agno_company_goals") is False
+    assert v3_3_0.up(db, "schedules", "agno_schedules") is False
+    assert v3_3_0.up(db, "schedule_runs", "agno_schedule_runs") is False
+    assert v3_3_0.up(db, "goals", "agno_company_goals") is False
 
 
 def test_a_routine_that_cannot_be_written_fails_the_migration():
     db = MongoDb([_stored_routine(0)], [], writes=False)
 
     with pytest.raises(RuntimeError, match="could not update schedule routine-0"):
-        v3_2_3.up(db, "schedules", "agno_schedules")
+        v3_3_0.up(db, "schedules", "agno_schedules")

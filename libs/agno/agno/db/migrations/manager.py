@@ -16,7 +16,7 @@ _COMPANY_TABLE_ATTRS = {
     "tasks": "tasks_table_name",
 }
 
-_COMPANY_RENAME_VERSION = packaging_version.parse("3.2.3")
+_COMPANY_RENAME_VERSION = packaging_version.parse("3.3.0")
 _BEFORE_COMPANY_RENAME = packaging_version.parse("3.0.0")
 
 
@@ -29,7 +29,7 @@ class MigrationManager:
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
         ("v3_0_0", packaging_version.parse("3.0.0")),
-        ("v3_2_3", packaging_version.parse("3.2.3")),
+        ("v3_3_0", packaging_version.parse("3.3.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -157,11 +157,11 @@ class MigrationManager:
 
     async def _company_rename_pending(self) -> bool:
         """Whether a Company table still has its 3.2.0 name or columns."""
-        from agno.db.migrations.versions import v3_2_3
+        from agno.db.migrations.versions import v3_3_0
 
         if isinstance(self.db, AsyncBaseDb):
-            return await v3_2_3.acompany_rename_pending(self.db)
-        return v3_2_3.company_rename_pending(self.db)
+            return await v3_3_0.acompany_rename_pending(self.db)
+        return v3_3_0.company_rename_pending(self.db)
 
     async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.

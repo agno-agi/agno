@@ -1,6 +1,6 @@
-"""Migration v3.2.3: Company Products become Goals
+"""Migration v3.3.0: Company Products become Goals
 
-agno 3.2.0 to 3.2.2 stored a Company Goal as a Product. This migration renames that storage in
+Every agno 3.2 release stored a Company Goal as a Product. This migration renames that storage in
 place. No row is copied and no id changes.
 
 In the database that holds the Company tables (SQLite or PostgreSQL):
@@ -509,7 +509,7 @@ def _keeping_updated_at(update_schedule: Any) -> Dict[str, Any]:
 
 def _written(result: Any, what: str) -> None:
     if result is None:
-        raise RuntimeError(f"Migration v3.2.3 could not update {what}")
+        raise RuntimeError(f"Migration v3.3.0 could not update {what}")
 
 
 def _rename_mongo(db: BaseDb, table_type: str) -> bool:
