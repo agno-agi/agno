@@ -33,41 +33,17 @@ whoever created the Goal. User isolation does not restrict Company records.
 
 ### Upgrading from agno 3.2.0
 
-In 3.2.0 a Goal was a Product and its objective was its purpose. To upgrade,
-deploy the new version. AgentOS migrates its databases as it starts: it renames
-the stored tables and columns in place and keeps every id. A deployment made
-from the 3.2.0 template then starts with no edit. Your own code that calls
-the Company Python API by its 3.2.0 names needs the rename first: see the names
-that changed with no alias, below.
+In 3.2.0 a Goal was a Product and its objective was its purpose. The new
+version stores Goals under new table and column names, so a 3.2.0 database
+must be migrated once. AgentOS does not migrate it by itself: until you do,
+AgentOS starts, everything outside Company works, and Company answers with
+`MigrationRequiredError` and the command to run.
 
-A Routine keeps the instructions saved in it. Where they name a Company tool by
-its 3.2.0 name, for example `read_product_source`, the migration writes the
-current name in its place.
-
-Stop every process that runs 3.2 first: they fail against a migrated database.
-Processes on the new version can start together; one migrates and the others
-wait. The migration cannot be reversed, and `down()` does not undo it, so back
-up the database if you may need to go back.
-
-If a 3.2 process starts after the migration, it creates its old tables again
-(`agno_company_products` and `agno_company_products_details`). The new version
-does not use them and logs a warning when it starts. Your Goals are not
-changed, but anything the 3.2 process wrote to those tables is not shown. Stop
-the process, copy any row you need, then drop the two tables.
-
-Migrate by hand only in these cases:
-
-- `auto_provision_dbs=False`. AgentOS then does not migrate at the start.
-- The automatic migration failed. AgentOS logs one error that says why.
-- A database has a table from before agno 3.0. AgentOS does not start that
-  older migration by itself.
-- The Routines are stored in MongoDB. AgentOS does not migrate them at the
-  start, and a Routine run raises `MigrationRequiredError` until
-  `POST /databases/all/migrate` is called.
-
-In each case AgentOS still starts, and Company refuses to work until the
-database is migrated. Run the migration on the Company database, and on the
-AgentOS database when they are different databases:
+1. Stop every process that runs 3.2: they fail against a migrated database.
+2. Back up the database. The migration cannot be reversed, and `down()` does
+   not undo it.
+3. Migrate the Company database, and the AgentOS database when they are
+   different databases. Run it once, from one process:
 
 ```python
 import asyncio
@@ -77,8 +53,23 @@ from agno.db.migrations.manager import MigrationManager
 asyncio.run(MigrationManager(db).up())
 ```
 
-Or call `POST /databases/all/migrate` once AgentOS is up. Company then starts
-without a restart.
+Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
+is up. Company then starts without a restart.
+
+The migration renames the stored tables and columns in place and keeps every
+id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+code that calls the Company Python API by its 3.2.0 names needs the rename
+first: see the names that changed with no alias, below.
+
+A Routine keeps the instructions saved in it. Where they name a Company tool by
+its 3.2.0 name, for example `read_product_source`, the migration writes the
+current name in its place.
+
+If a 3.2 process starts after the migration, it creates its old tables again
+(`agno_company_products` and `agno_company_products_details`). The new version
+does not use them. Your Goals are not changed, but anything the 3.2 process
+wrote to those tables is not shown. Stop the process, copy any row you need,
+then drop the two tables.
 
 These 3.2.0 names are still accepted:
 
