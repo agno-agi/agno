@@ -1,6 +1,12 @@
 # Test Log: 07_security
 
-Last updated: 2026-09-24
+Last updated: 2026-11-24
+
+Added `multiple_verification_keys.py` for several comma-separated keys in
+`JWT_VERIFICATION_KEY`. Ran it and `asymmetric_keys.py` with the branch's `.venv`, with
+`AgentOS.serve()` stubbed so each file builds its app, runs its smoke and returns. Both exit 0.
+
+Earlier (2026-09-24):
 
 After the low-severity authorization fixes, re-ran `asymmetric_keys.py`, `basic_scopes.py`,
 `excluded_routes.py`, `per_resource_scopes.py`, `service_accounts.py`, `test_scopes.py`,
@@ -45,6 +51,21 @@ verification enabled, then exercised its REST routes with a FastAPI
 key, and verified it in AgentOS with only the public key.
 
 **Result:** Audience-bound `GET /agents` returned 200.
+
+---
+
+### multiple_verification_keys.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Generated three RS256 key pairs, put two public keys in
+`JWT_VERIFICATION_KEY` separated by a comma, and built an AgentOS with
+`authorization=True`. Signed a token with each private key and called `GET /agents`.
+
+**Result:** The first and second issuers' tokens returned 200. The token signed by the
+key AgentOS was not given returned 401.
 
 ---
 
