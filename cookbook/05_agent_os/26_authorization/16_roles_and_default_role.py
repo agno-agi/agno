@@ -71,6 +71,8 @@ platform = Role(
 # /authz API survives a restart. The object borrows the AgentOS database.
 authz = Authorization(
     roles=[member, platform],
+    # The administrator below is one by the scopes on their token, so token scopes count beside roles
+    trust_token_scopes=True,
     verification_keys=[JWT_SECRET],
     algorithm="HS256",
     verify_audience=True,

@@ -117,7 +117,8 @@ class UserDirectory:
                 id. With none set, a new user gets no role. It must be a defined role, and it is
                 the same default ``define_role(..., default=True)`` sets: naming two different
                 roles fails at startup. A user already in the directory who holds no role is
-                decided under the default role too. Ignored with authorization off.
+                decided under the default role too. On an async database it is applied when the
+                app starts. Ignored with authorization off.
         """
         self.auto_provision = auto_provision
         self.email_claim = email_claim

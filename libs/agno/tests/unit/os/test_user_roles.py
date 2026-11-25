@@ -403,16 +403,93 @@ def test_a_role_in_code_still_fails_startup_when_its_database_cannot_be_read(tmp
             pass
 
 
-def test_a_default_role_needs_a_synchronous_database(tmp_path):
+def test_roles_in_code_and_a_default_role_apply_at_startup_on_an_async_database(tmp_path):
     from agno.db.sqlite import AsyncSqliteDb
 
-    # The default is applied while AgentOS is built, which cannot await an async database
-    with pytest.raises(ValueError, match="needs a synchronous database"):
-        _os(
-            AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
-            _verified(),
-            user_directory=UserDirectory(default_role="member"),
-        )
+    member, platform = _roles()
+    agent_os = _os(
+        AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
+        _verified(roles=[member, platform], trust_token_scopes=True),
+        user_directory=UserDirectory(default_role=member),
+    )
+    with TestClient(agent_os.get_app()) as client:
+        roles = {r["slug"]: r for r in client.get("/authz/roles", headers=_admin()).json()["data"]}
+        assert roles["member"]["is_default"] is True
+        assert {s["raw"] for s in roles["platform"]["scopes"]} == set(READ + RUN + PLATFORM)
+        # A new user's first request makes them a member: they can use the agents, not the config
+        assert client.get("/agents/research", headers=_auth("dana")).status_code == 200
+        assert client.get("/config", headers=_auth("dana")).status_code == 403
+
+
+def test_a_default_role_that_is_not_defined_stops_startup_on_an_async_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    agent_os = _os(
+        AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
+        _verified(),
+        user_directory=UserDirectory(default_role="ghost"),
+    )
+    with pytest.raises(ValueError, match="is not a defined role"):
+        with TestClient(agent_os.get_app()):
+            pass
+
+
+def test_two_default_roles_fail_while_agentos_is_built_on_an_async_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    member, platform = _roles()
+    authz = _verified(roles=[member]).define_role("platform", platform.scopes, default=True)
+    with pytest.raises(ValueError, match="Two default roles are set"):
+        _os(AsyncSqliteDb(db_file=str(tmp_path / "os.db")), authz, user_directory=UserDirectory(default_role=member))
+
+
+def test_a_role_defined_after_agentos_is_built_needs_a_synchronous_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    member, _ = _roles()
+    authz = _verified(roles=[member])
+    _os(AsyncSqliteDb(db_file=str(tmp_path / "os.db")), authz)
+    with pytest.raises(ValueError, match="need a synchronous database"):
+        authz.define_role("support", READ)
+
+
+@pytest.fixture
+def authz_warnings(monkeypatch):
+    """Warnings from the Authorization module. Patched at the call site, since agno's log helpers
+    write to whichever agno logger is current and a handler on one of them misses the rest."""
+    import agno.os.authz.authorization as authorization_module
+
+    messages = []
+    monkeypatch.setattr(authorization_module, "log_warning", messages.append)
+    return messages
+
+
+def _token_scope_warnings(messages):
+    return [message for message in messages if "trust_token_scopes unset" in message]
+
+
+def test_roles_in_code_with_trust_token_scopes_unset_warn_at_startup(tmp_path, authz_warnings):
+    member, _ = _roles()
+    _os(_db(tmp_path), _verified(roles=[member]))
+    assert len(_token_scope_warnings(authz_warnings)) == 1
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        pytest.param(lambda m: _verified(roles=[m], trust_token_scopes=True), id="trust-true"),
+        pytest.param(lambda m: _verified(roles=[m], trust_token_scopes=False), id="trust-false"),
+        pytest.param(lambda m: _verified(), id="no-role-in-code"),
+        pytest.param(lambda m: True, id="bare-switch"),
+    ],
+)
+def test_no_token_scope_warning_when_the_choice_is_explicit_or_no_role_is_in_code(
+    tmp_path, authz_warnings, monkeypatch, authorization
+):
+    monkeypatch.setenv("JWT_VERIFICATION_KEY", SECRET)
+    member, _ = _roles()
+    _os(_db(tmp_path), authorization(member))
+    assert _token_scope_warnings(authz_warnings) == []
 
 
 def test_a_role_in_code_still_needs_a_database_that_can_hold_it():

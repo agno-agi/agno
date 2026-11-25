@@ -234,6 +234,7 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await agent_os._acheck_sandbox_tables()
     if agent_os._authz_role_store is not None:
         await agent_os._authz_role_store._araise_if_former_manager_policies()
+        await agent_os._authz_role_store._aapply_pending_setup()
 
     yield
 
