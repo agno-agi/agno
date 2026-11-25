@@ -19,9 +19,11 @@ from agno.db.migrations.versions.v3_3_0 import (
     _file_table,
     _folders,
     _move,
+    acompany_files_pending,
     acompany_notes_to_move,
     amove_company_files,
     amove_company_notes,
+    company_files_pending,
     company_notes_to_move,
     move_company_files,
     move_company_notes,
@@ -348,6 +350,79 @@ def test_files_outside_the_company_namespaces_do_not_move(databases):
         if key != ("company/notes", "ideas.md"):
             assert after[key] == values, key
     assert len(after) == len(before)
+
+
+@pytest.mark.parametrize(
+    "namespace", ["company/wiki", "company/notes", "company/products/launch/wiki", "company/tasks/task-1"]
+)
+def test_files_are_pending_exactly_while_the_move_has_a_file_to_move(databases, namespace):
+    db, reader = databases.new()
+    # No file table yet.
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    # Files the move leaves where they are.
+    for other in (
+        "company",
+        "default",
+        "company/products/launch/summary-state",
+        "company/products/a/b/wiki",
+        "company/tasks/a/b",
+        "company/wikis",
+    ):
+        FileSystem(reader, namespace=other, user_scoped=False).write("notes/keep.md", other)
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    assert databases.run(move_company_files, amove_company_files, db) is False
+
+    FileSystem(reader, namespace=namespace, user_scoped=False).write("page.md", "Written on 3.2.0")
+    assert databases.run(company_files_pending, acompany_files_pending, db) is True
+    assert databases.run(move_company_files, amove_company_files, db) is True
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+
+
+def test_a_database_that_keeps_no_file_table_has_no_file_pending():
+    from agno.db.base import AsyncBaseDb
+    from agno.db.in_memory import InMemoryDb
+
+    class AsyncDocumentDb(AsyncBaseDb):
+        """An asynchronous adapter that is neither SQLite nor PostgreSQL."""
+
+    AsyncDocumentDb.__abstractmethods__ = frozenset()
+
+    assert company_files_pending(InMemoryDb()) is False
+    assert asyncio.run(acompany_files_pending(InMemoryDb())) is False
+    assert asyncio.run(acompany_files_pending(AsyncDocumentDb())) is False
+
+
+def test_the_async_pending_check_takes_a_synchronous_database(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    FileSystem(db, namespace="company/wiki", user_scoped=False).write("page.md", "Written on 3.2.0")
+    assert asyncio.run(acompany_files_pending(db)) is True
+    db.db_engine.dispose()
+
+
+def test_a_file_table_from_before_user_partitions_is_read_without_being_refused(tmp_path):
+    import sqlite3
+
+    os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
+    # A table as DbFileSystem created it before the user partition: every read of a file refuses it.
+    with sqlite3.connect(os_file) as conn:
+        conn.execute(
+            "CREATE TABLE agno_fs (namespace VARCHAR NOT NULL, path VARCHAR NOT NULL, content TEXT NOT NULL, "
+            "size_bytes BIGINT NOT NULL, version BIGINT NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT, "
+            "PRIMARY KEY (namespace, path))"
+        )
+        conn.execute("INSERT INTO agno_fs VALUES ('shared', 'd.md', 'd', 1, 3, 0, 0)")
+    os_db, company_db = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
+
+    # It holds no Company file, and the checks say so: they read only the namespace and the path.
+    assert company_files_pending(os_db) is False
+    assert asyncio.run(acompany_files_pending(os_db)) is False
+    assert company_notes_to_move(os_db, company_db) is False
+    with sqlite3.connect(os_file) as conn:
+        conn.execute("INSERT INTO agno_fs VALUES ('company/notes', 'ideas.md', 'A note', 6, 1, 0, 0)")
+    assert company_files_pending(os_db) is True
+    assert company_notes_to_move(os_db, company_db) is True
+    os_db.db_engine.dispose()
+    company_db.db_engine.dispose()
 
 
 def test_notes_in_another_database_arrive_in_the_company_database_and_leave_the_source(databases):

@@ -8,6 +8,7 @@ cases use the live pgvector container and skip without it.
 from typing import Any, Dict, Tuple
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from agno.company.filesystem import company_filesystem
@@ -17,6 +18,7 @@ from agno.os import AgentOS, CompanyConfig
 from tests.unit.db.test_v3_3_0_company_goals_migration import (  # noqa: F401
     BACKLOG_TASK,
     GOAL,
+    _call,
     _write_3_2_0,
     database,
     databases,
@@ -195,3 +197,76 @@ async def test_a_database_with_notes_and_no_company_tables_gets_its_notes_moved(
     assert len(after) == 2
     # No Company table was made on the way.
     assert not [name for name in database.describe(rows=False) if name.startswith("agno_company")]
+
+
+# ------------------------------------------------------------------ files behind a current stamp
+
+COMPANY_TABLE_TYPES = ("goals", "sources", "projects", "tasks")
+
+
+async def test_stamped_tables_do_not_hide_files_left_by_a_run_that_stopped(database):  # noqa: F811
+    from agno.db.migrations.versions.v3_3_0 import CompanyFilesMigrationError
+
+    _write_3_2_0(database)
+    reader = database.sync_db()
+    _write_files_3_2_0(reader)
+    # The Company tables are stamped current before they are renamed.
+    for name in COMPANY_TABLE_TYPES:
+        await _call(database.db().upsert_schema_version, f"agno_company_{name}", "3.3.0")
+    # A different note is already stored at the path the 3.2.0 note moves to.
+    company_filesystem(reader).write("notes/ideas.md", "Written on 3.3.0\n")
+    files_before = _rows(reader)
+
+    with pytest.raises(CompanyFilesMigrationError, match="notes/ideas.md"):
+        await MigrationManager(database.db()).up()
+
+    # No file moved. SQLite keeps the table rename of the run that stopped; PostgreSQL keeps nothing.
+    assert _rows(reader) == files_before
+    renamed = "agno_company_goals" in database.describe(rows=False)
+    assert renamed is not database.postgres
+    assert {database.versions()[f"agno_company_{name}"] for name in COMPANY_TABLE_TYPES[1:]} == {"3.3.0"}
+
+    # With the newer note out of the way, a plain run moves every file, whatever the stamps say.
+    company_filesystem(reader).delete("notes/ideas.md")
+    await MigrationManager(database.db()).up()
+
+    after = _rows(reader)
+    assert after[("company", "wiki/brief.md")] == files_before[("company/wiki", "brief.md")]
+    assert after[("company", f"goals/{GOAL}/status.md")] == files_before[(f"company/products/{GOAL}/wiki", "status.md")]
+    assert (
+        after[("company", f"tasks/{BACKLOG_TASK}/report.md")]
+        == files_before[(f"company/tasks/{BACKLOG_TASK}", "report.md")]
+    )
+    assert after[("company", "notes/ideas.md")] == files_before[("company/notes", "ideas.md")]
+    assert {namespace for namespace, _ in after} == {
+        "company",
+        f"company/products/{database.files_goal}/summary-state",
+    }
+    tables = database.describe(rows=False)
+    assert "agno_company_goals" in tables and "agno_company_products" not in tables
+
+
+async def test_company_tables_created_before_the_migration_do_not_hide_the_notes(database):  # noqa: F811
+    # An AgentOS without Company on 3.2.0 kept Super Agent's notes.
+    reader = database.sync_db()
+    notes = FileSystem(reader, namespace="company/notes", user_scoped=False)
+    notes.write("ideas.md", "A note\n")
+    notes.write("ideas.md", "A better note\n")
+    FileSystem(reader, namespace="default", user_scoped=False).write("keep.md", "An agent's own file\n")
+    before = _rows(reader)
+    # On 3.3.0 Company is turned on and used before the migration runs: each Company table is created
+    # on its first use and stamped current.
+    db = database.db()
+    for table_type in COMPANY_TABLE_TYPES:
+        await _call(db._get_table, table_type, create_table_if_not_found=True)
+    assert {database.versions()[f"agno_company_{name}"] for name in COMPANY_TABLE_TYPES} == {"3.3.0"}
+    assert _rows(reader) == before
+
+    await MigrationManager(database.db()).up()
+
+    after = _rows(reader)
+    assert after[("company", "notes/ideas.md")] == before[("company/notes", "ideas.md")]
+    assert after[("company", "notes/ideas.md")][:2] == ("A better note\n", 2)
+    assert after[("default", "keep.md")] == before[("default", "keep.md")]
+    assert len(after) == 2
+    assert {database.versions()[f"agno_company_{name}"] for name in COMPANY_TABLE_TYPES} == {"3.3.0"}

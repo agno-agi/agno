@@ -233,7 +233,7 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
-    await agent_os._acheck_company_notes()
+    await agent_os._acheck_company_files()
     if agent_os._authz_role_store is not None:
         await agent_os._authz_role_store._araise_if_former_manager_policies()
 
@@ -1315,18 +1315,37 @@ class AgentOS:
 
             await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
 
-    async def _acheck_company_notes(self) -> None:
-        """Fail startup, with the remedy, when notes were left in the AgentOS database.
+    async def _acheck_company_files(self) -> None:
+        """Fail startup, with the remedy, while Company files wait where a version before 3.3.0 stored them.
 
-        Notes are a folder of the Company file system, in the Company database. A deployment that
-        keeps a separate Company database moves the notes it wrote before 3.3.0 across once. Until
-        then they are not served, so the AgentOS does not start.
+        Every Company file is a file of the Company file system, in the Company database. Files still
+        in their namespaces from before 3.3.0 are not served until the migration moves them. Notes
+        were stored in the AgentOS database: a deployment that keeps a separate Company database
+        moves them across once. Runs with Company on, and reads the file table of each of the two
+        databases with one statement.
         """
-        if self._company_db is None or self.db is None or self._company_db is self.db:
+        if self._company_db is None:
             return
-        from agno.db.migrations.versions.v3_3_0 import acompany_notes_to_move
+        from agno.db.migrations.versions.v3_3_0 import acompany_files_pending, acompany_notes_to_move
         from agno.exceptions import MigrationRequiredError
 
+        if await acompany_files_pending(self._company_db):
+            from agno.company.filesystem import company_filesystem
+
+            files_table: Any = company_filesystem(self._company_db).backend
+            raise MigrationRequiredError(
+                table_name=files_table.table.fullname,
+                message=(
+                    f"AgentOS cannot start: table {files_table.table.fullname} of the Company database holds "
+                    "Company files where a version of Agno before 3.3.0 stored them, and they are not served "
+                    "from there. Apply the pending migrations to that database before starting AgentOS with "
+                    "`asyncio.run(MigrationManager(db).up())`, or `await MigrationManager(db).up()` in async "
+                    "code (import it from `agno.db.migrations.manager`). Each file keeps its content, version "
+                    "and timestamps."
+                ),
+            )
+        if self.db is None or self._company_db is self.db:
+            return
         if await acompany_notes_to_move(self.db, self._company_db):
             raise MigrationRequiredError(
                 table_name="company/notes",

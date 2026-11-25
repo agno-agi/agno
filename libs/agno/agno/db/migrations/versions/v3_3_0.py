@@ -53,6 +53,10 @@ halfway is finished by the next one. A different file already stored at a new pa
 migration with ``CompanyFilesMigrationError``. The summary delivery state of a Goal, in
 ``company/products/<id>/summary-state``, is not a file of the tree and does not move.
 
+A Company table is stamped with the current version when it is created, so MigrationManager does not
+trust that stamp while ``company_files_pending`` finds a file to move. Until the files have moved, an
+AgentOS with Company does not start: files left in the namespaces from before would look empty.
+
 Notes were stored in the AgentOS database. A deployment with a separate Company database calls
 ``move_company_notes`` once to move them into the Company database. Until it has, AgentOS does not
 start: notes left in the AgentOS database would look empty.
@@ -662,10 +666,12 @@ def _task_segment(namespace: str) -> Optional[str]:
     return segment if segment and "/" not in segment else None
 
 
-def _file_table(db: Any, conn: Any, create: bool = False) -> Any:
+def _file_table(db: Any, conn: Any, create: bool = False, any_schema: bool = False) -> Any:
     """The file table of a database, read and written on the given connection.
 
     None when the database cannot hold files, or holds no file table and none is to be created.
+    With ``any_schema`` a table from before user partitions is returned too, for a statement that
+    reads only its namespace and path columns.
     """
     from copy import copy
 
@@ -683,7 +689,7 @@ def _file_table(db: Any, conn: Any, create: bool = False) -> Any:
         backend._ensure_table()
     elif not inspect(conn).has_table(backend.table_name, schema=backend.db_schema):
         return None
-    else:
+    elif not any_schema:
         backend._require_current_schema()
     return backend.table
 
@@ -850,6 +856,31 @@ def _move_company_files(sess: Any, db: Any) -> bool:
     return True
 
 
+def _files_pending(sess: Any, db: Any) -> bool:
+    """Whether the file table holds a namespace that ``_move_company_files`` moves. One statement on the table."""
+    conn = sess.connection()
+    files = _file_table(db, conn, any_schema=True)
+    return files is not None and bool(_old_namespaces(conn, files))
+
+
+def company_files_pending(db: BaseDb) -> bool:
+    """Whether this database still holds Company files in their namespaces from before 3.3.0."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    with db.Session() as sess:  # type: ignore
+        return _files_pending(sess, db)
+
+
+async def acompany_files_pending(db: Any) -> bool:
+    """Async variant of ``company_files_pending``. The database may be synchronous."""
+    if not isinstance(db, AsyncBaseDb):
+        return company_files_pending(db)
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    async with db.async_session_factory() as sess:  # type: ignore
+        return await sess.run_sync(lambda sync_sess: _files_pending(sync_sess, db))
+
+
 def move_company_files(db: BaseDb) -> bool:
     """Move the Company files of a SQLite or PostgreSQL database into the Company file system.
 
@@ -968,26 +999,17 @@ def _take_notes(sess: Any, db: Any) -> List[Dict[str, Any]]:
 
 
 def _notes_wait(sess: Any, db: Any) -> bool:
-    """Whether a database holds a note, in the namespace from before 3.3.0 or in notes/."""
-    from agno.fs.errors import SchemaOutdatedError
+    """Whether a database holds a note, in the namespace from before 3.3.0 or in notes/. One statement on the table."""
+    from sqlalchemy import and_, func, or_
 
     conn = sess.connection()
-    try:
-        files = _file_table(db, conn)
-    except SchemaOutdatedError:
-        # A file table from before user partitions is refused by every read: it serves no note.
-        return False
+    files = _file_table(db, conn, any_schema=True)
     if files is None:
         return False
-    if conn.execute(select(files.c.path).where(files.c.namespace == _NOTES).limit(1)).first() is not None:
-        return True
-    paths = conn.execute(
-        select(files.c.path).where(
-            files.c.namespace == COMPANY_NAMESPACE, files.c.path.startswith("notes/", autoescape=True)
-        )
-    )
-    # A prefix match ignores case on SQLite, so each path is checked again here.
-    return any(row[0].startswith("notes/") for row in paths)
+    # substr compares case on SQLite and PostgreSQL alike; a prefix match ignores it on SQLite.
+    in_notes = and_(files.c.namespace == COMPANY_NAMESPACE, func.substr(files.c.path, 1, len("notes/")) == "notes/")
+    found = conn.execute(select(files.c.path).where(or_(files.c.namespace == _NOTES, in_notes)).limit(1))
+    return found.first() is not None
 
 
 def _in_session(db: Any, step: Callable[[Any], Any]) -> Any:

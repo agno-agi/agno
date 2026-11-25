@@ -190,18 +190,156 @@ def test_agentos_starts_when_no_note_is_left_behind(tmp_path):
     with TestClient(AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False).get_app()) as client:
         assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
 
-    # One database for both, or no Company: the notes in the AgentOS database are where they belong.
+    # One database for both: the notes in the AgentOS database are where they belong.
     single = SqliteDb(db_file=str(tmp_path / "single.db"))
     company_filesystem(single).write("notes/ideas.md", "A note")
-    FileSystem(single, namespace="company/notes", user_scoped=False).write("old.md", "Not migrated yet")
     with TestClient(AgentOS(db=single, company=CompanyConfig(), telemetry=False).get_app()) as client:
         assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
     twin = SqliteDb(db_file=str(tmp_path / "single.db"))
     with TestClient(AgentOS(db=single, company=CompanyConfig(db=twin), telemetry=False).get_app()):
         pass
+    # Without Company nothing is checked, whatever the file table holds.
+    FileSystem(single, namespace="company/notes", user_scoped=False).write("old.md", "Not migrated yet")
     with TestClient(AgentOS(db=single, agents=[], telemetry=False).get_app()):
         pass
     for db in (os_db, company_db, single, twin):
+        db.close()
+
+
+# ------------------------------------------------------------------ files left in the namespaces from before
+
+
+@pytest.mark.parametrize(
+    "namespace, path, moved_to, served",
+    [
+        ("company/wiki", "handbook.md", "wiki/handbook.md", "/company/wiki/handbook.md"),
+        ("company/products/launch/wiki", "status.md", "goals/launch/status.md", None),
+        ("company/tasks/task-1", "report.md", "tasks/task-1/report.md", None),
+        ("company/notes", "ideas.md", "notes/ideas.md", "/company/notes/ideas.md"),
+    ],
+)
+@pytest.mark.parametrize("two_databases", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_agentos_does_not_start_while_company_files_wait_to_be_moved(
+    tmp_path, namespace, path, moved_to, served, two_databases, use_async
+):
+    from fastapi.testclient import TestClient
+
+    from agno.db.migrations.manager import MigrationManager
+    from agno.exceptions import MigrationRequiredError
+    from tests.unit.db.test_v3_3_0_company_files_migration import rows
+
+    company_file = str(tmp_path / "company.db")
+    reader = SqliteDb(db_file=company_file)
+    # A file written before 3.3.0, in the namespace that version kept it in.
+    FileSystem(reader, namespace=namespace, user_scoped=False).write(path, "Written on 3.2.0")
+    opened = [reader]
+
+    def start() -> AgentOS:
+        company_db = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
+        opened.append(company_db)
+        if not two_databases:
+            return AgentOS(db=company_db, company=CompanyConfig(), telemetry=False)
+        os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
+        opened.append(os_db)
+        return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+
+    for _ in range(2):
+        # Refused every time: a refused start leaves nothing that lets the next one through.
+        with pytest.raises(MigrationRequiredError, match=r"MigrationManager\(db\)\.up\(\)") as refused:
+            with TestClient(start().get_app()):
+                pass
+        assert refused.value.error_id == "migration_required_error"
+        assert refused.value.table_name == "agno_fs" and "Company database" in str(refused.value)
+    assert [(key, row[0]) for key, row in rows(reader).items()] == [((namespace, path), "Written on 3.2.0")]
+
+    # The call the error names is the whole remedy, also after a refused start created the Company tables.
+    migrating = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
+    opened.append(migrating)
+
+    async def migrate() -> None:
+        await MigrationManager(migrating).up()
+        if use_async:
+            await migrating.db_engine.dispose()
+
+    asyncio.run(migrate())
+    with TestClient(start().get_app()) as client:
+        if served is not None:
+            response = client.get(served)
+            assert response.status_code == 200 and response.json()["content"] == "Written on 3.2.0"
+    after = rows(reader)
+    assert after[("company", moved_to)][0] == "Written on 3.2.0" and {key[0] for key in after} == {"company"}
+    for db in opened:
+        if not isinstance(db, AsyncSqliteDb):
+            db.close()
+
+
+def _statements(db, seen: list, label: str) -> None:
+    from sqlalchemy import event
+
+    @event.listens_for(db.db_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany):
+        seen.append((label, " ".join(statement.split())))
+
+
+def test_the_startup_check_reads_the_file_table_once_and_logs_nothing(tmp_path):
+    import logging
+
+    seen: list = []
+    logged: list = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            logged.append(record.getMessage())
+
+    def check(agent_os: AgentOS) -> list:
+        seen.clear()
+        asyncio.run(agent_os._acheck_company_files())
+        return list(seen)
+
+    def on_file_table(statements: list) -> list:
+        return [(label, statement) for label, statement in statements if "FROM agno_fs" in statement]
+
+    handler = Collect(level=logging.DEBUG)
+    logger = logging.getLogger("agno")
+    level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        one = SqliteDb(db_file=str(tmp_path / "one.db"))
+        os_db, company_db = SqliteDb(db_file=str(tmp_path / "os.db")), SqliteDb(db_file=str(tmp_path / "company.db"))
+        for db in (one, os_db, company_db):
+            company_filesystem(db).write("wiki/brief.md", "# Company")
+            company_filesystem(db).write("agents/keep.md", "Not a note")
+            FileSystem(db, namespace="default", user_scoped=False).write("keep.md", "An agent's file")
+        _statements(one, seen, "one")
+        _statements(os_db, seen, "os")
+        _statements(company_db, seen, "company")
+        without = AgentOS(db=one, agents=[], telemetry=False)
+        shared = AgentOS(db=one, company=CompanyConfig(), telemetry=False)
+        separate = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+        logged.clear()
+
+        # Without Company nothing is read.
+        assert check(without) == []
+        # With Company in the AgentOS database: one statement on the file table, after the lookup that it exists.
+        statements = check(shared)
+        assert len(on_file_table(statements)) == 1 and len(statements) == 2
+        # With a Company database of its own: one statement on the file table of each.
+        statements = check(separate)
+        assert [label for label, _ in on_file_table(statements)] == ["company", "os"] and len(statements) == 4
+        assert logged == []
+
+        # A database with no file table is asked only whether it holds one.
+        empty = SqliteDb(db_file=str(tmp_path / "empty.db"))
+        _statements(empty, seen, "empty")
+        statements = check(AgentOS(db=empty, company=CompanyConfig(), telemetry=False))
+        assert on_file_table(statements) == [] and all("table_info" in statement for _, statement in statements)
+        assert logged == []
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(level)
+    for db in (one, os_db, company_db, empty):
         db.close()
 
 
