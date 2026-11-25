@@ -1047,7 +1047,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 raise
             raise _AutomationSkip(f"The proposal's executor cannot run this Task: {exc}") from exc
         checked_task = {**task, "executor_type": executor[0], "executor_id": executor[1]}
-        authority = restore_authorization(self.app, grant.get(AUTHORIZATION_KEY))
+        authority = restore_authorization(self.app, grant.get(AUTHORIZATION_KEY), saved=True)
         if isinstance(authority, _ExecutorAuthorization) or (authority is not None and authority.service_account):
             raise _AutomationSkip("Automatic acceptance requires human authority")
         if authority is None and os.authorization:
@@ -1241,7 +1241,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         if not acceptances or AUTHORIZATION_KEY not in acceptances[-1]:
             raise ValueError("Task needs a fresh acceptance before automatic pickup")
         snapshot = acceptances[-1][AUTHORIZATION_KEY]
-        authority = restore_authorization(self.app, snapshot)
+        authority = restore_authorization(self.app, snapshot, saved=True)
         if authority is None and os.authorization:
             raise PermissionError("Task acceptance has no saved caller authority")
         if task.get("executor_type") == "engineering":
@@ -1280,7 +1280,10 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             raise ValueError("Only Ready Tasks or pending submissions can be picked up")
         # This is the ordinary manual Task route, which reserves the attempt,
         # checks the registry and run scope, and enters the executor's run route.
-        headers = {"Authorization": "Bearer " + self.internal_service_token, AUTHORIZATION_HEADER: json.dumps(snapshot)}
+        # The acceptance is loaded from the Task, where it was stored when a person accepted it.
+        # With authorization off none was stored, and the null is sent as it is.
+        saved = {**snapshot, "saved": True} if isinstance(snapshot, dict) else snapshot
+        headers = {"Authorization": "Bearer " + self.internal_service_token, AUTHORIZATION_HEADER: json.dumps(saved)}
         if task.get("accepted_by") is not None:
             headers[SCHEDULE_OWNER_HEADER] = quote(task["accepted_by"], safe="")
         current = await _call(os._company_db, "get_task", task["id"])

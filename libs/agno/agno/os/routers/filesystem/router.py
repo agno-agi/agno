@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, TypeVar, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -7,6 +8,7 @@ from agno.agent import Agent
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
 from agno.os.auth import (
+    afilter_resources_by_access,
     build_insufficient_permissions_detail,
     check_resource_access,
     get_accessible_resources,
@@ -315,8 +317,14 @@ async def _get_global_filesystem_agent_ids(
                 if isinstance((agent_id := getattr(agent, "id", None)), str) and agent_id
             )
 
-    if "*" not in accessible_ids:
-        agent_ids.intersection_update(accessible_ids)
+    if scopes_are_authoritative:
+        # The provider filters, as it does for GET /agents: what "*" covers is its own to say. From
+        # token scopes or a managed role it leaves the built-in components out; from a custom
+        # provider it means every agent.
+        readable = await afilter_resources_by_access(
+            request, [SimpleNamespace(id=agent_id) for agent_id in agent_ids], "agents"
+        )
+        agent_ids = {agent.id for agent in readable}
 
     return sorted(agent_ids)
 

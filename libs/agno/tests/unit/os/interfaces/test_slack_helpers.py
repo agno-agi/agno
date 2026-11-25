@@ -286,6 +286,7 @@ class TestResolveSlackUser:
             return_value={
                 "user": {
                     "name": "ashpreet",
+                    "is_email_confirmed": True,
                     "profile": {
                         "email": "ashpreet@example.com",
                         "display_name": "Ashpreet",
@@ -320,6 +321,7 @@ class TestResolveSlackUser:
             return_value={
                 "user": {
                     "name": "charlie",
+                    "is_email_confirmed": True,
                     "profile": {"email": "charlie@co.com", "display_name": "", "real_name": "Charlie Brown"},
                 }
             }
@@ -335,6 +337,7 @@ class TestResolveSlackUser:
             return_value={
                 "user": {
                     "name": "dave",
+                    "is_email_confirmed": True,
                     "profile": {"email": "dave@co.com", "display_name": "", "real_name": ""},
                 }
             }
@@ -556,7 +559,12 @@ class TestLookupCache:
     @pytest.mark.asyncio
     async def test_failed_user_lookup_not_cached(self):
         client = AsyncMock()
-        client.users_info = AsyncMock(side_effect=[Exception("ratelimited"), {"user": {"profile": {"email": "a@b.c"}}}])
+        client.users_info = AsyncMock(
+            side_effect=[
+                Exception("ratelimited"),
+                {"user": {"is_email_confirmed": True, "profile": {"email": "a@b.c"}}},
+            ]
+        )
         cache = LookupCache()
         with patch("agno.os.interfaces.slack.helpers.log_warning"):
             assert await cache.user_identity(client, "U1") == ("U1", None)

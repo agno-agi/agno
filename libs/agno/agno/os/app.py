@@ -1170,12 +1170,13 @@ class AgentOS:
 
         # Interfaces sharing a bot token and the settings that decide whose Task it is deliver the same results,
         # so only the first posts them, also when get_app runs again
-        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool]:
+        def delivery_key(interface: BaseInterface) -> Tuple[str, Optional[FrozenSet[Tuple[str, str]]], bool, bool]:
             users = interface.ctx.users  # type: ignore[attr-defined]
             return (
                 interface.ctx.token,  # type: ignore[attr-defined]
                 None if users is None else frozenset(users.items()),
                 interface.ctx.resolve_user_identity,  # type: ignore[attr-defined]
+                interface.ctx.authorize_senders,  # type: ignore[attr-defined]
             )
 
         delivery_keys = {

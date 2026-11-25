@@ -71,6 +71,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agno.os.authz._role_store import RoleChangeRefused
+from agno.utils.log import log_warning
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
 from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
@@ -484,7 +485,8 @@ def get_roles_router(
         Derived from the OS's own route→scope map (so it always matches what the OS
         actually enforces) plus the ``agent_os:admin`` super-scope. Each item is
         parsed into ``{raw, namespace, sub_namespace, permission}`` for a UI to
-        render a resource×action grid. (Single OS: no org-level scopes.)
+        render a resource×action grid. (Single OS: no org-level scopes.) The built-in components
+        (Super Agent, Platform Builder, Mini Agent) are listed by name, to read and to run.
         """
         from agno.os.scopes import get_default_scope_mappings
 
@@ -493,6 +495,12 @@ def get_roles_router(
             mappings = get_default_scope_mappings()
         raws = {scope for required in mappings.values() for scope in required}
         raws.add("agent_os:admin")
+        # A built-in component is reached only by its own scope, never by a type-wide one, so each
+        # is listed by name for a role to be given it
+        from agno.registry._reserved import MANAGER_RESOURCES
+
+        for component_id, resource in MANAGER_RESOURCES.items():
+            raws.update(f"{resource.split('/')[0]}:{component_id}:{action}" for action in ("read", "run"))
         return [AvailableScopeItem.from_raw(r) for r in sorted(raws)]
 
     # ---- audit ----------------------------------------------------------
@@ -805,10 +813,30 @@ def get_users_router(
                 "an opaque id (an email, say) for the person.",
             )
 
+    async def _grant_default_role(user_id: str, actor: str) -> None:
+        """Give a user an admin just created the default role, as a first sign-in would.
+
+        Only a user who holds no role gets it: an id new to the directory may already hold one."""
+        from agno.os.auth import _aroles_of, _astore_default_role
+
+        if role_store is None or await _aroles_of(role_store, user_id):
+            return
+        role = await _astore_default_role(role_store)
+        if role:
+            try:
+                await role_store.aassign(user_id, role, actor=actor)
+            except Exception as e:
+                log_warning(f"could not grant default role {role!r} to new user {user_id!r}: {e}")
+
     @router.post("", response_model=UserSchema)
     async def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
+        """Create a user, or update one that exists. A new user gets the default role, when one is set."""
         await _refuse_non_user_id(body.id)
-        return await _user(await user_store.aupsert(body.id, email=body.email, name=body.name, actor=actor))
+        created = await user_store.aget(body.id) is None
+        user = await user_store.aupsert(body.id, email=body.email, name=body.name, actor=actor)
+        if created:
+            await _grant_default_role(body.id, actor)
+        return await _user(user)
 
     # Declared before /{user_id} so the path parameter does not swallow it.
     @router.get("/metrics", response_model=UserManagementMetrics)
@@ -838,12 +866,15 @@ def get_users_router(
     async def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
         """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
         denied at the enforcement point on their next request, even with a still-valid token."""
-        if await user_store.aget(user_id) is None:
+        created = await user_store.aget(user_id) is None
+        if created:
             # PATCH creates an unknown id, so a create needs the same check as POST. An existing
             # row is exempt: a person who was in the directory before a role took their name must
             # stay manageable, since disabling them is the revocation an admin reaches for.
             await _refuse_non_user_id(user_id)
         user = await user_store.aupsert(user_id, email=body.email, name=body.name, actor=actor)
+        if created:
+            await _grant_default_role(user_id, actor)
         if body.disabled is not None and body.disabled != user["disabled"]:
             user = await user_store.aset_disabled(user_id, body.disabled, actor=actor)
         return await _user(user)

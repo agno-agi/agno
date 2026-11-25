@@ -39,7 +39,8 @@ async def _require_endpoint_permission(
     admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
-    match = RUN_ENDPOINT_RE.match(endpoint) if method.upper() == "POST" else None
+    # Matched on the decoded path, as the server will route it: an encoded id names the same component
+    match = RUN_ENDPOINT_RE.match(path) if method.upper() == "POST" else None
     scopes_decide = caller_scopes_are_authoritative(request)
 
     if match is None:
