@@ -1456,3 +1456,41 @@ def test_a_postgres_role_that_cannot_read_the_cluster_identifier_still_tells_one
         assert every_row(other_reader) == before and every_row(reader) == {}
     finally:
         databases.close()
+
+
+# ------------------------------------------------------------------ the store, while files wait
+
+
+def test_the_company_file_system_refuses_every_use_while_files_wait_and_serves_after_the_move(databases):
+    from agno.company.filesystem import company_filesystem
+    from agno.exceptions import MigrationRequiredError
+
+    db, reader = databases.new()
+    write_3_2_0(reader, "company/wiki", "people.md", "Ada", "Ada and Bo")
+    in_store(reader).write("notes/ideas.md", "A note")
+    before = rows(reader)
+
+    async def use(store, operation: str):
+        try:
+            if operation == "read":
+                return await store.aread("wiki/people.md") if databases.is_async else store.read("wiki/people.md")
+            if operation == "list":
+                found = await store.alist() if databases.is_async else store.list()
+                return sorted(meta.path for meta in found)
+            if databases.is_async:
+                return (await store.awrite("notes/new.md", "Written")).version
+            return store.write("notes/new.md", "Written").version
+        finally:
+            if databases.is_async:
+                await db.db_engine.dispose()
+
+    # Reading, listing and writing are all refused, and nothing is written beside the page that waits.
+    for operation in ("read", "list", "write"):
+        with pytest.raises(MigrationRequiredError, match="databases/all/migrate"):
+            asyncio.run(use(company_filesystem(db), operation))
+    assert rows(reader) == before
+
+    assert databases.run(move_company_files, amove_company_files, db) is True
+    assert asyncio.run(use(company_filesystem(db), "read")) == "Ada and Bo"
+    assert asyncio.run(use(company_filesystem(db), "list")) == ["notes/ideas.md", "wiki/people.md"]
+    assert asyncio.run(use(company_filesystem(db), "write")) == 1
