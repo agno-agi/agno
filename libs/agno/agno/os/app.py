@@ -233,6 +233,7 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
+    await agent_os._acheck_company_notes()
     if agent_os._authz_role_store is not None:
         await agent_os._authz_role_store._araise_if_former_manager_policies()
 
@@ -1313,6 +1314,30 @@ class AgentOS:
             from agno.sandbox import _harness
 
             await _harness.acheck_tables(entry, create=self.auto_provision_dbs)
+
+    async def _acheck_company_notes(self) -> None:
+        """Fail startup, with the remedy, when notes were left in the AgentOS database.
+
+        Notes are a folder of the Company file system, in the Company database. A deployment that
+        keeps a separate Company database moves the notes it wrote before 3.3.0 across once. Until
+        then they are not served, so the AgentOS does not start.
+        """
+        if self._company_db is None or self.db is None or self._company_db is self.db:
+            return
+        from agno.db.migrations.versions.v3_3_0 import acompany_notes_to_move
+        from agno.exceptions import MigrationRequiredError
+
+        if await acompany_notes_to_move(self.db, self._company_db):
+            raise MigrationRequiredError(
+                table_name="company/notes",
+                message=(
+                    "Notes are stored in the AgentOS database, and from 3.3.0 they belong in the Company "
+                    "database. Move them once with `move_company_notes(agent_os_db, company_db)` (import it "
+                    "from `agno.db.migrations.versions.v3_3_0`; use `await amove_company_notes(...)` when "
+                    "either database is asynchronous), then start AgentOS again. Each note keeps its content, "
+                    "version and timestamps."
+                ),
+            )
 
     @staticmethod
     def _nearest_postgres(db: Any, inherited_db: Any) -> Any:

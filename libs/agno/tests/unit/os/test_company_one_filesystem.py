@@ -138,6 +138,73 @@ def test_a_database_with_no_company_setting_uses_the_default_limit(tmp_path):
         db.close()
 
 
+# ------------------------------------------------------------------ notes left in the AgentOS database
+
+
+@pytest.mark.parametrize("where", ["company/notes", "company"])
+@pytest.mark.parametrize("os_async", [False, True])
+def test_agentos_does_not_start_while_notes_are_left_in_the_agentos_database(tmp_path, where, os_async):
+    from fastapi.testclient import TestClient
+
+    from agno.db.migrations.versions.v3_3_0 import move_company_notes
+    from agno.exceptions import MigrationRequiredError
+
+    os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
+    os_reader, company_db = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
+    # Notes written before 3.3.0: where 3.2.0 kept them, or where the migration of the AgentOS database put them.
+    if where == "company/notes":
+        FileSystem(os_reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    else:
+        company_filesystem(os_reader).write("notes/ideas.md", "A note")
+
+    def start() -> AgentOS:
+        os_db = AsyncSqliteDb(db_file=os_file) if os_async else SqliteDb(db_file=os_file)
+        return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+
+    with pytest.raises(MigrationRequiredError, match="move_company_notes") as refused:
+        with TestClient(start().get_app()):
+            pass
+    assert refused.value.error_id == "migration_required_error"
+    assert "amove_company_notes" in str(refused.value) and "agno.db.migrations.versions.v3_3_0" in str(refused.value)
+
+    # The call the error names is the whole remedy.
+    assert move_company_notes(os_reader, company_db) == 1
+    with TestClient(start().get_app()) as client:
+        served = client.get("/company/notes/ideas.md")
+        assert served.status_code == 200 and served.json()["content"] == "A note"
+    os_reader.close()
+    company_db.close()
+
+
+def test_agentos_starts_when_no_note_is_left_behind(tmp_path):
+    from fastapi.testclient import TestClient
+
+    os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    company_db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    # Other files in the AgentOS database are not notes, and notes in the Company database are in place.
+    FileSystem(os_db, namespace="default", user_scoped=False).write("keep.md", "An agent's file")
+    company_filesystem(os_db).write("agents/keep.md", "Not under notes/")
+    # A folder whose name differs from notes/ only by case is another folder.
+    company_filesystem(os_db).write("Notes/shout.md", "Not the notes folder")
+    company_filesystem(company_db).write("notes/ideas.md", "A note")
+    with TestClient(AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False).get_app()) as client:
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
+
+    # One database for both, or no Company: the notes in the AgentOS database are where they belong.
+    single = SqliteDb(db_file=str(tmp_path / "single.db"))
+    company_filesystem(single).write("notes/ideas.md", "A note")
+    FileSystem(single, namespace="company/notes", user_scoped=False).write("old.md", "Not migrated yet")
+    with TestClient(AgentOS(db=single, company=CompanyConfig(), telemetry=False).get_app()) as client:
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
+    twin = SqliteDb(db_file=str(tmp_path / "single.db"))
+    with TestClient(AgentOS(db=single, company=CompanyConfig(db=twin), telemetry=False).get_app()):
+        pass
+    with TestClient(AgentOS(db=single, agents=[], telemetry=False).get_app()):
+        pass
+    for db in (os_db, company_db, single, twin):
+        db.close()
+
+
 # ------------------------------------------------------------------ what a Task run may write
 
 
@@ -508,3 +575,78 @@ def test_the_tree_opens_each_area_as_a_folder_of_the_store(db):
     listed = [row.path for row in manager.list_wiki(goal["id"], limit=100)[0]]
     assert sorted(listed) == ["brief.md", "research.md", "status.md"]
     assert [row.path for row in manager.list_wiki(None, limit=100)[0]] == ["brief.md", "status.md"]
+
+
+# ------------------------------------------------------------------ one folder of the store, on PostgreSQL
+
+POSTGRES_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+
+@pytest.fixture
+def postgres_url():
+    """A PostgreSQL database of its own for one test: the Company store is one namespace of a database's file table.
+
+    Uses the live pgvector container (localhost:5532) and skips when psycopg or the server is absent.
+    """
+    pytest.importorskip("psycopg")
+    from uuid import uuid4
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import make_url
+
+    name = "company_folders_" + uuid4().hex[:12]
+    admin = create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as conn:
+            conn.execute(text(f'CREATE DATABASE "{name}"'))
+    except Exception:
+        admin.dispose()
+        pytest.skip(f"Postgres server not reachable at {POSTGRES_URL}")
+    try:
+        yield make_url(POSTGRES_URL).set(database=name).render_as_string(hide_password=False)
+    finally:
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE "{name}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_folder_reaches_no_other_folder_on_postgres(postgres_url, use_async):
+    from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+    async def run() -> None:
+        db = (AsyncPostgresDb if use_async else PostgresDb)(db_url=postgres_url)
+        whole = company_filesystem(db)
+
+        async def act(store, name, *args, **kwargs):
+            result = getattr(store, ("a" if use_async else "") + name)(*args, **kwargs)
+            return await result if use_async else result
+
+        # Names that a pattern match or a match without case would take for tasks/t_1.
+        for name in ("t_1", "tx1", "T_1", "t_1x", "t%1", "t_1/sub"):
+            await act(whole, "write", f"tasks/{name}/report.md", f"in {name}")
+        folder = company_folder(db, "tasks/t_1")
+
+        assert sorted(meta.path for meta in await act(folder, "list")) == ["report.md", "sub/report.md"]
+        assert await act(folder, "read", "report.md") == "in t_1"
+        assert sorted(match.path for match in await act(folder, "search", "in t")) == ["report.md", "sub/report.md"]
+        assert [meta.path for meta in await act(company_folder(db, "tasks/t%1"), "list")] == ["report.md"]
+        assert await act(company_folder(db, "tasks/T_1"), "read", "report.md") == "in T_1"
+        # A write and a version check stay inside the folder, and an error names the path inside it.
+        from agno.fs.errors import VersionConflictError
+
+        assert (await act(folder, "write", "status.md", "one", expected_version=0)).path == "status.md"
+        with pytest.raises(VersionConflictError) as stale:
+            await act(folder, "write", "status.md", "late", expected_version=7)
+        assert str(stale.value) == "version conflict on status.md: expected 7, actual 1"
+        assert await act(whole, "read", "tasks/t_1/status.md") == "one"
+        assert await act(company_folder(db, "tasks/tx1"), "read", "status.md") is None
+        with pytest.raises(InvalidPathError):
+            await act(folder, "write", "../tx1/report.md", "Escaped")
+        assert await act(whole, "read", "tasks/tx1/report.md") == "in tx1"
+        if use_async:
+            await db.close()
+        else:
+            db.close()
+
+    asyncio.run(run())

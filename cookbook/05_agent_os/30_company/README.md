@@ -274,7 +274,7 @@ addressed by ID, and listing `goals/` shows each name beside its ID. Pages in
 store in the Company database, the namespace `company`, with each file at its
 path in the tree. `notes/` is a folder of it. Without Company, Super Agent still
 has `notes/`: the same store in the AgentOS database holds it. The wiki API above
-serves the same pages. A deployment upgraded from 3.2.0 runs the 3.2.3 migration,
+serves the same pages. A deployment upgraded from 3.2.0 runs the 3.3.0 migration,
 which moves each file to its tree path.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
