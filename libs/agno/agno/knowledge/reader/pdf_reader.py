@@ -288,7 +288,14 @@ class BasePDFReader(Reader):
             log_error(f'Error decrypting PDF file "{doc_name}": {str(e)}')
             return False
 
-    def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
+    def _create_documents(
+        self,
+        pdf_content: List[str],
+        doc_name: str,
+        use_uuid_for_id: bool,
+        page_number_shift,
+        apply_chunking: bool = True,
+    ):
         if self.split_on_pages:
             shift = page_number_shift if page_number_shift is not None else 1
             documents: List[Document] = []
@@ -311,7 +318,7 @@ class BasePDFReader(Reader):
             )
             documents = [document]
 
-        if self.chunk:
+        if self.chunk and apply_chunking:
             return self._build_chunked_documents(documents)
         return documents
 
@@ -376,7 +383,8 @@ class BasePDFReader(Reader):
             page_end_numbering_format=self.page_end_numbering_format,
         )
 
-        return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
+        documents = self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift, apply_chunking=False)
+        return await self.chunk_documents_async(documents) if self.chunk else documents
 
 
 class PDFReader(BasePDFReader):
