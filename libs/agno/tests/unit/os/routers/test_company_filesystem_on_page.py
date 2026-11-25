@@ -705,6 +705,64 @@ def test_an_agent_that_cannot_be_loaded_is_left_out_of_the_list(tmp_path):
         db.close()
 
 
+@pytest.mark.parametrize("declared", [False, True])
+def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(declared):
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    def store(name: str) -> FileSystem:
+        # A database in memory has no place to name, so stores with the same names are numbered.
+        engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        filesystem = FileSystem(SqliteDb(id="main", db_engine=engine), namespace="notes")
+        filesystem.write(f"{name}.md", name)
+        return filesystem
+
+    state = {"broken": True}
+    stores = {name: store(name) for name in ("a", "b", "c")}
+
+    def build(ctx):
+        if state["broken"]:
+            raise RuntimeError("this agent cannot be built")
+        return Agent(id="a", filesystem=stores["a"])
+
+    plain = FileSystem(SqliteDb(id="plain", db_engine=stores["b"].backend.db_engine), namespace="plain")
+    agents = [AgentFactory(id="a", db=stores["a"].backend.db, factory=build), Agent(id="p", filesystem=plain)]
+    held = [] if declared else [Agent(id=name, filesystem=stores[name]) for name in ("b", "c")]
+    agent_os = AgentOS(
+        agents=[*agents, *held], filesystem=[stores["b"], stores["c"]] if declared else None, telemetry=False
+    )
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+
+        def listed(**params) -> dict:
+            entries = client.get("/filesystem/namespaces", params=params).json()["namespaces"]
+            return {entry["id"]: (entry.get("available"), entry.get("file_count")) for entry in entries}
+
+        def opens(filesystem_id: str, **params) -> tuple:
+            response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id, **params})
+            return response.status_code, [entry["path"] for entry in response.json().get("entries", [])]
+
+        first, second = "notes:main:agno_fs", "notes:main:agno_fs:2"
+        assert opens("plain") == (200, [])
+        if declared:
+            # The ids of declared stores depend on the declarations alone.
+            assert listed() == {first: (None, 1), second: (None, 1), "plain": (None, 0)}
+            assert (opens(first), opens(second)) == ((200, ["b.md"]), (200, ["c.md"]))
+            return
+        # The first number depends on every agent as the others do: agent "a" takes it once it loads.
+        assert listed() == {first: (False, None), second: (False, None), "plain": (None, 0)}
+        assert (opens(first)[0], opens(second)[0]) == (500, 500)
+        # An agent named does not make a numbered id certain. The agent alone still opens its store.
+        assert [available for available, _ in listed(agent_id="b").values()] == [False]
+        assert opens(first, agent_id="b")[0] == 500
+        alone = client.get("/filesystem/entries", params={"agent_id": "b"})
+        assert alone.status_code == 200 and [entry["path"] for entry in alone.json()["entries"]] == ["b.md"]
+
+        state["broken"] = False
+        third = "notes:main:agno_fs:3"
+        assert listed() == {first: (None, 1), second: (None, 1), third: (None, 1), "plain": (None, 0)}
+        assert [opens(i) for i in (first, second, third)] == [(200, ["a.md"]), (200, ["b.md"]), (200, ["c.md"])]
+
+
 def test_the_list_gives_two_stores_with_one_namespace_two_ids(tmp_path):
     main, archive = (
         SqliteDb(id="main-db", db_file=str(tmp_path / "main.db")),

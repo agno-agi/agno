@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, NamedTuple, Optional, TypeVar, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -260,8 +261,8 @@ async def _get_sources(
     out. It covers them with an agent named too, so a filesystem has one id
     whether or not a request names an agent. The named agent's errors are
     raised, and its filesystems are returned as it holds them, in its own order.
-    With no agent named, an agent that fails to load is left out and the first
-    failure is returned, for the caller to raise when nothing else answers.
+    Another agent that fails to load is left out and the first failure is
+    returned, for the caller to raise when nothing else answers.
     """
     failure: Optional[HTTPException] = None
     sources: dict[tuple, _Source] = {
@@ -285,10 +286,8 @@ async def _get_sources(
             try:
                 agent_filesystems = await _get_agent_filesystem_access(os, candidate_id, request)
             except HTTPException as e:
-                # With an agent named, another agent only settles the ids: its failure is not the request's.
-                if agent_id is not None or e.status_code in (400, 404, 501):
-                    continue
-                failure = failure or e
+                if e.status_code not in (400, 404, 501):
+                    failure = failure or e
                 continue
         for filesystem, read_only in agent_filesystems:
             key = _filesystem_key(filesystem)
@@ -299,6 +298,23 @@ async def _get_sources(
             if read_only:
                 source.read_only_agent_ids.add(candidate_id)
     return sources, held, failure
+
+
+def _numbered_ids(
+    ids: dict[tuple, str], sources: dict[tuple, _Source], declared: list[_DeclaredFileSystem]
+) -> set[str]:
+    """The ids given by number among stores that share every name, the first of them included.
+
+    They depend on every agent that holds such a store. The ids of the filesystems
+    the AgentOS holds itself do not.
+    """
+    own = {entry.key for entry in declared}
+    counts = Counter(form for source in sources.values() for form in source.forms)
+    return {
+        ids[key]
+        for key, source in sources.items()
+        if key not in own and (ids[key] not in source.forms or counts[ids[key]] > 1)
+    }
 
 
 async def _select_filesystems(
@@ -358,11 +374,12 @@ async def _select_filesystems(
     ]
     if not selected and agent_id is None and any(entry.denied and entry.forms[0] == namespace for entry in declared):
         raise denied(access)
-    # A failing agent does not hide what the others hold. A numbered id depends on every agent, so it is not opened.
-    if failure is not None and (
-        not selected or (filesystem_id is not None and any(filesystem_id not in s.forms for _, s in selected))
-    ):
-        raise failure
+    if failure is not None:
+        # A failing agent does not hide what the others hold. With an agent named, its failure is not the request's.
+        # A numbered id depends on every agent, so it is not opened until they all load.
+        unsettled = _numbered_ids(ids, sources, declared) if filesystem_id is not None else set()
+        if any(selected_id in unsettled for selected_id, _ in selected) or (not selected and agent_id is None):
+            raise failure
     if filesystem_id is not None and len(selected) > 1:
         raise HTTPException(status_code=409, detail=_AMBIGUOUS_ID_DETAIL)
     return selected, declared
@@ -694,7 +711,8 @@ def get_filesystem_router(
             "Each entry carries its namespace and the id the other /filesystem routes take as filesystem_id. "
             "Take ids from this list: /config describes only the agents declared in code, so an id it gives "
             "can name two filesystems here. file_count, folder_count and total_bytes cover every file the "
-            "caller can read in it, at any depth; they are left out when the filesystem cannot be read."
+            "caller can read in it, at any depth; they are left out when the filesystem cannot be read. "
+            "available is false on an entry whose id cannot be opened until every agent loads."
         ),
     )
     async def list_filesystems(
@@ -706,7 +724,7 @@ def get_filesystem_router(
         agent_id = agent_id or None
         held = _get_declared_filesystems(os, request, await get_company_access(request))
         # An agent that cannot be loaded is left out of the list: the other filesystems are still listed.
-        sources, held_by_agent, _ = await _get_sources(os, request, agent_id, held)
+        sources, held_by_agent, failure = await _get_sources(os, request, agent_id, held)
         ids = _filesystem_ids(
             [(entry.key, entry.forms) for entry in held], [(key, source.forms) for key, source in sources.items()]
         )
@@ -737,10 +755,15 @@ def get_filesystem_router(
                 for holder in sorted(source.agent_ids)
             ]
         entries = {key: entry for key, entry in entries.items() if namespace is None or entry.namespace == namespace}
+        unsettled = _numbered_ids(ids, sources, held) if failure is not None else set()
+        for entry in entries.values():
+            if entry.id in unsettled:
+                # The id may name another filesystem once every agent loads, so the other routes refuse it.
+                entry.available = False
         readable = [
             (entry, sources[key].filesystem if held_by_agent is None else held_by_agent[key])
             for key, entry in entries.items()
-            if key in sources
+            if key in sources and entry.available is not False
         ]
         for start in range(0, len(readable), _MAX_CONCURRENT_FILESYSTEM_READS):
             batch = readable[start : start + _MAX_CONCURRENT_FILESYSTEM_READS]

@@ -240,6 +240,13 @@ class FileSystemNamespace(FileSystemSummary):
     )
     declared: bool = Field(False, description="Whether the filesystem is declared on the AgentOS")
     company: bool = Field(False, description="Whether this is the Company filesystem")
+    available: Optional[bool] = Field(
+        None,
+        description=(
+            "False when an agent failed to load and the id, a numbered one, cannot be opened until it does. "
+            "Omitted otherwise"
+        ),
+    )
     file_count: Optional[int] = Field(
         None, description="Files the caller can read, at any depth. Set by /filesystem/namespaces; omitted when unknown"
     )
