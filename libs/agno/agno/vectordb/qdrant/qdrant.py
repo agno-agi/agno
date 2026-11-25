@@ -1069,30 +1069,39 @@ class Qdrant(VectorDb):
                 under the same content_id in place. ``None`` deletes across every owner.
 
         Returns:
-            bool: True if points were deleted successfully, False otherwise.
+            bool: True if the delete-by-filter request completed, including when no
+                points matched (a zero-match delete is a successful no-op).
+
+        Raises:
+            RuntimeError: If Qdrant reports a non-completed update status. A failed
+                delete must not be mistaken for "nothing to delete": callers such as
+                ``Knowledge.remove_content_by_id`` keep the content row for retry on
+                failure, and a False return cannot be told apart from a zero-match
+                no-op for rows without indexed-content metadata.
+            Exception: Any client error (unreachable, timeout, ...) is propagated
+                unchanged for the same reason.
         """
+        log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
+
+        must_conditions: List[Any] = [
+            models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
+        ]
+        # Only ``None`` is unscoped — an empty string is an owner and still scopes
+        if user_id is not None:
+            must_conditions.append(models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id)))
+
+        filter_condition = models.Filter(must=must_conditions)
+
         try:
-            log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
-
-            must_conditions: List[Any] = [
-                models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
-            ]
-            # Only ``None`` is unscoped — an empty string is an owner and still scopes
-            if user_id is not None:
-                must_conditions.append(
-                    models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id))
-                )
-
-            filter_condition = models.Filter(must=must_conditions)
-
-            # First, count how many points will be deleted
+            # Count for logging only: inserts use wait=False, so a point that is
+            # acknowledged but not yet applied may not be counted. Delete-by-filter
+            # is idempotent, so the delete is sent even on a zero count.
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
 
             if count_result.count == 0:
                 log_warning(f"No points found with content_id: {content_id}")
-                return True
-
-            log_info(f"Found {count_result.count} points to delete with content_id: {content_id}")
+            else:
+                log_info(f"Found {count_result.count} points to delete with content_id: {content_id}")
 
             # Delete all points matching the filter
             result = self.client.delete(
@@ -1100,18 +1109,16 @@ class Qdrant(VectorDb):
                 points_selector=filter_condition,
                 wait=True,  # Wait for the operation to complete
             )
-
-            # Check if the deletion was successful
-            if result.status == models.UpdateStatus.COMPLETED:
-                log_info(f"Successfully deleted {count_result.count} points with content_id: {content_id}")
-                return True
-            else:
-                log_warning(f"Deletion failed for content_id {content_id}. Status: {result.status}")
-                return False
-
         except Exception as e:
             log_warning(f"Error deleting points with content_id {content_id}: {str(e)}")
-            return False
+            raise
+
+        if result.status == models.UpdateStatus.COMPLETED:
+            log_info(f"Successfully deleted points with content_id: {content_id}")
+            return True
+
+        log_warning(f"Deletion failed for content_id {content_id}. Status: {result.status}")
+        raise RuntimeError(f"Deletion failed for content_id {content_id}. Status: {result.status}")
 
     def id_exists(self, id: str) -> bool:
         """Check if a point with the given ID exists in the collection.
