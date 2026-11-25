@@ -316,6 +316,7 @@ class TriggerRuntime:
             event=stored,
             session_id=session_id_for(trigger_id, delivery.key) if runs and delivery.key else None,
             user_id=trigger.get("user_id") if trigger is not None else None,
+            os_id=self.os_id,
         ).to_dict()
 
     async def areceive(self, source: Any, delivery: Delivery) -> Dict[str, Any]:
@@ -334,6 +335,11 @@ class TriggerRuntime:
                 starts = delivery.kind in (trigger.get("events") or [])
                 continues = delivery.kind in (trigger.get("continue_on") or [])
                 if not starts and not continues:
+                    continue
+                if trigger.get("managed_by") != CODE_MANAGED and trigger["name"] in self.declared:
+                    # A trigger declared in code has the name: a stored one that shares it stands aside.
+                    reason = f"trigger '{trigger['name']}' is declared in code, and that one is used"
+                    rows.append(self._row(delivery, trigger, EVENT_IGNORED, reason))
                     continue
                 verdict = source.check(delivery.event, trigger.get("filters") or {})
                 if verdict.reason is not None and not verdict.check_sender:

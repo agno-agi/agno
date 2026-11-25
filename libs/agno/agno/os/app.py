@@ -76,6 +76,7 @@ from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
+from agno.os.routers.triggers import get_trigger_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -1133,6 +1134,7 @@ class AgentOS:
                     agent_os=self,
                 )
             )
+            updated_routers.append(get_trigger_router(os_db=self.db, settings=self.settings, agent_os=self))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
             updated_routers.extend(self._admin_api_routers())
@@ -1502,6 +1504,12 @@ class AgentOS:
                     f"Trigger '{trigger.name}' runs {trigger.target_type} '{trigger.target_id}', which this "
                     f"AgentOS does not serve: add it to {trigger.target_type}s=[...]"
                 )
+
+    def _wake_trigger_poller(self) -> None:
+        """Have this process's trigger poller look for events now, instead of at its next poll."""
+        runtime = getattr(self, "_trigger_runtime", None)
+        if runtime is not None:
+            runtime.poller.wake()
 
     def _get_trigger_runtime(self) -> Optional[Any]:
         """The runtime that matches deliveries to triggers and runs them, when a source needs one."""
@@ -2321,6 +2329,7 @@ class AgentOS:
                     agent_os=self,
                 )
             )
+            routers.append(get_trigger_router(os_db=self.db, settings=self.settings, agent_os=self))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:

@@ -160,8 +160,12 @@ def get_trigger_events(
     page: int = 1,
     user_id: Optional[str] = None,
     started_run: Optional[bool] = None,
+    os_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     conditions = []
+    if os_id is not None:
+        # The events one AgentOS received, and the ones stored without an AgentOS.
+        conditions.append(or_(events.c.os_id == os_id, events.c.os_id.is_(None)))
     if started_run is not None:
         conditions.append(events.c.run_id.isnot(None) if started_run else events.c.run_id.is_(None))
     if trigger_id is not None:

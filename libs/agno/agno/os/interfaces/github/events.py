@@ -3,6 +3,26 @@ from typing import Any, Collection, Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_EVENTS = ("issues.opened", "issue_comment.created")
 
+# Event kinds offered when a trigger is created. A trigger may name any kind GitHub sends.
+COMMON_EVENT_KINDS = (
+    "issues.opened",
+    "issues.edited",
+    "issues.labeled",
+    "issues.assigned",
+    "issues.closed",
+    "issues.reopened",
+    "issue_comment.created",
+    "pull_request.opened",
+    "pull_request.synchronize",
+    "pull_request.ready_for_review",
+    "pull_request.labeled",
+    "pull_request.closed",
+    "pull_request_review.submitted",
+    "pull_request_review_comment.created",
+    "push",
+    "release.published",
+)
+
 # author_association values that show the sender works on the repository.
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 

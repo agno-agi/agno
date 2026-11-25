@@ -12,7 +12,7 @@ from agno.registry._reserved import RESERVED_MEMBER_IDS
 
 
 async def _require_endpoint_permission(
-    request: Request, endpoint: str, method: str, *, action: Literal["schedule", "accept"] = "schedule"
+    request: Request, endpoint: str, method: str, *, action: Literal["schedule", "accept", "trigger"] = "schedule"
 ) -> None:
     """Require the caller's run permission before scheduling or accepting work."""
     from agno.os.auth import build_insufficient_permissions_detail, caller_scopes_are_authoritative
@@ -20,11 +20,11 @@ async def _require_endpoint_permission(
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
     parts = path.strip("/").split("/")
     if len(parts) >= 2 and parts[0] in ("agents", "teams", "workflows") and parts[1] in RESERVED_MEMBER_IDS:
-        detail = (
-            "Manager specialists are internal. Select a registered agent, team or workflow as the Task executor."
-            if action == "accept"
-            else "Manager specialists are internal. Schedule Super Agent instead."
-        )
+        details = {
+            "accept": "Manager specialists are internal. Select a registered agent, team or workflow as the Task executor.",
+            "trigger": "Manager specialists are internal. Give the trigger Super Agent as its target instead.",
+        }
+        detail = details.get(action, "Manager specialists are internal. Schedule Super Agent instead.")
         raise HTTPException(status_code=409, detail=detail)
 
     if not getattr(request.state, "authorization_enabled", False):

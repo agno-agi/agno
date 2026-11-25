@@ -8690,6 +8690,7 @@ class SqliteDb(BaseDb):
         page: int = 1,
         user_id: Optional[str] = None,
         started_run: Optional[bool] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         return self._trigger_storage(
             triggers_sql.get_trigger_events,
@@ -8703,6 +8704,7 @@ class SqliteDb(BaseDb):
             page=page,
             user_id=user_id,
             started_run=started_run,
+            os_id=os_id,
             missing=([], 0),
         )
 
