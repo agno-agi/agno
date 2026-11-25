@@ -8,7 +8,7 @@ from weakref import ReferenceType, ref
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.interfaces.slack.context import SlackContext
 from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
-from agno.os.interfaces.slack.security import resolve_principal_authorization, sender_roles
+from agno.os.interfaces.slack.security import resolve_principal_authorization
 from agno.utils.log import log_debug, log_error, log_warning
 
 # Slack message metadata event type that marks a Task attempt's result as posted
@@ -171,10 +171,8 @@ class TaskDelivery:
             try:
                 # A run user equal to a mapped principal counts as mapped; anyone else started with the default role
                 mapped = self.ctx.users is not None and user_id in self.ctx.users.values()
+                # Under authorize_senders there is no default role: the role the run's user holds now decides
                 roles = [self.ctx.default_role] if self.ctx.default_role and not mapped else None
-                if self.ctx.authorize_senders and not mapped:
-                    # The run's user is asked again as they are now, with the role they hold at this moment
-                    roles = await sender_roles(app, self.ctx.default_role, user_id)
                 authority = await self.company.authorize(app, user_id, self.ctx.entity_id, roles)
                 if authority is not None:
                     await authority.arequire("tasks", "read")

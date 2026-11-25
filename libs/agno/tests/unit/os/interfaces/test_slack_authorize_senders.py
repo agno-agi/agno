@@ -277,17 +277,13 @@ async def test_disabling_the_user_stops_their_next_message(tmp_path, super_agent
 
 @pytest.mark.asyncio
 async def test_authorization_without_a_user_directory(tmp_path):
-    # No user records are kept. A sender is refused unless Slack has a default role, which every sender then gets
-    system = _System(tmp_path)
+    # No user records are kept. A sender is refused until an admin gives their user id a role
+    system = _System(tmp_path, roles=[Role("slack", scopes=["agents:helper:run"])])
     assert await system.send(ALICE) == NO_ACCESS
     assert system.app.state.user_store is None
-
-    system = _System(
-        tmp_path / "with-default", roles=[Role("slack", scopes=["agents:helper:run"])], default_role="slack"
-    )
+    system.give_role("alice@example.com", "slack")
     assert await system.send(ALICE) == RAN
-    assert await system.send(BOB) == RAN
-    assert system.app.state.user_store is None and system.authz.roles_of("alice@example.com") == []
+    assert await system.send(BOB) == NO_ACCESS
 
 
 @pytest.mark.asyncio
@@ -306,16 +302,17 @@ async def test_authorization_with_a_user_directory_and_no_roles_in_code(tmp_path
     assert await system.send(BOB) == NO_ACCESS
 
 
-@pytest.mark.asyncio
-async def test_slack_default_role_is_the_role_of_a_sender_who_holds_none(tmp_path):
-    viewer = Role("viewer", scopes=["agents:read"])
-    system = _System(tmp_path, roles=[member_role(), viewer], user_directory=True, default_role="member")
-    # Alice holds no role, so the Slack default role decides, and she is not given it in the directory
-    assert await system.send(ALICE) == RAN
-    assert system.authz.roles_of("alice@example.com") == []
-    # Bob holds a role of his own, so that role decides
-    system.give_role("bob@example.com", "viewer")
-    assert await system.send(BOB) == NO_ACCESS
+def test_authorize_senders_takes_no_slack_default_role():
+    # The role a new user gets is the user directory's default role, not a second one on Slack
+    helper = Agent(id="helper", model=_FixtureModel())
+    with pytest.raises(ValueError, match=r"UserDirectory\(default_role="):
+        Slack(agent=helper, token="xoxb-test", signing_secret="s", authorize_senders=True, default_role="member")
+
+
+def test_slack_default_role_is_deprecated():
+    helper = Agent(id="helper", model=_FixtureModel())
+    with pytest.warns(DeprecationWarning, match=r"Slack\(default_role=\) is deprecated"):
+        Slack(agent=helper, token="xoxb-test", signing_secret="s", default_role="member")
 
 
 @pytest.mark.asyncio
@@ -394,7 +391,9 @@ async def test_a_guest_or_external_sender_starts_disabled_until_an_admin_enables
 
 @pytest.mark.asyncio
 async def test_a_guest_is_refused_where_no_directory_can_hold_them(tmp_path):
-    system = _System(tmp_path, roles=[Role("slack", scopes=["agents:helper:run"])], default_role="slack")
+    system = _System(tmp_path, roles=[Role("slack", scopes=["agents:helper:run"])])
+    system.give_role("alice@example.com", "slack")
+    system.give_role("guest@partner.com", "slack")
     assert await system.send(ALICE) == RAN
     assert await system.send(GUEST) == OUTSIDER
 

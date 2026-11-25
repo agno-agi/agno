@@ -118,21 +118,6 @@ def no_roles_authorization(app: Any, owner: str) -> Any:
     return principal_authorization(app, f"slack:{owner}")
 
 
-async def sender_roles(app: Any, default_role: Optional[str], principal: str) -> Optional[List[str]]:
-    """The roles a sender is checked with under authorize_senders.
-
-    None means the role the sender holds decides; it is read from the role store at each check.
-    Slack(default_role=...) is the role of a sender who holds none."""
-    if default_role is None:
-        return None
-    from agno.os.auth import _aroles_of
-
-    role_store = getattr(getattr(app, "state", None), "role_store", None)
-    if role_store is not None and await _aroles_of(role_store, principal):
-        return None
-    return [default_role]
-
-
 async def _sender_row(
     ctx: "SlackContext", principal: str, member: Dict[str, Any], outsider: bool, name: Optional[str]
 ) -> Optional[Dict[str, Any]]:
@@ -206,8 +191,7 @@ async def authorize_sender_again(
     ctx: "SlackContext", event_context: "EventContext", client: Any, user: str, thread_ts: Optional[str] = None
 ) -> bool:
     """Check the run's user as they are now: their disabled switch and the role they hold at this moment."""
-    roles = await sender_roles(ctx.app, ctx.default_role, event_context.user_id)
-    return await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts, roles=roles)
+    return await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts)
 
 
 async def authorize_unmapped(

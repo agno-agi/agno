@@ -268,7 +268,8 @@ export SLACK_APPROVER_ID="U..."
   refuses only disabled users. A `JWTMiddleware` you add yourself, on a
   `base_app` or after `get_app()`, must list `/slack/events` and
   `/slack/interactions` in its `excluded_route_paths`.
-- **`default_role=`**: the managed role a user not in `users=` gets, under
+- **`default_role=`** (deprecated: use `authorize_senders=True` with
+  `UserDirectory(default_role=...)`, below): the managed role a user not in `users=` gets, under
   authorization. They still act as themselves: the run's `user_id` and principal
   stay theirs (the Slack member ID, or their email with
   `resolve_user_identity=True`), and their sessions, memory and the Company work
@@ -287,7 +288,9 @@ export SLACK_APPROVER_ID="U..."
   members who need different access. Without it and without `users=`, under
   authorization, Super Agent runs such a user with no roles: they can chat, and
   every action that needs a permission is refused. An agent, team or workflow
-  other than Super Agent runs them unchecked.
+  other than Super Agent runs them unchecked. A role reaches Super Agent only by
+  name: `teams:run` runs every team but Super Agent, so the role lists
+  `teams:superagent:run`.
 
 ```python
 # trust_token_scopes keeps os.agno.com sign-ins working once a role is defined
@@ -295,7 +298,8 @@ authz = Authorization(trust_token_scopes=True)
 authz.define_role(
     "slack-member",
     [
-        "teams:run",
+        "teams:superagent:read",
+        "teams:superagent:run",
         "agents:read",
         "agents:run",
         "workflows:run",
@@ -347,8 +351,9 @@ agent_os.interfaces.append(
 - **Guests and people from other organizations** (shared channels) start
   disabled. An admin enables them in the user directory.
 - **Other apps** are not run. Map an app in `users=` to run it as a principal.
-- `users=` still names the senders it lists, and `default_role=` is the role of a
-  sender who holds none.
+- `users=` still names the senders it lists. `default_role=` cannot be combined
+  with `authorize_senders`: the role a new user gets is the user directory's
+  `UserDirectory(default_role=...)`.
 
 Without `authorize_senders` nothing changes: see the next sections.
 
