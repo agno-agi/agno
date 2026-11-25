@@ -9,6 +9,7 @@ from uuid import uuid4
 from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID, build_run_endpoint
 from agno.db.schemas.triggers import (
     EVENT_IGNORED,
+    EVENT_PAUSED,
     NO_TRIGGER_ID,
     UNFINISHED_EVENT_STATUSES,
     StoredTrigger,
@@ -121,6 +122,8 @@ def _replayed(row: Dict[str, Any], trigger: Optional[StoredTrigger]) -> Dict[str
         raise ValueError(f"Event {event_id} was ignored and stored without its payload, so it cannot be run")
     if row["status"] in UNFINISHED_EVENT_STATUSES:
         raise ValueError(f"Event {event_id} is still being handled")
+    if row["status"] == EVENT_PAUSED:
+        raise ValueError(f"Event {event_id} has a paused run; continue or cancel that run instead of replaying")
     if not trigger.enabled:
         raise ValueError(f"Trigger '{trigger.name}' is disabled; enable it before replaying its events")
     return TriggerEvent(

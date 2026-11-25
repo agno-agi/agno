@@ -19,7 +19,7 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.schemas.scheduler import build_run_endpoint
-from agno.db.schemas.triggers import CODE_MANAGED, StoredTrigger, TriggerEvent
+from agno.db.schemas.triggers import CODE_MANAGED, NOT_DECLARED_REASON, StoredTrigger, TriggerEvent
 from agno.run import RunContext
 from agno.run.authorization import arequire_schedule_target, require_schedule_target, requires_permission
 from agno.tools.scheduler import (
@@ -34,6 +34,9 @@ from agno.tools.scheduler import (
 from agno.tools.toolkit import Toolkit
 from agno.triggers.manager import TARGET_TYPES, TriggerManager
 from agno.utils.log import log_debug, logger
+
+# The most events one tool call lists.
+MAX_LISTED_EVENTS = 100
 
 
 def _error(message: str, error_type: Optional[str] = None, **details: Any) -> str:
@@ -329,6 +332,24 @@ class TriggerTools(Toolkit):
             f"Trigger '{name}' is declared in code. Change it in code, or use another name.", "declared_in_code"
         )
 
+    @staticmethod
+    def _left_by_code(trigger: StoredTrigger) -> bool:
+        """Whether the trigger was declared in code and turned off at a start because the code no longer declares it."""
+        return trigger.managed_by == CODE_MANAGED and trigger.disabled_reason == NOT_DECLARED_REASON
+
+    @staticmethod
+    def _kept(existing: Optional[StoredTrigger], description: Optional[str]) -> Dict[str, Any]:
+        """What a create over an existing name leaves as stored: the tool has no argument for these."""
+        if existing is None:
+            return {"description": description}
+        return {
+            "description": description if description is not None else existing.description,
+            "key_path": existing.key_path,
+            "timeout_seconds": existing.timeout_seconds,
+            "max_retries": existing.max_retries,
+            "retry_delay_seconds": existing.retry_delay_seconds,
+        }
+
     def _provenance(self, run_context: Optional[RunContext]) -> Dict[str, str]:
         provenance: Dict[str, str] = {}
         if self.os_id is not None:
@@ -408,12 +429,13 @@ class TriggerTools(Toolkit):
             refusal = self._check_target("create", name, target_type, target_id, owner)
             if refusal:
                 return refusal
-            existed = self.manager.get_by_name(name, user_id=owner, os_id=self.os_id) is not None
+            existing = self.manager.get_by_name(name, user_id=owner, os_id=self.os_id)
+            existed = existing is not None
             trigger = self.manager.create(
                 source_id=source_id,
                 target_type=target_type,
-                description=description,
                 if_exists="update",
+                **self._kept(existing, description),
                 user_id=owner,
                 provenance=self._provenance(run_context),
                 **fields,
@@ -481,6 +503,8 @@ class TriggerTools(Toolkit):
             existing = self.manager.get(trigger_id, user_id=owner)
             if not self._taken(existing) or existing is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
+            if self._left_by_code(existing):
+                return self._declared_in_code(existing.name)
             refusal = self._check_target("enable", existing.name, existing.target_type, existing.target_id, owner)
             if refusal:
                 return refusal
@@ -548,7 +572,7 @@ class TriggerTools(Toolkit):
 
         Args:
             trigger_id (str): The ID of the trigger.
-            limit (int): Maximum number of events to return. Defaults to 10.
+            limit (int): Maximum number of events to return, from 1 to 100. Defaults to 10.
 
         Returns:
             str: JSON string with the events, newest first.
@@ -557,7 +581,9 @@ class TriggerTools(Toolkit):
             owner = self._owner(run_context)
             if not self._taken(self.manager.get(trigger_id, user_id=owner)):
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
-            events = self.manager.get_events(trigger_id=trigger_id, limit=limit, user_id=owner)
+            events = self.manager.get_events(
+                trigger_id=trigger_id, limit=max(1, min(limit, MAX_LISTED_EVENTS)), user_id=owner
+            )
             result = [_event_described(event) for event in events]
             return json.dumps({"events": result, "count": len(result)})
         except Exception as e:
@@ -659,12 +685,13 @@ class TriggerTools(Toolkit):
             refusal = await self._acheck_target("create", name, target_type, target_id, owner)
             if refusal:
                 return refusal
-            existed = await self.manager.aget_by_name(name, user_id=owner, os_id=self.os_id) is not None
+            existing = await self.manager.aget_by_name(name, user_id=owner, os_id=self.os_id)
+            existed = existing is not None
             trigger = await self.manager.acreate(
                 source_id=source_id,
                 target_type=target_type,
-                description=description,
                 if_exists="update",
+                **self._kept(existing, description),
                 user_id=owner,
                 provenance=self._provenance(run_context),
                 **fields,
@@ -732,6 +759,8 @@ class TriggerTools(Toolkit):
             existing = await self.manager.aget(trigger_id, user_id=owner)
             if not self._taken(existing) or existing is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
+            if self._left_by_code(existing):
+                return self._declared_in_code(existing.name)
             refusal = await self._acheck_target(
                 "enable", existing.name, existing.target_type, existing.target_id, owner
             )
@@ -803,7 +832,7 @@ class TriggerTools(Toolkit):
 
         Args:
             trigger_id (str): The ID of the trigger.
-            limit (int): Maximum number of events to return. Defaults to 10.
+            limit (int): Maximum number of events to return, from 1 to 100. Defaults to 10.
 
         Returns:
             str: JSON string with the events, newest first.
@@ -812,7 +841,9 @@ class TriggerTools(Toolkit):
             owner = self._owner(run_context)
             if not self._taken(await self.manager.aget(trigger_id, user_id=owner)):
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
-            events = await self.manager.aget_events(trigger_id=trigger_id, limit=limit, user_id=owner)
+            events = await self.manager.aget_events(
+                trigger_id=trigger_id, limit=max(1, min(limit, MAX_LISTED_EVENTS)), user_id=owner
+            )
             result = [_event_described(event) for event in events]
             return json.dumps({"events": result, "count": len(result)})
         except Exception as e:

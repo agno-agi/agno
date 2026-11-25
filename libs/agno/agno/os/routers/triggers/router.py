@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.scheduler import build_run_endpoint
-from agno.db.schemas.triggers import CODE_MANAGED, StoredTrigger
+from agno.db.schemas.triggers import CODE_MANAGED, NOT_DECLARED_REASON, StoredTrigger
 from agno.db.utils import is_unique_violation
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.run_permissions import _require_endpoint_permission
@@ -326,6 +326,13 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
     ) -> Dict[str, Any]:
         manager = _manager()
         existing = await _stored(manager, trigger_id, request)
+        if existing.managed_by == CODE_MANAGED and existing.disabled_reason == NOT_DECLARED_REASON:
+            # The code stopped declaring it, and a start turned it off. Declaring it again turns it on.
+            raise HTTPException(
+                status_code=409,
+                detail=f"Trigger '{existing.name}' was declared in code and no longer is. Declare it in code to "
+                "turn it on.",
+            )
         # Turning it on puts its target back in reach of events, so it needs what creating it needs.
         await _require_target(request, existing.name, existing.target_type, existing.target_id, "enable")
         result = await manager.aenable(trigger_id, user_id=get_scoped_user_id(request))

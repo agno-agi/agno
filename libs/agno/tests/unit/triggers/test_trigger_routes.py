@@ -10,6 +10,7 @@ from agno.db.base import ComponentType
 from agno.db.schemas.triggers import (
     CODE_MANAGED,
     EVENT_IGNORED,
+    EVENT_PAUSED,
     EVENT_PENDING,
     EVENT_SUCCESS,
 )
@@ -644,4 +645,34 @@ async def test_a_replay_of_a_stored_triggers_event_stands_aside_once_code_declar
     again = (await os.events(trigger_id=theirs.id))[-1]
     assert again["status"] == EVENT_IGNORED
     assert again["reason"] == "trigger 'triage-issues' is declared in code, and that one is used"
+    assert os.model.inputs == []
+
+
+async def test_an_event_whose_run_is_paused_is_not_replayed(make_os):
+    os = await make_os(nothing)
+    trigger = (await os.client.post("/triggers", json=body())).json()
+    await os.deliver(issue_payload())
+    await os.run_events()
+    (first,) = await os.events()
+    # Its run waits on somebody: a second run in the same session would not wait with it.
+    await call(os.db, "update_trigger_event", first["id"], status=EVENT_PAUSED)
+
+    replayed = await os.client.post(f"/triggers/{trigger['id']}/events/{first['id']}/replay")
+
+    assert replayed.status_code == 409 and "paused" in replayed.json()["detail"]
+    assert len(await os.events()) == 1
+
+
+async def test_a_trigger_the_code_stopped_declaring_is_not_turned_on_over_the_api(make_os):
+    before = await make_os(in_code, os_options={"id": "the-os"})
+    (declared,) = (await before.client.get("/triggers")).json()["data"]
+    # The next version of the code declares nothing, so the start turned the stored trigger off.
+    os = await make_os(nothing, os_options={"id": "the-os"})
+    assert (await os.client.get(f"/triggers/{declared['id']}")).json()["enabled"] is False
+
+    turned_on = await os.client.post(f"/triggers/{declared['id']}/enable")
+
+    assert turned_on.status_code == 409 and "declared in code" in turned_on.json()["detail"]
+    await os.deliver(issue_payload())
+    await os.run_events()
     assert os.model.inputs == []

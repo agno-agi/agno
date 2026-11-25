@@ -25,6 +25,7 @@ from agno.run.authorization import AUTHORIZATION_KEY, RunAuthorization, authoriz
 from agno.tools.triggers import TriggerTools
 from agno.triggers import Trigger, TriggerManager
 from tests.unit.triggers.conftest import REPOSITORY, SECRET, Harness, call, issue_payload
+from tests.unit.triggers.test_trigger_routes import body, in_code
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
@@ -468,3 +469,44 @@ async def test_a_tool_stores_a_trigger_for_its_own_agentos_only(make_os, use_asy
     assert mine["status"] == "created" and mine["id"] != theirs["id"]
     kept = await TriggerManager(first.db).aget(theirs["id"])
     assert kept.os_id == "first-os" and kept.input == "The first app's."
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_tool_does_not_turn_on_a_trigger_the_code_stopped_declaring(make_os, use_async):
+    before = await make_os(in_code, os_options={"id": "the-os"})
+    (declared,) = (await before.client.get("/triggers")).json()["data"]
+    os = await make_os(nothing, os_options={"id": "the-os"})
+
+    answer = await use(toolkit(os), "enable_trigger", use_async, declared["id"])
+
+    assert answer.get("error_type") == "declared_in_code", answer
+    assert (await TriggerManager(os.db).aget(declared["id"])).enabled is False
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_creating_over_an_existing_name_keeps_what_the_tool_cannot_set(make_os, use_async):
+    os = await make_os(nothing)
+    made = await os.client.post(
+        "/triggers", json=body(timeout_seconds=600, max_retries=3, retry_delay_seconds=5, description="keep")
+    )
+    assert made.status_code == 201
+
+    again = await use(toolkit(os), "create_trigger", use_async, **new_trigger(input="changed by the agent"))
+
+    stored = await TriggerManager(os.db).aget(made.json()["id"])
+    assert again["status"] == "updated" and stored.input == "changed by the agent"
+    assert (stored.timeout_seconds, stored.max_retries, stored.retry_delay_seconds) == (600, 3, 5)
+    assert stored.description == "keep"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_the_events_a_tool_lists_are_bounded(make_os, use_async):
+    os = await make_os(nothing)
+    trigger = (await os.client.post("/triggers", json=body())).json()
+    for number in range(3):
+        await os.deliver(issue_payload(number=10 + number), delivery=f"d-{number}")
+    tools = toolkit(os)
+
+    assert (await use(tools, "get_trigger_events", use_async, trigger["id"], limit=-1))["count"] == 1
+    assert (await use(tools, "get_trigger_events", use_async, trigger["id"], limit=0))["count"] == 1
+    assert (await use(tools, "get_trigger_events", use_async, trigger["id"], limit=2))["count"] == 2
