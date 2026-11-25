@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote
 
 
@@ -21,17 +21,27 @@ def _connect_arguments(engine: Any) -> Optional[Tuple[tuple, Dict[str, Any]]]:
     return tuple(held["cargs_tup"]), dict(held["cparams"])
 
 
-def _sqlite_place(filename: Any, is_uri: bool) -> Optional[tuple]:
-    """The file a SQLite connection opens, or None for a database that belongs to its engine."""
-    path = str(filename or "")
+def _sqlite_name(filename: Any, is_uri: bool) -> Tuple[str, Dict[str, List[str]]]:
+    """The file a SQLite connection names, empty for a database in memory, with the options of its URI."""
+    path, options = str(filename or ""), {}
     if is_uri and path.startswith("file:"):
         path, _, query = path[len("file:") :].partition("?")
-        # Named and shared memory databases are kept apart too: listing one twice hides no file.
-        if any(option in parse_qs(query) for option in ("mode", "cache", "vfs")):
-            return None
-        path = unquote(path[2:] if path.startswith("///") else path)
-    if not path or path == ":memory:":
+        options = parse_qs(query)
+        if path.startswith("//"):
+            # An authority, which is empty or localhost, comes before the path.
+            path = "/" + path[2:].partition("/")[2]
+        path = unquote(path)
+    if path == ":memory:" or options.get("mode") == ["memory"]:
+        path = ""
+    return path, options
+
+
+def _sqlite_place(filename: Any, is_uri: bool) -> Optional[tuple]:
+    """The file a SQLite connection opens, or None for a database in memory or behind a custom VFS."""
+    path, options = _sqlite_name(filename, is_uri)
+    if not path or "vfs" in options:
         return None
+    # How the file is opened, "mode" and "cache", does not change which file it is.
     return ("sqlite", str(Path(path).resolve()))
 
 
@@ -67,3 +77,13 @@ def database_place(engine: Any) -> Optional[tuple]:
     if backend_name == "postgresql" and not positional:
         return _postgres_place(params)
     return None
+
+
+def is_private(engine: Any) -> bool:
+    """Whether the engine opened a SQLite database in memory that no other engine can reach."""
+    engine = getattr(engine, "sync_engine", engine)
+    arguments = _connect_arguments(engine)
+    if arguments is None or engine.url.get_backend_name() != "sqlite" or not arguments[0]:
+        return False
+    path, options = _sqlite_name(arguments[0][0], bool(arguments[1].get("uri")))
+    return not path and "vfs" not in options and options.get("cache") != ["shared"]
