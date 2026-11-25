@@ -6,7 +6,7 @@ from agno.company.filesystem import company_folder, folder_name
 from agno.context.wiki.backend import DurableWikiBackend
 from agno.context.wiki.provider import WikiContextProvider
 from agno.fs._paths import normalize_path
-from agno.fs.errors import VersionConflictError
+from agno.fs.errors import QuotaExceededError, VersionConflictError
 
 
 def _wiki(db: Any, goal: Optional[Dict[str, Any]] = None) -> WikiContextProvider:
@@ -48,6 +48,9 @@ def _seed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None
             provider.backend.filesystem.write(path, content, expected_version=0)
         except VersionConflictError:
             pass
+        except QuotaExceededError:
+            # The store is at its limit. A default page is not owed to a reader: the read goes on without it.
+            return
 
 
 async def _aseed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None:
@@ -59,3 +62,5 @@ async def _aseed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) 
             await provider.backend.filesystem.awrite(path, content, expected_version=0)
         except VersionConflictError:
             pass
+        except QuotaExceededError:
+            return

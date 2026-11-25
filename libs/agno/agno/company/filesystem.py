@@ -38,6 +38,11 @@ def set_company_filesystem_bytes(db: Any, max_bytes: int) -> None:
     _limits[db] = max_bytes
 
 
+def company_filesystem_bytes(db: Any) -> int:
+    """The size limit of the Company file system in this database."""
+    return _limits.get(db, COMPANY_FILESYSTEM_BYTES)
+
+
 # Stand in a folder name as they are. Every other byte of an id is escaped, "%" included.
 _FOLDER_NAME_SAFE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_@+")
 
@@ -119,7 +124,7 @@ def company_filesystem(db: Any) -> FileSystem:
             backend=backend,
             namespace=COMPANY_NAMESPACE,
             user_scoped=False,
-            max_namespace_bytes=_limits.get(db, COMPANY_FILESYSTEM_BYTES),
+            max_namespace_bytes=company_filesystem_bytes(db),
         )
     except (TypeError, ValueError) as exc:
         raise NotImplementedError("Company files require a supported FileSystem database") from exc

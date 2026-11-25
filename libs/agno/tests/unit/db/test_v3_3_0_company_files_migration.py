@@ -1053,3 +1053,196 @@ def test_files_whose_goal_or_task_is_not_in_this_database_stay_and_are_reported(
     ]
     assert databases.run(company_files_pending, acompany_files_pending, db) is False
     assert databases.run(move_company_files, amove_company_files, db) is False
+
+
+# ------------------------------------------------------------------ a file table from before user partitions
+
+
+def _outdated_file_table(path: str, *rows_: tuple) -> None:
+    """A file table as DbFileSystem created it before the user partition: every file operation refuses it."""
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE agno_fs (namespace VARCHAR NOT NULL, path VARCHAR NOT NULL, content TEXT NOT NULL, "
+            "size_bytes BIGINT NOT NULL, version BIGINT NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT, "
+            "PRIMARY KEY (namespace, path))"
+        )
+        conn.executemany("INSERT INTO agno_fs VALUES (?, ?, ?, 1, 1, 0, 0)", rows_)
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("named_like_company", [False, True])
+def test_a_file_table_from_before_user_partitions_does_not_stop_the_migration(tmp_path, named_like_company, is_async):
+    import sqlite3
+
+    from agno.db.migrations.manager import MigrationManager
+
+    path = str(tmp_path / "agentos.db")
+    rows_ = [("shared", "d.md", "d")]
+    if named_like_company:
+        # No version that had Company could write to this table, so these are an agent's files.
+        rows_ += [("company/wiki", "x.md", "x"), ("company/notes", "y.md", "y"), ("company", "notes/z.md", "z")]
+    _outdated_file_table(path, *rows_)
+    db = (AsyncSqliteDb if is_async else SqliteDb)(db_file=path)
+    other = SqliteDb(db_file=str(tmp_path / "company.db"))
+
+    async def migrate() -> tuple:
+        try:
+            await MigrationManager(db).up()
+            if is_async:
+                return (
+                    await acompany_files_pending(db),
+                    await amove_company_files(db),
+                    await acompany_notes_to_move(db, other),
+                    await amove_company_notes(db, other),
+                )
+            return (
+                company_files_pending(db),
+                move_company_files(db),
+                company_notes_to_move(db, other),
+                move_company_notes(db, other),
+            )
+        finally:
+            if is_async:
+                await db.db_engine.dispose()
+
+    # The migration runs to the end, and the other tables of the database are stamped.
+    assert asyncio.run(migrate()) == (False, False, False, 0)
+    with sqlite3.connect(path) as conn:
+        assert sorted(conn.execute("SELECT namespace, path, content FROM agno_fs")) == sorted(rows_)
+        stamped = dict(conn.execute("SELECT table_name, version FROM agno_schema_versions"))
+    assert stamped and set(stamped.values()) == {"3.3.0"}
+    other.db_engine.dispose()
+    if not is_async:
+        db.db_engine.dispose()
+
+
+# ------------------------------------------------------------------ the same file at the new path
+
+
+def test_the_same_content_at_the_new_path_keeps_the_higher_version(databases):
+    db, reader = databases.new()
+    # A page three writes old where 3.2.0 kept it, and the same content written once at its new path.
+    write_3_2_0(reader, "company/wiki", "people.md", "Ada", "Ada and Bo", "Ada, Bo and Cy")
+    in_store(reader).write("wiki/people.md", "Ada, Bo and Cy")
+    # The other way round: the new path was written more often than the old one.
+    write_3_2_0(reader, "company/notes", "ideas.md", "An idea")
+    for content in ("A draft", "Another", "An idea"):
+        in_store(reader).write("notes/ideas.md", content)
+    before = rows(reader)
+    assert before[("company/wiki", "people.md")][1] == 3 and before[("company", "wiki/people.md")][1] == 1
+    assert before[("company/notes", "ideas.md")][1] == 1 and before[("company", "notes/ideas.md")][1] == 3
+
+    assert databases.run(move_company_files, amove_company_files, db) is True
+
+    after = rows(reader)
+    # The page keeps the version and the timestamps a client read before the upgrade.
+    assert after == {
+        ("company", "wiki/people.md"): before[("company/wiki", "people.md")],
+        ("company", "notes/ideas.md"): before[("company", "notes/ideas.md")],
+    }
+    manager = CompanyManager(reader)
+    assert manager.write_wiki(goal_id=None, path="people.md", content="Next", expected_version=3).version == 4
+
+
+def test_a_note_moved_between_databases_keeps_the_higher_version(databases):
+    os_db, os_reader = databases.new()
+    company_db, company_reader = databases.new()
+    for content in ("A note", "A better note", "The note"):
+        in_store(os_reader).write("notes/ideas.md", content)
+    in_store(company_reader).write("notes/ideas.md", "The note")
+    source = rows(os_reader)[("company", "notes/ideas.md")]
+    assert source[1] == 3 and rows(company_reader)[("company", "notes/ideas.md")][1] == 1
+
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
+
+    assert rows(company_reader) == {("company", "notes/ideas.md"): source} and rows(os_reader) == {}
+
+
+# ------------------------------------------------------------------ two sets of Company tables in one database
+
+
+def test_two_goal_tables_in_one_database_each_move_their_own_pages(databases):
+    from agno.db.migrations.versions.v3_3_0 import acompany_files_left, company_files_left
+
+    db, reader = databases.new()
+    other_tables = {
+        "goals_table": "other_goals",
+        "projects_table": "other_projects",
+        "tasks_table": "other_tasks",
+        "sources_table": "other_sources",
+    }
+    where = {"db_file": reader.db_file} if databases.kind.endswith("sqlite") else {"db_url": reader.db_url}
+    other_reader = type(reader)(**where, **other_tables)
+    other_db = type(db)(**where, **other_tables)
+    databases._opened.extend([(other_reader, False), (other_db, databases.is_async)])
+    CompanyManager(reader).create(name="Launch", id="launch")
+    other_manager = CompanyManager(other_reader)
+    other_manager.create(name="Docs", id="Docs Team")
+    project = other_manager.create_project(goal_id="Docs Team", name="Plan")
+    other_task = other_manager.create_task(goal_id="Docs Team", title="Write", project_id=project["id"])
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    write_3_2_0(reader, "company/products/launch/wiki", "status.md", "Go")
+    write_3_2_0(reader, "company/products/Docs Team/wiki", "status.md", "Drafting")
+    write_3_2_0(reader, f"company/tasks/{other_task['id']}", "report.md", "The other report")
+    before = rows(reader)
+    docs, task = "company/products/docs%20team/wiki", f"company/tasks/{other_task['id'].lower()}"
+
+    # The first set of tables moves its own Goal. The pages of a Goal it does not hold stay where they are.
+    assert databases.run(move_company_files, amove_company_files, db) is True
+    first = rows(reader)
+    assert first[("company", "goals/launch/status.md")] == before[("company/products/launch/wiki", "status.md")]
+    assert first[(docs, "status.md")] == before[(docs, "status.md")]
+    assert first[(task, "report.md")] == before[(task, "report.md")]
+    assert len(first) == len(before)
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    assert [entry["namespace"] for entry in databases.run(company_files_left, acompany_files_left, db)] == [docs, task]
+
+    # The second set finds them waiting and moves them to the folders of its own records.
+    assert databases.run(company_files_pending, acompany_files_pending, other_db) is True
+    assert databases.run(move_company_files, amove_company_files, other_db) is True
+    assert rows(reader) == {
+        ("company", "goals/launch/status.md"): before[("company/products/launch/wiki", "status.md")],
+        ("company", "goals/Docs%20Team/status.md"): before[(docs, "status.md")],
+        ("company", f"tasks/{other_task['id']}/report.md"): before[(task, "report.md")],
+    }
+    assert other_manager.read_wiki("Docs Team", "status.md").content == "Drafting"
+
+
+# ------------------------------------------------------------------ the size of the store after the move
+
+
+@pytest.mark.parametrize("over", [True, False])
+def test_the_migration_reports_a_store_that_ends_over_its_limit(databases, caplog, over):
+    import logging
+
+    from agno.company.filesystem import set_company_filesystem_bytes
+
+    db, reader = databases.new()
+    # Before 3.3.0 each folder had a limit of its own, so the folders together can hold more than one store may.
+    write_3_2_0(reader, "company/wiki", "people.md", "a" * 40)
+    write_3_2_0(reader, "company/notes", "ideas.md", "b" * 40)
+    in_store(reader).write("wiki/handbook.md", "c" * 20)
+    set_company_filesystem_bytes(db, 90 if over else 100)
+    before = rows(reader)
+
+    agno_logger = logging.getLogger("agno")
+    agno_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            assert databases.run(move_company_files, amove_company_files, db) is True
+    finally:
+        agno_logger.removeHandler(caplog.handler)
+
+    # Every file moved either way: the limit refuses writes, never the migration.
+    after = rows(reader)
+    assert after[("company", "wiki/people.md")] == before[("company/wiki", "people.md")]
+    assert after[("company", "notes/ideas.md")] == before[("company/notes", "ideas.md")]
+    report = [record.getMessage() for record in caplog.records if "limit" in record.getMessage()]
+    if over:
+        assert len(report) == 1
+        assert "100 bytes" in report[0] and "90 bytes" in report[0] and "max_filesystem_bytes" in report[0]
+    else:
+        assert report == []

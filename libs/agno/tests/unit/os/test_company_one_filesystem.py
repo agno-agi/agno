@@ -933,3 +933,52 @@ def test_notes_are_written_to_the_company_database_whatever_notes_database_is_na
     assert stored(os_db) == {"notes/own.md": "Super Agent's"}
     company_db.close()
     os_db.close()
+
+
+# ------------------------------------------------------------------ a store at its limit
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_full_store_is_still_read(tmp_path, use_async):
+    from fastapi.testclient import TestClient
+
+    from agno.company.manager import AsyncCompanyManager
+
+    db_file = str(tmp_path / "company.db")
+    writer = SqliteDb(db_file=db_file)
+    CompanyManager(writer).create(name="Launch", id="launch")
+    for meta in company_filesystem(writer).list():
+        company_filesystem(writer).delete(meta.path)
+    company_filesystem(writer).write("wiki/people.md", "Ada")
+    db = AsyncSqliteDb(db_file=db_file) if use_async else SqliteDb(db_file=db_file)
+    # The store holds exactly what it may: no default page can be added to it.
+    used = company_filesystem(writer).usage().total_bytes
+    agent_os = AgentOS(db=db, company=CompanyConfig(max_filesystem_bytes=used), telemetry=False)
+
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+        listed = client.get("/company/wiki")
+        assert listed.status_code == 200, listed.text
+        assert [page["path"] for page in listed.json()["data"]] == ["people.md"]
+        assert client.get("/company/wiki/people.md").json()["content"] == "Ada"
+        assert client.get("/company/goals/launch/wiki").status_code == 200
+        # A page that could not be created is not found. The limit is not the answer to a read.
+        assert client.get("/company/wiki/brief.md").status_code == 404
+        # A write that grows the store is refused with the limit, as before.
+        grown = client.put("/company/wiki/new.md", json={"content": "More", "expected_version": 0})
+        assert grown.status_code == 422 and "storage is full" in grown.text
+
+    manager = AsyncCompanyManager(db) if use_async else CompanyManager(db)
+
+    async def read() -> tuple:
+        try:
+            pages = manager.list_wiki(None)
+            page = manager.read_wiki(None, "people.md")
+            if use_async:
+                pages, page = await pages, await page
+            return [meta.path for meta in pages[0]], page.content
+        finally:
+            if use_async:
+                await db.db_engine.dispose()
+
+    assert asyncio.run(read()) == (["people.md"], "Ada")
+    writer.close()

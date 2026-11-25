@@ -948,6 +948,26 @@ def _report_left(entries: List[Dict[str, Any]]) -> None:
     )
 
 
+def _report_size(conn: Any, files: Any, db: Any) -> None:
+    """Say so when the store holds more than it may. Before 3.3.0 each folder had a limit of its own."""
+    from sqlalchemy import func
+
+    from agno.company.filesystem import company_filesystem_bytes
+
+    held = conn.execute(
+        select(func.coalesce(func.sum(files.c.size_bytes), 0)).where(
+            files.c.namespace == COMPANY_NAMESPACE, files.c.user_id == _SHARED
+        )
+    ).scalar()
+    limit = company_filesystem_bytes(db)
+    if int(held or 0) > limit:
+        log_warning(
+            f"The Company file system holds {int(held)} bytes after the move and its limit is {limit} bytes, so "
+            "every write that grows it is refused. Reads are not affected. Remove files, or raise the limit with "
+            "`CompanyConfig(max_filesystem_bytes=...)`."
+        )
+
+
 def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = None) -> bool:
     """Move the Company files of the session's database into the Company file system.
 
@@ -965,6 +985,7 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
     if plan.folders:
         moved = _move(conn, backend.table, plan.folders, plan.defaults)
         log_info(f"Moved {moved} Company files into the Company file system")
+        _report_size(conn, backend.table, db)
     if plan.left:
         _report_left(_paths_left(conn, backend.table, plan.left))
     return bool(plan.folders)
