@@ -8,6 +8,7 @@ import asyncio
 import base64
 import os
 import tempfile
+import time
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any, Dict, List, Optional
@@ -75,6 +76,18 @@ class ResultMessage:
     num_turns: Optional[int] = None
     duration_api_ms: Optional[int] = None
     structured_output: Any = None
+
+
+@dataclass
+class RateLimitInfo:
+    status: str
+    resets_at: Optional[int] = None
+    rate_limit_type: Optional[str] = None
+
+
+@dataclass
+class RateLimitEvent:
+    rate_limit_info: RateLimitInfo
 
 
 class StreamEvent:
@@ -637,6 +650,16 @@ def _sdk_result_error(**fields: Any) -> ResultError:
     return error
 
 
+def _usage_limit(resets_in: Optional[int] = 3600, status: str = "rejected") -> List[Any]:
+    """What the CLI sends when a subscription usage limit rejects the request."""
+    resets_at = None if resets_in is None else int(time.time()) + resets_in
+    return [
+        RateLimitEvent(RateLimitInfo(status, resets_at, "five_hour")),
+        AssistantMessage(content=[], error="rate_limit"),
+        ResultMessage("sdk-1", "You've hit your 5-hour limit", is_error=True),
+    ]
+
+
 @pytest.mark.parametrize(
     "failure, retried",
     [
@@ -649,6 +672,10 @@ def _sdk_result_error(**fields: Any) -> ResultError:
         (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
         (ResultMessage("sdk-1", "", subtype="error_during_execution", is_error=True), True),
         (_sdk_result_error(subtype="success", api_error_status=500), True),
+        (_usage_limit(), False),
+        (_usage_limit(resets_in=None), False),
+        (_usage_limit(resets_in=-60), True),
+        (_usage_limit(status="allowed_warning"), True),
     ],
     ids=[
         "max_turns",
@@ -660,6 +687,10 @@ def _sdk_result_error(**fields: Any) -> ResultError:
         "status_529",
         "during_execution",
         "sdk_result_error_500",
+        "usage_limit",
+        "usage_limit_no_reset_time",
+        "usage_limit_reset_passed",
+        "rate_limit_not_rejected",
     ],
 )
 @pytest.mark.parametrize("stream", [True, False])
@@ -672,7 +703,8 @@ def test_retry_skips_limits_and_permanent_errors(fake_sdk, monkeypatch, failure,
         yield SystemMessage("init", {"session_id": "sdk-1"})
         if isinstance(failure, Exception):
             raise failure
-        yield failure
+        for message in failure if isinstance(failure, list) else [failure]:
+            yield message
         if isinstance(failure, AssistantMessage):
             yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
 
@@ -693,8 +725,9 @@ def test_retry_skips_limits_and_permanent_errors(fake_sdk, monkeypatch, failure,
         (ResultMessage("sdk-1", "API Error: 401", is_error=True, api_error_status=401), False),
         (AssistantMessage(content=[], error="billing_error"), False),
         (ResultMessage("sdk-1", "API Error: 529 Overloaded", is_error=True, api_error_status=529), True),
+        (_usage_limit(), False),
     ],
-    ids=["max_turns", "authentication", "billing", "overloaded"],
+    ids=["max_turns", "authentication", "billing", "overloaded", "usage_limit"],
 )
 async def test_queue_does_not_redrive_permanent_claude_errors(fake_sdk, tmp_db, monkeypatch, failure, redriven, stream):
     """The queue's own attempts stop at a failure the agent classified as permanent."""
@@ -706,7 +739,8 @@ async def test_queue_does_not_redrive_permanent_claude_errors(fake_sdk, tmp_db, 
     async def failing(prompt, options):
         attempts.append(options.resume)
         yield SystemMessage("init", {"session_id": "sdk-1"})
-        yield failure
+        for message in failure if isinstance(failure, list) else [failure]:
+            yield message
         if isinstance(failure, AssistantMessage):
             yield ResultMessage("sdk-1", "API Error: billing", is_error=True)
 
@@ -717,6 +751,31 @@ async def test_queue_does_not_redrive_permanent_claude_errors(fake_sdk, tmp_db, 
     assert len(attempts) == job["attempt"]
     run = await agent.aget_run_output(job["id"], "s")
     assert run.status == RunStatus.error and run.metadata["retryable"] is redriven
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_usage_limit_failure_carries_reset_time(fake_sdk, tmp_db, monkeypatch, stream):
+    failure = _usage_limit()
+    resets_at = failure[0].rate_limit_info.resets_at
+    agent = ClaudeAgent(name="Claude", id="claude", db=tmp_db, retries=2, delay_between_retries=0)
+
+    async def failing(prompt, options):
+        yield SystemMessage("init", {"session_id": "sdk-1"})
+        for message in failure:
+            yield message
+
+    monkeypatch.setattr(claude_module._sdk(), "query", failing)
+    if stream:
+        event = _collect(agent, "go", session_id="s1")[-1]
+        assert isinstance(event, RunErrorEvent) and event.error_type == "ClaudeRateLimitError"
+        run = agent.get_run_output(event.run_id, "s1")
+    else:
+        run = agent.run("go", session_id="s1")
+    assert run.status == RunStatus.error
+    assert run.metadata["retryable"] is False
+    assert run.metadata["error_type"] == "ClaudeRateLimitError"
+    assert run.metadata["resets_at"] == resets_at
+    assert run.metadata["rate_limit_type"] == "five_hour"
 
 
 # ---------------------------------------------------------------------------

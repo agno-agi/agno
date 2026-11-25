@@ -1,4 +1,5 @@
 import copy
+import time
 import warnings
 from dataclasses import field, fields
 from pathlib import Path
@@ -115,6 +116,22 @@ class ClaudeResultError(RuntimeError):
         self.errors = errors
         self.api_error_status = api_error_status
         self.assistant_error = assistant_error
+
+
+class ClaudeRateLimitError(ClaudeResultError):
+    """A Claude Code usage-limit rejection, with when the limit resets (Unix seconds) and which limit it is."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        resets_at: Optional[int] = None,
+        rate_limit_type: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.resets_at = resets_at
+        self.rate_limit_type = rate_limit_type
 
 
 async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
@@ -553,6 +570,7 @@ class ClaudeAgent(BaseExternalAgent):
             request = self._prompt_with_media(prompt, kwargs.get("inline_media"))
             received = False
             assistant_error: Optional[str] = None
+            rate_limit_info: Any = None
             run_id = kwargs.get("run_id") or str(uuid4())
             client = sdk.ClaudeSDKClient(options=options)
             try:
@@ -567,8 +585,9 @@ class ClaudeAgent(BaseExternalAgent):
                         continue
                     if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
                         assistant_error = message.error
+                    rate_limit_info = getattr(message, "rate_limit_info", None) or rate_limit_info
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(sdk, message, assistant_error)
+                        self._check_result_message(sdk, message, assistant_error, rate_limit_info)
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -1122,12 +1141,21 @@ class ClaudeAgent(BaseExternalAgent):
             return False
         if getattr(error, "subtype", None) in _LIMIT_SUBTYPES:
             return False
+        if isinstance(error, ClaudeRateLimitError) and (error.resets_at is None or error.resets_at > time.time()):
+            return False
         if getattr(error, "api_error_status", None) in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
             return False
         if getattr(error, "assistant_error", None) in _PERMANENT_ASSISTANT_ERRORS:
             return False
         cli_not_found = getattr(_sdk(), "CLINotFoundError", None)
         return cli_not_found is None or not isinstance(error, cli_not_found)
+
+    def _failure_metadata(self, error: Exception) -> Dict[str, Any]:
+        metadata = super()._failure_metadata(error)
+        if isinstance(error, ClaudeRateLimitError):
+            metadata["resets_at"] = error.resets_at
+            metadata["rate_limit_type"] = error.rate_limit_type
+        return metadata
 
     def _metrics_from_result(self, message: Any) -> Optional[RunMetrics]:
         """Map the ResultMessage's usage and cost to RunMetrics.
@@ -1187,7 +1215,9 @@ class ClaudeAgent(BaseExternalAgent):
         return self._build_metrics(totals, details, additional)
 
     @staticmethod
-    def _check_result_message(sdk: Any, message: Any, assistant_error: Optional[str] = None) -> None:
+    def _check_result_message(
+        sdk: Any, message: Any, assistant_error: Optional[str] = None, rate_limit_info: Any = None
+    ) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
             return
@@ -1201,13 +1231,21 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "result", None)
                 or getattr(message, "stop_reason", None)
             )
-            raise ClaudeResultError(
-                f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}",
-                subtype=subtype,
-                errors=getattr(message, "errors", None),
-                api_error_status=getattr(message, "api_error_status", None),
-                assistant_error=assistant_error,
-            )
+            error_fields: Dict[str, Any] = {
+                "subtype": subtype,
+                "errors": getattr(message, "errors", None),
+                "api_error_status": getattr(message, "api_error_status", None),
+                "assistant_error": assistant_error,
+            }
+            error_message = f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}"
+            if getattr(rate_limit_info, "status", None) == "rejected":
+                raise ClaudeRateLimitError(
+                    error_message,
+                    resets_at=getattr(rate_limit_info, "resets_at", None),
+                    rate_limit_type=getattr(rate_limit_info, "rate_limit_type", None),
+                    **error_fields,
+                )
+            raise ClaudeResultError(error_message, **error_fields)
 
     async def _arun_adapter(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
