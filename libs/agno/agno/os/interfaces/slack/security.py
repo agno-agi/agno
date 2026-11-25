@@ -18,6 +18,16 @@ _OUTSIDER_MESSAGE = (
 )
 _SLACK_UNAVAILABLE_MESSAGE = "Slack could not be reached to check your account. Please try again."
 _DIRECTORY_UNAVAILABLE_MESSAGE = "The user directory is unavailable. Please try again later."
+# To someone other than the run's owner, e.g. an approver, refused because of the owner's access
+_OWNER_NO_ACCESS_MESSAGE = "The person who started this run no longer has access to it on this AgentOS."
+
+
+class UserDisabledError(PermissionError):
+    """The principal is disabled in the user directory."""
+
+
+class UserDirectoryUnavailableError(PermissionError):
+    """The user directory could not be read and is configured to fail closed."""
 
 
 def resolve_token(token: Optional[str] = None) -> str:
@@ -84,9 +94,11 @@ async def resolve_principal_authorization(
             log_warning(
                 f"user directory check failed for {principal_id!r}: {e} (failing {'closed' if fail_closed else 'open'})"
             )
-            disabled = fail_closed
+            if fail_closed:
+                raise UserDirectoryUnavailableError("User directory unavailable")
+            disabled = False
         if disabled:
-            raise PermissionError("User is disabled")
+            raise UserDisabledError("User is disabled")
     # The user directory applies on its own, as over HTTP; roles only under AgentOS authorization.
     # The middleware is checked here too: one added after get_app() is not in the flag
     if not _authorization_enforced(app):
@@ -236,16 +248,22 @@ async def authorize_run(
                 ctx.app, principal, ctx.resource, ctx.entity_id, roles
             )
     except PermissionError as e:
-        await post_ephemeral(client, event_context.channel, user, _refusal(ctx, e), thread_ts)
+        await post_ephemeral(
+            client, event_context.channel, user, _refusal(ctx, e, user == event_context.owner), thread_ts
+        )
         return False
     return True
 
 
-def _refusal(ctx: "SlackContext", error: PermissionError) -> str:
-    """What a refused sender is told. Under authorize_senders it says who to ask, not which scope is missing."""
+def _refusal(ctx: "SlackContext", error: PermissionError, to_owner: bool) -> str:
+    """What a refused user is told. Under authorize_senders it says who to ask, not which scope is missing."""
     if not ctx.authorize_senders:
         return f"Not run: {error}"
-    if str(error) == "User is disabled":
+    if isinstance(error, UserDirectoryUnavailableError):
+        return _DIRECTORY_UNAVAILABLE_MESSAGE
+    if not to_owner:
+        return _OWNER_NO_ACCESS_MESSAGE
+    if isinstance(error, UserDisabledError):
         return _DISABLED_MESSAGE
     # Super Agent is reached with platform access
     if ctx.company is not None:
