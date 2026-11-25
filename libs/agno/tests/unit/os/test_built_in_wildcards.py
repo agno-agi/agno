@@ -552,3 +552,45 @@ def test_agui_serving_a_team_you_built_keeps_the_type_wide_scope():
 
     team = Team(id="support", name="Support", members=[], model=_FixtureModel())
     assert AGUI(team=team).get_scope_mappings() == {"POST /agui": ["teams:run"]}
+
+
+@pytest.mark.usefixtures("unavailable_manager_docs")
+def test_a_task_accepted_with_plain_scopes_is_still_picked_up(tmp_path):
+    import asyncio
+
+    from agno.company.routines import _CompanyScheduleExecutor
+
+    from .test_mini_agent_tasks import SCOPES as TASK_SCOPES
+    from .test_mini_agent_tasks import ScriptedModel
+    from .test_mini_agent_tasks import System as TaskSystem
+
+    system = TaskSystem(tmp_path)
+    proposal = system.proposal()
+    system.accept(proposal["id"])
+    # As a Task accepted before built-ins needed their own scope is stored: the scopes the
+    # accepting person's token carried then, with Mini Agent not named
+    task = system.db.get_task(proposal["id"])
+    transitions = [dict(entry) for entry in task["transitions"]]
+    accepted = dict(transitions[-1][AUTHORIZATION_KEY])
+    plain = [scope for scope in TASK_SCOPES if scope != f"agents:{MINI_AGENT_ID}:run"] + ["agents:run"]
+    accepted["context"] = {**accepted["context"], "scopes": plain}
+    transitions[-1][AUTHORIZATION_KEY] = accepted
+    table = system.db._get_table(table_type="tasks")
+    with system.db.Session() as session, session.begin():
+        session.execute(table.update().where(table.c.id == task["id"]).values(transitions=transitions))
+
+    system.mini.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write"})])
+    executor = _CompanyScheduleExecutor(
+        system.os, system.app, base_url="http://test", internal_service_token=system.os._internal_service_token
+    )
+
+    async def pick_up():
+        await executor._dispatch(system.db.get_task(proposal["id"]))
+        job = await system.queue.store.claim_job(system.queue.worker_id, system.queue.config.lock_grace_seconds)
+        await system.queue._execute_claimed(job)
+
+    asyncio.run(pick_up())
+    done = system.db.get_task(proposal["id"])
+    assert done["status"] == "in_review"
+    assert done["result"]["invoked"][0]["status"] == "COMPLETED"
+    system.db.close()
