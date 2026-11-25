@@ -1,5 +1,6 @@
 """Tests for media offloading utilities."""
 
+import hashlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -331,8 +332,8 @@ class TestStorageKeyScoping:
         _offload_single_media(second, storage, "session-B", "image")
 
         assert first.media_reference.storage_key != second.media_reference.storage_key
-        assert first.media_reference.storage_key.startswith("session-A-")
-        assert second.media_reference.storage_key.startswith("session-B-")
+        assert first.media_reference.storage_key.startswith(hashlib.sha256(b"session-A").hexdigest() + "-")
+        assert second.media_reference.storage_key.startswith(hashlib.sha256(b"session-B").hexdigest() + "-")
 
     def test_a_long_session_id_does_not_overrun_the_key(self):
         """A filesystem name stops at 255 bytes, and a failed upload leaves base64 in the row."""
