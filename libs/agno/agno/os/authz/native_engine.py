@@ -290,16 +290,25 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()  # a write must be visible to the rest of this request
         self._db.delete_authz_policy(role=role, resource=resource, action=action)
 
+    def _delete_allow(self, role: str, resource: str, action: str) -> None:
+        """Delete a grant only while it is an allow. The database checks the effect, so a deny that
+        another writer puts there first is kept."""
+        self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
+        self._db.delete_authz_policy(role=role, resource=resource, action=action, effect=_ALLOW)
+
     def _keep_for_application(self, role: str, resource: str, action: str, effect: str) -> None:
-        """Make a row of ``effect`` under the old name of ``resource`` cover only an application's own type."""
+        """Make a row of ``effect`` under the old name of ``resource`` cover only an application's own type.
+
+        The database moves the row in one transaction and only while it still has ``effect``, so a
+        change another writer makes to that row is never deleted.
+        """
         for legacy in legacy_resources(resource):
-            rows = self._policies_for({role})
-            if (role, legacy, action, effect) not in rows:
-                continue
-            kept = application_resource(legacy)
-            if (role, kept, action, _DENY) not in rows:
-                self._persist_policy(role, kept, action, effect)
-            self._delete_policy(role, legacy, action)
+            self._require_engine()
+            _invalidate_request_cache()  # a write must be visible to the rest of this request
+            self._db.move_authz_policy(
+                role=role, resource=legacy, action=action, effect=effect, to_resource=application_resource(legacy)
+            )
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
         self._require_engine()
@@ -347,9 +356,7 @@ class NativePolicyEngine(PolicyEngine):
         self._delete_policy(role, resource, action)
         if is_legacy_scope(scope):
             # The old name also names the current type, so an allow under it is revoked too.
-            current = current_resource(resource)
-            if (role, current, action, _ALLOW) in self._policies_for({role}):
-                self._delete_policy(role, current, action)
+            self._delete_allow(role, current_resource(resource), action)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
         return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
@@ -644,16 +651,23 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()
         await self._acall("delete_authz_policy", role=role, resource=resource, action=action)
 
+    async def _adelete_allow(self, role: str, resource: str, action: str) -> None:
+        """Async twin of :meth:`_delete_allow`."""
+        _invalidate_request_cache()
+        await self._acall("delete_authz_policy", role=role, resource=resource, action=action, effect=_ALLOW)
+
     async def _akeep_for_application(self, role: str, resource: str, action: str, effect: str) -> None:
         """Async twin of :meth:`_keep_for_application`."""
         for legacy in legacy_resources(resource):
-            rows = await self._apolicies_for({role})
-            if (role, legacy, action, effect) not in rows:
-                continue
-            kept = application_resource(legacy)
-            if (role, kept, action, _DENY) not in rows:
-                await self._apersist_policy(role, kept, action, effect)
-            await self._adelete_policy(role, legacy, action)
+            _invalidate_request_cache()
+            await self._acall(
+                "move_authz_policy",
+                role=role,
+                resource=legacy,
+                action=action,
+                effect=effect,
+                to_resource=application_resource(legacy),
+            )
 
     async def _apersist_grouping(self, subject: str, role: str, add: bool) -> None:
         _invalidate_request_cache()
@@ -687,9 +701,7 @@ class NativePolicyEngine(PolicyEngine):
         await self._adelete_policy(role, resource, action)
         if is_legacy_scope(scope):
             # The old name also names the current type, so an allow under it is revoked too.
-            current = current_resource(resource)
-            if (role, current, action, _ALLOW) in await self._apolicies_for({role}):
-                await self._adelete_policy(role, current, action)
+            await self._adelete_allow(role, current_resource(resource), action)
 
     async def aget_role_scopes(self, role: str) -> List[ScopeEntry]:
         return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in await self._apolicies_for({role})]

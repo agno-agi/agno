@@ -5,9 +5,11 @@ deployment wrote in code, in config.yaml, in a token or in a stored role. Each k
 none logs a warning.
 """
 
+import inspect
 import logging
 import sys
 import types
+import uuid
 import warnings
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -777,4 +779,213 @@ async def test_a_goals_role_does_not_satisfy_an_application_products_scope(tmp_p
     assert await holds("products:read", "product-reader") is True
     assert await holds("goals:read", "product-reader") is True
     assert await holds("goals:read", "goal-reader") is True
+    db.close()
+
+
+# ------------------------------------------------------- a role edited by two admins
+
+
+POLICY_DBS = ["sqlite", "async_sqlite", "postgres", "async_postgres"]
+
+
+async def _call(function, *args, **kwargs):
+    """Call a sync or an async adapter method."""
+    result = function(*args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+
+@pytest.fixture(params=POLICY_DBS)
+async def policy_db(request, tmp_path):
+    """A database of each kind that stores roles. Its tables are removed when the test ends."""
+    kind = request.param
+    if "postgres" not in kind:
+        db = (AsyncSqliteDb if kind.startswith("async") else SqliteDb)(db_file=str(tmp_path / "roles.db"))
+        yield db
+        await _call(db.close)
+        return
+    from sqlalchemy import create_engine, text
+
+    admin = create_engine(POSTGRES_URL)
+    try:
+        with admin.connect() as conn:
+            conn.execute(text("select 1"))
+    except Exception:
+        admin.dispose()
+        pytest.skip(f"Postgres server not reachable at {POSTGRES_URL}")
+    schema = f"roles_{uuid.uuid4().hex[:10]}"
+    db = (AsyncPostgresDb if kind.startswith("async") else PostgresDb)(db_url=POSTGRES_URL, db_schema=schema)
+    yield db
+    await _call(db.close)
+    with admin.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    admin.dispose()
+
+
+async def _policies(db, role="reader"):
+    return sorted(await _call(db.get_authz_role_policies, role))
+
+
+async def test_a_policy_moves_only_while_it_has_the_effect_it_was_read_with(policy_db):
+    db = policy_db
+    await _call(db.upsert_authz_policy, role="reader", resource="products/*", action="read", effect="deny")
+
+    moved = await _call(
+        db.move_authz_policy,
+        role="reader",
+        resource="products/*",
+        action="read",
+        effect="allow",
+        to_resource="application:products/*",
+    )
+
+    assert moved is False
+    assert await _policies(db) == [("products/*", "read", "deny")]
+
+
+async def test_a_moved_policy_leaves_its_resource(policy_db):
+    db = policy_db
+    await _call(db.upsert_authz_policy, role="reader", resource="products/*", action="read", effect="allow")
+    await _call(db.upsert_authz_policy, role="reader", resource="products/*", action="write", effect="allow")
+    await _call(db.upsert_authz_policy, role="other", resource="products/*", action="read", effect="allow")
+
+    moved = await _call(
+        db.move_authz_policy,
+        role="reader",
+        resource="products/*",
+        action="read",
+        effect="allow",
+        to_resource="application:products/*",
+    )
+
+    assert moved is True
+    assert await _policies(db) == [("application:products/*", "read", "allow"), ("products/*", "write", "allow")]
+    assert await _policies(db, "other") == [("products/*", "read", "allow")]
+    again = await _call(
+        db.move_authz_policy,
+        role="reader",
+        resource="products/*",
+        action="read",
+        effect="allow",
+        to_resource="application:products/*",
+    )
+    assert again is False
+
+
+@pytest.mark.parametrize("effect, kept", [("allow", "deny"), ("deny", "deny")])
+async def test_a_moved_policy_does_not_replace_a_deny(policy_db, effect, kept):
+    db = policy_db
+    await _call(db.upsert_authz_policy, role="reader", resource="products/*", action="read", effect=effect)
+    await _call(db.upsert_authz_policy, role="reader", resource="application:products/*", action="read", effect="deny")
+
+    await _call(
+        db.move_authz_policy,
+        role="reader",
+        resource="products/*",
+        action="read",
+        effect=effect,
+        to_resource="application:products/*",
+    )
+
+    assert await _policies(db) == [("application:products/*", "read", kept)]
+
+
+async def test_a_moved_deny_replaces_an_allow(policy_db):
+    db = policy_db
+    await _call(db.upsert_authz_policy, role="reader", resource="products/*", action="read", effect="deny")
+    await _call(db.upsert_authz_policy, role="reader", resource="application:products/*", action="read", effect="allow")
+
+    await _call(
+        db.move_authz_policy,
+        role="reader",
+        resource="products/*",
+        action="read",
+        effect="deny",
+        to_resource="application:products/*",
+    )
+
+    assert await _policies(db) == [("application:products/*", "read", "deny")]
+
+
+def _before_a_write(db, monkeypatch, write, after=0):
+    """Run ``write`` once, just before a policy write of the engine reaches the database.
+
+    That is after the engine has read the role. ``after`` is how many of its writes go first.
+    """
+    state = {"writes": 0, "pending": write}
+    for name in ("upsert_authz_policy", "delete_authz_policy", "move_authz_policy", "set_authz_role_policies"):
+        real = getattr(db, name, None)
+        if real is None:
+            continue
+
+        def hooked(*args, _real=real, **kwargs):
+            if state["pending"] is not None and state["writes"] == after:
+                pending, state["pending"] = state["pending"], None
+                pending()
+            state["writes"] += 1
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(db, name, hooked)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_deny_written_while_goals_access_is_revoked_is_kept(tmp_path, monkeypatch, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
+    engine = Authorization(db=db)._store()._engine
+    # Another admin denies products while this one revokes goals.
+    deny = SqliteDb.upsert_authz_policy
+    _before_a_write(
+        db, monkeypatch, lambda: deny(db, role="reader", resource="products/*", action="read", effect="deny")
+    )
+
+    if use_async:
+        await engine.aremove_scope("reader", "goals:read")
+    else:
+        engine.remove_scope("reader", "goals:read")
+
+    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is False
+    assert engine.check_scope("goals:read", roles=["reader"]) is False
+    assert ("products:read", "deny") in engine.get_role_scopes("reader")
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_an_allow_written_while_goals_access_is_granted_is_kept(tmp_path, monkeypatch, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="deny")
+    engine = Authorization(db=db)._store()._engine
+    # Another admin allows products while this one grants goals.
+    allow = SqliteDb.upsert_authz_policy
+    _before_a_write(
+        db, monkeypatch, lambda: allow(db, role="reader", resource="products/*", action="read", effect="allow")
+    )
+
+    if use_async:
+        await engine.aadd_scope("reader", "goals:read")
+    else:
+        engine.add_scope("reader", "goals:read")
+
+    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
+    assert engine.check_scope("goals:read", roles=["reader"]) is True
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_deny_written_while_a_products_scope_is_revoked_is_kept(tmp_path, monkeypatch, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="editor", resource="products/*", action="write", effect="allow")
+    db.upsert_authz_policy(role="editor", resource="goals/*", action="write", effect="allow")
+    engine = Authorization(db=db)._store()._engine
+    # Another admin denies goals while this one revokes products, after the products row is gone.
+    deny = SqliteDb.upsert_authz_policy
+    _before_a_write(
+        db, monkeypatch, lambda: deny(db, role="editor", resource="goals/*", action="write", effect="deny"), after=1
+    )
+
+    if use_async:
+        await engine.aremove_scope("editor", "products:write")
+    else:
+        engine.remove_scope("editor", "products:write")
+
+    assert engine.get_role_scopes("editor") == [("goals:write", "deny")]
     db.close()

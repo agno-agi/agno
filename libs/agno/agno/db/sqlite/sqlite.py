@@ -9077,9 +9077,22 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
         authz_sql.upsert_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
 
-    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+    def delete_authz_policy(
+        self,
+        *,
+        role: str,
+        resource: Optional[str] = None,
+        action: Optional[str] = None,
+        effect: Optional[str] = None,
+    ) -> None:
         table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        authz_sql.delete_policy(self.db_engine, table, role=role, resource=resource, action=action)
+        authz_sql.delete_policy(self.db_engine, table, role=role, resource=resource, action=action, effect=effect)
+
+    def move_authz_policy(self, *, role: str, resource: str, action: str, effect: str, to_resource: str) -> bool:
+        table = self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
+        return authz_sql.move_policy(
+            self.db_engine, table, role=role, resource=resource, action=action, effect=effect, to_resource=to_resource
+        )
 
     def get_authz_direct_roles(self, subject: str) -> List[str]:
         table = self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)
