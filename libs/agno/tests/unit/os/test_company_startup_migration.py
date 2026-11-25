@@ -551,3 +551,89 @@ async def test_a_lock_on_a_removed_sqlite_file_is_not_taken(tmp_path, monkeypatc
         async with startup._sqlite_lock(path, 0) as second:
             assert second is False
     assert not startup.os.path.exists(path)
+
+
+# ------------------------------------------------------------------- a start that was interrupted
+
+
+def _stop_before_the_schedules(database, monkeypatch) -> Any:
+    """Start AgentOS on a 3.2.0 database with a migration that stops once the sessions are done."""
+
+    def stop(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("stopped partway")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(v3_3_0, "_rename_routines", stop)
+        starting = TestClient(_agent_os(database).get_app())
+        starting.__enter__()
+    versions = database.versions()
+    assert versions["agno_sessions"] == "3.3.0" and versions["agno_schedules"] == "3.0.0"
+    return starting
+
+
+def test_a_migration_that_stops_before_the_schedules_is_finished_by_the_next_start(database, ups, logged, monkeypatch):
+    _write_3_2_0_database(database)
+    _stop_before_the_schedules(database, monkeypatch).__exit__(None, None, None)
+    ups.clear()
+    logged.clear()
+
+    with TestClient(_agent_os(database).get_app()) as client:
+        assert GOAL in _goal_ids(client)
+        assert client.get("/company/routines").status_code == 200
+
+    assert len(ups) == 1
+    assert _errors(logged) == []
+    _assert_renamed(database)
+
+
+def test_a_migration_that_stops_before_the_schedules_is_finished_by_the_endpoint(database, logged, monkeypatch):
+    _write_3_2_0_database(database)
+    client = _stop_before_the_schedules(database, monkeypatch)
+    try:
+        _assert_refused(client.get("/company/routines"))
+
+        # The sessions table is at 3.3.0 already. The schedules are not.
+        migrated = client.post("/databases/all/migrate", params={"target_version": "3.3.0"})
+
+        assert migrated.status_code == 200, migrated.text
+        assert client.get("/company/routines").status_code == 200
+    finally:
+        client.__exit__(None, None, None)
+    _assert_renamed(database)
+
+
+@pytest.mark.parametrize("stamped_as", ["products", "goals"])
+def test_stamps_at_3_3_0_do_not_hide_tables_in_their_3_2_0_shape(database, ups, logged, stamped_as):
+    _write_3_2_0(database)
+    versions = database._ref("agno_schema_versions")
+    database.execute(f"UPDATE {versions} SET version = '3.3.0'")
+    if stamped_as == "goals":
+        database.execute(
+            f"UPDATE {versions} SET table_name = replace(table_name, 'agno_company_products', 'agno_company_goals')"
+        )
+
+    with TestClient(_agent_os(database).get_app()) as client:
+        assert GOAL in _goal_ids(client)
+
+    # The products table held the only copy of the Goals. Nothing said to drop it.
+    assert not [record.getMessage() for record in logged if "drop" in record.getMessage()]
+    assert len(ups) == 1
+    assert _errors(logged) == []
+    described = database.describe(rows=False)
+    assert "agno_company_products" not in described and "objective" in described["agno_company_goals"]["columns"]
+
+
+def test_agent_os_starts_without_sqlalchemy(monkeypatch):
+    import sys
+
+    import agno.db.migrations as migrations
+    from agno.db.in_memory import InMemoryDb
+
+    # An AgentOS on a database that is not SQL is installed without SQLAlchemy.
+    monkeypatch.setattr(migrations, "startup", startup)
+    monkeypatch.delitem(sys.modules, "agno.db.migrations.startup")
+    for name in [name for name in sys.modules if name == "sqlalchemy" or name.startswith("sqlalchemy.")]:
+        monkeypatch.setitem(sys.modules, name, None)
+
+    with TestClient(AgentOS(db=InMemoryDb(), telemetry=False).get_app()) as client:
+        assert client.get("/health").status_code == 200

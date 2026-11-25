@@ -11,6 +11,7 @@ PostgreSQL cases skip when the server is absent.
 
 import inspect as python_inspect
 import json
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +40,7 @@ from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem
 from agno.os.authz.run_context import restore_authorization
 from agno.run.authorization import AUTHORIZATION_HEADER, AUTHORIZATION_KEY, authorization_scope
+from agno.tools.company import CompanyTools
 
 POSTGRES_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 BACKENDS = ["sqlite", "async_sqlite", "postgres", "async_postgres"]
@@ -1320,3 +1322,42 @@ def test_a_routine_that_cannot_be_written_fails_the_migration():
 
     with pytest.raises(RuntimeError, match="could not update schedule routine-0"):
         v3_3_0.up(db, "schedules", "agno_schedules")
+
+
+# ------------------------------------------------------------------- the tools a Routine names
+
+
+# The instructions a 3.2.0 template saved in a Routine, with the tools under their 3.2.0 names.
+INSTRUCTIONS_3_2_0 = (
+    "Call refresh_company_product for that Product. Inspect Sources with read_product_source, then "
+    "use intake_product_source for Task proposals and update_product_status for the report."
+)
+
+
+def _name_the_3_2_0_tools(database: _Database) -> None:
+    message = json.dumps(f'Operate only on Product "{GOAL}".\n\n{INSTRUCTIONS_3_2_0}')
+    cast = "CAST(:message AS JSONB)" if database.postgres else "json(:message)"
+    set_message = "jsonb_set(payload, '{message}', " if database.postgres else "json_set(payload, '$.message', "
+    database.execute(
+        f"UPDATE {database._ref('agno_schedules')} SET payload = {set_message}{cast}) WHERE id IN (:routine, 'a-persons-schedule')",
+        message=message,
+        routine=ROUTINE,
+    )
+
+
+async def test_a_routine_names_the_tools_as_they_are_now(database):
+    _write_3_2_0(database)
+    _name_the_3_2_0_tools(database)
+    db = database.db()
+
+    await MigrationManager(db).up()
+
+    message = (await _call(db.get_schedule, ROUTINE))["payload"]["message"]
+    assert message.endswith(
+        "Call refresh_company_goal for that Product. Inspect Sources with read_goal_source, then "
+        "use intake_goal_source for Task proposals and update_goal_status for the report."
+    )
+    # Every tool the saved instructions name is one the Routine's run can call and is checked for.
+    assert not set(re.findall(r"\w+", message)) & set(CompanyTools.renamed_tools)
+    # A schedule that is not a Routine keeps its own message.
+    assert INSTRUCTIONS_3_2_0 in (await _call(db.get_schedule, "a-persons-schedule"))["payload"]["message"]

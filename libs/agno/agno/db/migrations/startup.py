@@ -3,8 +3,8 @@
 Only the newest migration is applied here. An older migration can copy or rewrite a large amount of
 data, so a database that is behind an older version is left as it is for the operator to migrate.
 
-The check that decides this is one read of the schema versions table. A database that is already
-current, or that holds no table yet, is not touched and nothing is logged.
+The check that decides this reads the schema versions table and the shape of the Company tables. A
+database that is already current, or that holds no table yet, is not touched and nothing is logged.
 
 One process migrates at a time. The others wait, then find nothing left to do. The migrate endpoints
 take the same lock.
@@ -24,13 +24,6 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.manager import TABLE_TYPE_TO_ATTR, MigrationManager
 from agno.db.utils import legacy_company_table
 from agno.utils.log import log_warning
-
-try:
-    from sqlalchemy import select, text
-    from sqlalchemy.engine import Engine
-    from sqlalchemy.ext.asyncio import AsyncEngine
-except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 # The database types the newest migration changes tables on.
 _SQL_DB_TYPES = ("PostgresDb", "SqliteDb", "AsyncPostgresDb", "AsyncSqliteDb")
@@ -81,6 +74,8 @@ async def _call(function: Any, *args: Any, **kwargs: Any) -> Any:
 
 async def _stamps(db: Union[BaseDb, AsyncBaseDb]) -> Dict[str, str]:
     """Every table's stamped version, read once. Empty when the database has no versions table."""
+    from sqlalchemy import select
+
     table = await _call(db._get_table, table_type="versions", create_table_if_not_found=False)  # type: ignore[union-attr]
     if table is None:
         return {}
@@ -100,11 +95,13 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
     latest, previous = manager.latest_schema_version, manager.available_versions[-2][1]
     stamps = await _stamps(db)
     names = [getattr(db, attr) for attr in TABLE_TYPE_TO_ATTR.values()]
-    pending, behind, unstamped = False, [], []
+    behind, unstamped = [], []
+    # A Company table that still has its 3.2.0 name or columns is pending, whatever the stamps say.
+    pending = await manager._company_rename_pending()
     # Until the newest migration renames them, the goals and details tables are stamped under their
     # 3.2.0 names. An agno 3.2 process that starts after the migration stamps them again.
     legacy = [name for name in (legacy_company_table(db, kind) for kind in ("goals", "company")) if name in stamps]
-    if legacy and not await manager._company_rename_pending():
+    if not pending:
         legacy = []
     for name in [*names, *legacy]:
         if name not in stamps:
@@ -133,6 +130,8 @@ async def _sqlite_lock_path(db: Any) -> Optional[str]:
     SQLite is asked for the file it has open, so a path, a ``file:`` URI and a relative path to one
     database all share the lock.
     """
+    from sqlalchemy import text
+
     conn = await _call(db.db_engine.connect)
     try:
         rows = (await _call(conn.execute, text("PRAGMA database_list"))).all()
@@ -147,6 +146,9 @@ def _lock_engine(db: Any) -> Any:
 
     The lock is held while the migration runs, and the pool may have no second connection to give.
     """
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     if isinstance(db, AsyncBaseDb):
         engine = db.db_engine.sync_engine  # type: ignore[attr-defined]
         return AsyncEngine(Engine(engine.pool.recreate(), engine.dialect, engine.url))
@@ -169,6 +171,8 @@ async def _wait_for(acquire: Any, seconds: float) -> bool:
 @asynccontextmanager
 async def _postgres_lock(db: Any, seconds: float) -> AsyncIterator[bool]:
     """A session advisory lock on one connection. PostgreSQL releases it when the connection ends."""
+    from sqlalchemy import text
+
     acquire, release = "SELECT pg_try_advisory_lock(hashtext(:name))", "SELECT pg_advisory_unlock(hashtext(:name))"
     params = {"name": _LOCK_NAME}
     engine = _lock_engine(db)

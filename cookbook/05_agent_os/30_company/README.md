@@ -35,8 +35,14 @@ whoever created the Goal. User isolation does not restrict Company records.
 
 In 3.2.0 a Goal was a Product and its objective was its purpose. To upgrade,
 deploy the new version. AgentOS migrates its databases as it starts: it renames
-the stored tables and columns in place and keeps every id. A deployment written
-for 3.2.0 then starts with no edit.
+the stored tables and columns in place and keeps every id. A deployment made
+from the 3.2.0 template then starts with no edit. Your own code that calls
+the Company Python API by its 3.2.0 names needs the rename first: see the names
+that changed with no alias, below.
+
+A Routine keeps the instructions saved in it. Where they name a Company tool by
+its 3.2.0 name, for example `read_product_source`, the migration writes the
+current name in its place.
 
 Stop every process that runs 3.2 first: they fail against a migrated database.
 Processes on the new version can start together; one migrates and the others
@@ -55,6 +61,9 @@ Migrate by hand only in these cases:
 - The automatic migration failed. AgentOS logs one error that says why.
 - A database has a table from before agno 3.0. AgentOS does not start that
   older migration by itself.
+- The Routines are stored in MongoDB. AgentOS does not migrate them at the
+  start, and a Routine run raises `MigrationRequiredError` until
+  `POST /databases/all/migrate` is called.
 
 In each case AgentOS still starts, and Company refuses to work until the
 database is migrated. Run the migration on the Company database, and on the
@@ -89,9 +98,12 @@ also runs Company, rename yours before you upgrade. Otherwise its holders also
 have access to Company Goals.
 
 These changed with no alias: the routes are `/company/goals`, with the fields
-`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`;
-the Company tools are named for Goals, for example `create_company_goal` and
-`update_goal_status`; and the tree path is `goals/<goal-id>/`. A request that
+`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`
+where it took `purpose=` and `product_id=`, and `discard_product` is
+`discard_goal`; the Company tools and the `CompanyTools` methods are named for
+Goals, for example `create_company_goal` and `update_goal_status`; a row holds
+`goal_id` where it held `product_id`, so a custom check in `acceptance_checks`
+reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
 still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
 with 422.
 
