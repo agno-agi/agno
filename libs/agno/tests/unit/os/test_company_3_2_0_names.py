@@ -21,7 +21,6 @@ from agno.company import Goal
 from agno.company.declarations import AcceptanceScope, CompanyDeclarations
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
-from agno.exceptions import MigrationRequiredError
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from agno.os.authz import Authorization
@@ -676,27 +675,6 @@ def test_the_component_api_reads_products_table(tmp_path, saved, expected):
 
     assert config["db"]["goals_table"] == expected
     assert "products_table" not in config["db"]
-
-
-@pytest.mark.parametrize("named", [False, True])
-def test_an_unmigrated_company_database_stops_startup(tmp_path, named):
-    import sqlite3
-
-    path = str(tmp_path / "company.db")
-    table = "my_products" if named else "agno_company_products"
-    with sqlite3.connect(path) as conn:
-        conn.execute(f"CREATE TABLE {table} (id VARCHAR PRIMARY KEY, name VARCHAR, purpose TEXT)")
-    db = SqliteDb(db_file=path, products_table="my_products" if named else None)
-    app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
-
-    with pytest.raises(MigrationRequiredError) as refused:
-        with TestClient(app):
-            pass
-
-    # The HTTP migration route is unreachable until the server starts.
-    assert "asyncio.run(MigrationManager(db).up())" in str(refused.value)
-    assert "await MigrationManager(db).up()" in str(refused.value)
-    assert "/databases/all/migrate" not in str(refused.value)
 
 
 def test_a_stored_system_policy_does_not_match_config():

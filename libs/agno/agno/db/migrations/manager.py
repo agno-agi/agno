@@ -16,6 +16,21 @@ _COMPANY_TABLE_ATTRS = {
     "tasks": "tasks_table_name",
 }
 
+# Every table type the manager migrates, with the db attribute that holds the table's name.
+TABLE_TYPE_TO_ATTR = {
+    **_COMPANY_TABLE_ATTRS,
+    "memories": "memory_table_name",
+    "sessions": "session_table_name",
+    "metrics": "metrics_table_name",
+    "evals": "eval_table_name",
+    "knowledge": "knowledge_table_name",
+    "approvals": "approvals_table_name",
+    "components": "components_table_name",
+    "schedules": "schedules_table_name",
+    "schedule_runs": "schedule_runs_table_name",
+    "learnings": "learnings_table_name",
+}
+
 _COMPANY_RENAME_VERSION = packaging_version.parse("3.3.0")
 _BEFORE_COMPANY_RENAME = packaging_version.parse("3.0.0")
 
@@ -62,19 +77,7 @@ class MigrationManager:
             _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            **_COMPANY_TABLE_ATTRS,
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:
@@ -190,19 +193,7 @@ class MigrationManager:
         _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            **_COMPANY_TABLE_ATTRS,
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:

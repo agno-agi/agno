@@ -71,6 +71,19 @@ def get_database_router(
             # If the target version is not provided, migrate to the latest version
             await MigrationManager(db).up()  # type: ignore
 
+    def _company_db():
+        """The Company database when it is not one of the AgentOS databases."""
+        company_db = getattr(os, "_company_db", None)
+        registered = [db for dbs in os.dbs.values() for db in dbs]
+        return None if company_db is None or any(db is company_db for db in registered) else company_db
+
+    async def _start_company() -> None:
+        """Start Company if the start could not, now that its database may be migrated."""
+        if getattr(os, "_company_start_pending", False):
+            from agno.company.bootstrap import _start_company as start_company
+
+            await start_company(os)
+
     @router.post(
         "/databases/all/migrate",
         tags=["Database"],
@@ -95,6 +108,9 @@ def get_database_router(
     async def migrate_all_databases(target_version: Optional[str] = None):
         """Migrate all local databases. Remote databases are skipped and listed in the response."""
         all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
+        company_db = _company_db()
+        if company_db is not None:
+            all_dbs.setdefault(company_db.id, company_db)
         local_dbs = {db_id: db for db_id, db in all_dbs.items() if not isinstance(db, RemoteDb)}
         skipped_dbs = [db_id for db_id in all_dbs if db_id not in local_dbs]
         if skipped_dbs:
@@ -107,6 +123,7 @@ def get_database_router(
             except Exception as e:
                 failed_dbs[db_id] = str(e)
 
+        await _start_company()
         version_msg = f"version {target_version}" if target_version else "latest version"
         migrated_count = len(local_dbs) - len(failed_dbs)
 
@@ -147,7 +164,8 @@ def get_database_router(
         },
     )
     async def migrate_database(db_id: str, target_version: Optional[str] = None):
-        db = await get_db(os.dbs, db_id)
+        company_db = _company_db()
+        db = company_db if company_db is not None and company_db.id == db_id else await get_db(os.dbs, db_id)
         if not db:
             raise HTTPException(status_code=404, detail="Database not found")
 
@@ -159,6 +177,7 @@ def get_database_router(
 
         try:
             await _migrate_single_db(db, target_version)
+            await _start_company()
 
             version_msg = f"version {target_version}" if target_version else "latest version"
             return JSONResponse(

@@ -202,18 +202,37 @@ def rehydrate_goal(
     )
 
 
+async def _start_company(agent_os: Any) -> bool:
+    """Apply CompanyConfig and the Goals declared in code. False when a database must be migrated first.
+
+    AgentOS starts either way. Until the migration, Company refuses at first use with the same error.
+    The migrate endpoint calls this again, so Company starts without a restart.
+    """
+    from agno.company.details import _seed_company
+    from agno.exceptions import MigrationRequiredError
+    from agno.utils.log import log_debug, log_error
+
+    try:
+        if agent_os._company_db is not None:
+            await _seed_company(agent_os)
+        for declaration in agent_os.company.goals:
+            goal = declaration if isinstance(declaration, Goal) else Goal.model_validate(declaration)
+            await arehydrate_goal(
+                agent_os._company_db, goal, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os, trusted=True
+            )
+    except MigrationRequiredError as exc:
+        message = f"Company is not started: {exc}"
+        # The failed automatic migration was reported once already.
+        (log_debug if agent_os._unmigrated_dbs or agent_os._company_start_pending else log_error)(message)
+        agent_os._company_start_pending = True
+        return False
+    agent_os._company_start_pending = False
+    return True
+
+
 @asynccontextmanager
 async def _company_lifespan(app: Any, agent_os: Any):
-    if agent_os._company_db is not None:
-        from agno.company.details import _require_migrated_company, _seed_company
-
-        await _require_migrated_company(agent_os._company_db)
-        await _seed_company(agent_os)
-    for declaration in agent_os.company.goals:
-        goal = declaration if isinstance(declaration, Goal) else Goal.model_validate(declaration)
-        await arehydrate_goal(
-            agent_os._company_db, goal, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os, trusted=True
-        )
+    await _start_company(agent_os)
     # Super Agent tools start Task runs through this app's executor route, as the HTTP API does.
     agent_os._company_app = app
     try:

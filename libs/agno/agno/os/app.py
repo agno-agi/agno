@@ -22,7 +22,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import database_error_message
-from agno.exceptions import AgnoError, SessionBusyError
+from agno.exceptions import AgnoError, MigrationRequiredError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -229,6 +229,7 @@ async def interface_lifespan(_, agent_os: "AgentOS"):
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
     if agent_os.auto_provision_dbs:
+        await agent_os._migrate_databases()
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
     await agent_os._acheck_sandbox_tables()
@@ -480,7 +481,8 @@ class AgentOS:
                 When unset, the existing PAT/JWT path is unchanged.
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
-            auto_provision_dbs: Whether to automatically provision databases
+            auto_provision_dbs: Whether to automatically provision databases. When on, the newest
+                migration is also applied to each database as AgentOS starts.
             authorization: The authorization setup. Prefer ``Authorization(...)`` -- one object for
                 verification, roles, the user directory, audit, and the admin API (see
                 ``agno.os.authz.Authorization``). ``True`` keeps today's scope RBAC from token
@@ -580,6 +582,9 @@ class AgentOS:
                 company = replace(company, goals=self.config.company.goals)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
+        # Databases the start could not migrate, by id(), and whether Company still has to start.
+        self._unmigrated_dbs: Set[int] = set()
+        self._company_start_pending = False
         self.checkpoint = checkpoint
 
         self.telemetry = telemetry
@@ -2265,6 +2270,13 @@ class AgentOS:
                     content=_error_body(str(exc.detail), exc),
                 )
 
+            @fastapi_app.exception_handler(MigrationRequiredError)
+            async def migration_required_handler(_: Request, exc: MigrationRequiredError) -> JSONResponse:
+                # The message names the table and the two ways to migrate it. It is written for the
+                # caller and holds no connection detail, so it is the response.
+                log_error(f"Migration required: {exc}")
+                return JSONResponse(status_code=exc.status_code, content=_error_body(str(exc), exc))
+
             @fastapi_app.exception_handler(HTTPStatusError)
             async def http_status_error_handler(_: Request, exc: HTTPStatusError) -> JSONResponse:
                 status_code = exc.response.status_code
@@ -3035,6 +3047,35 @@ class AgentOS:
         # Initialize all discovered databases
         if self.auto_provision_dbs:
             self._pending_async_db_init = True
+
+    async def _migrate_databases(self) -> None:
+        """Apply the newest migration to every local database, and to the Company database.
+
+        AgentOS starts whatever the outcome. A database that could not be migrated is reported once,
+        and Company then refuses to work on it until it is migrated.
+        """
+        from itertools import chain
+
+        from agno.db.migrations.startup import MIGRATE_ADVICE, migrate_at_startup
+
+        company_db = getattr(self, "_company_db", None)
+        candidates = chain(
+            chain.from_iterable(self.dbs.values()),
+            chain.from_iterable(self.knowledge_dbs.values()),
+            [company_db] if company_db is not None else [],
+        )
+        unique_dbs = list({id(db): db for db in candidates if isinstance(db, (BaseDb, AsyncBaseDb))}.values())
+        for db in unique_dbs:
+            outcome = await migrate_at_startup(db)
+            if not outcome.pending:
+                continue
+            self._unmigrated_dbs.add(id(db))
+            message = f"{db.__class__.__name__} (id: {db.id}) was not migrated: {outcome.reason}. {MIGRATE_ADVICE}"
+            # A database left behind an older migration works as it did, unless Company needs it.
+            if outcome.status == "failed" or self.company is not None:
+                log_error(message)
+            else:
+                log_debug(message)
 
     def _initialize_sync_databases(self) -> None:
         """Initialize sync databases."""
