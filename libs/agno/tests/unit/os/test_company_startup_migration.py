@@ -4,6 +4,7 @@ Each test runs on SQLite and on PostgreSQL, with the sync and the async adapter.
 3.2.0 fixture of the migration tests, stamped the way 3.2.0 stamps it.
 """
 
+import asyncio
 import json
 import logging
 import threading
@@ -15,6 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agno.company import Goal, Routine
+from agno.db.migrations import startup
 from agno.db.migrations.manager import MigrationManager
 from agno.db.migrations.startup import StartupMigration, _call, _sqlite_lock_path, migrate_at_startup
 from agno.db.migrations.versions import v3_3_0
@@ -488,3 +490,64 @@ async def test_every_name_of_a_sqlite_file_shares_its_lock(tmp_path):
 @pytest.mark.parametrize("url", ["sqlite://", "sqlite:///file:shared?mode=memory&cache=shared&uri=true"])
 async def test_a_sqlite_database_in_memory_has_no_lock_file(url):
     assert await _sqlite_lock_path(SqliteDb(db_url=url)) is None
+
+
+@pytest.mark.parametrize("route", ["all", "one"])
+def test_the_migrate_endpoint_takes_the_lock_of_the_start(database, ups, monkeypatch, route):
+    _write_3_2_0_database(database)
+    monkeypatch.setattr(startup, "REQUEST_LOCK_WAIT_SECONDS", 0.5)
+    agent_os = _agent_os(database, auto_provision_dbs=False)
+    db_id = agent_os.db.id
+    taken, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        async def run() -> None:
+            async with startup.migration_lock(database.db(), 5) as held:
+                assert held
+                taken.set()
+                while not release.is_set():
+                    await asyncio.sleep(0.05)
+
+        asyncio.run(run())
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert taken.wait(10)
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            path = "/databases/all/migrate" if route == "all" else f"/databases/{db_id}/migrate"
+            refused = client.post(path)
+            assert refused.status_code == (207 if route == "all" else 409), refused.text
+            assert "Another process is migrating" in refused.text
+            assert ups == []
+
+            release.set()
+            holder.join(10)
+            assert client.post(path).status_code == 200
+            assert ARCHIVED_GOAL in _goal_ids(client)
+    finally:
+        release.set()
+        holder.join(10)
+
+
+async def test_a_lock_on_a_removed_sqlite_file_is_not_taken(tmp_path, monkeypatch):
+    path = str(tmp_path / "company.db.migration-lock")
+    connect = startup.sqlite3.connect
+    removed = []
+
+    def connect_then_remove(*args, **kwargs):
+        conn = connect(*args, **kwargs)
+        if not removed:
+            # SQLite opens the file at the first statement.
+            conn.execute("PRAGMA schema_version")
+            startup.os.unlink(path)
+            removed.append(path)
+        return conn
+
+    monkeypatch.setattr(startup.sqlite3, "connect", connect_then_remove)
+
+    async with startup._sqlite_lock(path, 5) as held:
+        assert held and removed
+        async with startup._sqlite_lock(path, 0) as second:
+            assert second is False
+    assert not startup.os.path.exists(path)

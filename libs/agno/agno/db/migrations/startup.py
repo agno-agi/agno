@@ -6,7 +6,8 @@ data, so a database that is behind an older version is left as it is for the ope
 The check that decides this is one read of the schema versions table. A database that is already
 current, or that holds no table yet, is not touched and nothing is logged.
 
-One process migrates at a time. The others wait, then find nothing left to do.
+One process migrates at a time. The others wait, then find nothing left to do. The migrate endpoints
+take the same lock.
 """
 
 import asyncio
@@ -39,6 +40,8 @@ _POSTGRES_DB_TYPES = ("PostgresDb", "AsyncPostgresDb")
 _LOCK_NAME = "agno_startup_migration"
 # How long a process waits for another one that is migrating.
 LOCK_WAIT_SECONDS = 600.0
+# How long a migrate request waits. Short enough to answer before a proxy gives up on it.
+REQUEST_LOCK_WAIT_SECONDS = 20.0
 _LOCK_POLL_SECONDS = 0.2
 
 MIGRATE_ADVICE = (
@@ -151,20 +154,20 @@ def _lock_engine(db: Any) -> Any:
     return Engine(engine.pool.recreate(), engine.dialect, engine.url)
 
 
-async def _wait_for(acquire: Any) -> bool:
-    """Call ``acquire`` until it returns True or the wait is over."""
+async def _wait_for(acquire: Any, seconds: float) -> bool:
+    """Call ``acquire`` until it returns True or ``seconds`` have passed."""
     waited = 0.0
     while True:
         if await _call(acquire):
             return True
-        if waited >= LOCK_WAIT_SECONDS:
+        if waited >= seconds:
             return False
         await asyncio.sleep(_LOCK_POLL_SECONDS)
         waited += _LOCK_POLL_SECONDS
 
 
 @asynccontextmanager
-async def _postgres_lock(db: Any) -> AsyncIterator[bool]:
+async def _postgres_lock(db: Any, seconds: float) -> AsyncIterator[bool]:
     """A session advisory lock on one connection. PostgreSQL releases it when the connection ends."""
     acquire, release = "SELECT pg_try_advisory_lock(hashtext(:name))", "SELECT pg_advisory_unlock(hashtext(:name))"
     params = {"name": _LOCK_NAME}
@@ -180,7 +183,7 @@ async def _postgres_lock(db: Any) -> AsyncIterator[bool]:
         async def attempt() -> bool:
             return bool((await _call(conn.execute, text(acquire), params)).scalar())
 
-        held = await _wait_for(attempt)
+        held = await _wait_for(attempt, seconds)
         yield held
     finally:
         try:
@@ -195,8 +198,16 @@ async def _postgres_lock(db: Any) -> AsyncIterator[bool]:
             await _call(engine.dispose)
 
 
+def _file_id(path: str) -> Optional[Tuple[int, int]]:
+    try:
+        found = os.stat(path)
+    except OSError:
+        return None
+    return found.st_dev, found.st_ino
+
+
 @asynccontextmanager
-async def _sqlite_lock(path: Optional[str]) -> AsyncIterator[bool]:
+async def _sqlite_lock(path: Optional[str], seconds: float) -> AsyncIterator[bool]:
     """An exclusive transaction on a lock file beside the database. SQLite releases it when the process ends.
 
     The database file itself cannot hold the lock: the migration writes to it on other connections.
@@ -207,23 +218,50 @@ async def _sqlite_lock(path: Optional[str]) -> AsyncIterator[bool]:
     held: List[sqlite3.Connection] = []
 
     def attempt() -> bool:
-        # A new connection each time. The process that migrated removes the file, and a connection
-        # opened before that can no longer lock it.
+        # A new connection each time: the process that held the lock removed the file it was opened on.
+        os.close(os.open(path, os.O_CREAT | os.O_RDONLY, 0o644))
+        before = _file_id(path)
         conn = sqlite3.connect(path, timeout=0, isolation_level=None, check_same_thread=False)
         try:
             conn.execute("BEGIN EXCLUSIVE")
         except sqlite3.OperationalError:
             conn.close()
             return False
+        if before is None or _file_id(path) != before:
+            # The lock is on a file that was removed meanwhile, which no other process looks at.
+            conn.close()
+            return False
         held.append(conn)
         return True
 
     try:
-        yield await _wait_for(attempt)
+        yield await _wait_for(attempt, seconds)
     finally:
         for conn in held:
+            # Removed while it is still locked, so no other process holds it at that moment.
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
             conn.execute("ROLLBACK")
             conn.close()
+
+
+@asynccontextmanager
+async def migration_lock(db: Any, seconds: float) -> AsyncIterator[bool]:
+    """Let one process migrate ``db`` at a time, at the start and through the migrate endpoints.
+
+    Yields whether the lock was taken within ``seconds``. A database other than SQLite and
+    PostgreSQL has no lock and yields True.
+    """
+    if not _is_db_type(db, _SQL_DB_TYPES):
+        yield True
+    elif _is_db_type(db, _POSTGRES_DB_TYPES):
+        async with _postgres_lock(db, seconds) as held:
+            yield held
+    else:
+        async with _sqlite_lock(await _sqlite_lock_path(db), seconds) as held:
+            yield held
 
 
 async def _migrate_locked(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
@@ -262,20 +300,10 @@ async def _migrate(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
     if not pending:
         await _warn_of_unused_tables(db)
         return StartupMigration("current")
-    postgres = _is_db_type(db, _POSTGRES_DB_TYPES)
-    lock_path = None if postgres else await _sqlite_lock_path(db)
-    async with _postgres_lock(db) if postgres else _sqlite_lock(lock_path) as held:
+    async with migration_lock(db, LOCK_WAIT_SECONDS) as held:
         if not held:
             return StartupMigration("skipped", f"another process held the migration lock for {LOCK_WAIT_SECONDS:.0f}s")
-        result = await _migrate_locked(db)
-    if lock_path is not None and not result.pending:
-        # Nothing is left to migrate, so the lock file has no more use. A process that still waits
-        # on it takes the lock next and finds the same.
-        try:
-            os.unlink(lock_path)
-        except OSError:
-            pass
-    return result
+        return await _migrate_locked(db)
 
 
 async def migrate_at_startup(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
