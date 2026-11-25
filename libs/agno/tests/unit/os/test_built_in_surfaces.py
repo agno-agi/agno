@@ -122,11 +122,12 @@ class _Surfaces(_System):
         executor._client = client
         return executor
 
-    async def fire(self, schedule_id):
-        """Fire one schedule as the scheduler does. The run record it writes."""
+    async def fire(self, schedule_id, **stored):
+        """Fire one schedule as the scheduler does, with any stored fields replaced. The run record it writes."""
         async with AsyncClient(transport=ASGITransport(app=self.app), base_url="http://test") as client:
             executor = self.scheduler(client)
-            return await executor.execute(self.db.get_schedule(schedule_id), self.db, release_schedule=False)
+            row = {**self.db.get_schedule(schedule_id), **stored}
+            return await executor.execute(row, self.db, release_schedule=False)
 
 
 @pytest.fixture
@@ -360,6 +361,29 @@ async def test_a_schedule_aimed_at_super_agent_fires_only_for_an_author_who_hold
         system.authz.set_role_scopes("author", SCHEDULES + PLAIN, actor="test")
     refused = await system.fire(schedule_id)
     assert refused["status_code"] == 403 and "Insufficient permissions for scheduled target" in refused["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["author@example.com", None])
+@pytest.mark.parametrize(
+    "endpoint, built_in",
+    [
+        (f"/teams/{MANAGER_TEAM_ID}/runs", True),
+        ("/teams/superagen%74/runs", True),
+        (f"/agents/{MINI_AGENT_ID}/runs", True),
+        ("/agents/research/runs", False),
+    ],
+)
+async def test_a_schedule_with_no_saved_authority_does_not_fire_a_built_in(system, endpoint, built_in, owner):
+    # Saved while authorization was off, or from code: nobody's authority is left to ask when it fires
+    author = system.holding("token", SCHEDULES + PLAIN + NAMED, name="author")
+    created = system.schedule(author, endpoint)
+    assert created.status_code == 201, created.text
+    fired = await system.fire(created.json()["id"], payload={"message": "hi"}, user_id=owner)
+    if built_in:
+        assert fired["status_code"] == 403 and "Insufficient permissions for scheduled target" in fired["error"]
+    else:
+        assert fired["status"] == "success", fired
 
 
 # ----------------------------------------------------------------- Routines
