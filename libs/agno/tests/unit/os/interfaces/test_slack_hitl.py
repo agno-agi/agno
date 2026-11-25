@@ -557,6 +557,33 @@ class TestWhoMayDecide:
         assert len(fake.calls) == 1
 
 
+def _sender_os(tmp_path, **slack: Any):
+    """A real AgentOS whose Slack runs under authorize_senders; OWNER holds runner, with a paused run."""
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+    from agno.os.authz import Authorization, Role, UserDirectory
+
+    authz = Authorization(
+        verification_keys=["approval-test-signing-key-at-least-32-characters"],
+        algorithm="HS256",
+        roles=[Role("runner", scopes=["agents:run"]), Role("viewer", scopes=["agents:read"])],
+    )
+    directory = UserDirectory()
+    agent_os = AgentOS(
+        db=SqliteDb(db_file=str(tmp_path / "os.db")),
+        agents=[Agent(id="agent-1")],
+        authorization=authz,
+        user_directory=directory,
+        telemetry=False,
+    )
+    app = agent_os.get_app()
+    authz.assign(OWNER, "runner")
+    directory.upsert(OWNER)
+    entity = _make_entity(_paused_run([_make_requirement()], user_id=OWNER))
+    return authz, directory, make_ctx(agent=entity, authorize_senders=True, **slack).bind(app)
+
+
 class TestRestoredAuthority:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -569,29 +596,7 @@ class TestRestoredAuthority:
     )
     async def test_a_senders_paused_run_resumes_only_while_their_user_still_covers_it(self, tmp_path, change, refusal):
         # Under authorize_senders the run's user is asked again, as they are now, when the approval is clicked
-        from agno.agent import Agent
-        from agno.db.sqlite import SqliteDb
-        from agno.os import AgentOS
-        from agno.os.authz import Authorization, Role, UserDirectory
-
-        authz = Authorization(
-            verification_keys=["approval-test-signing-key-at-least-32-characters"],
-            algorithm="HS256",
-            roles=[Role("runner", scopes=["agents:run"]), Role("viewer", scopes=["agents:read"])],
-        )
-        directory = UserDirectory()
-        agent_os = AgentOS(
-            db=SqliteDb(db_file=str(tmp_path / "os.db")),
-            agents=[Agent(id="agent-1")],
-            authorization=authz,
-            user_directory=directory,
-            telemetry=False,
-        )
-        app = agent_os.get_app()
-        authz.assign(OWNER, "runner")
-        directory.upsert(OWNER)
-        entity = _make_entity(_paused_run([_make_requirement()], user_id=OWNER))
-        ctx = make_ctx(agent=entity, authorize_senders=True).bind(app)
+        authz, directory, ctx = _sender_os(tmp_path)
         if change == "disable":
             directory.set_disabled(OWNER, True)
         if change == "lesser-role":
@@ -604,6 +609,38 @@ class TestRestoredAuthority:
 
         assert len(fake.calls) == (0 if refusal else 1)
         assert _ephemerals(client) == ([refusal] if refusal else [])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("change", ["disable", "lesser-role"])
+    async def test_an_approver_is_told_the_owner_lost_access_not_that_they_did(self, tmp_path, change):
+        authz, directory, ctx = _sender_os(tmp_path, approvers=["U_APPROVER"])
+        if change == "disable":
+            directory.set_disabled(OWNER, True)
+        if change == "lesser-role":
+            authz.set_role(OWNER, "viewer")
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), user="U_APPROVER", owner=OWNER), client, ctx)
+
+        assert fake.calls == []
+        assert _ephemerals(client) == [security._OWNER_NO_ACCESS_MESSAGE]
+
+    @pytest.mark.asyncio
+    async def test_a_directory_outage_on_resume_is_not_reported_as_a_disabled_account(self, tmp_path):
+        _, directory, ctx = _sender_os(tmp_path)
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with (
+            patch.object(hitl, "continue_run", new=fake),
+            patch.object(directory, "ais_disabled", new=AsyncMock(side_effect=RuntimeError("db down"))),
+        ):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), client, ctx)
+
+        assert fake.calls == []
+        assert _ephemerals(client) == [security._DIRECTORY_UNAVAILABLE_MESSAGE]
 
     @pytest.mark.asyncio
     async def test_click_after_registry_clear_restores_owner_authority(self):
