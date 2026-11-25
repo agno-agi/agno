@@ -1024,10 +1024,10 @@ def test_a_request_for_a_declared_filesystem_loads_no_agent(db, client_factory, 
         assert response.status_code == 200, path
     assert resolved == []
 
-    # Every other request reads the agents, and the one that cannot be built fails it.
-    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
+    # Every other request reads the agents, and one that cannot be built does not hide the declared filesystem.
+    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 200
     by_namespace = client.get("/filesystem/entries", params={"namespace": "handbook"}, headers=_headers("alice"))
-    assert by_namespace.status_code == 500
+    assert by_namespace.status_code == 200
     assert "broken" in resolved
 
 
@@ -1595,13 +1595,16 @@ def test_id_forms_go_from_the_namespace_to_the_table_or_folder(tmp_path, db):
     from agno.fs.local import LocalFileSystem
     from agno.os.routers.filesystem.utils import _ID_SEPARATOR, _filesystem_id_forms
 
-    assert _filesystem_id_forms(FileSystem(db, namespace="handbook")) == (
+    forms = _filesystem_id_forms(FileSystem(db, namespace="handbook"))
+    assert forms[:3] == (
         "handbook",
         "handbook:filesystem-db",
         "handbook:filesystem-db:agno_fs",
     )
+    # The last form adds a digest of the database, never its path.
+    assert len(forms) == 4 and forms[3].startswith("handbook:filesystem-db:agno_fs:") and "/" not in forms[3]
     from_engine = FileSystem(backend=DbFileSystem(db_engine=db.db_engine, table_name="files"), namespace="handbook")
-    assert _filesystem_id_forms(from_engine) == ("handbook", "handbook:db", "handbook:db:files")
+    assert _filesystem_id_forms(from_engine)[:3] == ("handbook", "handbook:db", "handbook:db:files")
     on_disk = _filesystem_id_forms(FileSystem(backend=LocalFileSystem(root=str(tmp_path / "team")), namespace="a/b"))
     assert on_disk[:2] == ("a/b", "a/b:team")
     assert on_disk[2].startswith("a/b:team:") and str(tmp_path) not in on_disk[2]
@@ -1654,6 +1657,230 @@ def test_backends_with_the_same_names_are_numbered_in_order():
     assert _match_filesystem_id("handbook:MemoryBackend", candidates) == [0]
     assert _match_filesystem_id("handbook:MemoryBackend:2", candidates) == [1]
     assert _match_filesystem_id("handbook", candidates) == [0, 1]
+
+
+@pytest.mark.parametrize(
+    "declared_stores, held_stores",
+    [
+        ([("main", "files"), ("main", "files"), ("main", "files:2")], []),
+        ([], [("main", "files"), ("main", "files"), ("main", "files:2")]),
+        ([("main", "files"), ("main", "files")], [("main", "files:2")]),
+        ([("main:files", "t"), ("other", "t")], [("main", "files"), ("main", "files")]),
+    ],
+)
+def test_a_numbered_id_never_names_another_store(tmp_path, declared_stores, held_stores, client_factory):
+    from agno.fs.db import DbFileSystem
+
+    stores = []
+    for index, (db_id, table_name) in enumerate([*declared_stores, *held_stores]):
+        database = SqliteDb(id=db_id, db_file=str(tmp_path / f"{index}.db"))
+        store = FileSystem(DbFileSystem(db=database, table_name=table_name), namespace="notes")
+        store.write(f"store-{index}.md", "x")
+        stores.append(store)
+    declared, held = stores[: len(declared_stores)], stores[len(declared_stores) :]
+    agents = [Agent(id=f"agent-{index}", filesystem=store) for index, store in enumerate(held)]
+    client = client_factory(*agents, filesystem=declared, authorization=False)
+
+    ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+    assert len(set(ids)) == len(stores)
+    opened = set()
+    for filesystem_id in ids:
+        response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id})
+        assert response.status_code == 200, response.text
+        opened.update(entry["path"] for entry in response.json()["entries"])
+    assert opened == {f"store-{index}.md" for index in range(len(stores))}
+
+
+def test_a_number_skips_forms_and_ids_already_used():
+    from agno.os.routers.filesystem.utils import _filesystem_ids
+
+    twin = ("notes", "notes:main", "notes:main:files")
+    other = ("notes", "notes:main", "notes:main:files:2")
+
+    assert _filesystem_ids([("a", twin), ("b", twin), ("c", other)]) == {
+        "a": "notes:main:files",
+        "b": "notes:main:files:3",
+        "c": "notes:main:files:2",
+    }
+    # The ids of declared stores do not depend on what agents hold, so the held store moves.
+    ids = _filesystem_ids([("a", twin), ("b", twin)], [("c", other)])
+    assert ids == {"a": "notes:main:files", "b": "notes:main:files:2", "c": "notes:main:files:2:2"}
+
+
+def test_ids_of_databases_with_the_same_names_do_not_depend_on_their_order(tmp_path, client_factory):
+    from agno.fs.db import DbFileSystem
+
+    stores = [
+        FileSystem(DbFileSystem(db_url=f"sqlite:///{tmp_path}/{name}.db"), namespace="notes") for name in ("a", "b")
+    ]
+    opened = []
+    for order in (stores, stores[::-1]):
+        client = client_factory(filesystem=order, authorization=False)
+        ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+        stores[0].write("a.md", "x")
+        stores[1].write("b.md", "x")
+        rows = {
+            i: [e["path"] for e in client.get("/filesystem/entries", params={"filesystem_id": i}).json()["entries"]]
+            for i in ids
+        }
+        assert sorted(rows.values()) == [["a.md"], ["b.md"]]
+        opened.append(rows)
+    assert opened[0] == opened[1]
+
+
+def test_private_uri_memory_databases_are_two_filesystems(client_factory):
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from agno.fs.db import DbFileSystem
+
+    stores = []
+    for name in ("a", "b"):
+        engine = create_engine(
+            "sqlite:///file::memory:?uri=true", poolclass=StaticPool, connect_args={"check_same_thread": False}
+        )
+        store = FileSystem(DbFileSystem(db_engine=engine), namespace="notes")
+        store.write(f"{name}.md", "x")
+        stores.append(store)
+    client = client_factory(filesystem=stores, authorization=False)
+
+    assert len(client.get("/config").json()["filesystem"]["namespaces"]) == 2
+    rows = client.get("/filesystem/files").json()["entries"]
+    assert [row["path"] for row in rows] == ["a.md", "b.md"]
+
+
+def test_the_backend_key_follows_the_port_the_schema_and_the_sqlite_uri(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.fs.db import DbFileSystem
+    from agno.os.routers.filesystem.utils import _database_place, _filesystem_backend_key
+
+    monkeypatch.delenv("PGPORT", raising=False)
+
+    def place(url: str) -> tuple:
+        return _database_place(create_engine(url))
+
+    assert place("postgresql+psycopg://db/app") == place("postgresql+psycopg://db:5432/app")
+    assert place("postgresql+psycopg://db/app") != place("postgresql+psycopg://db:5433/app")
+    assert place("postgresql+psycopg:///app?host=/run&port=5433") != place(
+        "postgresql+psycopg:///app?host=/run&port=5434"
+    )
+    monkeypatch.setenv("PGPORT", "5433")
+    assert place("postgresql+psycopg://db/app") == place("postgresql+psycopg://db:5433/app")
+    # No host in the URL: the driver chooses the server, so engines are not compared.
+    first, second = (create_engine("postgresql+psycopg:///app") for _ in range(2))
+    assert _database_place(first) != _database_place(second)
+    # A SQLite file is one file through a URI too.
+    path = tmp_path / "one.db"
+    assert place(f"sqlite:///file:{path}?uri=true") == place(f"sqlite:///{path}")
+    assert place(f"sqlite:///file://{path}?uri=true") == place(f"sqlite:///{path}")
+
+    def key(url: str, db_schema) -> tuple:
+        backend = DbFileSystem(db_engine=create_engine(url), db_schema=db_schema)
+        return _filesystem_backend_key(FileSystem(backend=backend, namespace="notes"))
+
+    # Without a schema the search_path names the table; with one, the user does not matter.
+    assert key("postgresql+psycopg://one@db/app", None) != key("postgresql+psycopg://two@db/app", None)
+    assert key("postgresql+psycopg://one@db/app", "fs") == key("postgresql+psycopg://two@db/app", "fs")
+
+
+@pytest.mark.parametrize("option", ["dbname", "host", "hostaddr", "port", "service"])
+@pytest.mark.parametrize("through", ["query", "connect_args"])
+def test_a_connection_override_names_another_database(option, through, client_factory):
+    from sqlalchemy import create_engine
+
+    from agno.fs.db import DbFileSystem
+
+    url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+    engines = [
+        create_engine(f"{url}?{option}={value}")
+        if through == "query"
+        else create_engine(url, connect_args={option: value})
+        for value in ("1", "2")
+    ]
+    stores = [FileSystem(DbFileSystem(db_engine=engine), namespace="notes") for engine in engines]
+    client = client_factory(filesystem=stores, authorization=False)
+
+    ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+    assert len(set(ids)) == 2
+
+
+def test_an_engine_whose_database_is_not_known_is_its_own_place():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+    base = _database_place(create_engine(url))
+    # Options that do not choose the database, and the asynchronous driver, keep the place.
+    assert base == ("postgresql", "localhost", "5432", "ai")
+    assert _database_place(create_engine(url, connect_args={"application_name": "x"}, pool_size=1)) == base
+    assert _database_place(create_async_engine(url).sync_engine) == base
+    # An override that repeats the URL is the same database.
+    assert _database_place(create_engine(f"{url}?dbname=ai")) == base
+
+    listened = create_engine(url)
+    event.listen(listened, "do_connect", lambda *args: None)
+    for unknown in (create_engine(url, creator=lambda: None), listened, create_engine(f"{url}?dbname=host%3Dother")):
+        assert _database_place(unknown) == ("engine", id(unknown))
+
+
+@pytest.mark.parametrize("pgdatabase", [None, "postgres"])
+def test_a_connection_that_names_no_database_is_not_merged_by_its_user(pgdatabase, client_factory, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.fs.db import DbFileSystem
+
+    monkeypatch.delenv("PGDATABASE", raising=False)
+    if pgdatabase is not None:
+        monkeypatch.setenv("PGDATABASE", pgdatabase)
+    urls = ("postgresql+psycopg://ai:ai@localhost:5432", "postgresql+psycopg://ai:ai@localhost:5432/ai")
+    stores = [FileSystem(DbFileSystem(db_engine=create_engine(url)), namespace="notes") for url in urls]
+    client = client_factory(filesystem=stores, authorization=False)
+
+    ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+    assert len(set(ids)) == 2
+
+
+@pytest.mark.parametrize("variable", ["PGSERVICE", "PGHOSTADDR"])
+def test_an_environment_that_redirects_connections_leaves_the_place_unknown(variable, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    monkeypatch.setenv(variable, "elsewhere")
+    engine = create_engine("postgresql+psycopg://ai:ai@localhost:5432/ai")
+    assert _database_place(engine) == ("engine", id(engine))
+
+
+def test_a_sqlite_name_is_a_uri_only_when_opened_as_one(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    monkeypatch.chdir(tmp_path)
+    as_uri = _database_place(create_engine("sqlite:///file:one.db?uri=true"))
+    assert as_uri == _database_place(create_engine("sqlite:///one.db"))
+    assert as_uri != _database_place(create_engine("sqlite:///file:one.db"))
+
+
+def test_a_failing_agent_does_not_hide_a_declared_filesystem(db, client_factory):
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "x\n")
+    client = client_factory(_failing_factory(db), db=db, filesystem=handbook)
+
+    for path, params in (
+        ("entries", {"namespace": "handbook"}),
+        ("files", {"namespace": "handbook"}),
+        ("files", {}),
+    ):
+        response = client.get(f"/filesystem/{path}", params=params, headers=_headers("alice"))
+        assert response.status_code == 200, response.text
+        assert [row["path"] for row in response.json()["entries"]] == ["style.md"]
+    # A name no declared filesystem has may be the failing agent's, so its failure is reported.
+    for params in ({"namespace": "other"}, {"filesystem_id": "other"}):
+        assert client.get("/filesystem/entries", params=params, headers=_headers("alice")).status_code == 500
 
 
 def test_a_filesystem_on_an_async_database_is_browsable_on_every_route(tmp_path, client_factory):
@@ -1990,7 +2217,6 @@ def test_two_wrappers_on_one_engine_table_and_namespace_are_one_filesystem(tmp_p
 
 def test_the_backend_key_names_the_database_and_table_not_the_wrapper(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
-    from sqlalchemy.engine import make_url
 
     from agno.db.sqlite import AsyncSqliteDb
     from agno.fs.db import DbFileSystem
@@ -2024,15 +2250,21 @@ def test_the_backend_key_names_the_database_and_table_not_the_wrapper(tmp_path, 
         engine.dispose()
 
     def place(url: str) -> tuple:
-        return _database_place(SimpleNamespace(url=make_url(url)))
+        return _database_place(create_engine(url))
 
     # A PostgreSQL database is the same through either driver and for any user, and another on another server.
     assert place("postgresql+psycopg://ai:ai@db.internal:5432/app") == place(
         "postgresql+psycopg_async://reader@db.internal:5432/app"
     )
-    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@db.internal:5432/other")
-    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@replica.internal:5432/app")
-    assert place("postgresql://ai@/app?host=/var/run/one") != place("postgresql://ai@/app?host=/var/run/two")
+    assert place("postgresql+psycopg://ai@db.internal:5432/app") != place(
+        "postgresql+psycopg://ai@db.internal:5432/other"
+    )
+    assert place("postgresql+psycopg://ai@db.internal:5432/app") != place(
+        "postgresql+psycopg://ai@replica.internal:5432/app"
+    )
+    assert place("postgresql+psycopg://ai@/app?host=/var/run/one") != place(
+        "postgresql+psycopg://ai@/app?host=/var/run/two"
+    )
 
 
 # --- A namespace that names a team ---
