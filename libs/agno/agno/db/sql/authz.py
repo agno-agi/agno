@@ -137,62 +137,17 @@ def upsert_policy(engine: Engine, table: Any, *, role: str, resource: str, actio
         )
 
 
-def _policy_clause(
-    table: Any, role: str, resource: Optional[str], action: Optional[str], effect: Optional[str]
-) -> List[Any]:
+def delete_policy(
+    engine: Engine, table: Any, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
+) -> None:
+    """Delete a role's policy rows, optionally narrowed to one resource and action."""
     clause = [table.c.role == role]
     if resource is not None:
         clause.append(table.c.resource == resource)
     if action is not None:
         clause.append(table.c.action == action)
-    if effect is not None:
-        clause.append(table.c.effect == effect)
-    return clause
-
-
-def delete_policy(
-    engine: Engine,
-    table: Any,
-    *,
-    role: str,
-    resource: Optional[str] = None,
-    action: Optional[str] = None,
-    effect: Optional[str] = None,
-) -> None:
-    """Delete a role's policy rows, optionally narrowed to one resource, action and effect.
-
-    Naming the effect makes the delete conditional in the database: a grant another writer has
-    since flipped is left as it is, which a read followed by a delete cannot guarantee.
-    """
     with engine.begin() as conn:
-        conn.execute(delete(table).where(*_policy_clause(table, role, resource, action, effect)))
-
-
-def _moved_policy_values(role: str, to_resource: str, action: str, effect: str) -> Tuple[Dict[str, Any], List[str]]:
-    """The row a moved grant becomes, and the columns it may overwrite at its new resource.
-
-    An allow overwrites nothing, so a deny already stored there is kept. A deny replaces an allow.
-    """
-    values = {"role": role, "resource": to_resource, "action": action, "effect": effect}
-    return values, (["effect"] if effect == "deny" else [])
-
-
-def move_policy(
-    engine: Engine, table: Any, *, role: str, resource: str, action: str, effect: str, to_resource: str
-) -> bool:
-    """Move one grant to ``to_resource`` while it still has ``effect``. Returns whether it moved.
-
-    One transaction, and the delete names the effect. Done as read, write, delete, a writer who
-    flips the grant in between has that change deleted while a copy of the old effect stays.
-    """
-    with engine.begin() as conn:
-        _serialize_on(conn, f"authz:role:{role}")
-        removed = conn.execute(delete(table).where(*_policy_clause(table, role, resource, action, effect)))
-        if not removed.rowcount:
-            return False
-        values, overwrite = _moved_policy_values(role, to_resource, action, effect)
-        _upsert(conn, table, values, ["role", "resource", "action"], overwrite)
-        return True
+        conn.execute(delete(table).where(*clause))
 
 
 # ==================== Grouping: who holds which role ====================
@@ -698,30 +653,15 @@ async def aupsert_policy(
 
 
 async def adelete_policy(
-    engine: "AsyncEngine",
-    table: Any,
-    *,
-    role: str,
-    resource: Optional[str] = None,
-    action: Optional[str] = None,
-    effect: Optional[str] = None,
+    engine: "AsyncEngine", table: Any, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
 ) -> None:
+    clause = [table.c.role == role]
+    if resource is not None:
+        clause.append(table.c.resource == resource)
+    if action is not None:
+        clause.append(table.c.action == action)
     async with engine.begin() as conn:
-        await conn.execute(delete(table).where(*_policy_clause(table, role, resource, action, effect)))
-
-
-async def amove_policy(
-    engine: "AsyncEngine", table: Any, *, role: str, resource: str, action: str, effect: str, to_resource: str
-) -> bool:
-    """Async twin of :func:`move_policy`."""
-    async with engine.begin() as conn:
-        await _aserialize_on(conn, f"authz:role:{role}")
-        removed = await conn.execute(delete(table).where(*_policy_clause(table, role, resource, action, effect)))
-        if not removed.rowcount:
-            return False
-        values, overwrite = _moved_policy_values(role, to_resource, action, effect)
-        await _aupsert(conn, table, values, ["role", "resource", "action"], overwrite)
-        return True
+        await conn.execute(delete(table).where(*clause))
 
 
 # --- Grouping: who holds which role ---

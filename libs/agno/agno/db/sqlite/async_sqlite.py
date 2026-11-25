@@ -6606,23 +6606,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         )
 
     async def delete_authz_policy(
-        self,
-        *,
-        role: str,
-        resource: Optional[str] = None,
-        action: Optional[str] = None,
-        effect: Optional[str] = None,
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
     ) -> None:
         table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        await authz_sql.adelete_policy(
-            self.db_engine, table, role=role, resource=resource, action=action, effect=effect
-        )
-
-    async def move_authz_policy(self, *, role: str, resource: str, action: str, effect: str, to_resource: str) -> bool:
-        table = await self._get_table(table_type=AUTHZ_POLICY, create_table_if_not_found=True)
-        return await authz_sql.amove_policy(
-            self.db_engine, table, role=role, resource=resource, action=action, effect=effect, to_resource=to_resource
-        )
+        await authz_sql.adelete_policy(self.db_engine, table, role=role, resource=resource, action=action)
 
     async def get_authz_direct_roles(self, subject: str) -> List[str]:
         table = await self._get_table(table_type=AUTHZ_GROUPING, create_table_if_not_found=True)

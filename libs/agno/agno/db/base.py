@@ -2610,22 +2610,8 @@ class BaseDb(ABC):
         """Add or flip the effect of one (role, resource, action) grant."""
         raise NotImplementedError
 
-    def delete_authz_policy(
-        self,
-        *,
-        role: str,
-        resource: Optional[str] = None,
-        action: Optional[str] = None,
-        effect: Optional[str] = None,
-    ) -> None:
-        """Delete policy rows for a role, optionally narrowed to a resource, action and effect."""
-        raise NotImplementedError
-
-    def move_authz_policy(self, *, role: str, resource: str, action: str, effect: str, to_resource: str) -> bool:
-        """Move one grant to ``to_resource`` while it still has ``effect``, atomically.
-
-        Returns whether it moved. A deny already stored at ``to_resource`` is kept.
-        """
+    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        """Delete policy rows for a role, optionally narrowed to a resource and action."""
         raise NotImplementedError
 
     # grouping: who holds which role (and role-to-role inheritance)
@@ -4712,21 +4698,9 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def delete_authz_policy(
-        self,
-        *,
-        role: str,
-        resource: Optional[str] = None,
-        action: Optional[str] = None,
-        effect: Optional[str] = None,
+        self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None
     ) -> None:
-        """Delete a role's policy rows, optionally narrowed to one resource, action and effect."""
-        raise NotImplementedError
-
-    async def move_authz_policy(self, *, role: str, resource: str, action: str, effect: str, to_resource: str) -> bool:
-        """Move one grant to ``to_resource`` while it still has ``effect``, atomically.
-
-        Returns whether it moved. A deny already stored at ``to_resource`` is kept.
-        """
+        """Delete a role's policy rows, optionally narrowed to one resource and action."""
         raise NotImplementedError
 
     async def get_authz_direct_roles(self, subject: str) -> List[str]:
