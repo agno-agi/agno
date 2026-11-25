@@ -117,6 +117,15 @@ class MarkdownChunking(ChunkingStrategy):
                         chunks.append(chunk_text.strip())
                         current_words = []
                         current_word_len = 0
+                    # A single word can exceed the budget (e.g. CJK text, which
+                    # has no spaces). Split it into character-sized pieces so
+                    # the chunk size is still respected.
+                    if len(word) > available_size:
+                        for start in range(0, len(word), available_size):
+                            piece = word[start : start + available_size]
+                            chunk_text = heading + "\n\n" + piece if heading else piece
+                            chunks.append(chunk_text.strip())
+                        continue
                     current_words.append(word)
                     current_word_len += len(word) + 1
 

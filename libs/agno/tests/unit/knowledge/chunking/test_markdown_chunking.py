@@ -572,6 +572,15 @@ def test_split_on_headings_overlap_between_sub_chunks():
         assert chunks[i].content.startswith(prev_ending), f"Chunk {i + 1} should start with overlap from chunk {i}"
 
 
+def test_cjk_paragraph_respects_chunk_size():
+    """A heading section with a long whitespace-free (CJK) paragraph is subdivided."""
+    content = "# 标题\n\n" + "数据分析报告内容" * 20
+    chunker = MarkdownChunking(chunk_size=50, overlap=0, split_on_headings=True)
+    chunks = chunker.chunk(Document(content=content))
+    assert len(chunks) > 1
+    assert all(len(chunk.content) <= 50 for chunk in chunks)
+
+
 def test_overlap_hash_id_matches_final_content():
     """With overlap and no id/name, the hash-based id must match the final content."""
     content = (
