@@ -295,6 +295,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         limit: int = Query(20, ge=1, le=1000),
         page: int = Query(1, ge=1),
         include_deleted: bool = False,
+        # Only archived Routines, for an archived view apart from the active list.
+        deleted_only: bool = False,
         sort_by: Literal["created_at", "updated_at", "next_run_at", "schedule_type", "enabled"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         _: bool = Depends(auth),
@@ -303,13 +305,18 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
         get_scoped_user_id(request)
         rows = await call(ScheduleManager(schedule_db).alist_all)
+
+        def visible(metadata: Dict[str, Any]) -> bool:
+            archived = metadata.get("deleted_at") is not None
+            return archived if deleted_only else include_deleted or not archived
+
         selected = [
             row.to_dict()
             for row in rows
             if row.managed_by == "company"
             and (row.payload or {}).get("metadata", {}).get("product_id")
             and (product_id is None or (row.payload or {}).get("metadata", {}).get("product_id") == product_id)
-            and (include_deleted or (row.payload or {}).get("metadata", {}).get("deleted_at") is None)
+            and visible((row.payload or {}).get("metadata", {}))
         ]
         selected = sort_routines(selected, sort_by, sort_order)
         rows = await routine_responses(selected[(page - 1) * limit : page * limit])
