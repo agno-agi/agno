@@ -1,6 +1,6 @@
 """Validated declarations shared by code, YAML and blank-deployment setup."""
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Mapping, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
@@ -50,6 +50,10 @@ class AcceptanceScope(BaseModel):
     @product_ids.setter
     def product_ids(self, value: Optional[List[str]]) -> None:
         self.goal_ids = value
+
+    def model_copy(self, *, update: Optional[Mapping[str, Any]] = None, deep: bool = False) -> "AcceptanceScope":
+        """A copy. ``product_ids`` in ``update`` is the 3.2.0 name of ``goal_ids``."""
+        return super().model_copy(update=_renamed(dict(update or {}), "product_ids", "goal_ids"), deep=deep)
 
 
 class AcceptanceLimits(BaseModel):
@@ -193,6 +197,10 @@ class Goal(BaseModel):
     def purpose(self, value: Optional[str]) -> None:
         self.objective = value
 
+    def model_copy(self, *, update: Optional[Mapping[str, Any]] = None, deep: bool = False) -> "Goal":
+        """A copy. ``purpose`` in ``update`` is the 3.2.0 name of ``objective``."""
+        return super().model_copy(update=_renamed(dict(update or {}), "purpose", "objective"), deep=deep)
+
 
 # The 3.2.0 name of Goal.
 Product = Goal
@@ -218,6 +226,10 @@ class CompanyDeclarations(BaseModel):
     @products.setter
     def products(self, value: List[Goal]) -> None:
         self.goals = value
+
+    def model_copy(self, *, update: Optional[Mapping[str, Any]] = None, deep: bool = False) -> "CompanyDeclarations":
+        """A copy. ``products`` in ``update`` is the 3.2.0 name of ``goals``."""
+        return super().model_copy(update=_renamed(dict(update or {}), "products", "goals"), deep=deep)
 
 
 class IntakeProposal(BaseModel):

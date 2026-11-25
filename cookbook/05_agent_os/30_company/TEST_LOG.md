@@ -1,3 +1,59 @@
+# Upgrade from agno 3.2.0, started with defaults — November 25, 2026
+
+Branch: `refactor/company-goals`. agno 3.2.0 came from PyPI, in an environment of its own.
+
+### Upgrade run: a database built by agno 3.2.0, then this branch started on it
+
+**Status:** PASS
+
+**Description:** One application file, written for agno 3.2.0, ran on both
+versions with no edit. Its Company definition follows `app/company.py` of the
+`agentos-render` template at its `agno==3.2.0` pin: `Product(...)` with a
+`purpose`, Sources, the template's maintenance Routine on the default executor,
+and `CompanyConfig(products=...)`. It has two Products.
+
+1. Under agno 3.2.0 the application started and its API was used, with the
+   3.2.0 routes and field names, to add: a Project and a Task for each Product,
+   a wiki page for each Product, and a second Routine created at run time from
+   the packaged `intake` template. A role `goal-reader` was stored with
+   `products:read` and given to one person. 3.2.0 left the tables
+   `agno_company_products` and `agno_company_products_details`, every stamp at
+   3.0.0, the role row `products/*`, and Routines whose payload names the
+   Product under `product_id`.
+2. Under this branch the same file was started with defaults, and nothing else
+   was run. No migration command.
+3. The checks then ran against the live server, and both Routines were resumed
+   and fired with `gpt-5.6-luna`.
+4. The server was stopped and started a second time.
+
+Done once on SQLite and once on PostgreSQL.
+
+**Result:** 26 of 26 checks pass on each database.
+
+- The server starts. The migration ran at that start and changed two table
+  types, the Company tables and the schedules. No error is logged.
+- The tables and columns have their new names, and the stamp is 3.3.0.
+- Both Goals, both Projects, both Tasks, both Sources and both Routines are
+  there with the ids 3.2.0 gave them. The wiki pages are there, and a page reads
+  as it was written on 3.2.0.
+- `/company/products` answers 404, and `product_id` as a filter answers 422.
+- The role row is still the one 3.2.0 wrote, `products/*`. Its holder reads
+  Goals and cannot write them. A caller with no role is refused.
+- Both Routines fire and succeed. The stored messages still say "Product", and
+  the intake message names `read_product_source` and `intake_product_source`.
+  The model called the tools under their current names every time, with no tool
+  error: `list_goal_sources`, `read_goal_source` (3 times), `intake_goal_source`
+  and, for the maintenance Routine, `update_goal_status`. Each run proposed one
+  Backlog Task from the evidence in its Source.
+- The second start runs no migration, logs no error, and changes no table,
+  stamp or row count.
+- The Python names a 3.2.0 deployment uses import and work: `Product`,
+  `purpose=`, `CompanyConfig(products=...)`, `dataclasses.replace(config,
+  products=...)`, `AcceptanceScope(product_ids=...)`, `products_table=`,
+  `rehydrate_product` and `model_copy(update={"purpose": ...})`.
+
+---
+
 # Company chat Product creation hardening — October 19, 2026
 
 Branch: `fix/company-chat-products-hardening`, based on `codex/company-chat-products`.

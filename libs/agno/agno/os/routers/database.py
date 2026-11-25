@@ -25,7 +25,7 @@ from agno.os.utils import (
     get_db,
 )
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_info
+from agno.utils.log import log_error, log_info
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -78,11 +78,18 @@ def get_database_router(
         return None if company_db is None or any(db is company_db for db in registered) else company_db
 
     async def _start_company() -> None:
-        """Start Company if the start could not, now that its database may be migrated."""
+        """Start Company if the start could not, now that its database may be migrated.
+
+        The answer of the migrate endpoint is about the migration. A Company that still cannot start
+        is logged, as it is when AgentOS starts.
+        """
         if getattr(os, "_company_start_pending", False):
             from agno.company.bootstrap import _start_company as start_company
 
-            await start_company(os)
+            try:
+                await start_company(os)
+            except Exception as exc:
+                log_error(f"Company did not start after the migration: {type(exc).__name__}: {exc}")
 
     @router.post(
         "/databases/all/migrate",

@@ -33,9 +33,21 @@ whoever created the Goal. User isolation does not restrict Company records.
 
 ### Upgrading from agno 3.2.0
 
-In 3.2.0 a Goal was a Product and its objective was its purpose. Run the
-migration once, before you start the new version, on the Company database and
-on the AgentOS database when they are different databases:
+In 3.2.0 a Goal was a Product and its objective was its purpose. To upgrade,
+deploy the new version. AgentOS migrates its databases as it starts: it renames
+the stored tables and columns in place and keeps every id. A deployment written
+for 3.2.0 then starts with no edit.
+
+Migrate by hand only in these cases:
+
+- `auto_provision_dbs=False`. AgentOS then does not migrate at the start.
+- The automatic migration failed. AgentOS logs one error that says why.
+- A database has a table from before agno 3.0. AgentOS does not start that
+  older migration by itself.
+
+In each case AgentOS still starts, and Company refuses to work until the
+database is migrated. Run the migration on the Company database, and on the
+AgentOS database when they are different databases:
 
 ```python
 import asyncio
@@ -45,9 +57,10 @@ from agno.db.migrations.manager import MigrationManager
 asyncio.run(MigrationManager(db).up())
 ```
 
-It renames the stored tables and columns in place and keeps every id. A
-deployment written for 3.2.0 then starts with no edit. These 3.2.0 names are
-still accepted:
+Or call `POST /databases/all/migrate` once AgentOS is up. Company then starts
+without a restart.
+
+These 3.2.0 names are still accepted:
 
 | 3.2.0 | Now |
 | --- | --- |
@@ -56,12 +69,20 @@ still accepted:
 | `CompanyConfig(products=[...])` and `company: products:` in `config.yaml` | `goals` |
 | `AcceptanceScope(product_ids=[...])` | `goal_ids` |
 | `products_table=` on `SqliteDb` and `PostgresDb` | `goals_table=` |
+| `rehydrate_product` and `arehydrate_product` | `rehydrate_goal` and `arehydrate_goal` |
 | The scopes `products:read`, `products:write`, `products:delete` | `goals:read`, `goals:write`, `goals:delete` |
+
+`products` and `goals` are one permission under two names, in a token and in a
+stored role. If your application has a `products` permission of its own and
+also runs Company, rename yours before you upgrade. Otherwise its holders also
+have access to Company Goals.
 
 These changed with no alias: the routes are `/company/goals`, with the fields
 `goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`;
 the Company tools are named for Goals, for example `create_company_goal` and
-`update_goal_status`; and the tree path is `goals/<goal-id>/`.
+`update_goal_status`; and the tree path is `goals/<goal-id>/`. A request that
+still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
+with 422.
 
 ## Weekly Mini Agent review
 

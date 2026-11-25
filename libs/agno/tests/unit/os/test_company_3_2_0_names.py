@@ -911,3 +911,57 @@ async def test_rehydrate_product_declares_a_goal(tmp_path, by_keyword):
         row = await arehydrate_product(async_db, declared, trusted=True)
     assert row["id"] == "docs" and (await async_db.get_goal("docs"))["name"] == "Docs"
     await async_db.close()
+
+
+def test_company_config_init_follows_its_fields():
+    """CompanyConfig writes its constructor by hand, so it is pinned to the dataclass fields here."""
+    import dataclasses
+    import inspect
+
+    fields = dataclasses.fields(CompanyConfig)
+    parameters = inspect.signature(CompanyConfig.__init__).parameters
+    # Every field, in the order of the fields, then the one 3.2.0 name.
+    assert [name for name in parameters if name != "self"] == [field.name for field in fields] + ["products"]
+    assert parameters["products"].default is None
+    built = CompanyConfig()
+    for field in fields:
+        default = parameters[field.name].default
+        if field.default is not dataclasses.MISSING:
+            assert default == field.default, field.name
+            assert getattr(built, field.name) == field.default, field.name
+        else:
+            # A field with a factory takes None and builds its own value.
+            assert default is None, field.name
+            assert getattr(built, field.name) == field.default_factory(), field.name
+    # Each field is settable through the constructor and survives a copy.
+    values = {
+        "db": None,
+        "model": OpenAIResponses(id="offline"),
+        "goals": [Goal(name="Docs")],
+        "acceptance_checks": {"check": lambda task, context: True},
+        "automation_history_retention_days": 7,
+        "cron_expr": "*/5 * * * *",
+        "name": "Acme",
+        "description": "Makes things.",
+    }
+    assert set(values) == {field.name for field in fields}
+    config = CompanyConfig(**values)
+    for name, value in values.items():
+        assert getattr(config, name) == value, name
+        assert getattr(replace(config), name) == value, name
+
+
+def test_model_copy_reads_the_3_2_0_names():
+    scope = AcceptanceScope(goal_ids=["docs"]).model_copy(update={"product_ids": ["website"]})
+    assert scope.goal_ids == ["website"] and scope.model_dump()["goal_ids"] == ["website"]
+
+    goal = Goal(name="Docs", objective="First").model_copy(update={"purpose": "Second"})
+    assert goal.objective == "Second" and "purpose" not in goal.model_dump()
+    assert goal.model_copy(update={"objective": "Third"}, deep=True).objective == "Third"
+
+    other = Goal(name="Website")
+    declarations = CompanyDeclarations(goals=[goal]).model_copy(update={"products": [other]})
+    assert declarations.goals == [other] and list(declarations.model_dump()) == ["goals"]
+
+    with pytest.raises(ValueError, match="Give objective or purpose, not both"):
+        goal.model_copy(update={"purpose": "a", "objective": "b"})

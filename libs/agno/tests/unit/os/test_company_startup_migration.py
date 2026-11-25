@@ -247,6 +247,27 @@ def test_without_auto_provisioning_nothing_is_migrated_and_company_refuses(datab
     _assert_renamed(database)
 
 
+def test_the_migrate_endpoint_answers_for_the_migration_when_company_cannot_start(database, logged, monkeypatch):
+    _write_3_2_0_database(database)
+
+    with TestClient(_agent_os(database, auto_provision_dbs=False).get_app()) as client:
+
+        async def cannot_start(agent_os: Any) -> bool:
+            raise ValueError("Routine name is already used by another schedule")
+
+        monkeypatch.setattr("agno.company.bootstrap._start_company", cannot_start)
+        logged.clear()
+
+        migrated = client.post("/databases/all/migrate")
+
+        # The migration is done, and that is what the endpoint answers. Company's own problem is logged.
+        assert migrated.status_code == 200, migrated.text
+        assert _errors(logged) == [
+            "Company did not start after the migration: ValueError: Routine name is already used by another schedule"
+        ]
+    _assert_renamed(database)
+
+
 def test_a_new_database_starts_with_no_migration(database, ups, logged):
     with TestClient(_agent_os(database).get_app()) as client:
         assert _goal_ids(client) == []
