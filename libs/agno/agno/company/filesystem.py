@@ -13,15 +13,16 @@ database. Until the 3.3.0 migration has moved them the store refuses every use, 
 names the migration: files left where they were would look like an empty store.
 """
 
+import os
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import lru_cache
-from typing import Any, Iterator, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set
 from weakref import WeakKeyDictionary, WeakSet
 
 from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem
-from agno.fs._paths import normalize_path
+from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS, normalize_path
 from agno.fs.base import BaseFS, partition_kwargs
 from agno.fs.errors import FileSystemError, InvalidPathError
 from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
@@ -30,17 +31,41 @@ COMPANY_NAMESPACE = "company"
 # The size limit of the whole store when CompanyConfig sets none.
 COMPANY_FILESYSTEM_BYTES = 1_000_000_000
 
-_limits: "WeakKeyDictionary[Any, int]" = WeakKeyDictionary()
+# The limit set for a database, by where the database is, so every handle on it has the same limit.
+_limits: Dict[tuple, int] = {}
+# A database kept in memory belongs to the handle that opened it.
+_memory_limits: "WeakKeyDictionary[Any, int]" = WeakKeyDictionary()
+
+
+def _where(db: Any) -> Optional[tuple]:
+    """Where a database is, read from its URL: the same for a path written two ways. None when it is in memory."""
+    engine = getattr(db, "db_engine", None)
+    url = getattr(getattr(engine, "sync_engine", engine), "url", None)
+    if url is None:
+        return None
+    database = url.database
+    if url.get_backend_name() == "sqlite":
+        if not database or database == ":memory:":
+            return None
+        database = os.path.realpath(database)
+    return (url.get_backend_name(), url.host or url.query.get("host"), url.port, database)
 
 
 def set_company_filesystem_bytes(db: Any, max_bytes: int) -> None:
-    """Set the size limit of the Company file system in this database."""
-    _limits[db] = max_bytes
+    """Set the size limit of the Company file system in this database, for every handle on it."""
+    where = _where(db)
+    if where is None:
+        _memory_limits[db] = max_bytes
+    else:
+        _limits[where] = max_bytes
 
 
 def company_filesystem_bytes(db: Any) -> int:
     """The size limit of the Company file system in this database."""
-    return _limits.get(db, COMPANY_FILESYSTEM_BYTES)
+    where = _where(db)
+    if where is None:
+        return _memory_limits.get(db, COMPANY_FILESYSTEM_BYTES)
+    return _limits.get(where, COMPANY_FILESYSTEM_BYTES)
 
 
 # Stand in a folder name as they are. Every other byte of an id is escaped, "%" included.
@@ -225,6 +250,20 @@ class _Folder(BaseFS):
             raise InvalidPathError(f"invalid path {path!r}: it must be a normalized path inside {self.folder}/")
         return f"{self.folder}/{path}"
 
+    def _to_write(self, path: str) -> str:
+        """The stored path of a file to write. The limits of a path count the folder's own name."""
+        stored = self._inside(path)
+        try:
+            normalize_path(stored)
+        except InvalidPathError:
+            names = MAX_SEGMENTS - self.folder.count("/") - 1
+            chars = MAX_PATH_CHARS - len(self.folder) - 1
+            raise InvalidPathError(
+                f"invalid path {path!r}: inside {self.folder}/ a path is at most {names} names deep and {chars} "
+                f"characters, each name at most {MAX_SEGMENT_CHARS} characters."
+            ) from None
+        return stored
+
     def _directory(self, directory: str) -> str:
         return self._inside(directory) if directory else self.folder
 
@@ -264,7 +303,7 @@ class _Folder(BaseFS):
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.write, user_id, expected_version=expected_version)
         with self._named_inside():
-            return self._meta(self.backend.write(namespace, self._inside(path), content, **kwargs))
+            return self._meta(self.backend.write(namespace, self._to_write(path), content, **kwargs))
 
     def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         kwargs = self._kwargs(self.backend.list, user_id)
@@ -282,12 +321,12 @@ class _Folder(BaseFS):
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.append, user_id, max_file_bytes=max_file_bytes)
         with self._named_inside():
-            return self._meta(self.backend.append(namespace, self._inside(path), content, **kwargs))
+            return self._meta(self.backend.append(namespace, self._to_write(path), content, **kwargs))
 
     def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
         kwargs = self._kwargs(self.backend.move, user_id, overwrite=overwrite)
         with self._named_inside():
-            return self._meta(self.backend.move(namespace, self._inside(src), self._inside(dst), **kwargs))
+            return self._meta(self.backend.move(namespace, self._inside(src), self._to_write(dst), **kwargs))
 
     def search(
         self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
@@ -302,6 +341,9 @@ class _Folder(BaseFS):
 
     def usage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         return self.backend.usage(namespace, **self._kwargs(self.backend.usage, user_id))
+
+    def partitions(self, namespace: str) -> List[str]:
+        return self.backend.partitions(namespace)
 
     def _stat(self, namespace: str, path: str, *, user_id: str = "") -> Optional[FileMeta]:
         meta = self.backend._stat(namespace, self._inside(path), **self._kwargs(self.backend._stat, user_id))
@@ -321,7 +363,7 @@ class _Folder(BaseFS):
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.write, user_id, expected_version=expected_version)
         with self._named_inside():
-            return self._meta(await self.backend.awrite(namespace, self._inside(path), content, **kwargs))
+            return self._meta(await self.backend.awrite(namespace, self._to_write(path), content, **kwargs))
 
     async def alist(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         kwargs = self._kwargs(self.backend.list, user_id)
@@ -342,14 +384,14 @@ class _Folder(BaseFS):
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.append, user_id, max_file_bytes=max_file_bytes)
         with self._named_inside():
-            return self._meta(await self.backend.aappend(namespace, self._inside(path), content, **kwargs))
+            return self._meta(await self.backend.aappend(namespace, self._to_write(path), content, **kwargs))
 
     async def amove(
         self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = ""
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.move, user_id, overwrite=overwrite)
         with self._named_inside():
-            return self._meta(await self.backend.amove(namespace, self._inside(src), self._inside(dst), **kwargs))
+            return self._meta(await self.backend.amove(namespace, self._inside(src), self._to_write(dst), **kwargs))
 
     async def asearch(
         self, namespace: str, query: str, directory: str = "", limit: int = 10, *, user_id: str = ""
@@ -366,3 +408,6 @@ class _Folder(BaseFS):
 
     async def ausage(self, namespace: str, *, user_id: str = "") -> NamespaceUsage:
         return await self.backend.ausage(namespace, **self._kwargs(self.backend.usage, user_id))
+
+    async def apartitions(self, namespace: str) -> List[str]:
+        return await self.backend.apartitions(namespace)

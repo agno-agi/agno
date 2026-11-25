@@ -982,3 +982,154 @@ def test_a_full_store_is_still_read(tmp_path, use_async):
 
     assert asyncio.run(read()) == (["people.md"], "Ada")
     writer.close()
+
+
+# ------------------------------------------------------------------ the limit, for every handle on a database
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_limit_holds_for_every_handle_on_the_database(tmp_path, monkeypatch, use_async):
+    db_file = str(tmp_path / "data" / "company.db")
+    (tmp_path / "data").mkdir()
+    built_with = SqliteDb(db_file=db_file)
+    AgentOS(db=built_with, company=CompanyConfig(max_filesystem_bytes=50), telemetry=False)
+    cls = AsyncSqliteDb if use_async else SqliteDb
+    scheme = "sqlite+aiosqlite" if use_async else "sqlite"
+    monkeypatch.chdir(tmp_path)
+    handles = [
+        cls(db_file=db_file),
+        cls(db_url=f"{scheme}:///{tmp_path}/data/../data/company.db"),
+        cls(db_url=f"{scheme}:///data/company.db"),
+    ]
+    elsewhere = cls(db_file=str(tmp_path / "other.db"))
+
+    # A handle AgentOS was not built with has the limit AgentOS was given.
+    assert [company_filesystem(handle).max_namespace_bytes for handle in handles] == [50, 50, 50]
+    assert company_folder(handles[0], "notes").max_namespace_bytes == 50
+    # Another database has the default.
+    assert company_filesystem(elsewhere).max_namespace_bytes == COMPANY_FILESYSTEM_BYTES
+
+    async def fill() -> None:
+        store = company_filesystem(handles[0])
+        try:
+            if use_async:
+                await store.awrite("notes/a.md", "x" * 40)
+                await store.awrite("notes/b.md", "x" * 40)
+            else:
+                store.write("notes/a.md", "x" * 40)
+                store.write("notes/b.md", "x" * 40)
+        finally:
+            if use_async:
+                await handles[0].db_engine.dispose()
+
+    with pytest.raises(QuotaExceededError):
+        asyncio.run(fill())
+    assert stored(built_with) == {"notes/a.md": "x" * 40}
+    built_with.close()
+
+
+# ------------------------------------------------------------------ the users of a folder
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_folder_view_names_the_users_who_hold_files(tmp_path, use_async):
+    from agno.company.filesystem import _Folder
+
+    db_file = str(tmp_path / "files.db")
+    writer = SqliteDb(db_file=db_file)
+    whole = FileSystem(writer, namespace="team", user_scoped=True)
+    whole.resolve(user_id="alice").write("docs/a.md", "Alice's")
+    whole.resolve(user_id="bob").write("docs/b.md", "Bob's")
+    db = AsyncSqliteDb(db_file=db_file) if use_async else writer
+    backend = FileSystem(db, namespace="team", user_scoped=True).backend
+    folder = FileSystem(backend=_Folder(backend, "docs"), namespace="team", user_scoped=True)
+
+    async def users() -> list:
+        try:
+            return await folder.apartitions() if use_async else folder.partitions()
+        finally:
+            if use_async:
+                await db.db_engine.dispose()
+
+    assert asyncio.run(users()) == ["alice", "bob"]
+    writer.close()
+
+
+# ------------------------------------------------------------------ the length of a stored path
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_write_is_held_to_the_limits_of_the_path_as_it_is_stored(system, use_async):
+    from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
+
+    manager = CompanyManager(system.db, system.os.registry)
+    manager.create(name="Launch", id="launch")
+    files = tree(system.os)
+
+    def deep(names: int, leaf: str = "page.md") -> str:
+        return "/".join(["d"] * (names - 1) + [leaf])
+
+    def write(path: str) -> dict:
+        return call(files, "write_company_file", None, use_async, path=path, content="x", expected_version=0)
+
+    # The tree takes a whole tree path, which is the path as it is stored: it holds at most MAX_SEGMENTS names.
+    for folder, own in (("notes", 1), ("goals/launch", 2)):
+        fits, over = deep(MAX_SEGMENTS - own), deep(MAX_SEGMENTS - own + 1)
+        assert write(f"{folder}/{fits}")["path"] == f"{folder}/{fits}"
+        with pytest.raises(InvalidPathError):
+            write(f"{folder}/{over}")
+    # The wiki takes a path inside its folder. It is held to what the folder's own name leaves of the limit.
+    for goal_id, own in ((None, 1), ("launch", 2)):
+        fits, over = deep(MAX_SEGMENTS - own, "wiki.md"), deep(MAX_SEGMENTS - own + 1, "wiki.md")
+        with pytest.raises(InvalidPathError, match=f"at most {MAX_SEGMENTS - own} names deep"):
+            manager.write_wiki(goal_id=goal_id, path=over, content="x", expected_version=0)
+        assert manager.write_wiki(goal_id=goal_id, path=fits, content="x", expected_version=0).version == 1
+    # The same for the length of the whole path.
+    longest = MAX_PATH_CHARS - len("wiki/")
+    name = "n" * (MAX_SEGMENT_CHARS - 3) + ".md"
+    parts = [name] * (longest // (len(name) + 1))
+    fits = "/".join([*parts, "x" * (longest - sum(len(part) + 1 for part in parts) - 3) + ".md"])
+    assert len(f"wiki/{fits}") == MAX_PATH_CHARS
+    assert manager.write_wiki(goal_id=None, path=fits, content="x", expected_version=0).version == 1
+    with pytest.raises(InvalidPathError, match=f"{longest} characters"):
+        manager.write_wiki(goal_id=None, path=fits[:-3] + "x.md", content="x", expected_version=0)
+    # Appending to a file and moving one are writes too.
+    notes = company_folder(system.db, "notes")
+    notes.write("short.md", "x")
+    for refused in (
+        lambda: notes.append(deep(MAX_SEGMENTS, "log.md"), "x"),
+        lambda: notes.move("short.md", deep(MAX_SEGMENTS, "moved.md")),
+    ):
+        with pytest.raises(InvalidPathError, match=f"at most {MAX_SEGMENTS - 1} names deep"):
+            refused()
+    # No stored path is past a limit.
+    for path in stored(system.db):
+        assert len(path) <= MAX_PATH_CHARS and path.count("/") < MAX_SEGMENTS, path
+
+    # A file stored with a longer path, as the migration can leave one, is still read and listed.
+    over = f"wiki/{deep(MAX_SEGMENTS)}"
+    FileSystem(system.db, namespace="company", user_scoped=False).backend.write("company", over, "Kept from 3.2.0")
+    assert manager.read_wiki(None, deep(MAX_SEGMENTS)).content == "Kept from 3.2.0"
+    assert company_folder(system.db, "wiki").read(deep(MAX_SEGMENTS)) == "Kept from 3.2.0"
+    assert deep(MAX_SEGMENTS) in [page.path for page in manager.list_wiki(None, limit=100)[0]]
+
+
+def test_a_write_on_an_asynchronous_database_is_held_to_the_same_limits(tmp_path):
+    from agno.company.manager import AsyncCompanyManager
+    from agno.fs._paths import MAX_SEGMENTS
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "company.db"))
+    manager = AsyncCompanyManager(db)
+    fits = "/".join(["d"] * (MAX_SEGMENTS - 2) + ["page.md"])
+
+    async def write() -> int:
+        try:
+            with pytest.raises(InvalidPathError, match=f"at most {MAX_SEGMENTS - 1} names deep"):
+                await manager.write_wiki(goal_id=None, path=f"d/{fits}", content="x", expected_version=0)
+            with pytest.raises(InvalidPathError, match=f"at most {MAX_SEGMENTS - 1} names deep"):
+                await company_folder(db, "notes").aappend(f"d/{fits}", "x")
+            return (await manager.write_wiki(goal_id=None, path=fits, content="x", expected_version=0)).version
+        finally:
+            await db.db_engine.dispose()
+
+    assert asyncio.run(write()) == 1

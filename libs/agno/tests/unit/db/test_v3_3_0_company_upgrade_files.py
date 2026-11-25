@@ -279,3 +279,36 @@ async def test_company_tables_created_before_the_migration_do_not_hide_the_notes
     assert after[("default", "keep.md")] == before[("default", "keep.md")]
     assert len(after) == 2
     assert {database.versions()[f"agno_company_{name}"] for name in COMPANY_TABLE_TYPES} == {"3.3.0"}
+
+
+# ------------------------------------------------------------------ the file move before the rename
+
+
+async def test_the_file_move_is_refused_before_the_tables_are_renamed(database):  # noqa: F811
+    from agno.db.migrations.versions.v3_3_0 import (
+        CompanyFilesMigrationError,
+        acompany_files_pending,
+        amove_company_files,
+        company_files_pending,
+        move_company_files,
+    )
+
+    _write_3_2_0(database)
+    reader = database.sync_db()
+    _write_files_3_2_0(reader)
+    before, tables = _rows(reader), database.describe()
+    db = database.db()
+
+    async def call(sync_function: Any, async_function: Any) -> Any:
+        return await _call(async_function if database.kind.startswith("async") else sync_function, db)
+
+    # Called before MigrationManager has renamed the tables, the move does nothing and says what to run.
+    with pytest.raises(CompanyFilesMigrationError, match=r"MigrationManager\(db\)\.up\(\)"):
+        await call(move_company_files, amove_company_files)
+    assert _rows(reader) == before and database.describe() == tables
+    # The files still wait, and the migration moves them to the folders of their Goals and Tasks.
+    assert await call(company_files_pending, acompany_files_pending) is True
+    await MigrationManager(database.db()).up()
+    after = _rows(reader)
+    assert after[("company", f"goals/{GOAL}/status.md")] == before[(f"company/products/{GOAL}/wiki", "status.md")]
+    assert await call(company_files_pending, acompany_files_pending) is False
