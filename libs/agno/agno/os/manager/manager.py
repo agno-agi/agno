@@ -322,6 +322,43 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     if workspace is not None:
         _raise_if_source_tool_names_taken(config.tools)
 
+    builder_tools: List[Any] = [
+        StudioTools(
+            registry=registry,
+            db=db,
+            create_agents=True,
+            create_teams=True,
+            create_workflows=True,
+            versions=True,
+            schedules=True,
+            default_num_history_runs=5,
+            # Create, edit and publish keep version history. Archive and delete
+            # operations remove access or data, so they require confirmation.
+            requires_confirmation_tools=["archive_component", "delete_version", "delete_schedule"],
+        ),
+    ]
+    from agno.triggers.runtime import supports_triggers
+
+    # Triggers are created on the sources this AgentOS declares, so they are managed only where
+    # there is one, and where the database stores them.
+    if agent_os._trigger_sources() and supports_triggers(db):
+        from agno.tools.triggers import TriggerTools
+
+        builder_tools.append(
+            TriggerTools(
+                db=db,
+                sources=LiveSequence(agent_os._trigger_sources),
+                os_id=agent_os._trigger_os_id,
+                include_agents=LiveSequence(lambda: list(agent_os.agents or [])),
+                include_teams=LiveSequence(lambda: list(agent_os.teams or [])),
+                include_workflows=LiveSequence(lambda: list(agent_os.workflows or [])),
+                wake=agent_os._wake_trigger_poller,
+                add_instructions=True,
+                # Deleting a trigger removes its stored events with it.
+                requires_confirmation_tools=["delete_trigger"],
+            )
+        )
+
     builder = Agent(
         id=BUILDER_ID,
         metadata={"_agno": {"internal": True, "id": BUILDER_ID}},
@@ -329,21 +366,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         model=model,
         db=db,
         offload_tool_results=config.offload_tool_results,
-        tools=[
-            StudioTools(
-                registry=registry,
-                db=db,
-                create_agents=True,
-                create_teams=True,
-                create_workflows=True,
-                versions=True,
-                schedules=True,
-                default_num_history_runs=5,
-                # Create, edit and publish keep version history. Archive and delete
-                # operations remove access or data, so they require confirmation.
-                requires_confirmation_tools=["archive_component", "delete_version", "delete_schedule"],
-            ),
-        ],
+        tools=builder_tools,
         instructions=[BUILDER_INSTRUCTIONS, FOCUSED_EXECUTION_INSTRUCTIONS],
         tool_call_limit=config.member_tool_call_limit,
         add_datetime_to_context=True,

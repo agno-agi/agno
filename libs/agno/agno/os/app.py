@@ -1505,6 +1505,12 @@ class AgentOS:
                     f"AgentOS does not serve: add it to {trigger.target_type}s=[...]"
                 )
 
+    def _wake_trigger_poller(self) -> None:
+        """Have this process's trigger poller look for events now, instead of at its next poll."""
+        runtime = getattr(self, "_trigger_runtime", None)
+        if runtime is not None:
+            runtime.poller.wake()
+
     def _get_trigger_runtime(self) -> Optional[Any]:
         """The runtime that matches deliveries to triggers and runs them, when a source needs one."""
         if not self._runs_trigger_events:
