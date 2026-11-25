@@ -965,6 +965,7 @@ def test_company_config_init_follows_its_fields():
         "cron_expr": "*/5 * * * *",
         "name": "Acme",
         "description": "Makes things.",
+        "max_filesystem_bytes": 5_000_000,
     }
     assert set(values) == {field.name for field in fields}
     config = CompanyConfig(**values)
