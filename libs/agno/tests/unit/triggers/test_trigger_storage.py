@@ -391,3 +391,28 @@ async def test_a_claim_cannot_write_to_an_event_once_it_has_ended(db):
     assert (await call(db, "get_trigger_event", row["id"]))["status"] == EVENT_SUCCESS
     # A write that names no claim is the caller's own business.
     assert await call(db, "update_trigger_event", row["id"], reason="noted") is not None
+
+
+async def test_a_trigger_tied_to_no_agentos_is_given_to_one_once(db):
+    await call(db, "create_trigger", trigger_row("unmarked"))
+
+    assert await call(db, "adopt_trigger", "trg-unmarked", "first-os") is True
+    # It belongs to one now. A second taker gets nothing and changes nothing.
+    assert await call(db, "adopt_trigger", "trg-unmarked", "second-os") is False
+    assert (await call(db, "get_trigger", "trg-unmarked"))["os_id"] == "first-os"
+    assert await call(db, "adopt_trigger", "trg-missing", "first-os") is False
+
+
+async def test_a_claim_takes_only_events_of_the_sources_named(db):
+    await call(db, "create_trigger", trigger_row("anyones"))
+    elsewhere = {**event_row("d-1", trigger_id="trg-anyones", key=None), "source_id": "github/other"}
+    here = event_row("d-2", trigger_id="trg-anyones", key=None)
+    for row in (elsewhere, here):
+        assert await call(db, "create_trigger_event", row)
+
+    # The oldest event came from a source this AgentOS does not have. It is passed over.
+    taken = await call(db, "claim_trigger_event", "first:1", 120, os_id="first-os", source_ids=["github"])
+    assert taken["id"] == here["id"]
+    assert await call(db, "claim_trigger_event", "first:2", 120, os_id="first-os", source_ids=["github"]) is None
+    other = await call(db, "claim_trigger_event", "second:1", 120, os_id="second-os", source_ids=["github/other"])
+    assert other["id"] == elsewhere["id"]

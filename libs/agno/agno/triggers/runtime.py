@@ -95,8 +95,13 @@ async def adeclare_triggers(
                 unmarked = await manager.aget_by_name(trigger.name)
                 if unmarked is not None:
                     # A trigger tied to no AgentOS becomes the property of the first one that
-                    # declares its name. Any other AgentOS that declares the name gets its own row.
-                    await acall_db(db, "update_trigger", unmarked.id, os_id=os_id)
+                    # declares its name. Any other AgentOS that declares the name gets its own row:
+                    # the row is taken only while it still belongs to nobody.
+                    try:
+                        await acall_db(db, "adopt_trigger", unmarked.id, os_id)
+                    except Exception as exc:
+                        # Another replica of this AgentOS stored the name in the meantime.
+                        log_debug(f"Trigger '{trigger.name}': the row with no AgentOS was not taken: {exc}")
             stored = await manager.acreate(
                 name=trigger.name,
                 source_id=trigger.on.source_id,
@@ -178,16 +183,28 @@ async def _adeclare_schedule(db: Any, schedule_manager: Any, trigger: Trigger, o
             existing = await stored()
             if existing is None:
                 raise
+    # A schedule's name is unique in a database. One that something else manages is not this
+    # trigger's to write over, so the trigger is refused before anything is changed.
+    manager = existing.managed_by
+    if manager is not None and manager != owner:
+        if str(manager).startswith(f"{TRIGGER_MANAGED}:"):
+            raise ValueError(
+                f"Trigger '{trigger.name}' cannot be stored: the schedule named '{trigger.name}' on this database "
+                f"was declared by a trigger of AgentOS '{str(manager).split(':', 1)[1]}'. Schedule names are unique "
+                "in a database: give this trigger another name."
+            )
+        raise ValueError(
+            f"Trigger '{trigger.name}' cannot be stored: the schedule named '{trigger.name}' on this database is "
+            f"managed by {manager}. Give this trigger another name."
+        )
     if existing.cron_expr != cron or existing.timezone != timezone:
         # A new cadence has a new next run.
         fields.update(cron_expr=cron, timezone=timezone)
     # Otherwise the stored next run stands: a schedule that came due while the app was down runs
     # now, and is not pushed to its next slot by the restart.
     schedule = await schedule_manager.aupdate(existing.id, method="POST", **fields) or existing
-    # A schedule of this name that no control plane manages, or that an AgentOS's triggers declared
-    # before, becomes this AgentOS's. One managed by something else keeps its manager.
-    unmanaged = schedule.managed_by is None or str(schedule.managed_by).startswith(f"{TRIGGER_MANAGED}:")
-    if schedule.managed_by != owner and unmanaged:
+    # A schedule of this name that nothing manages becomes this AgentOS's.
+    if schedule.managed_by is None:
         await acall_db(db, "stamp_schedule_provenance", schedule.id, managed_by=owner)
         schedule.managed_by = owner
     return schedule
@@ -223,7 +240,12 @@ class TriggerRuntime:
         }
         self.executor = TriggerExecutor(base_url=base_url, internal_service_token=internal_service_token)
         self.poller = TriggerPoller(
-            db=db, executor=self.executor, runtime=self, poll_interval=poll_interval, os_id=os_id
+            db=db,
+            executor=self.executor,
+            runtime=self,
+            poll_interval=poll_interval,
+            os_id=os_id,
+            source_ids=sorted(self.sources),
         )
 
     async def astart(self, with_schedules: bool = True) -> None:

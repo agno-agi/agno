@@ -6128,6 +6128,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             triggers_sql.update_trigger, ("triggers",), trigger_id, user_id=user_id, **kwargs
         )
 
+    async def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        return await self._trigger_storage(triggers_sql.adopt_trigger, ("triggers",), trigger_id, os_id, missing=False)
+
     async def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
         return await self._trigger_storage(
             triggers_sql.delete_trigger, ("triggers", "trigger_events"), trigger_id, user_id=user_id, create=True
@@ -6187,11 +6190,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         )
 
     async def claim_trigger_event(
-        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         if os_id is None:
             return await self._trigger_storage(
-                triggers_sql.claim_trigger_event, ("trigger_events",), worker_id, stale_after_seconds
+                triggers_sql.claim_trigger_event,
+                ("trigger_events",),
+                worker_id,
+                stale_after_seconds,
+                source_ids=source_ids,
             )
         # An event that may run has a trigger, so no triggers table means nothing to claim.
         return await self._trigger_storage(
@@ -6200,6 +6211,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             worker_id,
             stale_after_seconds,
             os_id,
+            source_ids=source_ids,
         )
 
     async def renew_trigger_event_claim(self, event_id: str, worker_id: str) -> bool:

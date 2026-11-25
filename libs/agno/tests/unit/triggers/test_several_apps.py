@@ -271,3 +271,106 @@ async def test_a_trigger_with_no_agentos_id_is_adopted_by_the_first_app_that_dec
     rows = sorted(await TriggerManager(os.db).alist(), key=lambda row: row.os_id)
     assert [row.os_id for row in rows] == ["first-os", "second-os"]
     assert rows[0].id == old.id and rows[1].id != old.id
+
+
+async def test_a_trigger_with_no_agentos_id_is_adopted_once(make_os):
+    first = await make_os(nothing, declare_now=False, os_options={"id": "first-os"})
+    second = await make_os(nothing, declare_now=False, os_options={"id": "second-os"})
+    old = await TriggerManager(first.db).acreate(
+        name="triage-issues",
+        source_id=first.github.id,
+        events=["issues.opened"],
+        target_type="agent",
+        target_id="engineer",
+        input="An older instruction.",
+        provenance={"managed_by": CODE_MANAGED},
+    )
+    first_declares = await make_os(triage, os_options={"id": "first-os"})
+
+    # The second app read the row while it still had no id, just before the first one took it.
+    read = second.db.get_trigger_by_name
+    stale = [old.to_dict()]
+
+    def read_once_stale(name, user_id=None, os_id=None):
+        if os_id is None and stale:
+            return stale.pop()
+        return read(name, user_id=user_id, os_id=os_id)
+
+    second_declares = await make_os(triage, declare_now=False, os_options={"id": "second-os"})
+    second_declares.db.get_trigger_by_name = read_once_stale
+    await second_declares.start()
+
+    # The row stays the first app's. The second has a row of its own.
+    rows = sorted(await TriggerManager(first.db).alist(), key=lambda row: row.os_id)
+    assert [row.os_id for row in rows] == ["first-os", "second-os"]
+    assert rows[0].id == old.id and rows[1].id != old.id
+    assert (await first_declares.deliver(issue_payload())).json()["status"] == "accepted"
+
+
+async def test_an_app_does_not_take_events_from_a_source_it_does_not_have(make_os):
+    first = await make_os(nothing, os_options={"id": "first-os"})
+    second = await make_os(nothing, os_options={"id": "second-os"}, prefix="/github-other")
+    assert first.github.id == "github" and second.github.id == "github/github-other"
+    # A trigger tied to no AgentOS, on the first app's source.
+    await TriggerManager(first.db).acreate(
+        name="shared",
+        source_id="github",
+        events=["issues.opened"],
+        target_type="agent",
+        target_id="engineer",
+        input=INSTRUCTION,
+    )
+    await first.deliver(issue_payload())
+
+    # The second app has no such source: it could only fail the event, so it leaves it.
+    await second.run_events()
+    (row,) = await first.events()
+    assert row["status"] == EVENT_PENDING and row["claimed_by"] is None
+
+    await first.run_events()
+    (row,) = await first.events()
+    assert row["status"] == EVENT_SUCCESS
+
+
+async def test_a_schedule_managed_by_something_else_is_not_written_over(make_os):
+    import pytest
+
+    os = await make_os(nothing, declare_now=False, os_options={"id": "the-os"})
+    schedules = ScheduleManager(os.db)
+    theirs = await schedules.acreate(
+        name="nightly-report",
+        cron="0 5 * * *",
+        endpoint="/agents/reporter/runs",
+        payload={"message": "The builder's report."},
+        provenance={"managed_by": "studio", "target_type": "agent", "target_id": "reporter"},
+    )
+
+    declares = await make_os(nightly, declare_now=False, os_options={"id": "the-os"})
+    with pytest.raises(ValueError, match="schedule named 'nightly-report' on this database is managed by studio"):
+        await declares.start()
+
+    kept = await schedules.aget(theirs.id)
+    assert kept.endpoint == "/agents/reporter/runs" and kept.cron_expr == "0 5 * * *"
+    assert kept.payload["message"] == "The builder's report." and kept.managed_by == "studio"
+
+
+async def test_two_apps_cannot_share_the_name_of_a_schedule_trigger(make_os):
+    import pytest
+
+    from agno.triggers.runtime import schedule_manager_of
+
+    first = await make_os(nightly, os_options={"id": "first-os"})
+    schedules = ScheduleManager(first.db)
+    (mine,) = [row for row in await schedules.alist_all() if row.name == "nightly-report"]
+
+    def other_report(github, agent):
+        return [Trigger(name="nightly-report", on=Schedule("30 6 * * *"), agent=agent, input="The second app's.")]
+
+    second = await make_os(other_report, declare_now=False, os_options={"id": "second-os"})
+    with pytest.raises(ValueError, match="was declared by a trigger of AgentOS 'first-os'"):
+        await second.start()
+
+    # A schedule's name is unique in a database, so there is one row, and it is still the first app's.
+    kept = await schedules.aget(mine.id)
+    assert kept.cron_expr == "0 2 * * *" and kept.payload["message"] == "Write the report."
+    assert kept.managed_by == schedule_manager_of("first-os") and kept.enabled

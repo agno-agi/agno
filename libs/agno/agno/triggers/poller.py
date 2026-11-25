@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 from agno.db.schemas.triggers import EVENT_IGNORED
@@ -37,14 +37,18 @@ class TriggerPoller:
         stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
         cleanup_interval: int = 3600,
         os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
     ) -> None:
         """
         Args:
             os_id: The AgentOS this poller works for. It claims only events whose trigger that AgentOS
                 takes. None claims any event.
+            source_ids: The sources this AgentOS has. It claims only their events: one from a source
+                it does not have could only be failed. None claims events from any source.
         """
         self.db = db
         self.os_id = os_id
+        self.source_ids = source_ids
         self.executor = executor
         self.runtime = runtime
         self.poll_interval = poll_interval
@@ -121,7 +125,14 @@ class TriggerPoller:
         while len(self._in_flight) < self.max_concurrent:
             # Each claim has its own name, so a claim that expired cannot write over the one that replaced it.
             claim = f"{self.worker_id}:{uuid4().hex[:12]}"
-            row = await acall_db(self.db, "claim_trigger_event", claim, self.stale_after_seconds, os_id=self.os_id)
+            row = await acall_db(
+                self.db,
+                "claim_trigger_event",
+                claim,
+                self.stale_after_seconds,
+                os_id=self.os_id,
+                source_ids=self.source_ids,
+            )
             if row is None:
                 break
             task = asyncio.create_task(self._execute_safe(row))

@@ -2416,6 +2416,10 @@ class BaseDb(ABC):
         """Update a trigger by ID. ``user_id`` filters the row; it does not reassign the owner."""
         raise NotImplementedError
 
+    def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        """Give a trigger that is tied to no AgentOS to one. False when it already belongs to one."""
+        raise NotImplementedError
+
     def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a trigger and its events."""
         raise NotImplementedError
@@ -2466,7 +2470,11 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def claim_trigger_event(
-        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest event that may run now.
 
@@ -2476,7 +2484,8 @@ class BaseDb(ABC):
         ``worker_id`` names this one claim; pass it to renew and to guarded updates.
 
         With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
-        triggers, and the ones tied to no AgentOS.
+        triggers, and the ones tied to no AgentOS. With ``source_ids``, only an event from one of
+        those sources.
         """
         raise NotImplementedError
 
@@ -4684,6 +4693,10 @@ class AsyncBaseDb(ABC):
         """Update a trigger by ID. ``user_id`` filters the row; it does not reassign the owner."""
         raise NotImplementedError
 
+    async def adopt_trigger(self, trigger_id: str, os_id: str) -> bool:
+        """Give a trigger that is tied to no AgentOS to one. False when it already belongs to one."""
+        raise NotImplementedError
+
     async def delete_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a trigger and its events."""
         raise NotImplementedError
@@ -4734,7 +4747,11 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def claim_trigger_event(
-        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+        self,
+        worker_id: str,
+        stale_after_seconds: int = 120,
+        os_id: Optional[str] = None,
+        source_ids: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest event that may run now.
 
@@ -4744,7 +4761,8 @@ class AsyncBaseDb(ABC):
         ``worker_id`` names this one claim; pass it to renew and to guarded updates.
 
         With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
-        triggers, and the ones tied to no AgentOS.
+        triggers, and the ones tied to no AgentOS. With ``source_ids``, only an event from one of
+        those sources.
         """
         raise NotImplementedError
 

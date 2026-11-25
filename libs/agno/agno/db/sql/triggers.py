@@ -99,6 +99,19 @@ def update_trigger(
     return get_trigger(sess, triggers, trigger_id, user_id=user_id)
 
 
+def adopt_trigger(sess: Any, triggers: Any, trigger_id: str, os_id: str) -> bool:
+    """Give a trigger that is tied to no AgentOS to one. False when it already belongs to one.
+
+    One statement, so two apps that both saw the trigger without an AgentOS cannot both take it.
+    """
+    stmt = (
+        update(triggers)
+        .where(triggers.c.id == trigger_id, triggers.c.os_id.is_(None))
+        .values(os_id=os_id, updated_at=int(time.time()))
+    )
+    return sess.execute(stmt).rowcount > 0
+
+
 def delete_trigger(sess: Any, triggers: Any, events: Any, trigger_id: str, user_id: Optional[str] = None) -> bool:
     stmt = triggers.delete().where(triggers.c.id == trigger_id)
     if user_id is not None:
@@ -192,6 +205,7 @@ def claim_trigger_event(
     stale_after_seconds: int,
     triggers: Any = None,
     os_id: Optional[str] = None,
+    source_ids: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Claim the oldest event that may run now, in one statement.
 
@@ -201,7 +215,9 @@ def claim_trigger_event(
     Events with no key never wait for each other.
 
     With ``os_id``, only an event whose trigger that AgentOS takes is claimed: several AgentOS apps
-    on one database each run their own events, and replicas of one app share its events.
+    on one database each run their own events, and replicas of one app share its events. With
+    ``source_ids``, only an event from one of those sources: an app can only run the events of
+    the sources it has.
     """
     now = int(time.time())
     stale_before = now - stale_after_seconds
@@ -223,6 +239,8 @@ def claim_trigger_event(
     own = []
     if os_id is not None and triggers is not None:
         own.append(candidate.c.trigger_id.in_(select(triggers.c.id).where(_taken_by(triggers, os_id))))
+    if source_ids is not None:
+        own.append(candidate.c.source_id.in_(list(source_ids)))
     oldest = (
         select(candidate.c.id)
         .where(
@@ -249,10 +267,18 @@ def claim_trigger_event(
 
 
 def claim_trigger_event_of(
-    sess: Any, events: Any, triggers: Any, worker_id: str, stale_after_seconds: int, os_id: str
+    sess: Any,
+    events: Any,
+    triggers: Any,
+    worker_id: str,
+    stale_after_seconds: int,
+    os_id: str,
+    source_ids: Optional[Sequence[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Claim as ``claim_trigger_event`` does, among the events whose trigger one AgentOS takes."""
-    return claim_trigger_event(sess, events, worker_id, stale_after_seconds, triggers=triggers, os_id=os_id)
+    return claim_trigger_event(
+        sess, events, worker_id, stale_after_seconds, triggers=triggers, os_id=os_id, source_ids=source_ids
+    )
 
 
 def renew_trigger_event_claim(sess: Any, events: Any, event_id: str, worker_id: str) -> bool:
