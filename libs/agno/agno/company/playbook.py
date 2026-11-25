@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional
 
-from agno.company.filesystem import company_folder
+from agno.company.filesystem import company_folder, folder_name
 from agno.context.wiki.backend import DurableWikiBackend
 from agno.context.wiki.provider import WikiContextProvider
 from agno.fs._paths import normalize_path
@@ -10,7 +10,7 @@ from agno.fs.errors import VersionConflictError
 
 
 def _wiki(db: Any, goal: Optional[Dict[str, Any]] = None) -> WikiContextProvider:
-    filesystem = company_folder(db, "wiki" if goal is None else f"goals/{goal['id']}")
+    filesystem = company_folder(db, "wiki" if goal is None else f"goals/{folder_name(goal['id'])}")
     return WikiContextProvider(
         id="company-wiki" if goal is None else f"goal-{goal['id']}-wiki",
         name="Company playbook" if goal is None else f"{goal['name']} playbook",

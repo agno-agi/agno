@@ -6,7 +6,9 @@
     notes/
 
 Every file is stored at its path in the tree, in the Company file system: one store in the Company
-database. Without a Company database the same store in the AgentOS database holds notes/ alone.
+database. The folder of a Goal or a Task is its id written as one path segment, so an id with a
+slash or a space is stored under an escaped name. Without a Company database the same store in the
+AgentOS database holds notes/ alone.
 
 The store is shared. The tree is not isolated by user, including when user isolation is on, so
 notes/ is one folder for everyone who talks to Super Agent.
@@ -16,7 +18,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.company.execution import _call
-from agno.company.filesystem import arequire_company_notes_moved, company_folder, require_company_notes_moved
+from agno.company.filesystem import (
+    arequire_company_notes_moved,
+    company_folder,
+    folder_name,
+    require_company_notes_moved,
+)
 from agno.db.base import AsyncBaseDb
 from agno.fs import FileSystem
 from agno.fs._paths import normalize_directory, normalize_path
@@ -49,7 +56,13 @@ class _Location:
 
     @property
     def folder(self) -> str:
+        """The folder as a caller names it: the area, then the id of the Goal or Task."""
         return self.area if self.record_id is None else f"{self.area}/{self.record_id}"
+
+    @property
+    def stored_folder(self) -> str:
+        """The folder as the store holds it: the id is written as one path segment."""
+        return self.area if self.record_id is None else f"{self.area}/{folder_name(self.record_id)}"
 
     @property
     def tree_path(self) -> str:
@@ -57,7 +70,7 @@ class _Location:
 
     @property
     def store_path(self) -> str:
-        """The path inside the folder. The stored path is the tree path."""
+        """The path inside the folder."""
         return self.path
 
     def tree_path_of(self, stored: str) -> str:
@@ -129,16 +142,17 @@ def _require_page(location: _Location) -> None:
 class CompanyFiles:
     """Read and write the tree by path.
 
-    ``db`` is the Company database; without it only ``notes/`` exists. ``notes_db`` is the database
-    that holds ``notes/``: the Company database, or the AgentOS database when there is no Company
-    database. Without it there is no ``notes/``. Each folder is opened as a view that reaches no file
+    ``db`` is the Company database; without it only ``notes/`` exists. ``notes_db`` says whether the
+    tree has ``notes/``: without it there is none. ``notes/`` is a folder of the Company file system,
+    so it is in the Company database whenever there is one, whatever database ``notes_db`` names.
+    Without a Company database it is in ``notes_db``. Each folder is opened as a view that reaches no file
     outside it. Goal writes keep a Routine or Task run on its own Goal. Every other limit on who may
     write is the caller's to check.
     """
 
     def __init__(self, db: Any = None, notes_db: Any = None):
         self.db = db
-        self.notes_db = notes_db
+        self.notes_db = (db if db is not None else notes_db) if notes_db is not None else None
 
     @property
     def areas(self) -> List[str]:
@@ -162,7 +176,7 @@ class CompanyFiles:
         """The folder of notes/ or of one Task, which need no Company record to open."""
         if location.area == "notes":
             return company_folder(self.notes_db, "notes")
-        return company_folder(self.db, location.folder)
+        return company_folder(self.db, location.stored_folder)
 
     def _filesystem(self, location: _Location) -> FileSystem:
         self._require_area(location)

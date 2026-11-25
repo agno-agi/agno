@@ -38,6 +38,26 @@ def set_company_filesystem_bytes(db: Any, max_bytes: int) -> None:
     _limits[db] = max_bytes
 
 
+# Stand in a folder name as they are. Every other byte of an id is escaped, "%" included.
+_FOLDER_NAME_SAFE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_@+")
+
+
+def folder_name(record_id: str) -> str:
+    """The folder of a Goal or a Task under ``goals/`` or ``tasks/``: its id as one path segment.
+
+    ASCII letters, digits and ``. - _ @ +`` stand as they are, with their case. Every other byte of
+    the id in UTF-8 is written ``%xx``, the ``%`` sign included. Two ids never share a folder: not
+    ids that differ by case, by a slash, or by the Unicode form of one letter. The name is plain
+    ASCII, so no path rule changes it. An id made of one or two dots has its first dot escaped,
+    because ``.`` and ``..`` are not names a path may hold.
+    """
+    if not isinstance(record_id, str) or not record_id:
+        raise ValueError("A Goal or Task id is a non-empty string")
+    encoded = record_id.encode("utf-8", "surrogatepass")
+    name = "".join(chr(byte) if chr(byte) in _FOLDER_NAME_SAFE else f"%{byte:02x}" for byte in encoded)
+    return "%2e" + name[1:] if name in (".", "..") else name
+
+
 # Databases whose file table holds no Company file that waits to be moved. Files do not move back.
 _moved: "WeakSet[Any]" = WeakSet()
 

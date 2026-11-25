@@ -68,8 +68,8 @@ class CompanyFileTools(Toolkit):
 
     Args:
         db: The Company database. Without it the tree is notes/ only.
-        notes_db: The database that holds notes/: the Company database, or the AgentOS database
-            when there is no Company database. Without it there is no notes/. A Routine run and a
+        notes_db: Gives the tree notes/: without it there is none. notes/ is in the Company database
+            whenever there is one, and in this database when there is no Company database. A Routine run and a
             Task run never see notes/. A scheduled or service-account run of an agent that holds
             these tools counts as a person's chat, and reads and writes notes/.
         user_isolation: Deployment setting. With it on, a write to a Company folder needs a caller

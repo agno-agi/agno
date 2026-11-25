@@ -41,17 +41,29 @@ Before 3.3.0 each folder of the Company file tree was its own namespace of the f
 3.3.0 every Company file is a row of the namespace ``company``, stored at its path in the tree:
 
     company/wiki                     path p  ->  company   wiki/p
-    company/products/<id>/wiki       path p  ->  company   goals/<id>/p
-    company/tasks/<id>               path p  ->  company   tasks/<id>/p
+    company/products/<id>/wiki       path p  ->  company   goals/<folder>/p
+    company/tasks/<id>               path p  ->  company   tasks/<folder>/p
     company/notes                    path p  ->  company   notes/p
 
-Rows are rewritten in place: content, version and timestamps do not change. The files move after
-the Company tables are renamed, on the same session, for any Company table type, in every database
-that holds a file table. On PostgreSQL the tables and the files change in one transaction. The move
-reads its state from the file table, so a second run finds nothing to move and a run that stopped
-halfway is finished by the next one. A different file already stored at a new path stops the
-migration with ``CompanyFilesMigrationError``. The summary delivery state of a Goal, in
+``<folder>`` is ``agno.company.filesystem.folder_name`` of the Goal or Task id: the id as one path
+segment. 3.2.0 wrote an id into a namespace lower-cased, with a slash kept, so the owner of a
+namespace is found among the records of this database: the one Goal or Task whose id 3.2.0 would
+have written that way.
+
+Rows are rewritten in place: content, version and timestamps do not change. Only rows of the shared
+partition are Company files; a user's rows are left alone. The files move after the Company tables
+are renamed, on the same session, for any Company table type, in every database that holds a file
+table. On PostgreSQL the tables and the files change in one transaction. The move reads its state
+from the file table, so a second run finds nothing to move and a run that stopped halfway is
+finished by the next one. A different file already stored at a new path stops the migration with
+``CompanyFilesMigrationError``. The summary delivery state of a Goal, in
 ``company/products/<id>/summary-state``, is not a file of the tree and does not move.
+
+The migration never guesses where a file belongs. A namespace stays where it is, and is reported
+in the log and by ``company_files_left``, when no Goal or Task of this database has its id, or when
+several have: 3.2.0 kept the pages of ``Docs`` and ``docs`` in one namespace. Such a namespace does
+not keep the migration pending. ``move_company_files(db, owners={namespace: id})`` moves it to the
+owner it is given.
 
 A Company table is stamped with the current version when it is created, so MigrationManager does not
 trust that stamp while ``company_files_pending`` finds a file to move. Until the files have moved, the
@@ -66,14 +78,14 @@ with ``MigrationRequiredError``: notes left in the AgentOS database would look e
 from dataclasses import dataclass
 from inspect import signature
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import unquote
+from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.db.schemas.goals import goal_metadata
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 from agno.db.utils import LEGACY_GOALS_TABLE_NAME
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_warning
 
 try:
     from sqlalchemy import JSON, column, select, table, text, update
@@ -643,36 +655,59 @@ def _limit_lock_wait(sess: Any) -> None:
 # ---------------------------------------------------------------------------
 
 COMPANY_NAMESPACE = "company"
+# Company wrote the shared partition only, so a row of a user's partition is never a Company file.
+_SHARED = ""
 _WIKI, _NOTES = "company/wiki", "company/notes"
 _GOAL_PREFIX, _GOAL_SUFFIX, _TASK_PREFIX = "company/products/", "/wiki", "company/tasks/"
+# The paths of one namespace a log line names before it counts the rest.
+_REPORTED_PATHS = 20
 
 
 class CompanyFilesMigrationError(RuntimeError):
-    """A Company file cannot move because another file is already stored at its new path."""
+    """Company files cannot be moved as they are. No file was changed."""
 
 
-def _goal_segment(namespace: str) -> Optional[str]:
-    """The id part of a Goal's page namespace, or None for any other namespace."""
-    if not namespace.startswith(_GOAL_PREFIX) or not namespace.endswith(_GOAL_SUFFIX):
+def _is_goal_namespace(namespace: str) -> bool:
+    named = len(namespace) > len(_GOAL_PREFIX) + len(_GOAL_SUFFIX)
+    return named and namespace.startswith(_GOAL_PREFIX) and namespace.endswith(_GOAL_SUFFIX)
+
+
+def _is_task_namespace(namespace: str) -> bool:
+    return len(namespace) > len(_TASK_PREFIX) and namespace.startswith(_TASK_PREFIX)
+
+
+def _namespace_before(name: str) -> Optional[str]:
+    """A namespace as agno 3.2.0 stored it: composed, lower-cased and escaped, with a slash kept.
+
+    None when that version could store nothing under the name.
+    """
+    from agno.fs._paths import normalize_namespace
+    from agno.fs.errors import InvalidPathError
+
+    try:
+        return normalize_namespace(name)
+    except InvalidPathError:
         return None
-    segment = namespace[len(_GOAL_PREFIX) : -len(_GOAL_SUFFIX)]
-    return segment if segment and "/" not in segment else None
 
 
-def _task_segment(namespace: str) -> Optional[str]:
-    """The id part of a Task's folder namespace, or None for any other namespace."""
-    if not namespace.startswith(_TASK_PREFIX):
-        return None
-    segment = namespace[len(_TASK_PREFIX) :]
-    return segment if segment and "/" not in segment else None
+class _OnConnection:
+    """A connection, read the way the statements of this module read a session."""
+
+    def __init__(self, conn: Any):
+        self.bind = conn.engine
+        self._conn = conn
+
+    def execute(self, statement: Any, parameters: Any = None) -> Any:
+        return self._conn.execute(statement, parameters or {})
+
+    def connection(self) -> Any:
+        return self._conn
 
 
-def _file_table(db: Any, conn: Any, create: bool = False, any_schema: bool = False) -> Any:
+def _file_backend(db: Any, conn: Any, create: bool = False) -> Any:
     """The file table of a database, read and written on the given connection.
 
     None when the database cannot hold files, or holds no file table and none is to be created.
-    With ``any_schema`` a table from before user partitions is returned too, for a statement that
-    reads only its namespace and path columns.
     """
     from copy import copy
 
@@ -690,13 +725,23 @@ def _file_table(db: Any, conn: Any, create: bool = False, any_schema: bool = Fal
         backend._ensure_table()
     elif not inspect(conn).has_table(backend.table_name, schema=backend.db_schema):
         return None
-    elif not any_schema:
-        backend._require_current_schema()
-    return backend.table
+    return backend
 
 
-def _old_namespaces(conn: Any, files: Any) -> List[str]:
-    """The namespaces of the file table that hold Company files in the layout before 3.3.0."""
+def _has_user_partitions(backend: Any) -> bool:
+    """Whether the file table has the user partition.
+
+    A table from before it is refused by every file operation, so no version that had Company wrote
+    a file to one: it holds nothing to move.
+    """
+    return backend._is_current(*backend._schema_state())
+
+
+def _old_namespace_names(conn: Any, files: Any) -> List[str]:
+    """The namespaces of the file table that are named as Company named its own before 3.3.0.
+
+    One statement, on the namespace column alone, so it runs on a file table of any age.
+    """
     from sqlalchemy import or_
 
     rows = conn.execute(
@@ -713,99 +758,139 @@ def _old_namespaces(conn: Any, files: Any) -> List[str]:
     # A prefix match ignores case on SQLite, so each name is checked again here.
     found = {row[0] for row in rows}
     return sorted(
-        name
-        for name in found
-        if name in (_WIKI, _NOTES) or _goal_segment(name) is not None or _task_segment(name) is not None
+        name for name in found if name in (_WIKI, _NOTES) or _is_goal_namespace(name) or _is_task_namespace(name)
     )
 
 
-def _goals_and_tasks(sess: Any, db: Any, namespaces: List[str]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """The Goals and the Task ids the old namespaces may name, read after the rename.
+def _waiting_namespaces(conn: Any, backend: Any) -> List[str]:
+    """The namespaces from before 3.3.0 that hold a Company file: a file of the shared partition."""
+    files = backend.table
+    names = _old_namespace_names(conn, files)
+    if not names or not _has_user_partitions(backend):
+        return []
+    rows = conn.execute(
+        select(files.c.namespace).where(files.c.user_id == _SHARED, files.c.namespace.in_(names)).distinct()
+    )
+    return sorted(row[0] for row in rows)
 
-    Read on the session that renamed the tables, and only when a namespace names a Goal or a Task.
-    """
+
+def _records(sess: Any, db: Any, goals: bool, tasks: bool) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """The Goals and the Task ids in the Company tables of this database, before or after the rename."""
     tables = _CompanyTables.of(db)
     sql = _Sql(sess, type(db).__name__, tables.schema)
-    goals: List[Dict[str, Any]] = []
+    goal_rows: List[Dict[str, Any]] = []
     task_ids: List[str] = []
-    if any(_goal_segment(name) is not None for name in namespaces) and sql.table_exists(tables.goals):
-        rows = sess.execute(text(f"SELECT id, name, objective FROM {sql.ref(tables.goals)}")).fetchall()
-        goals = [{"id": row[0], "name": row[1], "objective": row[2]} for row in rows]
-    if any(_task_segment(name) is not None for name in namespaces) and sql.table_exists(tables.tasks):
+    if goals:
+        name = next((n for n in (tables.goals, tables.legacy_goals) if n is not None and sql.table_exists(n)), None)
+        if name is not None:
+            objective = "objective" if "objective" in sql.columns(name) else "purpose"
+            rows = sess.execute(text(f"SELECT id, name, {sql.quote(objective)} FROM {sql.ref(name)}")).fetchall()
+            goal_rows = [{"id": str(row[0]), "name": row[1], "objective": row[2]} for row in rows]
+    if tasks and sql.table_exists(tables.tasks):
         rows = sess.execute(text(f"SELECT id FROM {sql.ref(tables.tasks)}")).fetchall()
         task_ids = [str(row[0]) for row in rows]
-    return goals, task_ids
+    return goal_rows, task_ids
 
 
-def _record_id(segment: str, ids: Dict[str, str]) -> str:
-    """The id a namespace segment stands for.
+@dataclass
+class _Plan:
+    """Where the files of each waiting namespace go, and the namespaces that stay.
 
-    A namespace stored its id in lower case with other characters escaped. The record with that
-    form gives the id as it is written. A folder whose record is gone keeps the unescaped segment.
+    A namespace stays when the Goal or Task it belongs to is not certain: no record of this database
+    has its id, or more than one has. ``left`` names the ids that could own it.
     """
-    return ids.get(segment) or unquote(segment)
+
+    folders: Dict[str, str]
+    defaults: Dict[str, Dict[str, str]]
+    left: Dict[str, List[str]]
 
 
-def _folders(
-    namespaces: List[str], goals: List[Dict[str, Any]], task_ids: List[str]
-) -> Tuple[Dict[str, str], Dict[str, Dict[str, str]]]:
-    """The folder each old namespace moves into, and the default pages of each folder that has them."""
+def _plan(sess: Any, db: Any, namespaces: List[str], owners: Optional[Dict[str, str]] = None) -> _Plan:
+    """Decide where each waiting namespace goes. ``owners`` names the owner of a namespace by hand."""
+    from agno.company.filesystem import folder_name
     from agno.company.playbook import _defaults
-    from agno.fs._paths import sanitize_namespace_segment
 
-    goal_rows = {sanitize_namespace_segment(str(goal["id"])): goal for goal in goals}
-    goal_ids = {segment: str(goal["id"]) for segment, goal in goal_rows.items()}
-    tasks = {sanitize_namespace_segment(task_id): task_id for task_id in task_ids}
-    folders: Dict[str, str] = {}
-    defaults: Dict[str, Dict[str, str]] = {}
+    owners = owners or {}
+    goal_spaces = [name for name in namespaces if _is_goal_namespace(name)]
+    task_spaces = [name for name in namespaces if _is_task_namespace(name)]
+    goals, task_ids = _records(sess, db, bool(goal_spaces), bool(task_spaces))
+    by_id = {goal["id"]: goal for goal in goals}
+    # 3.2.0 lower-cased an id in a namespace and kept its slashes, so two ids can name one namespace.
+    goal_owners: Dict[str, List[str]] = {}
+    for goal in goals:
+        goal_owners.setdefault(_namespace_before(_GOAL_PREFIX + goal["id"] + _GOAL_SUFFIX) or "", []).append(goal["id"])
+    task_owners: Dict[str, List[str]] = {}
+    for task_id in task_ids:
+        task_owners.setdefault(_namespace_before(_TASK_PREFIX + task_id) or "", []).append(task_id)
+
+    for namespace, owner in owners.items():
+        known = by_id if namespace in goal_spaces else task_ids if namespace in task_spaces else None
+        if known is None:
+            raise CompanyFilesMigrationError(
+                f"{namespace} holds no files of a Goal or a Task that wait to be moved, so it takes no owner."
+            )
+        if owner not in known:
+            kind = "Goal" if namespace in goal_spaces else "Task"
+            raise CompanyFilesMigrationError(f"{owner!r} is not the id of a {kind} in this database.")
+
+    plan = _Plan({}, {}, {})
     for namespace in namespaces:
         if namespace == _WIKI:
-            folders[namespace] = "wiki"
-            defaults["wiki"] = _defaults(None)
+            plan.folders[namespace] = "wiki"
+            plan.defaults["wiki"] = _defaults(None)
         elif namespace == _NOTES:
-            folders[namespace] = "notes"
-        elif (segment := _goal_segment(namespace)) is not None:
-            folder = folders[namespace] = f"goals/{_record_id(segment, goal_ids)}"
-            if segment in goal_rows:
-                defaults[folder] = _defaults(goal_rows[segment])
-        elif (segment := _task_segment(namespace)) is not None:
-            folders[namespace] = f"tasks/{_record_id(segment, tasks)}"
-    return folders, defaults
+            plan.folders[namespace] = "notes"
+        else:
+            is_goal = namespace in goal_spaces
+            could_own = sorted((goal_owners if is_goal else task_owners).get(namespace, []))
+            if namespace in owners:
+                could_own = [owners[namespace]]
+            if len(could_own) != 1:
+                plan.left[namespace] = could_own
+            elif is_goal:
+                folder = plan.folders[namespace] = f"goals/{folder_name(could_own[0])}"
+                plan.defaults[folder] = _defaults(by_id[could_own[0]])
+            else:
+                plan.folders[namespace] = f"tasks/{folder_name(could_own[0])}"
+    return plan
 
 
 def _move(conn: Any, files: Any, folders: Dict[str, str], defaults: Dict[str, Dict[str, str]]) -> int:
-    """Move every row of each old namespace to its tree path in the Company namespace.
+    """Move every shared row of each old namespace to its tree path in the Company namespace.
 
-    A file already at the new path is settled first: the same content means the file is there
-    already, and a default page that nobody edited gives way to the page that moves in. Any other
-    file at the new path stops the move before a row changes.
+    A file already at the new path is settled first. The same content means the file is there
+    already: of the two rows the one with the higher version stays, so no version a client read
+    is given out again. A default page that nobody edited gives way to the page that moves in.
+    Any other file at the new path stops the move before a row changes.
     """
     from sqlalchemy import and_, delete, literal
 
-    settled: List[Tuple[str, str, str, bool]] = []
+    give_way: List[Tuple[str, str]] = []
+    already_there: List[Tuple[str, str]] = []
     blocked: List[str] = []
     for namespace, folder in folders.items():
         prefix = f"{folder}/"
         old, new = files.alias("old"), files.alias("new")
         clashes = conn.execute(
-            select(old.c.user_id, old.c.path, old.c.content, new.c.content, new.c.version)
+            select(old.c.path, old.c.content, old.c.version, new.c.content, new.c.version)
             .select_from(
                 old.join(
                     new,
                     and_(
                         new.c.namespace == COMPANY_NAMESPACE,
-                        new.c.user_id == old.c.user_id,
+                        new.c.user_id == _SHARED,
                         new.c.path == literal(prefix).concat(old.c.path),
                     ),
                 )
             )
-            .where(old.c.namespace == namespace)
+            .where(old.c.namespace == namespace, old.c.user_id == _SHARED)
         ).all()
-        for user_id, path, content, existing, existing_version in clashes:
-            if existing == content:
-                settled.append((namespace, user_id, path, False))
-            elif existing_version == 1 and existing == defaults.get(folder, {}).get(path):
-                settled.append((namespace, user_id, path, True))
+        for path, content, version, existing, existing_version in clashes:
+            unedited_default = existing_version == 1 and existing == defaults.get(folder, {}).get(path)
+            if existing == content and existing_version > version:
+                already_there.append((namespace, path))
+            elif existing == content or unedited_default:
+                give_way.append((COMPANY_NAMESPACE, f"{prefix}{path}"))
             else:
                 blocked.append(f"{prefix}{path}")
     if blocked:
@@ -813,207 +898,94 @@ def _move(conn: Any, files: Any, folders: Dict[str, str], defaults: Dict[str, Di
             "Company files were not moved: a different file is already stored at "
             f"{', '.join(sorted(blocked))}. Rename or delete one of the two, then run the migration again."
         )
-    for namespace, user_id, path, replace_default in settled:
-        if replace_default:
-            # The default page gives way; the page from the old namespace moves in below.
-            conn.execute(
-                delete(files).where(
-                    files.c.user_id == user_id,
-                    files.c.namespace == COMPANY_NAMESPACE,
-                    files.c.path == f"{folders[namespace]}/{path}",
-                )
-            )
-        else:
-            conn.execute(
-                delete(files).where(files.c.user_id == user_id, files.c.namespace == namespace, files.c.path == path)
-            )
+    # Each row removed here has its content in the row that stays.
+    for namespace, path in (*give_way, *already_there):
+        conn.execute(
+            delete(files).where(files.c.user_id == _SHARED, files.c.namespace == namespace, files.c.path == path)
+        )
     moved = 0
     for namespace, folder in folders.items():
         result = conn.execute(
             update(files)
-            .where(files.c.namespace == namespace)
+            .where(files.c.namespace == namespace, files.c.user_id == _SHARED)
             .values(namespace=COMPANY_NAMESPACE, path=literal(f"{folder}/").concat(files.c.path))
         )
         moved += result.rowcount or 0
     return moved
 
 
-def _move_company_files(sess: Any, db: Any) -> bool:
+def _paths_left(conn: Any, files: Any, left: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    """Each namespace that stays, with the paths of its files and the ids that could own it."""
+    rows = conn.execute(
+        select(files.c.namespace, files.c.path).where(files.c.user_id == _SHARED, files.c.namespace.in_(list(left)))
+    ).all()
+    paths: Dict[str, List[str]] = {namespace: [] for namespace in left}
+    for namespace, path in rows:
+        paths[namespace].append(path)
+    return [
+        {"namespace": namespace, "paths": sorted(paths[namespace]), "owners": left[namespace]}
+        for namespace in sorted(left)
+    ]
+
+
+def _report_left(entries: List[Dict[str, Any]]) -> None:
+    lines = []
+    for entry in entries:
+        kind = "Goal" if _is_goal_namespace(entry["namespace"]) else "Task"
+        named = entry["paths"][:_REPORTED_PATHS]
+        more = len(entry["paths"]) - len(named)
+        paths = ", ".join(named) + (f" and {more} more" if more else "")
+        if entry["owners"]:
+            why = f"3.2.0 kept the files of these {kind}s in this one namespace: {', '.join(entry['owners'])}"
+        else:
+            why = f"no {kind} of this database has its id"
+        lines.append(f"{entry['namespace']} ({paths}): {why}")
+    log_warning(
+        "Company files were left where a version before 3.3.0 kept them, because the migration cannot be sure "
+        "which Goal or Task they belong to. " + ". ".join(lines) + ". They keep their content and versions. To "
+        "move a namespace, name its owner: `move_company_files(db, owners={'<namespace>': '<goal or task id>'})` "
+        "from `agno.db.migrations.versions.v3_3_0`, or `await amove_company_files(...)` in async code."
+    )
+
+
+def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = None) -> bool:
     """Move the Company files of the session's database into the Company file system.
 
     Runs on the session that renamed the Company tables, so on PostgreSQL the tables and the files
-    change together or not at all. True when a row moved.
+    change together or not at all. True when a namespace moved.
     """
     conn = sess.connection()
-    files = _file_table(db, conn)
-    if files is None:
-        return False
-    namespaces = _old_namespaces(conn, files)
+    backend = _file_backend(db, conn)
+    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
     if not namespaces:
+        if owners:
+            raise CompanyFilesMigrationError(f"No file waits in {', '.join(sorted(owners))}.")
         return False
-    folders, defaults = _folders(namespaces, *_goals_and_tasks(sess, db, namespaces))
-    moved = _move(conn, files, folders, defaults)
-    log_info(f"Moved {moved} Company files into the Company file system")
-    return True
+    plan = _plan(sess, db, namespaces, owners)
+    if plan.folders:
+        moved = _move(conn, backend.table, plan.folders, plan.defaults)
+        log_info(f"Moved {moved} Company files into the Company file system")
+    if plan.left:
+        _report_left(_paths_left(conn, backend.table, plan.left))
+    return bool(plan.folders)
 
 
 def _files_wait(conn: Any, db: Any) -> bool:
-    """Whether the file table holds a namespace that ``_move_company_files`` moves. One statement on the table."""
-    files = _file_table(db, conn, any_schema=True)
-    return files is not None and bool(_old_namespaces(conn, files))
+    """Whether the file table holds a namespace that ``_move_company_files`` moves.
 
-
-def _files_pending(sess: Any, db: Any) -> bool:
-    return _files_wait(sess.connection(), db)
-
-
-def company_files_pending(db: BaseDb) -> bool:
-    """Whether this database still holds Company files in their namespaces from before 3.3.0."""
-    if not _is_db_type(db, SQL_DB_TYPES):
-        return False
-    with db.Session() as sess:  # type: ignore
-        return _files_pending(sess, db)
-
-
-async def acompany_files_pending(db: Any) -> bool:
-    """Async variant of ``company_files_pending``. The database may be synchronous."""
-    if not isinstance(db, AsyncBaseDb):
-        return company_files_pending(db)
-    if not _is_db_type(db, SQL_DB_TYPES):
-        return False
-    async with db.async_session_factory() as sess:  # type: ignore
-        return await sess.run_sync(lambda sync_sess: _files_pending(sync_sess, db))
-
-
-def move_company_files(db: BaseDb) -> bool:
-    """Move the Company files of a SQLite or PostgreSQL database into the Company file system.
-
-    ``MigrationManager`` does this with the Company tables. True when a row moved.
+    One statement on the file table when nothing is named as Company named its namespaces.
     """
-    if not _is_db_type(db, SQL_DB_TYPES):
-        return False
-    with db.Session() as sess, sess.begin():  # type: ignore
-        return _move_company_files(sess, db)
+    backend = _file_backend(db, conn)
+    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
+    return bool(namespaces) and bool(_plan(_OnConnection(conn), db, namespaces).folders)
 
 
-async def amove_company_files(db: AsyncBaseDb) -> bool:
-    """Async variant of ``move_company_files``."""
-    if not _is_db_type(db, SQL_DB_TYPES):
-        return False
-    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
-        return await sess.run_sync(lambda sync_sess: _move_company_files(sync_sess, db))
-
-
-# Notes kept in another database
-
-_NOTE_COLUMNS = ("user_id", "path", "content", "size_bytes", "version", "created_at", "updated_at")
-
-
-def _read_notes(sess: Any, db: Any) -> List[Dict[str, Any]]:
-    """Every note of a database, with the fields that must not change."""
+def _files_left(sess: Any, db: Any) -> List[Dict[str, Any]]:
     conn = sess.connection()
-    files = _file_table(db, conn)
-    if files is None:
-        return []
-    rows = conn.execute(
-        select(*(files.c[name] for name in _NOTE_COLUMNS)).where(
-            files.c.namespace == COMPANY_NAMESPACE, files.c.path.startswith("notes/", autoescape=True)
-        )
-    ).all()
-    # A prefix match ignores case on SQLite, so each path is checked again here.
-    return [dict(zip(_NOTE_COLUMNS, row)) for row in rows if row[1].startswith("notes/")]
-
-
-def _write_notes(sess: Any, db: Any, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Store notes as they are, and return them once every one is stored with the same content.
-
-    A different note already at a path stops the copy before a row is written.
-    """
-    conn = sess.connection()
-    files = _file_table(db, conn, create=True)
-    present = {
-        (row[0], row[1]): row[2]
-        for row in conn.execute(
-            select(files.c.user_id, files.c.path, files.c.content).where(
-                files.c.namespace == COMPANY_NAMESPACE, files.c.path.startswith("notes/", autoescape=True)
-            )
-        ).all()
-    }
-    blocked = sorted(
-        note["path"]
-        for note in notes
-        if (note["user_id"], note["path"]) in present and present[(note["user_id"], note["path"])] != note["content"]
-    )
-    if blocked:
-        raise CompanyFilesMigrationError(
-            "Notes were not moved: a different note is already stored in the Company database at "
-            f"{', '.join(blocked)}. Rename or delete one of the two, then run the move again."
-        )
-    missing = [note for note in notes if (note["user_id"], note["path"]) not in present]
-    if missing:
-        conn.execute(files.insert(), [{"namespace": COMPANY_NAMESPACE, **note} for note in missing])
-    return notes
-
-
-def _delete_notes(sess: Any, db: Any, notes: List[Dict[str, Any]]) -> int:
-    """Remove notes that are stored in the Company database now."""
-    from sqlalchemy import delete
-
-    conn = sess.connection()
-    files = _file_table(db, conn)
-    for note in notes:
-        conn.execute(
-            delete(files).where(
-                files.c.namespace == COMPANY_NAMESPACE,
-                files.c.user_id == note["user_id"],
-                files.c.path == note["path"],
-                files.c.version == note["version"],
-            )
-        )
-    return len(notes)
-
-
-def _same_file_table(source_db: Any, company_db: Any) -> bool:
-    """Whether two databases keep their files in one table: the same database, schema and table."""
-    from agno.fs import FileSystem
-
-    def place(db: Any) -> tuple:
-        backend: Any = FileSystem(db, namespace=COMPANY_NAMESPACE, user_scoped=False).backend
-        url = backend.db_engine.url
-        return (url.get_backend_name(), url.host, url.port, url.database, backend.db_schema, backend.table_name)
-
-    return place(source_db) == place(company_db)
-
-
-def _notes_can_move(source_db: Any, company_db: Any) -> bool:
-    if not _is_db_type(source_db, SQL_DB_TYPES) or not _is_db_type(company_db, SQL_DB_TYPES):
-        return False
-    # Notes in the Company database are where they belong: copying them onto themselves would remove them.
-    return not _same_file_table(source_db, company_db)
-
-
-def _take_notes(sess: Any, db: Any) -> List[Dict[str, Any]]:
-    """The notes of a database, after any still in the namespace from before 3.3.0 are put in notes/."""
-    conn = sess.connection()
-    files = _file_table(db, conn)
-    if files is None:
-        return []
-    _move(conn, files, {_NOTES: "notes"}, {})
-    return _read_notes(sess, db)
-
-
-def _notes_wait(sess: Any, db: Any) -> bool:
-    """Whether a database holds a note, in the namespace from before 3.3.0 or in notes/. One statement on the table."""
-    from sqlalchemy import and_, func, or_
-
-    conn = sess.connection()
-    files = _file_table(db, conn, any_schema=True)
-    if files is None:
-        return False
-    # substr compares case on SQLite and PostgreSQL alike; a prefix match ignores it on SQLite.
-    in_notes = and_(files.c.namespace == COMPANY_NAMESPACE, func.substr(files.c.path, 1, len("notes/")) == "notes/")
-    found = conn.execute(select(files.c.path).where(or_(files.c.namespace == _NOTES, in_notes)).limit(1))
-    return found.first() is not None
+    backend = _file_backend(db, conn)
+    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
+    left = _plan(sess, db, namespaces).left if namespaces else {}
+    return _paths_left(conn, backend.table, left) if left else []
 
 
 def _in_session(db: Any, step: Callable[[Any], Any]) -> Any:
@@ -1029,53 +1001,312 @@ async def _ain_session(db: Any, step: Callable[[Any], Any]) -> Any:
         return await sess.run_sync(step)
 
 
+def company_files_pending(db: BaseDb) -> bool:
+    """Whether this database still holds Company files that the migration moves."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    return _in_session(db, lambda sess: _files_wait(sess.connection(), db))
+
+
+async def acompany_files_pending(db: Any) -> bool:
+    """Async variant of ``company_files_pending``. The database may be synchronous."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    return await _ain_session(db, lambda sess: _files_wait(sess.connection(), db))
+
+
+def company_files_left(db: BaseDb) -> List[Dict[str, Any]]:
+    """The Company files the migration leaves where a version before 3.3.0 kept them.
+
+    One entry for each namespace whose Goal or Task is not certain: its ``namespace``, the ``paths``
+    of its files, and ``owners``, the ids that could own it. ``owners`` is empty when no record of
+    this database has the id, and holds several ids when 3.2.0 kept their files in one namespace.
+    ``move_company_files(db, owners={namespace: id})`` moves a namespace to the owner it is given.
+    """
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return []
+    return _in_session(db, lambda sess: _files_left(sess, db))
+
+
+async def acompany_files_left(db: Any) -> List[Dict[str, Any]]:
+    """Async variant of ``company_files_left``. The database may be synchronous."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return []
+    return await _ain_session(db, lambda sess: _files_left(sess, db))
+
+
+def _move_after_rename(sess: Any, db: Any, owners: Optional[Dict[str, str]]) -> bool:
+    if _rename_pending(sess, type(db).__name__, _CompanyTables.of(db)):
+        raise CompanyFilesMigrationError(
+            "Company files were not moved: the Company tables are not renamed yet, and a folder is named after "
+            "the Goal or Task in them. Run the migration, which renames the tables and then moves the files: "
+            "`asyncio.run(MigrationManager(db).up())` (import it from `agno.db.migrations.manager`)."
+        )
+    return _move_company_files(sess, db, owners)
+
+
+def move_company_files(db: BaseDb, owners: Optional[Dict[str, str]] = None) -> bool:
+    """Move the Company files of a SQLite or PostgreSQL database into the Company file system.
+
+    ``MigrationManager`` does this after it renames the Company tables, and this refuses to run
+    before that. ``owners`` names, by namespace, the Goal or Task id that takes the files of a
+    namespace ``company_files_left`` reports. True when a namespace moved.
+    """
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    return _in_session(db, lambda sess: _move_after_rename(sess, db, owners))
+
+
+async def amove_company_files(db: Any, owners: Optional[Dict[str, str]] = None) -> bool:
+    """Async variant of ``move_company_files``. The database may be synchronous."""
+    if not _is_db_type(db, SQL_DB_TYPES):
+        return False
+    return await _ain_session(db, lambda sess: _move_after_rename(sess, db, owners))
+
+
+# Notes kept in another database
+
+_NOTE_COLUMNS = ("path", "content", "size_bytes", "version", "created_at", "updated_at")
+# Holds one row while a move makes sure its two databases are two: never a note.
+_PROBE_NAMESPACE = "company/notes-move"
+
+
+def _file_place(sess: Any, db: Any) -> tuple:
+    """Where a database keeps its files, as the database itself answers.
+
+    The same for every way of reaching one database: a path written two ways, a link, a host under
+    two names. An in-memory database is the place of its own engine, so two of them are two places.
+    """
+    import os
+
+    from agno.fs import FileSystem
+
+    conn = sess.connection()
+    backend: Any = FileSystem(db, namespace=COMPANY_NAMESPACE, user_scoped=False).backend
+    table = (backend.db_schema, backend.table_name)
+    if conn.dialect.name == "postgresql":
+        cluster, database = conn.execute(
+            text("SELECT (SELECT system_identifier FROM pg_control_system()), current_database()")
+        ).one()
+        return ("postgresql", str(cluster), database, *table)
+    file = next((row[2] for row in conn.execute(text("PRAGMA database_list")).fetchall() if row[1] == "main"), "")
+    if not file:
+        return ("sqlite", "memory", id(conn.engine), *table)
+    try:
+        stat = os.stat(file)
+    except OSError:
+        return ("sqlite", os.path.realpath(file), *table)
+    return ("sqlite", stat.st_dev, stat.st_ino, *table)
+
+
+def _notes_can_move(source_db: Any, company_db: Any) -> bool:
+    return _is_db_type(source_db, SQL_DB_TYPES) and _is_db_type(company_db, SQL_DB_TYPES)
+
+
+def _is_note(files: Any) -> Any:
+    """Rows that are notes: in the namespace from before 3.3.0, or under notes/ in the Company namespace."""
+    from sqlalchemy import and_, func, or_
+
+    # substr compares case on SQLite and PostgreSQL alike; a prefix match ignores it on SQLite.
+    in_folder = and_(files.c.namespace == COMPANY_NAMESPACE, func.substr(files.c.path, 1, len("notes/")) == "notes/")
+    return or_(files.c.namespace == _NOTES, in_folder)
+
+
+def _notes_wait(sess: Any, db: Any) -> bool:
+    """Whether a database holds a shared note. One statement on the file table when it holds none."""
+    conn = sess.connection()
+    backend = _file_backend(db, conn)
+    if backend is None:
+        return False
+    files = backend.table
+    if conn.execute(select(files.c.path).where(_is_note(files)).limit(1)).first() is None:
+        return False
+    if not _has_user_partitions(backend):
+        return False
+    return (
+        conn.execute(select(files.c.path).where(_is_note(files), files.c.user_id == _SHARED).limit(1)).first()
+        is not None
+    )
+
+
+def _take_notes(sess: Any, db: Any) -> List[Dict[str, Any]]:
+    """The shared notes of a database, after any still in the namespace from before 3.3.0 are put in notes/."""
+    if not _notes_wait(sess, db):
+        return []
+    conn = sess.connection()
+    files = _file_backend(db, conn).table
+    _move(conn, files, {_NOTES: "notes"}, {})
+    rows = conn.execute(
+        select(*(files.c[name] for name in _NOTE_COLUMNS)).where(
+            files.c.namespace == COMPANY_NAMESPACE, files.c.user_id == _SHARED, _is_note(files)
+        )
+    ).all()
+    return [dict(zip(_NOTE_COLUMNS, row)) for row in rows]
+
+
+def _notes_in_place(files: Any) -> tuple:
+    return (files.c.namespace == COMPANY_NAMESPACE, files.c.user_id == _SHARED, _is_note(files))
+
+
+def _write_notes(sess: Any, db: Any, notes: List[Dict[str, Any]]) -> None:
+    """Store notes in the Company database.
+
+    A different note already at a path stops the copy before a row is written. A note already there
+    with the same content takes the higher of the two versions, with the timestamps that go with it.
+    """
+    conn = sess.connection()
+    files = _file_backend(db, conn, create=True).table
+    in_place = _notes_in_place(files)
+    rows = conn.execute(select(files.c.path, files.c.content, files.c.version).where(*in_place)).all()
+    before = {row[0]: (row[1], row[2]) for row in rows}
+    blocked = sorted(n["path"] for n in notes if n["path"] in before and before[n["path"]][0] != n["content"])
+    if blocked:
+        raise CompanyFilesMigrationError(
+            "Notes were not moved: a different note is already stored in the Company database at "
+            f"{', '.join(blocked)}. Rename or delete one of the two, then run the move again."
+        )
+    missing = [note for note in notes if note["path"] not in before]
+    if missing:
+        conn.execute(files.insert(), [{"namespace": COMPANY_NAMESPACE, "user_id": _SHARED, **n} for n in missing])
+    for note in notes:
+        if note["path"] in before and before[note["path"]][1] < note["version"]:
+            kept = {name: note[name] for name in ("version", "created_at", "updated_at")}
+            conn.execute(update(files).where(*in_place, files.c.path == note["path"]).values(**kept))
+
+
+def _notes_held(sess: Any, db: Any, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The notes a database is seen to hold with the same content, read after the write is committed."""
+    conn = sess.connection()
+    backend = _file_backend(db, conn)
+    if backend is None:
+        return []
+    files = backend.table
+    rows = conn.execute(select(files.c.path, files.c.content).where(*_notes_in_place(files))).all()
+    held = {row[0]: row[1] for row in rows}
+    return [note for note in notes if note["path"] in held and held[note["path"]] == note["content"]]
+
+
+def _delete_notes(sess: Any, db: Any, notes: List[Dict[str, Any]]) -> int:
+    """Remove from the AgentOS database the notes the Company database holds now."""
+    from sqlalchemy import delete
+
+    conn = sess.connection()
+    files = _file_backend(db, conn).table
+    removed = 0
+    for note in notes:
+        result = conn.execute(
+            delete(files).where(
+                files.c.namespace == COMPANY_NAMESPACE,
+                files.c.user_id == _SHARED,
+                files.c.path == note["path"],
+                files.c.version == note["version"],
+                files.c.content == note["content"],
+            )
+        )
+        removed += result.rowcount or 0
+    return removed
+
+
+def _probe(sess: Any, db: Any, token: str, step: str) -> bool:
+    """Write, look for, or remove the row that tells two file tables apart."""
+    from sqlalchemy import delete
+
+    conn = sess.connection()
+    backend = _file_backend(db, conn, create=step == "write")
+    if backend is None:
+        return False
+    files = backend.table
+    mine = (files.c.namespace == _PROBE_NAMESPACE, files.c.user_id == _SHARED, files.c.path == token)
+    if step == "write":
+        row = {"namespace": _PROBE_NAMESPACE, "user_id": _SHARED, "path": token, "content": "", "size_bytes": 0}
+        conn.execute(files.insert(), [{**row, "version": 1, "created_at": 0, "updated_at": None}])
+        return True
+    if step == "look":
+        return conn.execute(select(files.c.path).where(*mine)).first() is not None
+    conn.execute(delete(files).where(*mine))
+    return True
+
+
+def _place_of_notes(sess: Any, db: Any) -> Optional[tuple]:
+    """Where a database keeps its files, when it holds a shared note."""
+    return _file_place(sess, db) if _notes_wait(sess, db) else None
+
+
 def company_notes_to_move(source_db: BaseDb, company_db: BaseDb) -> bool:
     """Whether the AgentOS database holds notes that ``move_company_notes`` moves to the Company database.
 
-    False when the two keep their files in one table: the notes are where they belong.
+    False when the two keep their files in one table, however each is reached: the notes are where
+    they belong.
     """
     if not _notes_can_move(source_db, company_db):
         return False
-    return _in_session(source_db, lambda sess: _notes_wait(sess, source_db))
+    source = _in_session(source_db, lambda sess: _place_of_notes(sess, source_db))
+    return source is not None and source != _in_session(company_db, lambda sess: _file_place(sess, company_db))
 
 
 async def acompany_notes_to_move(source_db: Any, company_db: Any) -> bool:
     """Async variant of ``company_notes_to_move``. Either database may be synchronous."""
     if not _notes_can_move(source_db, company_db):
         return False
-    return await _ain_session(source_db, lambda sess: _notes_wait(sess, source_db))
+    source = await _ain_session(source_db, lambda sess: _place_of_notes(sess, source_db))
+    if source is None:
+        return False
+    return source != await _ain_session(company_db, lambda sess: _file_place(sess, company_db))
 
 
 def move_company_notes(source_db: BaseDb, company_db: BaseDb) -> int:
     """Move notes/ from the AgentOS database to the Company database, for a deployment that keeps two.
 
     Before 3.3.0 notes were stored in the AgentOS database. From 3.3.0 they are a folder of the
-    Company file system, in the Company database. Each note is copied with its content, version and
-    timestamps, and removed from the AgentOS database after the copy is stored. Returns the number
-    of notes moved.
+    Company file system, in the Company database. Each shared note is copied with its content,
+    version and timestamps, and removed from the AgentOS database after the Company database is
+    seen to hold it. Returns the number of notes moved.
+
+    Nothing is removed unless the two databases are two: a row written through one must not be
+    seen through the other. Two handles on one database, however each names it, move nothing.
 
     Notes are moved from the namespace 3.2.0 kept them in and from notes/, so the call does not
     depend on ``MigrationManager`` having run on the AgentOS database. Calling it again moves
     nothing, and a call that stopped after the copy is finished by the next one. Use
     ``amove_company_notes`` when either database is asynchronous.
     """
-    if not _notes_can_move(source_db, company_db):
+    if not company_notes_to_move(source_db, company_db):
         return 0
     notes = _in_session(source_db, lambda sess: _take_notes(sess, source_db))
     if not notes:
         return 0
-    stored = _in_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    _in_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    stored = _in_session(company_db, lambda sess: _notes_held(sess, company_db, notes))
+    if not stored:
+        return 0
+    token = uuid4().hex
+    _in_session(source_db, lambda sess: _probe(sess, source_db, token, "write"))
+    try:
+        if _in_session(company_db, lambda sess: _probe(sess, company_db, token, "look")):
+            return 0
+    finally:
+        _in_session(source_db, lambda sess: _probe(sess, source_db, token, "remove"))
     return _in_session(source_db, lambda sess: _delete_notes(sess, source_db, stored))
 
 
 async def amove_company_notes(source_db: Any, company_db: Any) -> int:
     """Async variant of ``move_company_notes``. Either database may be synchronous."""
-    if not _notes_can_move(source_db, company_db):
+    if not await acompany_notes_to_move(source_db, company_db):
         return 0
     notes = await _ain_session(source_db, lambda sess: _take_notes(sess, source_db))
     if not notes:
         return 0
-    stored = await _ain_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    await _ain_session(company_db, lambda sess: _write_notes(sess, company_db, notes))
+    stored = await _ain_session(company_db, lambda sess: _notes_held(sess, company_db, notes))
+    if not stored:
+        return 0
+    token = uuid4().hex
+    await _ain_session(source_db, lambda sess: _probe(sess, source_db, token, "write"))
+    try:
+        if await _ain_session(company_db, lambda sess: _probe(sess, company_db, token, "look")):
+            return 0
+    finally:
+        await _ain_session(source_db, lambda sess: _probe(sess, source_db, token, "remove"))
     return await _ain_session(source_db, lambda sess: _delete_notes(sess, source_db, stored))
 
 

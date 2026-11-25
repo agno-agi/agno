@@ -844,3 +844,92 @@ def test_a_folder_reaches_no_other_folder_on_postgres(postgres_url, use_async):
             db.close()
 
     asyncio.run(run())
+
+
+# ------------------------------------------------------------------ the folder of an id
+
+
+def test_a_folder_name_is_one_path_segment_and_keeps_ids_apart():
+    from agno.company.filesystem import folder_name
+    from agno.fs._paths import normalize_path
+
+    ids = [
+        "launch", "Launch", "LAUNCH", "docs team", "docs%20team", "docs+team", "team", "team/growth", "team%2fgrowth",
+        "/team", "team/", "a//b", "a/b", ".", "..", "...", "%2e", "%2e.", "café", "café", "a\\b", "a\tb",
+        "x{user_id}", "50%off", "me@example.com", " ", "  ", "名前",
+    ]  # fmt: skip
+    names = [folder_name(record_id) for record_id in ids]
+    # Different ids have different folders, and each folder is one plain segment that a path keeps as written.
+    assert len(set(names)) == len(ids)
+    for name in names:
+        assert "/" not in name and name.isascii()
+        assert normalize_path(f"goals/{name}/brief.md") == f"goals/{name}/brief.md"
+    assert folder_name("launch") == "launch" and folder_name("Docs-1_v2.x") == "Docs-1_v2.x"
+    assert folder_name("me@example.com") == "me@example.com"
+    assert folder_name("Docs Team") == "Docs%20Team" and folder_name("team/growth") == "team%2fgrowth"
+    assert (folder_name("."), folder_name("..")) == ("%2e", "%2e.")
+    for empty in ("", None):
+        with pytest.raises(ValueError):
+            folder_name(empty)
+    # A Task's folder is named the same way. A caller still names the Task by its id.
+    from agno.company.files import _locate
+
+    location = _locate("tasks/Task 1/report.md")
+    assert (location.folder, location.stored_folder, location.tree_path) == (
+        "tasks/Task 1",
+        "tasks/Task%201",
+        "tasks/Task 1/report.md",
+    )
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_goals_whose_ids_differ_by_a_slash_or_by_case_keep_their_pages_apart(system, use_async):
+    manager = CompanyManager(system.db, system.os.registry)
+    ids = ["team", "team/growth", "Docs", "docs", "café", "café"]
+    for goal_id in ids:
+        manager.create(name=goal_id, id=goal_id)
+        manager.write_wiki(goal_id=goal_id, path="notes.md", content=f"Of {goal_id}", expected_version=0)
+    manager.write_wiki(goal_id="team", path="growth/notes.md", content="The team's page", expected_version=0)
+
+    for goal_id in ids:
+        assert manager.read_wiki(goal_id, "notes.md").content == f"Of {goal_id}"
+    assert sorted(page.path for page in manager.list_wiki("team", limit=100)[0]) == [
+        "brief.md", "growth/notes.md", "notes.md", "status.md",
+    ]  # fmt: skip
+    assert sorted(page.path for page in manager.list_wiki("team/growth", limit=100)[0]) == [
+        "brief.md", "notes.md", "status.md",
+    ]  # fmt: skip
+    # Each Goal has one folder of the store, named by its id written as one segment.
+    folders = {
+        path.split("/")[1] for path in stored(system.db) if path.startswith("goals/") and path.endswith("/notes.md")
+    }
+    assert folders >= {"team", "team%2fgrowth", "Docs", "docs", "cafe%cc%81", "caf%c3%a9"}
+    # The tree reads a Goal by its id.
+    files = tree(system.os)
+    assert call(files, "read_company_file", None, use_async, path="goals/Docs/notes.md")["content"] == "Of Docs"
+    assert call(files, "read_company_file", None, use_async, path="goals/docs/notes.md")["content"] == "Of docs"
+
+
+# ------------------------------------------------------------------ where notes are written
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_notes_are_written_to_the_company_database_whatever_notes_database_is_named(tmp_path, use_async):
+    company_db, os_db = SqliteDb(db_file=str(tmp_path / "company.db")), SqliteDb(db_file=str(tmp_path / "os.db"))
+    tools = CompanyFileTools(company_db, notes_db=os_db)
+    written = call(tools, "write_company_file", None, use_async, path="notes/ideas.md", content="A note")
+    assert written["path"] == "notes/ideas.md"
+    assert call(tools, "read_company_file", None, use_async, path="notes/ideas.md")["content"] == "A note"
+    files = CompanyFiles(company_db, notes_db=os_db)
+    assert files.read("notes/ideas.md")["content"] == "A note"
+
+    assert stored(company_db) == {"notes/ideas.md": "A note"}
+    assert stored(os_db) == {}
+    # Leaving the notes database out still means a tree with no notes/.
+    assert "notes" not in CompanyFiles(company_db).areas and "notes" in files.areas
+    # Without a Company database the notes are in the database that is named.
+    alone = CompanyFiles(notes_db=os_db)
+    alone.write("notes/own.md", "Super Agent's")
+    assert stored(os_db) == {"notes/own.md": "Super Agent's"}
+    company_db.close()
+    os_db.close()

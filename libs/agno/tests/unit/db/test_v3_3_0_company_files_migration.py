@@ -11,13 +11,11 @@ from uuid import uuid4
 import pytest
 
 from agno.company.files import CompanyFiles
-from agno.company.filesystem import company_filesystem
 from agno.company.manager import CompanyManager
 from agno.company.playbook import _defaults
 from agno.db.migrations.versions.v3_3_0 import (
     CompanyFilesMigrationError,
-    _file_table,
-    _folders,
+    _file_backend,
     _move,
     acompany_files_pending,
     acompany_notes_to_move,
@@ -209,9 +207,9 @@ def expected_after(before: dict, ids: dict) -> dict:
         "company/wiki": "wiki",
         "company/notes": "notes",
         f"company/products/{ids['goal']}/wiki": f"goals/{ids['goal']}",
-        "company/products/docs%20team/wiki": "goals/Docs Team",
+        "company/products/docs%20team/wiki": "goals/Docs%20Team",
         f"company/tasks/{ids['task']}": f"tasks/{ids['task']}",
-        "company/tasks/gone-task": "tasks/gone-task",
+        # No Task has this id any more: its files stay where they are.
     }
     moved = {}
     for (namespace, path), values in before.items():
@@ -233,10 +231,11 @@ def test_every_file_moves_to_its_tree_path_with_the_same_content_and_version(dat
 
     after = rows(reader)
     assert after == expected_after(before, ids)
-    # Nothing is left in a namespace from before 3.3.0, and the summary state did not move.
+    # The summary state did not move, and the files of a Task that is gone stay: nothing else is left behind.
     assert sorted({namespace for namespace, _ in after}) == [
         "company",
         f"company/products/{ids['goal']}/summary-state",
+        "company/tasks/gone-task",
     ]
     assert after[("company", f"goals/{ids['goal']}/research/notes.md")][:2] == ("three", 3)
 
@@ -268,7 +267,7 @@ def test_a_run_stopped_halfway_is_finished_by_the_next(databases):
     done = {"company/wiki": "wiki", f"company/tasks/{ids['task']}": f"tasks/{ids['task']}"}
     with reader.Session() as sess, sess.begin():
         conn = sess.connection()
-        assert _move(conn, _file_table(reader, conn), done, {}) == 4
+        assert _move(conn, _file_backend(reader, conn).table, done, {}) == 4
     halfway = rows(reader)
     assert ("company", "wiki/brief.md") in halfway and ("company/notes", "ideas.md") in halfway
 
@@ -323,7 +322,8 @@ def test_a_different_file_already_at_the_new_path_stops_the_move(databases):
     assert after[("company", "notes/ideas.md")] == before[("company/notes", "ideas.md")]
     # The same file already at the new path is not a clash.
     assert after[("company", f"tasks/{ids['task']}/report.md")][0] == "The report"
-    assert not [key for key in after if key[0].startswith("company/tasks/") or key[0] == "company/notes"]
+    left = [key for key in after if key[0].startswith("company/tasks/") or key[0] == "company/notes"]
+    assert left == [("company/tasks/gone-task", "report.md")]
 
 
 def test_a_database_with_no_file_table_is_left_without_one(databases):
@@ -363,26 +363,35 @@ def test_files_outside_the_company_namespaces_do_not_move(databases):
     assert len(after) == len(before)
 
 
-@pytest.mark.parametrize(
-    "namespace", ["company/wiki", "company/notes", "company/products/launch/wiki", "company/tasks/task-1"]
-)
-def test_files_are_pending_exactly_while_the_move_has_a_file_to_move(databases, namespace):
+@pytest.mark.parametrize("kind", ["wiki", "notes", "goal", "task"])
+def test_files_are_pending_exactly_while_the_move_has_a_file_to_move(databases, kind):
     db, reader = databases.new()
     # No file table yet.
     assert databases.run(company_files_pending, acompany_files_pending, db) is False
-    # Files the move leaves where they are.
+    manager = CompanyManager(reader)
+    goal = manager.create(name="Launch", id="launch")
+    project = manager.create_project(goal_id=goal["id"], name="Plan")
+    task = manager.create_task(goal_id=goal["id"], title="Write", project_id=project["id"])
+    # Files the move leaves where they are: the last three are named as a Goal or a Task that this database does not hold.
     for other in (
         "company",
         "default",
         "company/products/launch/summary-state",
+        "company/wikis",
         "company/products/a/b/wiki",
         "company/tasks/a/b",
-        "company/wikis",
+        "company/tasks/gone",
     ):
         FileSystem(reader, namespace=other, user_scoped=False).write("notes/keep.md", other)
     assert databases.run(company_files_pending, acompany_files_pending, db) is False
     assert databases.run(move_company_files, amove_company_files, db) is False
 
+    namespace = {
+        "wiki": "company/wiki",
+        "notes": "company/notes",
+        "goal": "company/products/launch/wiki",
+        "task": f"company/tasks/{task['id']}",
+    }[kind]
     FileSystem(reader, namespace=namespace, user_scoped=False).write("page.md", "Written on 3.2.0")
     assert databases.run(company_files_pending, acompany_files_pending, db) is True
     assert databases.run(move_company_files, amove_company_files, db) is True
@@ -408,32 +417,6 @@ def test_the_async_pending_check_takes_a_synchronous_database(tmp_path):
     FileSystem(db, namespace="company/wiki", user_scoped=False).write("page.md", "Written on 3.2.0")
     assert asyncio.run(acompany_files_pending(db)) is True
     db.db_engine.dispose()
-
-
-def test_a_file_table_from_before_user_partitions_is_read_without_being_refused(tmp_path):
-    import sqlite3
-
-    os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
-    # A table as DbFileSystem created it before the user partition: every read of a file refuses it.
-    with sqlite3.connect(os_file) as conn:
-        conn.execute(
-            "CREATE TABLE agno_fs (namespace VARCHAR NOT NULL, path VARCHAR NOT NULL, content TEXT NOT NULL, "
-            "size_bytes BIGINT NOT NULL, version BIGINT NOT NULL, created_at BIGINT NOT NULL, updated_at BIGINT, "
-            "PRIMARY KEY (namespace, path))"
-        )
-        conn.execute("INSERT INTO agno_fs VALUES ('shared', 'd.md', 'd', 1, 3, 0, 0)")
-    os_db, company_db = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
-
-    # It holds no Company file, and the checks say so: they read only the namespace and the path.
-    assert company_files_pending(os_db) is False
-    assert asyncio.run(acompany_files_pending(os_db)) is False
-    assert company_notes_to_move(os_db, company_db) is False
-    with sqlite3.connect(os_file) as conn:
-        conn.execute("INSERT INTO agno_fs VALUES ('company/notes', 'ideas.md', 'A note', 6, 1, 0, 0)")
-    assert company_files_pending(os_db) is True
-    assert company_notes_to_move(os_db, company_db) is True
-    os_db.db_engine.dispose()
-    company_db.db_engine.dispose()
 
 
 def test_notes_in_another_database_arrive_in_the_company_database_and_leave_the_source(databases):
@@ -619,30 +602,454 @@ def test_a_subclassed_adapter_has_its_files_and_notes_moved(tmp_path, is_async):
     company_reader.db_engine.dispose()
 
 
-def test_the_folder_of_a_namespace_uses_the_id_of_its_record():
-    namespaces = [
-        "company/wiki",
-        "company/notes",
-        "company/products/docs%20team/wiki",
-        "company/products/launch/wiki",
-        "company/products/orphan%2bone/wiki",
-        "company/tasks/abc",
-        "company/tasks/gone",
-    ]
-    goals = [{"id": "Docs Team", "name": "Docs", "objective": "Write"}, {"id": "launch", "name": "Launch"}]
+# ------------------------------------------------------------------ one database reached two ways
 
-    folders, defaults = _folders(namespaces, goals, ["ABC"])
 
-    assert folders == {
-        "company/wiki": "wiki",
-        "company/notes": "notes",
-        "company/products/docs%20team/wiki": "goals/Docs Team",
-        "company/products/launch/wiki": "goals/launch",
-        # No record is left: the folder keeps the name the namespace held, unescaped.
-        "company/products/orphan%2bone/wiki": "goals/orphan+one",
-        "company/tasks/abc": "tasks/ABC",
-        "company/tasks/gone": "tasks/gone",
+def every_row(reader) -> dict:
+    """Every row of the file table, a user's rows included: (namespace, user_id, path) -> (content, version)."""
+    from sqlalchemy import inspect, select
+
+    backend = FileSystem(reader, namespace="company", user_scoped=False).backend
+    if not inspect(backend.db_engine).has_table(backend.table_name, schema=backend.db_schema):
+        return {}
+    table = backend.table
+    with backend.db_engine.connect() as conn:
+        found = conn.execute(select(table.c.namespace, table.c.user_id, table.c.path, table.c.content, table.c.version))
+        return {(row[0], row[1], row[2]): (row[3], row[4]) for row in found}
+
+
+def _run(databases_are_async: bool, sync_function, async_function, *args):
+    if not databases_are_async:
+        return sync_function(*args)
+
+    async def call():
+        try:
+            return await async_function(*args)
+        finally:
+            for database in args:
+                engine = getattr(database, "db_engine", None)
+                if engine is not None and hasattr(engine, "sync_engine"):
+                    await engine.dispose()
+
+    return asyncio.run(call())
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("spelling", ["dots", "link", "relative"])
+def test_one_sqlite_file_named_two_ways_is_one_place_and_keeps_its_notes(tmp_path, monkeypatch, spelling, is_async):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    path = folder / "agentos.db"
+    reader = SqliteDb(db_file=str(path))
+    in_store(reader).write("notes/ideas.md", "A note")
+    FileSystem(reader, namespace="company/notes", user_scoped=False).write("older.md", "An older note")
+    before = every_row(reader)
+    cls = AsyncSqliteDb if is_async else SqliteDb
+    scheme = "sqlite+aiosqlite" if is_async else "sqlite"
+    # The same file, written in the URL as an operator may write it.
+    if spelling == "dots":
+        other = cls(db_url=f"{scheme}:///{folder}/../data/agentos.db")
+    elif spelling == "link":
+        link = tmp_path / "link.db"
+        link.symlink_to(path)
+        other = cls(db_url=f"{scheme}:///{link}")
+    else:
+        monkeypatch.chdir(tmp_path)
+        other = cls(db_url=f"{scheme}:///data/agentos.db")
+    first = cls(db_file=str(path))
+
+    # The notes are in the Company database already: there is nothing to move, and nothing is removed.
+    assert _run(is_async, company_notes_to_move, acompany_notes_to_move, first, other) is False
+    assert _run(is_async, move_company_notes, amove_company_notes, first, other) == 0
+    assert _run(is_async, move_company_notes, amove_company_notes, other, first) == 0
+    assert every_row(reader) == before
+    reader.db_engine.dispose()
+    if not is_async:
+        first.db_engine.dispose()
+        other.db_engine.dispose()
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_one_postgres_database_named_by_two_hosts_is_one_place_and_keeps_its_notes(postgres_server, is_async):
+    if not postgres_server:
+        pytest.skip(f"Postgres server not reachable at {POSTGRES_URL}")
+    from sqlalchemy.engine import make_url
+
+    from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+    databases = Databases("async-postgres" if is_async else "postgres", None)
+    try:
+        db, reader = databases.new()
+        in_store(reader).write("notes/ideas.md", "A note")
+        before = every_row(reader)
+        by_name = make_url(db.db_url) if isinstance(db.db_url, str) else db.db_engine.url
+        assert by_name.host == "localhost"
+        by_address = by_name.set(host="127.0.0.1").render_as_string(hide_password=False)
+        other = (AsyncPostgresDb if is_async else PostgresDb)(db_url=by_address)
+        databases._opened.append((other, is_async))
+
+        assert _run(is_async, company_notes_to_move, acompany_notes_to_move, db, other) is False
+        assert _run(is_async, move_company_notes, amove_company_notes, db, other) == 0
+        assert _run(is_async, move_company_notes, amove_company_notes, other, db) == 0
+        assert every_row(reader) == before
+    finally:
+        databases.close()
+
+
+def test_two_in_memory_databases_are_two_places():
+    source, company = SqliteDb(db_url="sqlite://"), SqliteDb(db_url="sqlite://")
+    in_store(source).write("notes/ideas.md", "A note")
+
+    assert company_notes_to_move(source, company) is True
+    assert move_company_notes(source, company) == 1
+    assert every_row(company) == {("company", "", "notes/ideas.md"): ("A note", 1)}
+    assert every_row(source) == {}
+    # One in-memory database is one place.
+    assert company_notes_to_move(company, company) is False
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_a_wrong_answer_about_the_place_of_a_database_removes_no_note(tmp_path, monkeypatch, is_async):
+    from agno.db.migrations.versions import v3_3_0
+
+    path = str(tmp_path / "agentos.db")
+    reader = SqliteDb(db_file=path)
+    in_store(reader).write("notes/ideas.md", "A note")
+    before = every_row(reader)
+    cls = AsyncSqliteDb if is_async else SqliteDb
+    first, twin = cls(db_file=path), cls(db_file=path)
+    # However the two handles are told apart, a note is removed only once it is seen in another table.
+    answers = iter(range(1000))
+    monkeypatch.setattr(v3_3_0, "_file_place", lambda sess, db: ("somewhere", next(answers)))
+
+    assert _run(is_async, move_company_notes, amove_company_notes, first, twin) == 0
+    assert every_row(reader) == before
+    reader.db_engine.dispose()
+    if not is_async:
+        first.db_engine.dispose()
+        twin.db_engine.dispose()
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_a_note_the_company_database_is_not_seen_to_hold_stays_in_the_agentos_database(tmp_path, monkeypatch, is_async):
+    from agno.db.migrations.versions import v3_3_0
+
+    cls = AsyncSqliteDb if is_async else SqliteDb
+    os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
+    os_reader, company_reader = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    in_store(os_reader).write("notes/more.md", "More")
+    before = every_row(os_reader)
+    # A write that stores one note of the two, whatever the reason.
+    write = v3_3_0._write_notes
+    monkeypatch.setattr(v3_3_0, "_write_notes", lambda sess, db, notes: write(sess, db, notes[:1]))
+
+    assert _run(is_async, move_company_notes, amove_company_notes, cls(db_file=os_file), cls(db_file=company_file)) == 1
+
+    # The note that arrived left the AgentOS database. The other is still there, as it was.
+    arrived = every_row(company_reader)
+    assert len(arrived) == 1
+    left = every_row(os_reader)
+    assert len(left) == 1 and set(arrived) | set(left) == set(before)
+    assert all(before[key] == value for key, value in {**arrived, **left}.items())
+    os_reader.db_engine.dispose()
+    company_reader.db_engine.dispose()
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_a_note_changed_in_the_company_database_after_the_copy_stays_in_the_agentos_database(
+    tmp_path, monkeypatch, is_async
+):
+    from agno.db.migrations.versions import v3_3_0
+
+    cls = AsyncSqliteDb if is_async else SqliteDb
+    os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
+    os_reader, company_reader = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    before = every_row(os_reader)
+    write = v3_3_0._write_notes
+
+    def write_then_someone_edits(sess, db, notes) -> None:
+        write(sess, db, notes)
+        files = v3_3_0._file_backend(db, sess.connection()).table
+        sess.connection().execute(files.update().values(content="Edited by someone else"))
+
+    monkeypatch.setattr(v3_3_0, "_write_notes", write_then_someone_edits)
+
+    # The Company database does not hold the note as it was copied, so the AgentOS database keeps its copy.
+    assert _run(is_async, move_company_notes, amove_company_notes, cls(db_file=os_file), cls(db_file=company_file)) == 0
+    assert every_row(os_reader) == before
+    os_reader.db_engine.dispose()
+    company_reader.db_engine.dispose()
+
+
+# ------------------------------------------------------------------ a user's own files
+
+
+def test_files_in_a_user_partition_are_not_company_files(databases):
+    os_db, os_reader = databases.new()
+    company_db, company_reader = databases.new()
+    # An agent's own store, partitioned by user, that happens to use these names.
+    own = FileSystem(os_reader, namespace="company", user_scoped=True)
+    own.resolve(user_id="alice").write("notes/private.md", "Alice's own")
+    older = FileSystem(os_reader, namespace="company/notes", user_scoped=True)
+    older.resolve(user_id="alice").write("diary.md", "Alice's diary")
+    FileSystem(os_reader, namespace="company/wiki", user_scoped=True).resolve(user_id="bob").write("x.md", "Bob's")
+    before = every_row(os_reader)
+    assert {key[1] for key in before} == {"alice", "bob"}
+    assert len(before) == 3
+
+    assert databases.run(company_notes_to_move, acompany_notes_to_move, os_db, company_db) is False
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 0
+    assert databases.run(company_files_pending, acompany_files_pending, os_db) is False
+    assert databases.run(move_company_files, amove_company_files, os_db) is False
+    assert every_row(os_reader) == before and every_row(company_reader) == {}
+
+    # A shared note beside them is a note, and it moves alone.
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    assert databases.run(company_notes_to_move, acompany_notes_to_move, os_db, company_db) is True
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
+    assert every_row(os_reader) == before
+    assert every_row(company_reader) == {("company", "", "notes/ideas.md"): ("A note", 1)}
+
+    # A shared page beside a user's page in one namespace moves alone too, and so does a shared note left behind.
+    FileSystem(os_reader, namespace="company/wiki", user_scoped=False).write("x.md", "The company's")
+    FileSystem(os_reader, namespace="company/notes", user_scoped=False).write("diary.md", "A shared note")
+    assert databases.run(company_files_pending, acompany_files_pending, os_db) is True
+    assert databases.run(move_company_files, amove_company_files, os_db) is True
+    assert every_row(os_reader) == {
+        **before,
+        ("company", "", "wiki/x.md"): ("The company's", 1),
+        ("company", "", "notes/diary.md"): ("A shared note", 1),
     }
-    assert defaults["wiki"] == _defaults(None)
-    assert defaults["goals/Docs Team"]["brief.md"] == "# Docs\n\nWrite\n"
-    assert "goals/orphan+one" not in defaults and "notes" not in defaults
+    assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
+    assert every_row(os_reader) == {**before, ("company", "", "wiki/x.md"): ("The company's", 1)}
+
+
+# ------------------------------------------------------------------ the folder of an id
+
+
+def write_3_2_0(reader, namespace: str, path: str, *contents: str) -> None:
+    """A file where agno 3.2.0 stored it: the namespace is lower-cased and escaped as that version did."""
+    files = FileSystem(reader, namespace=namespace, user_scoped=False)
+    for content in contents:
+        files.write(path, content)
+
+
+def test_an_id_with_a_slash_keeps_its_own_folder_through_the_migration(databases):
+    from agno.company.filesystem import folder_name
+
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    for goal_id in ("team", "team/growth"):
+        manager.create(name=goal_id, id=goal_id)
+    project = manager.create_project(goal_id="team", name="Plan")
+    task = manager.create_task(goal_id="team", title="Write", project_id=project["id"])
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    # 3.2.0 kept a slash in a namespace as it is, so each of the two Goals had a namespace of its own.
+    write_3_2_0(reader, "company/products/team/wiki", "status.md", "The team")
+    write_3_2_0(reader, "company/products/team/wiki", "growth/plan.md", "The team's own page about growth")
+    write_3_2_0(reader, "company/products/team/growth/wiki", "status.md", "Growth", "Growth, twice")
+    write_3_2_0(reader, f"company/tasks/{task['id']}", "report.md", "The report")
+    before = rows(reader)
+    assert sorted({namespace for namespace, _ in before}) == [
+        "company/products/team/growth/wiki",
+        "company/products/team/wiki",
+        f"company/tasks/{task['id'].lower()}",
+    ]
+
+    assert databases.run(company_files_pending, acompany_files_pending, db) is True
+    assert databases.run(move_company_files, amove_company_files, db) is True
+
+    after = rows(reader)
+    assert folder_name("team/growth") == "team%2fgrowth"
+    assert after == {
+        ("company", "goals/team/status.md"): before[("company/products/team/wiki", "status.md")],
+        ("company", "goals/team/growth/plan.md"): before[("company/products/team/wiki", "growth/plan.md")],
+        ("company", "goals/team%2fgrowth/status.md"): before[("company/products/team/growth/wiki", "status.md")],
+        ("company", f"tasks/{task['id']}/report.md"): before[(f"company/tasks/{task['id'].lower()}", "report.md")],
+    }
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    # Each Goal reads its own pages and none of the other's.
+    listed = {
+        goal_id: sorted(page.path for page in manager.list_wiki(goal_id, limit=100)[0])
+        for goal_id in ("team", "team/growth")
+    }
+    assert listed == {"team": ["brief.md", "growth/plan.md", "status.md"], "team/growth": ["brief.md", "status.md"]}
+    assert manager.read_wiki("team/growth", "status.md").content == "Growth, twice"
+    assert manager.read_wiki("team/growth", "status.md").metadata.version == 2
+    assert manager.read_wiki("team", "status.md").content == "The team"
+
+
+def test_an_id_that_is_not_in_normal_form_is_read_where_the_migration_put_it(databases):
+    import unicodedata
+
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    decomposed = "café"
+    assert unicodedata.normalize("NFC", decomposed) != decomposed
+    manager.create(name="Cafe", id=decomposed)
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    # 3.2.0 composed and escaped the id in the namespace.
+    write_3_2_0(reader, f"company/products/{decomposed}/wiki", "status.md", "Open", "Open late")
+    before = rows(reader)
+    assert list(before) == [("company/products/caf%c3%a9/wiki", "status.md")]
+
+    assert databases.run(move_company_files, amove_company_files, db) is True
+
+    assert rows(reader) == {
+        ("company", "goals/cafe%cc%81/status.md"): before[("company/products/caf%c3%a9/wiki", "status.md")]
+    }
+    page = manager.read_wiki(decomposed, "status.md")
+    assert (page.content, page.metadata.version) == ("Open late", 2)
+
+
+def test_two_goals_that_shared_one_namespace_keep_their_pages_in_place_and_are_reported(databases, caplog):
+    import logging
+
+    from agno.db.migrations.versions.v3_3_0 import acompany_files_left, company_files_left
+
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    for goal_id in ("Docs", "docs", "launch"):
+        manager.create(name=goal_id, id=goal_id)
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    # 3.2.0 lower-cased an id in the namespace, so the two Goals read and wrote the same pages.
+    write_3_2_0(reader, "company/products/Docs/wiki", "status.md", "Drafting")
+    write_3_2_0(reader, "company/products/docs/wiki", "research/notes.md", "Found")
+    write_3_2_0(reader, "company/products/launch/wiki", "status.md", "Go")
+    before = rows(reader)
+    shared = "company/products/docs/wiki"
+    assert sorted(key for key in before if key[0] == shared) == [(shared, "research/notes.md"), (shared, "status.md")]
+
+    agno_logger = logging.getLogger("agno")
+    agno_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            assert databases.run(move_company_files, amove_company_files, db) is True
+    finally:
+        agno_logger.removeHandler(caplog.handler)
+
+    after = rows(reader)
+    # The Goal with a namespace of its own moved. The shared pages are where they were, each as it was.
+    assert after[("company", "goals/launch/status.md")] == before[("company/products/launch/wiki", "status.md")]
+    for key in ((shared, "status.md"), (shared, "research/notes.md")):
+        assert after[key] == before[key]
+    assert len(after) == len(before)
+    # They are reported by path with the Goals that shared them, and they do not keep the migration pending.
+    left = databases.run(company_files_left, acompany_files_left, db)
+    assert left == [
+        {"namespace": shared, "paths": ["research/notes.md", "status.md"], "owners": ["Docs", "docs"]},
+    ]
+    report = "\n".join(record.getMessage() for record in caplog.records)
+    assert shared in report and "research/notes.md" in report and "Docs, docs" in report
+    assert "move_company_files" in report and "owners=" in report
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+
+    # What an operator does next: name the Goal that keeps them.
+    assert (
+        databases.run(
+            lambda d: move_company_files(d, owners={shared: "docs"}),
+            lambda d: amove_company_files(d, owners={shared: "docs"}),
+            db,
+        )
+        is True
+    )
+    assert rows(reader)[("company", "goals/docs/status.md")] == before[(shared, "status.md")]
+    assert rows(reader)[("company", "goals/docs/research/notes.md")] == before[(shared, "research/notes.md")]
+    assert databases.run(company_files_left, acompany_files_left, db) == []
+    assert manager.read_wiki("docs", "status.md").content == "Drafting"
+    # The other Goal has its own folder now, and none of these pages.
+    assert manager.list_wiki("Docs", limit=100)[1] == 2
+
+
+def test_an_owner_named_by_hand_must_be_a_record_of_this_database(databases):
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    for goal_id in ("Docs", "docs"):
+        manager.create(name=goal_id, id=goal_id)
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    write_3_2_0(reader, "company/products/docs/wiki", "status.md", "Drafting")
+    write_3_2_0(reader, "company/tasks/gone-task", "report.md", "Of a Task that was deleted")
+    write_3_2_0(reader, "company/wiki", "people.md", "Ada")
+    before = rows(reader)
+
+    def move(owners: dict):
+        return databases.run(
+            lambda d: move_company_files(d, owners=owners), lambda d: amove_company_files(d, owners=owners), db
+        )
+
+    for owners, message in (
+        ({"company/products/docs/wiki": "nobody"}, "not the id of a Goal"),
+        ({"company/tasks/gone-task": "nobody"}, "not the id of a Task"),
+        ({"company/wiki": "docs"}, "takes no owner"),
+        ({"company/products/elsewhere/wiki": "docs"}, "takes no owner"),
+    ):
+        with pytest.raises(CompanyFilesMigrationError, match=message):
+            move(owners)
+        # A refused owner moves nothing, not even the files that need none.
+        assert rows(reader) == before
+    assert move({"company/products/docs/wiki": "Docs"}) is True
+    after = rows(reader)
+    assert after[("company", "goals/Docs/status.md")] == before[("company/products/docs/wiki", "status.md")]
+    assert after[("company", "wiki/people.md")] == before[("company/wiki", "people.md")]
+    assert after[("company/tasks/gone-task", "report.md")] == before[("company/tasks/gone-task", "report.md")]
+    # Nothing waits there now, so a name for it is refused.
+    with pytest.raises(CompanyFilesMigrationError, match="takes no owner|No file waits"):
+        move({"company/products/docs/wiki": "docs"})
+
+
+def test_a_task_whose_id_is_not_plain_gets_the_folder_of_its_id(databases):
+    from sqlalchemy import text
+
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    goal = manager.create(name="Launch", id="launch")
+    project = manager.create_project(goal_id=goal["id"], name="Plan")
+    task = manager.create_task(goal_id=goal["id"], title="Write", project_id=project["id"])
+    # Task ids are generated. One written another way is still named as one segment that keeps it apart.
+    schema = getattr(reader, "db_schema", None)
+    table = f'"{schema}"."{reader.tasks_table_name}"' if schema else f'"{reader.tasks_table_name}"'
+    with reader.Session() as sess, sess.begin():
+        sess.execute(text(f"UPDATE {table} SET id = :new WHERE id = :old"), {"new": "Task A/1", "old": task["id"]})
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    write_3_2_0(reader, "company/tasks/Task A/1", "report.md", "The report")
+    before = rows(reader)
+    assert list(before) == [("company/tasks/task%20a/1", "report.md")]
+
+    assert databases.run(move_company_files, amove_company_files, db) is True
+
+    assert rows(reader) == {
+        ("company", "tasks/Task%20A%2f1/report.md"): before[("company/tasks/task%20a/1", "report.md")]
+    }
+
+
+def test_files_whose_goal_or_task_is_not_in_this_database_stay_and_are_reported(databases):
+    from agno.db.migrations.versions.v3_3_0 import acompany_files_left, company_files_left
+
+    db, reader = databases.new()
+    CompanyManager(reader).create(name="Launch", id="launch")
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    write_3_2_0(reader, "company/products/gone/wiki", "status.md", "Of a Goal that was deleted")
+    write_3_2_0(reader, "company/tasks/gone-task", "report.md", "Of a Task that was deleted")
+    write_3_2_0(reader, "company/notes", "ideas.md", "A note")
+    before = rows(reader)
+
+    assert databases.run(move_company_files, amove_company_files, db) is True
+
+    after = rows(reader)
+    assert after[("company", "notes/ideas.md")] == before[("company/notes", "ideas.md")]
+    for key in (("company/products/gone/wiki", "status.md"), ("company/tasks/gone-task", "report.md")):
+        assert after[key] == before[key]
+    assert databases.run(company_files_left, acompany_files_left, db) == [
+        {"namespace": "company/products/gone/wiki", "paths": ["status.md"], "owners": []},
+        {"namespace": "company/tasks/gone-task", "paths": ["report.md"], "owners": []},
+    ]
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    assert databases.run(move_company_files, amove_company_files, db) is False
