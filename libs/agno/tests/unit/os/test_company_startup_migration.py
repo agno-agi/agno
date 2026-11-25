@@ -4,6 +4,7 @@ Each test runs on SQLite and on PostgreSQL, with the sync and the async adapter.
 3.2.0 fixture of the migration tests, stamped the way 3.2.0 stamps it.
 """
 
+import json
 import logging
 import threading
 from typing import Any, List
@@ -11,9 +12,10 @@ from typing import Any, List
 import pytest
 from fastapi.testclient import TestClient
 
-from agno.company import Goal
+from agno.company import Goal, Routine
 from agno.db.migrations.manager import MigrationManager
 from agno.db.migrations.versions import v3_3_0
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from tests.unit.db import test_v3_3_0_company_goals_migration as migration_tests
 from tests.unit.db.test_v3_3_0_company_goals_migration import (
@@ -281,3 +283,84 @@ def test_a_database_behind_an_older_migration_is_left_for_the_operator(database,
     company = [name for name in before if name.startswith("agno_company")]
     after = database.describe(rows=False)
     assert {name: after[name] for name in company} == {name: before[name] for name in company}
+
+
+# ----------------------------------- the Company database is migrated, the schedules are not
+
+
+def _declared(routines: bool = True) -> List[Goal]:
+    routine = Routine(name="weekly", cron_expr="0 9 * * 1", instructions="Review.", enabled=False, auto_accept=False)
+    return [Goal(id="docs", name="Docs", objective="Keep the docs accurate.", routines=[routine] if routines else [])]
+
+
+def _two_databases(databases, goals: List[Goal], **kwargs) -> Any:
+    """An AgentOS whose Company database and schedules are two databases, as a new one each call."""
+    company, schedules = databases(), databases()
+
+    def build(declared: List[Goal] = goals, **more: Any) -> AgentOS:
+        return AgentOS(
+            db=schedules.db(),
+            company=CompanyConfig(db=company.db(), goals=declared, model=OpenAIResponses(id="offline")),
+            telemetry=False,
+            **kwargs,
+            **more,
+        )
+
+    return company, schedules, build
+
+
+def _store_the_routine_as_3_2_0_did(schedules) -> str:
+    """Put the Routine back in the form agno 3.2.0 stored, and stamp its table as 3.2.0 did."""
+    db = schedules.sync_db()
+    row = db.get_schedule_by_name("docs.weekly")
+    metadata = {key: value for key, value in row["payload"]["metadata"].items() if key != "goal_id"}
+    payload = json.dumps({**row["payload"], "metadata": {"product_id": "docs", **metadata}})
+    cast = "CAST(:payload AS JSONB)" if schedules.postgres else ":payload"
+    schedules.execute(
+        f"UPDATE {schedules._ref('agno_schedules')} SET payload = {cast} WHERE id = :id", payload=payload, id=row["id"]
+    )
+    _stamp_3_0_0(schedules)
+    return row["id"]
+
+
+def test_a_routine_declared_in_code_does_not_stop_the_start(databases, logged):
+    company, schedules, build = _two_databases(databases, _declared(), auto_provision_dbs=False)
+    with TestClient(build().get_app()) as client:
+        assert [routine["name"] for routine in client.get("/company/routines").json()["data"]] == ["docs.weekly"]
+    routine_id = _store_the_routine_as_3_2_0_did(schedules)
+    logged.clear()
+
+    # The Company database has nothing to migrate. The schedules were not migrated.
+    with TestClient(build().get_app()) as client:
+        errors = _errors(logged)
+        assert len(errors) == 1, errors
+        assert errors[0].startswith("Company is not started: ") and routine_id in errors[0]
+        assert client.get("/health").status_code == 200
+        _assert_refused(client.get("/company/routines"))
+        _assert_refused(client.get(f"/company/routines/{routine_id}"))
+
+        assert client.post("/databases/all/migrate").status_code == 200
+
+        listed = client.get("/company/routines", params={"goal_id": "docs"}).json()["data"]
+        assert [(routine["id"], routine["name"]) for routine in listed] == [(routine_id, "docs.weekly")]
+        assert client.get(f"/company/routines/{routine_id}").status_code == 200
+
+
+def test_a_stored_routine_says_the_migration_is_needed(databases, logged):
+    company, schedules, build = _two_databases(databases, _declared(), auto_provision_dbs=False)
+    with TestClient(build().get_app()):
+        pass
+    routine_id = _store_the_routine_as_3_2_0_did(schedules)
+
+    # The Routine is no longer declared in code, so the start does not touch it.
+    with TestClient(build(_declared(routines=False)).get_app()) as client:
+        assert client.get("/company/goals/docs").status_code == 200
+        _assert_refused(client.get("/company/routines"))
+        _assert_refused(client.get("/company/routines", params={"goal_id": "docs"}))
+        _assert_refused(client.get(f"/company/routines/{routine_id}"))
+        _assert_refused(client.post(f"/company/routines/{routine_id}/trigger"))
+
+        assert client.post("/databases/all/migrate").status_code == 200
+
+        assert [routine["id"] for routine in client.get("/company/routines").json()["data"]] == [routine_id]
+        assert client.get(f"/company/routines/{routine_id}").json()["name"] == "docs.weekly"

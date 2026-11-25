@@ -261,6 +261,21 @@ def test_products_table_names_the_goals_table(tmp_path, make, logged):
 
 
 @pytest.mark.parametrize("cls", [SqliteDb, AsyncSqliteDb, PostgresDb, AsyncPostgresDb])
+def test_the_3_2_0_default_table_name_is_one_table_however_it_is_given(tmp_path, cls):
+    connection = {"db_url": POSTGRES_URL} if "Postgres" in cls.__name__ else {"db_file": str(tmp_path / "one.db")}
+
+    # Written in code for 3.2.0, and saved by 3.2.0 from that same db.
+    built = cls(**connection, products_table="agno_company_products")
+    loaded = cls.from_dict({**connection, "products_table": "agno_company_products"})
+
+    assert built.goals_table_name == loaded.goals_table_name == "agno_company_goals"
+    assert built.company_table_name == loaded.company_table_name == "agno_company_goals_details"
+    assert cls.from_dict({**connection, **built.to_dict()}).goals_table_name == "agno_company_goals"
+    with pytest.raises(ValueError, match=BOTH_TABLES):
+        cls(**connection, goals_table="my_goals", products_table="agno_company_products")
+
+
+@pytest.mark.parametrize("cls", [SqliteDb, AsyncSqliteDb, PostgresDb, AsyncPostgresDb])
 def test_a_db_serialized_by_3_2_0_loads(tmp_path, cls):
     connection = {"db_url": POSTGRES_URL} if "Postgres" in cls.__name__ else {"db_file": str(tmp_path / "saved.db")}
 

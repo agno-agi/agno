@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from agno.company.declarations import Goal
 from agno.company.execution import _call
-from agno.company.routines import _declared_schedule_fields
+from agno.company.routines import _declared_schedule_fields, _require_migrated_routine
 from agno.db.utils import is_unique_violation
 from agno.scheduler import ScheduleManager
 
@@ -170,6 +170,8 @@ async def arehydrate_goal(
                 if existing is None:
                     raise
                 schedule = Schedule.from_dict(existing)
+        if schedule.managed_by == "company":
+            _require_migrated_routine(schedule.id, schedule.payload, schedule_db.schedules_table_name)
         if schedule.managed_by != "company" or (schedule.payload or {}).get("metadata", {}).get("goal_id") != goal_id:
             raise ValueError("Routine name is already used by another schedule")
         # An archived Routine stays out of the Goal's routine_ids until it is restored.

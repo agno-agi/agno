@@ -171,13 +171,22 @@ class _Sql:
 
         SQLite creates the new index before dropping the old one, so a run that stops between the
         two leaves the old name for the next run to find.
+
+        SQLite names an index within the whole database. When the new name already belongs to an
+        index of another table, or to one with another definition, the old index is the only one
+        with this definition. It keeps its name and is not dropped.
         """
         if self.postgres:
             self.sess.execute(text(f"ALTER INDEX {self.ref(old)} RENAME TO {self.quote(new)}"))
             return True
-        stored = self._first("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = :name", name=old)
-        create = _sqlite_index_under_name(stored[0] if stored else None, old, self.quote(new))
-        if create is None:
+        find = "SELECT sql, tbl_name FROM sqlite_master WHERE type = 'index' AND name = :name"
+        source = self._first(find, name=old)
+        renamed = _sqlite_index_under_name(source[0] if source else None, old, self.quote(new))
+        if renamed is None:
+            return False
+        create, stored_as = renamed
+        taken = self._first(find, name=new)
+        if taken is not None and (taken[1] != source[1] or taken[0] != stored_as):
             return False
         self.sess.execute(text(create))
         self.sess.execute(text(f"DROP INDEX {self.quote(old)}"))
@@ -187,8 +196,11 @@ class _Sql:
         self.sess.execute(text(f"DROP INDEX {self.ref(name)}"))
 
 
-def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -> Optional[str]:
+def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -> Optional[Tuple[str, str]]:
     """The statement that creates a stored SQLite index again under another name, if it is not there yet.
+
+    Returned with the statement SQLite then stores for the new index, which tells whether an index
+    that already has the new name is the same one.
 
     SQLite stores an index as ``CREATE INDEX`` or ``CREATE UNIQUE INDEX``, then the name as it was
     written, then the rest of the statement. None when the name is not found in that place.
@@ -204,7 +216,7 @@ def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -
             if written == old and after[:1] not in ("", " ", "\t", "\n", "\r", "("):
                 # The bare name is only the start of a longer name.
                 continue
-            return f"{head}IF NOT EXISTS {quoted_new}{after}"
+            return f"{head}IF NOT EXISTS {quoted_new}{after}", f"{head}{quoted_new}{after}"
     return None
 
 
@@ -313,10 +325,11 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
     old_index, new_index = f"idx_{table_name}_{old}", f"idx_{table_name}_{new}"
     indexes = sql.indexes(table_name)
     if new in columns and old_index in indexes:
-        if new_index in indexes:
+        if new_index in indexes and sql.postgres:
             sql.drop_index(old_index)
             changed = True
         else:
+            # On SQLite this also checks an index that already has the new name.
             changed = sql.rename_index(old_index, new_index) or changed
     return changed
 

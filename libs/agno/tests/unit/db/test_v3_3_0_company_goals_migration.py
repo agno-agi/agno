@@ -842,6 +842,41 @@ async def test_an_index_the_user_added_keeps_its_definition(database, quoted):
     assert database.describe(rows=False) == described
 
 
+@pytest.mark.parametrize("taken_by", ["another table", "the same table, another definition"])
+async def test_an_index_whose_new_name_is_taken_keeps_its_old_name(database, taken_by):
+    if database.postgres:
+        pytest.skip("PostgreSQL names an index within its schema and renames it in place")
+    _write_3_2_0(database)
+    products = database._ref("agno_company_products")
+    database.execute(
+        f"CREATE UNIQUE INDEX idx_agno_company_products_active_name ON {products} (name) WHERE deleted_at IS NULL"
+    )
+    # SQLite names an index within the whole database, so the new name can already be in use.
+    if taken_by == "another table":
+        database.execute(
+            f"CREATE INDEX idx_agno_company_goals_active_name ON {database._ref('agno_company_tasks')} (title)"
+        )
+    else:
+        database.execute(f"CREATE INDEX idx_agno_company_goals_active_name ON {products} (name)")
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    goals = _index_sql(database, "agno_company_goals")
+    # The unique index is still there, under the name it had.
+    assert "UNIQUE" in goals["idx_agno_company_products_active_name"].upper()
+    assert "deleted_at IS NULL" in goals["idx_agno_company_products_active_name"].replace('"', "")
+    owner = "agno_company_tasks" if taken_by == "another table" else "agno_company_goals"
+    assert "UNIQUE" not in _index_sql(database, owner)["idx_agno_company_goals_active_name"].upper()
+    insert = f"INSERT INTO {database._ref('agno_company_goals')} (id, name, created_at) VALUES (:id, 'AgentOS', {NOW})"
+    with pytest.raises(IntegrityError):
+        database.execute(insert, id="active-copy")
+
+    described = database.describe(rows=False)
+    await MigrationManager(database.db()).up()
+    assert database.describe(rows=False) == described
+
+
 async def test_a_second_run_changes_nothing(database):
     _write_3_2_0(database)
     await MigrationManager(database.db()).up()

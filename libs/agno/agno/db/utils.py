@@ -87,12 +87,16 @@ def company_migration_required_error(legacy_table: str, table_name: str) -> Migr
 
 
 def goals_table_argument(goals_table: Optional[str], products_table: Optional[str]) -> Optional[str]:
-    """The Goals table name an adapter was constructed with; products_table is its agno 3.2.0 name."""
+    """The Goals table name an adapter was constructed with; products_table is its agno 3.2.0 name.
+
+    The 3.2.0 default name there means the table was never named, as it does in a serialized db.
+    Both then name the default table, which is the one the migration renames the 3.2.0 table to.
+    """
     if products_table is None:
         return goals_table
     if goals_table is not None:
         raise ValueError("Give goals_table or products_table, not both")
-    return products_table
+    return None if products_table == LEGACY_GOALS_TABLE_NAME else products_table
 
 
 def goals_table_from_dict(data: Dict[str, Any]) -> Optional[str]:

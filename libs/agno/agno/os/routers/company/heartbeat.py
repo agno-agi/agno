@@ -13,7 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.company.declarations import AutoAccept, Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
-from agno.company.routines import _routine_executor_endpoint, _routine_message, _schedule_fields
+from agno.company.routines import (
+    _require_migrated_routine,
+    _routine_executor_endpoint,
+    _routine_message,
+    _schedule_fields,
+)
 from agno.db.base import AsyncBaseDb
 from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
@@ -155,6 +160,7 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await call(handlers["get_schedule"], routine_id, request)
         if row.get("managed_by") != "company":
             raise HTTPException(404, "Routine not found")
+        _require_migrated_routine(routine_id, row.get("payload"), schedule_db.schedules_table_name)
         if not (row.get("payload") or {}).get("metadata", {}).get("goal_id"):
             raise HTTPException(409, "Routine is missing its Goal metadata")
         if not include_deleted and row["payload"]["metadata"].get("deleted_at") is not None:
@@ -308,6 +314,10 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
 
         get_scoped_user_id(request)
         rows = await call(ScheduleManager(schedule_db).alist_all)
+        for row in rows:
+            if row.managed_by == "company":
+                # A Routine that is not migrated would be left out of the list without a word.
+                _require_migrated_routine(row.id, row.payload, schedule_db.schedules_table_name)
         selected = [
             row.to_dict()
             for row in rows

@@ -1326,6 +1326,27 @@ def _require_routine_goal(goal_id: Optional[str], authority: Any = None) -> None
         raise PermissionError("A Task run is restricted to its Task's Goal")
 
 
+def _require_migrated_routine(schedule_id: Any, payload: Any, table_name: str) -> None:
+    """Raise when a Routine still has the payload agno 3.2 saved, with its Goal under ``product_id``.
+
+    The Routine is then found by no Goal. Without this it looks like a schedule of another owner,
+    or like no Routine at all.
+    """
+    from agno.exceptions import MigrationRequiredError
+
+    metadata = (payload or {}).get("metadata") or {}
+    if "goal_id" not in metadata and "product_id" in metadata:
+        raise MigrationRequiredError(
+            table_name=table_name,
+            message=(
+                f"Routine {schedule_id} was saved by an older version of Agno and must be migrated before Company "
+                "can use it. Apply the pending migrations to the database that holds the schedules with "
+                "`asyncio.run(MigrationManager(db).up())` (import it from `agno.db.migrations.manager`; await the "
+                "call directly in async code), or via the AgentOS endpoint `POST /databases/all/migrate`."
+            ),
+        )
+
+
 async def _require_active_routine_goal(db: Any, goal_id: Optional[str]) -> None:
     from agno.company.execution import _call
 
