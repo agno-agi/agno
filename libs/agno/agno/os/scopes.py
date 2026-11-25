@@ -96,7 +96,7 @@ class AgentOSScope(str, Enum):
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
-    - filesystem:read - Browse, read and search agent filesystems
+    - filesystem:read - Browse, read and search AgentOS and agent filesystems
     - metrics:read - View metrics
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
@@ -585,8 +585,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
-        # Filesystem browser (read-only). The router further limits results to the
-        # agents the caller may read.
+        # Filesystem browser (read-only). Filesystems declared on the AgentOS need
+        # only this scope; agent-held ones are further limited to the agents the
+        # caller may read.
         "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
