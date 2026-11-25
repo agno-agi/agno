@@ -1045,6 +1045,32 @@ async def test_two_goals_tables_with_no_record_are_never_taken_as_migrated(datab
         await MigrationManager(database.db()).up()
 
 
+@pytest.mark.parametrize("creates", ["goals", "company"])
+async def test_creating_one_company_table_does_not_settle_the_other(database, creates):
+    _write_3_2_0(database)
+    kept, other = ("", "_details") if creates == "company" else ("_details", "")
+    # The table under test has only its 3.2.0 predecessor removed, so it is created new.
+    database.execute(f"DROP TABLE {database._ref('agno_company_products' + other)}")
+    database._patch.setattr("agno.db.utils.legacy_company_table", lambda db, table_type: None)
+    unsettled = "goals" if creates == "company" else "company"
+    await _call(database.db()._get_table, unsettled, create_table_if_not_found=True)
+    database._patch.undo()
+    if unsettled == "company":
+        database.execute(
+            f"INSERT INTO {database._ref('agno_company_goals_details')} (id, name, created_at, updated_at) "
+            "VALUES ('company', 'New', 1, 1)"
+        )
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError):
+        await MigrationManager(database.db()).up()
+
+    await _call(database.db()._get_table, creates, create_table_if_not_found=True)
+
+    with pytest.raises(MigrationRequiredError):
+        await _call(database.db()._get_table, unsettled)
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match=f"agno_company_products{kept}"):
+        await MigrationManager(database.db()).up()
+
+
 async def test_tables_3_2_creates_beside_those_of_a_new_database_are_not_used(database):
     """A database that never needed the migration records that too."""
     await _call(database.db()._get_table, "goals", create_table_if_not_found=True)

@@ -467,9 +467,9 @@ class BaseDb(ABC):
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
         if creates_company_table:
-            from agno.db.migrations.versions.v3_3_0 import record_company_tables
+            from agno.db.migrations.versions.v3_3_0 import record_company_table
 
-            record_company_tables(self)
+            record_company_table(self, table_type)
         return table
 
     def _resolve_table(
@@ -3074,9 +3074,9 @@ class AsyncBaseDb(ABC):
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
         if creates_company_table:
-            from agno.db.migrations.versions.v3_3_0 import arecord_company_tables
+            from agno.db.migrations.versions.v3_3_0 import arecord_company_table
 
-            await arecord_company_tables(self)
+            await arecord_company_table(self, table_type)
         return table
 
     async def _resolve_table(
