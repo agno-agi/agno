@@ -61,7 +61,7 @@ class FakeSlack:
         }
 
     async def _users_info(self, user: str) -> Dict[str, Any]:
-        return {"user": {"profile": {"email": self.emails.get(user)}}}
+        return {"user": {"is_email_confirmed": True, "profile": {"email": self.emails.get(user)}}}
 
     def posted(self) -> List[Dict[str, Any]]:
         return [call.kwargs for call in self.chat_postMessage.await_args_list]
@@ -177,6 +177,7 @@ def _delivery(
     users: Optional[Dict[str, str]] = None,
     resolve_user_identity: bool = False,
     default_role: Optional[str] = None,
+    authorize_senders: bool = False,
 ):
     ctx = SimpleNamespace(
         company=CompanyBridge(agent_os),
@@ -184,6 +185,7 @@ def _delivery(
         entity_id=ENTITY_ID,
         users=users,
         default_role=default_role,
+        authorize_senders=authorize_senders,
         resolve_user_identity=resolve_user_identity,
         web=lambda: slack,
         lookup_cache=LookupCache(),
@@ -528,6 +530,57 @@ async def test_unmapped_user_gets_result_through_the_default_role(tmp_path, user
     assert bool(slack.posted()) is posted
 
 
+@pytest.mark.parametrize(
+    "role, disabled, users, default_role, posted",
+    [
+        ("asker", False, None, None, True),
+        # The run's user is asked again before a delayed post: disabled, or moved to a role that cannot read Tasks
+        ("asker", True, None, None, False),
+        ("runner", False, None, None, False),
+        # Their own role decides, not the Slack default role, which is for a sender who holds none
+        ("runner", False, None, "slack-bot", False),
+        (None, False, None, "slack-bot", True),
+        # A sender users= leaves out is their own user
+        ("asker", False, USERS, None, True),
+    ],
+    ids=["own-role", "disabled", "lesser-role", "own-role-not-the-default", "default-role", "not-in-users"],
+)
+@pytest.mark.asyncio
+async def test_a_senders_result_follows_their_own_user_as_it_is_now(
+    tmp_path, role, disabled, users, default_role, posted
+):
+    from agno.os.authz import UserDirectory
+
+    auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
+    auth.define_role("asker", [f"teams:{ENTITY_ID}:run", "tasks:read"])
+    auth.define_role("runner", [f"teams:{ENTITY_ID}:run"])
+    auth.define_role("slack-bot", [f"teams:{ENTITY_ID}:run", "tasks:read"])
+    directory = UserDirectory()
+    db_file = str(tmp_path / "company.db")
+    task = _seed_task(db_file)
+    db = SqliteDb(db_file=db_file)
+    agent_os = AgentOS(
+        id="slack-company",
+        db=db,
+        registry=Registry(agents=[Agent(id="writer", db=db)]),
+        company=CompanyConfig(),
+        authorization=auth,
+        user_directory=directory,
+        telemetry=False,
+    )
+    agent_os._company_app = agent_os.get_app()
+    # Without resolve_user_identity the sender's user is their Slack member id
+    directory.upsert("U_DAVE")
+    if role:
+        auth.assign("U_DAVE", role)
+    directory.set_disabled("U_DAVE", disabled)
+    _finish_attempt(db, task, "run-1", "U_DAVE")
+    _save_turn(db, "run-1", "U_DAVE")
+    slack = FakeSlack(root_user="U_DAVE")
+    await _delivery(agent_os, db, slack, users=users, default_role=default_role, authorize_senders=True).sweep()
+    assert bool(slack.posted()) is posted
+
+
 @pytest.mark.asyncio
 async def test_shutdown_mid_sweep_keeps_access_check(tmp_path):
     db, agent_os = _authorized_company(tmp_path, "carol")
@@ -565,7 +618,12 @@ BOT_MESSAGE = "1708123456.000300"
 @pytest.mark.parametrize(
     "run_user, message_ts, lookup, found",
     [
-        ("alice@example.com", THREAD, "users_info", {"user": {"profile": {"email": "alice@example.com"}}}),
+        (
+            "alice@example.com",
+            THREAD,
+            "users_info",
+            {"user": {"is_email_confirmed": True, "profile": {"email": "alice@example.com"}}},
+        ),
         ("B_HOOK", BOT_MESSAGE, "bots_info", {"bot": {"name": "Deploy hook"}}),
     ],
     ids=["user", "bot"],
