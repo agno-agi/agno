@@ -188,6 +188,7 @@ def get_base_router(
     async def config(request: Request, response: Response) -> ConfigResponse:
         # The component lists and the authorization detail both depend on who is asking.
         response.headers["Vary"] = "Authorization"
+        is_admin = await _caller_is_admin(os, request)
         agents_in_scope = _listed(os.agents)
         teams_in_scope = list(os.teams or [])
         workflows_in_scope = list(os.workflows or [])
@@ -245,8 +246,8 @@ def get_base_router(
                     )
                 ),
             ),
-            authorization=await _authorization_report(os, request),
-            features=_features_report(os, request),
+            authorization=await _authorization_report(os, request, is_admin),
+            features=_features_report(os, request, is_admin),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -270,7 +271,7 @@ async def _caller_is_admin(os: "AgentOS", request: Request) -> bool:
     return True
 
 
-async def _authorization_report(os: "AgentOS", request: Request) -> AuthorizationReport:
+async def _authorization_report(os: "AgentOS", request: Request, is_admin: bool) -> AuthorizationReport:
     """The /config authorization block: the mode for every caller, the detail for administrators."""
     from agno.os.auth import _authorization_enforced, token_scopes_are_authoritative
 
@@ -281,7 +282,7 @@ async def _authorization_report(os: "AgentOS", request: Request) -> Authorizatio
         mode=get_effective_auth_mode(settings=os.settings, authorization=os.authorization, app=app),
         user_isolation=bool(getattr(app.state, "user_isolation_enabled", False)),
     )
-    if not await _caller_is_admin(os, request):
+    if not is_admin:
         return report
 
     role_store = os._authz_role_store
@@ -310,26 +311,9 @@ def _agno_tracing_is_active() -> bool:
     return is_agno_tracing_active()
 
 
-def _features_report(os: "AgentOS", request: Request) -> FeaturesReport:
-    """The /config features block: what runs on this AgentOS, read from the running app."""
-    state = request.app.state
-    directory_on = getattr(state, "user_store", None) is not None
-    audit_sink = getattr(state, "authz_audit", None)
-    # Both audit trails are served by the /authz router, which is mounted only with managed roles.
-    role_store = os._authz_role_store
-    return FeaturesReport(
-        user_directory=UserDirectoryStatus(
-            enabled=directory_on,
-            auto_provision=bool(directory_on and getattr(state, "user_auto_provision", False)),
-            fail_closed=bool(directory_on and getattr(state, "user_directory_fail_closed", False)),
-        ),
-        audit=AuditStatus(
-            enabled=audit_sink is not None,
-            changes_readable=bool(role_store is not None and role_store._audit_readable),
-            decisions_readable=bool(
-                role_store is not None and audit_sink is not None and hasattr(audit_sink, "read_decisions")
-            ),
-        ),
+def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> FeaturesReport:
+    """The /config features block: what runs on this AgentOS. Directory and audit status are admin-only."""
+    report = FeaturesReport(
         # tracing=True alone is not enough: the spans reach this AgentOS only while its own
         # tracer provider is the active one.
         tracing=FeatureStatus(enabled=_agno_tracing_is_active()),
@@ -337,6 +321,27 @@ def _features_report(os: "AgentOS", request: Request) -> FeaturesReport:
         scheduler=FeatureStatus(enabled=bool(os._scheduler_enabled and os.db is not None)),
         mcp=FeatureStatus(enabled=bool(os.mcp)),
     )
+    if not is_admin:
+        return report
+
+    state = request.app.state
+    directory_on = getattr(state, "user_store", None) is not None
+    report.user_directory = UserDirectoryStatus(
+        enabled=directory_on,
+        auto_provision=bool(directory_on and getattr(state, "user_auto_provision", False)),
+        fail_closed=bool(directory_on and getattr(state, "user_directory_fail_closed", False)),
+    )
+    audit_sink = getattr(state, "authz_audit", None)
+    # Both audit trails are served by the /authz router, which is mounted only with managed roles.
+    role_store = os._authz_role_store
+    report.audit = AuditStatus(
+        enabled=audit_sink is not None,
+        changes_readable=bool(role_store is not None and role_store._audit_readable),
+        decisions_readable=bool(
+            role_store is not None and audit_sink is not None and hasattr(audit_sink, "read_decisions")
+        ),
+    )
+    return report
 
 
 def _collect_unique_models(os: "AgentOS") -> List[Model]:

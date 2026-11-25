@@ -37,6 +37,8 @@ FEATURES_OFF = {
     "scheduler": {"enabled": False},
     "mcp": {"enabled": False},
 }
+ADMIN_ONLY_FEATURES = {"user_directory", "audit"}
+PUBLIC_FEATURES_OFF = {k: v for k, v in FEATURES_OFF.items() if k not in ADMIN_ONLY_FEATURES}
 
 
 @pytest.fixture(autouse=True)
@@ -141,7 +143,7 @@ class TestScopeAuthorization:
     def test_non_admin_sees_the_mode_and_no_detail(self, db):
         body = _config(self._scope_os(db), _bearer("bob", MEMBER_SCOPES)).json()
         assert body["authorization"] == {"enabled": True, "mode": "jwt", "user_isolation": False}
-        assert body["features"] == FEATURES_OFF
+        assert body["features"] == PUBLIC_FEATURES_OFF
 
     def test_audience_check_is_reported_when_it_runs(self, db):
         agent_os = self._scope_os(db, verify_audience=True)
@@ -232,21 +234,31 @@ class TestFeatures:
     def test_user_directory_settings_under_roles(self, db):
         directory = UserDirectory(auto_provision=False, fail_closed=False)
         agent_os = _os(db, authorization=_roles(), user_directory=directory)
-        for headers in (_bearer("alice"), _bearer("bob")):
-            features = _config(agent_os, headers).json()["features"]
-            assert features["user_directory"] == {"enabled": True, "auto_provision": False, "fail_closed": False}
+        features = _config(agent_os, _bearer("alice")).json()["features"]
+        assert features["user_directory"] == {"enabled": True, "auto_provision": False, "fail_closed": False}
 
     def test_no_user_directory_under_roles(self, db):
-        features = _config(_os(db, authorization=_roles()), _bearer("bob")).json()["features"]
+        features = _config(_os(db, authorization=_roles()), _bearer("alice")).json()["features"]
         assert features["user_directory"] == {"enabled": False, "auto_provision": False, "fail_closed": False}
+
+    def test_member_does_not_see_directory_or_audit_status(self, db):
+        agent_os = _os(db, authorization=_roles(audit=True), user_directory=True)
+        features = _config(agent_os, _bearer("bob")).json()["features"]
+        assert features == PUBLIC_FEATURES_OFF
+
+    def test_scope_member_does_not_see_directory_or_audit_status(self, db):
+        config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256")
+        agent_os = _os(db, authorization=True, authorization_config=config, user_directory=True)
+        assert _config(agent_os, _bearer("bob", MEMBER_SCOPES)).json()["features"] == PUBLIC_FEATURES_OFF
+        admin = _config(agent_os, _bearer("alice", ["agent_os:admin"])).json()["features"]
+        assert admin["user_directory"]["enabled"] is True
 
     def test_audit_on_a_database_is_readable(self, db):
         agent_os = _os(db, authorization=_roles(audit=True))
         app = agent_os.get_app()
         client = TestClient(app)
-        for headers in (_bearer("alice"), _bearer("bob")):
-            audit = client.get("/config", headers=headers).json()["features"]["audit"]
-            assert audit == {"enabled": True, "changes_readable": True, "decisions_readable": True}
+        audit = client.get("/config", headers=_bearer("alice")).json()["features"]["audit"]
+        assert audit == {"enabled": True, "changes_readable": True, "decisions_readable": True}
         # The report agrees with the routes it describes.
         assert client.get("/authz/audit", headers=_bearer("alice")).status_code == 200
         assert client.get("/authz/decisions", headers=_bearer("alice")).status_code == 200
@@ -398,12 +410,16 @@ class TestDatabaseReads:
                 resp = client.get("/config", headers=headers)
             else:
 
-                async def _no_authorization(os, request):
+                async def _no_authorization(os, request, is_admin):
                     return None
 
+                async def _no_admin_check(os, request):
+                    return False
+
                 with (
+                    patch("agno.os.router._caller_is_admin", _no_admin_check),
                     patch("agno.os.router._authorization_report", _no_authorization),
-                    patch("agno.os.router._features_report", lambda os, request: None),
+                    patch("agno.os.router._features_report", lambda os, request, is_admin: None),
                 ):
                     resp = client.get("/config", headers=headers)
         finally:

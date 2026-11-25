@@ -7,8 +7,9 @@ Configuration Report - read how an AgentOS is set up
   Every caller sees `enabled`, `mode` and `user_isolation`.
   An administrator also sees `managed_roles`, `default_role`,
   `token_scopes_trusted` and `audience_verified`.
-- `features`: which optional features are running: the user directory, audit,
-  tracing, the scheduler and the MCP server.
+- `features`: which optional features are running.
+  Every caller sees tracing, the scheduler and the MCP server.
+  An administrator also sees the user directory and audit.
 
 Both blocks report what the running AgentOS does, not the arguments it was given,
 and neither holds a key, an audience, a database location or a role's scopes.
@@ -106,9 +107,7 @@ if __name__ == "__main__":
     print("\nalice (admin) sees the full report:")
     print(json.dumps(report("alice"), indent=2))
 
-    print(
-        "\nbob (member) sees the mode and the features, not the authorization detail:"
-    )
+    print("\nbob (member) sees the mode and the public features, not the admin detail:")
     print(json.dumps(report("bob"), indent=2))
 
     # The audit flags describe the routes that serve the trails.
