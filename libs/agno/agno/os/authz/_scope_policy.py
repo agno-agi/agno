@@ -105,15 +105,10 @@ def resource_action_to_scope(resource: str, action: str) -> str:
 _RENAMED_POLICY_TYPES = {"products": "goals"}
 
 
-def policy_resource(resource: str, requested_type: str) -> str:
-    """A stored policy's resource, under ``requested_type`` when that is the current name of its type.
-
-    Only the stored side is translated: a request for the old name is an application's own type.
-    """
+def current_resource(resource: str) -> str:
+    """``resource`` under the current name of its type."""
     resource_type, separator, rest = resource.partition("/")
-    if _RENAMED_POLICY_TYPES.get(resource_type) == requested_type:
-        return requested_type + separator + rest
-    return resource
+    return _RENAMED_POLICY_TYPES.get(resource_type, resource_type) + separator + rest
 
 
 def legacy_resources(resource: str) -> List[str]:
@@ -134,11 +129,11 @@ def resource_matches(pattern: str, request: str) -> bool:
       string ``"type"``, which no policy writes,
     - otherwise an exact match.
 
-    A policy stored under a resource type that was since renamed also matches the current type.
+    A renamed resource type and its old name are the same type on both sides.
     """
     if pattern == "*":
         return True
-    pattern = policy_resource(pattern, request.partition("/")[0])
+    pattern, request = current_resource(pattern), current_resource(request)
     if pattern == request:
         return True
     if pattern.endswith("/*"):

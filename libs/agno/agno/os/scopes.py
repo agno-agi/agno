@@ -20,6 +20,8 @@ Examples:
 Backwards compatibility:
 - Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
+- Legacy ``products:*`` scopes are accepted as aliases for ``goals:*`` in the same way:
+  a Company Goal was a Product in agno 3.2. The two names are one permission.
 """
 
 import fnmatch
@@ -307,6 +309,11 @@ def has_required_scopes(
     if not required_scopes:
         return True
 
+    # The resource type is part of what is required, so a legacy name reads as the current one,
+    # the same as in a scope.
+    if resource_type is not None:
+        resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
+
     # Parse user scopes once
     parsed_user_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
@@ -391,6 +398,8 @@ def get_accessible_resource_ids(
     """
     # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
     allowed_actions = [action] if action else ["read", "run"]
+    # A legacy name for the resource type reads as the current one, the same as in a scope.
+    resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
 
     parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 

@@ -25,11 +25,11 @@ from agno.exceptions import MigrationRequiredError
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from agno.os.authz import Authorization
-from agno.os.authz._scope_policy import resource_matches
+from agno.os.authz._scope_policy import resource_matches, scope_to_resource_action
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.config import AuthorizationConfig
-from agno.os.scopes import has_required_scopes
+from agno.os.scopes import get_accessible_resource_ids, has_required_scopes, parse_scope, split_scope
 from agno.run.authorization import RunAuthorization
 from agno.utils.log import log_warning
 
@@ -460,23 +460,208 @@ async def test_stored_products_policies_filter_lists(tmp_path, use_async):
     db.close()
 
 
-def test_a_goals_policy_does_not_match_an_application_products_type():
-    assert not resource_matches("goals/*", "products/catalog")
-    assert resource_matches("products/*", "products/catalog")
+# products is the 3.2.0 name of the goals permission. The two names are one permission.
+
+
+def test_products_and_goals_are_one_permission_in_a_token():
+    for held, required in (("products", "goals"), ("goals", "products"), ("products", "products")):
+        assert has_required_scopes([f"{held}:read"], [f"{required}:read"])
+        assert has_required_scopes([f"{held}:*:read"], [f"{required}:read"])
+        assert not has_required_scopes([f"{held}:read"], [f"{required}:write"])
+        # One Goal, named by id.
+        one = [f"{held}:docs:read"]
+        assert has_required_scopes(one, [f"{required}:read"], resource_type=required, resource_id="docs")
+        assert not has_required_scopes(one, [f"{required}:read"], resource_type=required, resource_id="other")
+        assert not has_required_scopes(one, [f"{required}:read"])
+        assert get_accessible_resource_ids(one, required) == {"docs"}
+        assert get_accessible_resource_ids([f"{held}:read"], required) == {"*"}
+        assert get_accessible_resource_ids(one, required, action="write") == set()
+    assert not has_required_scopes(["products:read"], ["tasks:read"])
+    assert not has_required_scopes(["tasks:read"], ["products:read"])
+    # A scope is shown under the current name; raw keeps what was written.
+    assert parse_scope("products:read").resource == "goals"
+    assert parse_scope("products:read").raw == "products:read"
+    assert split_scope("products:docs:read") == ("goals", "docs", "read")
+
+
+def test_a_products_requirement_of_an_application_is_read_the_same_way(tmp_path):
+    from fastapi import APIRouter
+
+    from agno.os.interfaces.base import BaseInterface
+
+    class Catalog(BaseInterface):
+        """Routes of an application that has a products permission of its own."""
+
+        type = "catalog"
+        prefix = "/catalog"
+
+        def get_router(self, **kwargs):
+            router = APIRouter(prefix=self.prefix)
+
+            @router.get("/products")
+            def products():
+                return {"products": ["chair"]}
+
+            return router
+
+        def get_scope_mappings(self):
+            return {f"GET {self.prefix}/products": ["products:read"]}
+
+    db = SqliteDb(db_file=str(tmp_path / "catalog.db"))
+    agent_os = AgentOS(
+        id=OS_ID,
+        db=db,
+        interfaces=[Catalog()],
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
+    )
+
+    with TestClient(agent_os.get_app()) as client:
+        assert client.get("/catalog/products", headers=_headers(["products:read"])).status_code == 200
+        # The one permission under its current name.
+        assert client.get("/catalog/products", headers=_headers(["goals:read"])).status_code == 200
+        assert client.get("/catalog/products", headers=_headers(["tasks:read"])).status_code == 403
+        assert client.get("/catalog/products", headers=_headers(["products:write"])).status_code == 403
+    db.close()
+
+
+def test_the_system_scope_and_the_config_scope_are_read_as_before():
+    assert has_required_scopes(["system:read"], ["config:read"])
+    assert has_required_scopes(["config:read"], ["system:read"])
+    assert has_required_scopes(["system:dep-1:read"], ["config:read"], resource_type="config", resource_id="dep-1")
+    assert not has_required_scopes(["system:read"], ["config:write"])
+    assert not has_required_scopes(["system:read"], ["registry:read"])
+    assert get_accessible_resource_ids(["system:dep-1:read"], "config") == {"dep-1"}
+    assert parse_scope("system:read").resource == "config"
+    assert split_scope("system:read") == ("config", None, "read")
+    # A role stores a system scope under config, and a row under system matches nothing.
+    assert scope_to_resource_action("system:read") == ("config/*", "read")
+    assert scope_to_resource_action("products:read") == ("goals/*", "read")
+    assert not resource_matches("system/*", "config/*")
+    assert not resource_matches("config/*", "system/*")
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_granting_goals_keeps_a_stored_products_grant(tmp_path, use_async):
+async def test_products_and_goals_are_one_permission_in_a_role(tmp_path, use_async):
     db = SqliteDb(db_file=str(tmp_path / "roles.db"))
-    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
-    engine = Authorization(db=db)._store()._engine
+    store = Authorization(db=db)
+    store.set_role_scopes("goal-reader", ["goals:read"])
+    store.set_role_scopes("product-reader", ["products:read"])
+    engine = store._store()._engine
 
+    async def holds(scope, role):
+        if use_async:
+            return await engine.acheck_scope(scope, roles=[role])
+        return engine.check_scope(scope, roles=[role])
+
+    for role in ("goal-reader", "product-reader"):
+        assert await holds("goals:read", role) is True
+        assert await holds("products:read", role) is True
+        assert await holds("products:docs:read", role) is True
+        assert await holds("goals:write", role) is False
+        assert engine.check_resource("products", "docs", "read", roles=[role]) is True
+        assert engine.check_resource("goals", "docs", "read", roles=[role]) is True
+    # Both are stored under the current name.
+    assert db.get_authz_role_policies("goal-reader") == db.get_authz_role_policies("product-reader")
+    assert db.get_authz_role_policies("product-reader") == [("goals/*", "read", "allow")]
+    db.close()
+
+
+async def _patch(store, use_async, role, upsert=None, remove=None):
     if use_async:
-        await engine.aadd_scope("reader", "goals:read")
+        await store._apatch_role_scopes(role, upsert=upsert, remove=remove)
     else:
-        engine.add_scope("reader", "goals:read")
+        store._patch_role_scopes(role, upsert=upsert, remove=remove)
 
-    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("name", ["goals", "products"])
+async def test_granting_either_name_on_a_stored_3_2_0_row_leaves_one_grant(tmp_path, name, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    # The row 3.2.0 stored for a role that held products:read.
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
+    store = Authorization(db=db)
+    engine = store._store()._engine
+    assert engine.check_scope("goals:read", roles=["reader"]) is True
+
+    await _patch(store, use_async, "reader", upsert=[f"{name}:read"])
+
+    assert db.get_authz_role_policies("reader") == [("goals/*", "read", "allow")]
+    assert engine.check_scope("goals:read", roles=["reader"]) is True
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("name", ["goals", "products"])
+@pytest.mark.parametrize("stored", ["products/*", "goals/*"])
+async def test_removing_either_name_removes_the_goals_grant(tmp_path, stored, name, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource=stored, action="read", effect="allow")
+    db.upsert_authz_policy(role="reader", resource="tasks/*", action="read", effect="allow")
+    store = Authorization(db=db)
+    engine = store._store()._engine
+
+    await _patch(store, use_async, "reader", remove=[f"{name}:read"])
+
+    assert db.get_authz_role_policies("reader") == [("tasks/*", "read", "allow")]
+    assert engine.check_scope("goals:read", roles=["reader"]) is False
+    assert engine.check_scope("products:read", roles=["reader"]) is False
+    db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("name", ["goals", "products"])
+@pytest.mark.parametrize("stored", ["products/*", "goals/*"])
+async def test_a_deny_on_either_name_denies_both(tmp_path, stored, name, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    db.upsert_authz_policy(role="reader", resource=stored, action="read", effect="allow")
+    store = Authorization(db=db)
+    engine = store._store()._engine
+
+    await _patch(store, use_async, "reader", upsert=[{"scope": f"{name}:read", "effect": "deny"}])
+
+    assert db.get_authz_role_policies("reader") == [("goals/*", "read", "deny")]
+    for checked in ("goals:read", "products:read"):
+        assert engine.check_scope(checked, roles=["reader"]) is False
+    assert engine.denied_resource_ids("goals", "read", roles=["reader"]) == {"*"}
+    assert engine.denied_resource_ids("products", "read", roles=["reader"]) == {"*"}
+    db.close()
+
+
+def test_a_service_account_token_carries_products_only_from_a_holder_of_the_permission():
+    from agno.os.routers.service_accounts.router import _caller_holds_scope
+
+    for held in ("goals", "products"):
+        assert _caller_holds_scope([f"{held}:read"], "products:read", None)
+        assert _caller_holds_scope([f"{held}:read"], "goals:read", None)
+        assert _caller_holds_scope([f"{held}:docs:read"], "products:docs:read", None)
+        assert not _caller_holds_scope([f"{held}:read"], "products:write", None)
+        assert not _caller_holds_scope([f"{held}:docs:read"], "products:read", None)
+    assert not _caller_holds_scope(["tasks:read", "agents:read"], "products:read", None)
+    assert not _caller_holds_scope([], "products:read", None)
+
+
+@pytest.mark.parametrize("scope", ["application:products:*:read", "application:products:read"])
+def test_no_row_is_stored_apart_from_the_one_permission(tmp_path, scope):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    store = Authorization(db=db)
+
+    if scope.count(":") == 3:
+        # Four parts is not a scope.
+        with pytest.raises(ValueError):
+            store.set_role_scopes("reader", [scope])
+        with pytest.raises(ValueError):
+            store._patch_role_scopes("reader", upsert=[scope])
+        assert db.get_authz_role_policies("reader") == []
+    else:
+        # "application" is an ordinary resource type here, with no tie to products or goals.
+        store.set_role_scopes("reader", [scope])
+        engine = store._store()._engine
+        assert engine.check_scope("products:read", roles=["reader"]) is False
+        assert engine.check_scope("goals:read", roles=["reader"]) is False
+    for resource, _action, _effect in db.get_authz_role_policies("reader"):
+        assert not resource.startswith("application:")
     db.close()
 
 
