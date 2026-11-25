@@ -1886,6 +1886,32 @@ def test_another_agent_that_cannot_be_built_does_not_fail_a_request_that_names_a
     )
 
 
+def test_a_shared_declaration_and_a_user_scoped_view_of_one_store_are_one_entry(db, client_factory):
+    declared = FileSystem(db, namespace="handbook", user_scoped=False)
+    held = FileSystem(db, namespace="handbook", user_scoped=True)
+    client = client_factory(Agent(id="writer", db=db, filesystem=held), db=db, filesystem=declared)
+    declared.write("shared.md", "shared\n")
+    held.resolve(user_id="alice").write("alice.md", "alice's\n")
+    held.resolve(user_id="bob").write("bob.md", "bob's\n")
+    alice, admin = _headers("alice", ["agents:read", "filesystem:read", "config:read"]), _admin_headers()
+
+    # One entry, described by the declaration.
+    assert _config_entries(client, alice) == [_declared_entry("handbook", agents=[{"id": "writer"}])]
+
+    def listed(headers: dict, **params) -> list:
+        entries = client.get("/filesystem/entries", params=params, headers=headers).json()["entries"]
+        return [(entry["path"], entry["user_id"]) for entry in entries]
+
+    # By its id the store is the shared partition, for a user and for an admin.
+    for headers in (alice, admin):
+        assert listed(headers, filesystem_id="handbook") == [("shared.md", None)]
+        rows = client.get("/filesystem/files", headers=headers).json()["entries"]
+        assert [(row["path"], row["user_id"]) for row in rows] == [("shared.md", None)]
+    # With the agent named it is read as the agent holds it: a user's own files, and every partition for an admin.
+    assert listed(alice, agent_id="writer") == [("alice.md", "alice")]
+    assert listed(admin, agent_id="writer") == [("alice.md", "alice"), ("bob.md", "bob"), ("shared.md", None)]
+
+
 # --- Reading one file as an admin ---
 
 

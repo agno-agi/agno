@@ -101,6 +101,15 @@ the store sets `user_scoped` itself. The setting is applied to what the AgentOS
 serves, not written onto the `FileSystem` you declared, so one `FileSystem`
 declared on two AgentOS instances follows the setting of each.
 
+One table and namespace is one entry, whoever holds it. When a store is declared
+shared and an agent holds a user-scoped view of the same table and namespace:
+
+- `/config` lists one entry, described by the declaration (`user_isolation: false`).
+- Read by `filesystem_id`, it is the shared partition, for a user and for an admin.
+- The files the agent's runs wrote for each user are in the users' partitions.
+  They are listed only with `agent_id`, which reads the store as that agent holds
+  it: a user sees their own partition, an admin every partition.
+
 ## Namespaces and isolation
 
 The agent receives its filesystem tools automatically. The managed namespace is
