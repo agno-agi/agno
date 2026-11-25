@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agno.client import AgentOSClient
-from agno.os.routers.evals.schemas import EvalSuiteCaseInput
 
 
 def test_init_with_base_url():
@@ -474,6 +473,8 @@ async def test_run_eval_suite():
 @pytest.mark.asyncio
 async def test_run_eval_suite_from_body():
     """Verify run_eval_suite_from_body posts the cases to /eval-suites."""
+    from agno.os.routers.evals.schemas import EvalSuiteCaseInput
+
     client = AgentOSClient(base_url="http://localhost:7777")
     mock_data = {"id": "run-2", "eval_type": "suite", "eval_data": {"summary": {"total": 1}}}
     case = EvalSuiteCaseInput(name="mul", agent_id="math-tutor", input="17 * 23", criteria="391")

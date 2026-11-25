@@ -6,12 +6,14 @@ exercise FastAPI's default exception handlers, not agno's. The owned-app contrac
 """
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from agno.agent import Agent
+from agno.eval import Case, EvalSuite
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.settings import AgnoAPISettings
 
@@ -561,9 +563,6 @@ class TestScheduleRunScope:
 
     def test_eval_suite_run_needs_run_on_its_agent_and_evals_run(self, scoped_client, mock_db):
         """Scheduling a suite asks what running it by hand asks: run on its one agent, plus evals:run."""
-        from agno.agent import Agent
-        from agno.eval import Case, EvalSuite
-
         suite = EvalSuite(id="s1", cases=(Case(name="c", agent=Agent(id="a1"), input="q", criteria="k"),))
 
         def _client(scopes):
@@ -591,3 +590,36 @@ class TestScheduleRunScope:
         mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         resp = scoped_client(["schedules:write"]).patch("/schedules/sched-1", json={"endpoint": "/teams/t1/runs"})
         assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_eval_suite_run_under_managed_roles_asks_the_provider(monkeypatch):
+    """Under managed roles, scheduling a suite asks evals:run as its route gate does, then run on its agent."""
+    from starlette.requests import Request
+
+    from agno.os.routers.run_permissions import _require_endpoint_permission
+
+    app = FastAPI()
+    app.state.eval_suites = [EvalSuite(id="s1", cases=(Case(name="c", agent=Agent(id="a1"), input="q", criteria="k"),))]
+    request = Request({"type": "http", "app": app})
+    request.state.authorization_enabled = True
+    request.state.user_id = "alice"
+    provider = MagicMock()
+    provider.aauthorize_route = AsyncMock(return_value=True)
+    provider.acheck = AsyncMock(return_value=True)
+    monkeypatch.setattr("agno.os.auth.caller_scopes_are_authoritative", lambda request: False)
+    monkeypatch.setattr("agno.os.auth.resolve_authorization_provider", lambda request: provider)
+
+    await _require_endpoint_permission(request, "/eval-suites/s1/runs", "POST")
+    evals_ctx, required_scopes = provider.aauthorize_route.call_args.args
+    assert (evals_ctx.resource_type, evals_ctx.action, required_scopes) == (None, "run", ["evals:run"])
+    ctx = provider.acheck.call_args.args[0]
+    assert (ctx.principal_id, ctx.resource_type, ctx.resource_id, ctx.action) == ("alice", "agents", "a1", "run")
+    # An unknown suite answers the same 403 as a refused one.
+    with pytest.raises(HTTPException) as exc:
+        await _require_endpoint_permission(request, "/eval-suites/nope/runs", "POST")
+    assert exc.value.status_code == 403
+    provider.aauthorize_route.return_value = False
+    with pytest.raises(HTTPException) as exc:
+        await _require_endpoint_permission(request, "/eval-suites/s1/runs", "POST")
+    assert exc.value.status_code == 403

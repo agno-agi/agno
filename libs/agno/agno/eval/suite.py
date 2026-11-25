@@ -26,6 +26,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.reliability import ReliabilityEval
 from agno.filters import FilterExpr
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
@@ -195,9 +196,12 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
-    # Scorer verdict; None = check not configured. Must stay the last field: not
+    # Scorer verdict; None = check not configured. Stays after response: not
     # kw_only, so positional construction depends on field order.
     score: Optional[Score] = None
+    # A copy of the run's metrics with the judge's added, so a run held by a cached
+    # session is never changed. Appended last for the same field-order reason.
+    metrics: Optional[RunMetrics] = None
 
     @property
     def passed(self) -> bool:
@@ -267,6 +271,8 @@ class SuiteResult:
                     "score_value": result.score.value if result.score is not None else None,
                     "score_passed": result.score.passed if result.score is not None else None,
                     "score_reason": result.score.reason if result.score is not None else None,
+                    # The run's metrics with the judge's folded in; null when the run produced no output.
+                    "metrics": result.metrics.to_dict() if result.metrics is not None else None,
                 }
                 for result in self.results
             ],
@@ -425,6 +431,7 @@ async def _run_case_body(
                 # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
+                result.metrics = RunMetrics.from_dict(event.metrics.to_dict()) if event.metrics is not None else None
                 _extract_evidence(result, event)
                 continue
             if isinstance(event, _RUN_ERROR_EVENTS):
@@ -494,7 +501,12 @@ async def _run_case_body(
                 # Preserve EvalSuite's existing policy: its internally-created evals
                 # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
-            ).arun(input=input_text, output=result.output or "")
+            ).arun(
+                input=input_text,
+                output=result.output or "",
+                # The judge's tokens and time are added to the case's run metrics, as AccuracyEval does.
+                run_metrics=result.metrics,
+            )
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
         else:

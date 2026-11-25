@@ -10,14 +10,15 @@ from starlette._utils import get_route_path
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalType
-from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.eval.suite import Case, EvalSuite, JudgeMode, arun_cases
 from agno.eval.utils import async_log_eval
 from agno.exceptions import AgnoError
 from agno.models.base import Model
 from agno.models.utils import get_model
-from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
+    _schedule_owner_from_header,
     apply_scope_to_kwargs,
     assert_session_writable,
     caller_is_admin,
@@ -701,10 +702,10 @@ def attach_routes(
     async def get_eval_suite(request: Request, suite_id: str) -> EvalSuiteSchema:
         eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
         if eval_suite is None:
-            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
         # Same 404 as an unknown id, so the route does not reveal a suite the caller cannot read.
         if eval_suite not in await _readable_eval_suites(request, eval_suites):
-            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
         return EvalSuiteSchema.from_eval_suite(eval_suite)
 
     async def _run_eval_suite(
@@ -720,38 +721,43 @@ def attach_routes(
         """Run the selected cases of a suite and store the result as one eval run of type suite.
 
         Shared by the registered-suite and the body-defined routes, so both gate, run and persist
-        the same way; eval_input is what a client posts again to rerun.
+        the same way; eval_input is the request a client reruns: the posted body, or the suite_id with
+        the body posted to its run route.
         """
         # Resolved before the run: get_scoped_user_id raises 403 and the suite below makes real model calls.
-        # The scheduler sentinel identifies the caller, not the owner, so a scheduled run stays unowned.
+        # The scheduler sentinel identifies the caller, not the owner: a scheduled run takes the forwarded
+        # schedule owner, as the run routes take the owner the executor puts in the form.
         state_user_id = getattr(request.state, "user_id", None)
         creator_user_id = get_scoped_user_id(request) or (
-            None if state_user_id == INTERNAL_SCHEDULER_USER_ID else state_user_id
+            _schedule_owner_from_header(request) if state_user_id == INTERNAL_SCHEDULER_USER_ID else state_user_id
         )
+        # The target is gated like the run endpoints, before case selection, so a refused caller gets 403 for any tag.
+        agent_ids = {cast(str, case.agent.id) for case in eval_suite.cases if case.agent is not None}
+        team_ids = {cast(str, case.team.id) for case in eval_suite.cases if case.team is not None}
+        for resource_type, resource_ids in (("agents", agent_ids), ("teams", team_ids)):
+            for resource_id in sorted(resource_ids):
+                await _require_eval_target_run_access(request, resource_type=resource_type, resource_id=resource_id)
         selected = eval_suite.select(tag=tag, name=name)
         if not selected:
             raise HTTPException(status_code=400, detail="No cases match the given tag or name")
         # The caller's identity wins over a user_id set on the case, as on the run routes, so a case runs
         # and writes its session as the caller. A case's own user_id applies only when there is no caller.
-        if creator_user_id is not None:
-            selected = tuple(replace(case, user_id=creator_user_id) for case in selected)
-        # Values the middleware put on request.state (from token claims) win over the case's own, as on
-        # the run routes, so a posted or registered case cannot override what the caller's token sets.
-        state_overrides = {
+        # Values the middleware put on request.state (from token claims) win over the case's own too.
+        overrides = {
             field: getattr(request.state, field)
             for field in ("session_id", "session_state", "dependencies", "metadata")
             if getattr(request.state, field, None) is not None
         }
-        if state_overrides:
-            selected = tuple(replace(case, **state_overrides) for case in selected)
-        # The suite RUNS every selected agent or team with real model calls, so each distinct
-        # target is gated like the run endpoints, the same way a single eval is.
-        # AgentOS registers every target object at startup, so these are the real ids.
-        agent_ids = {case.agent.id for case in selected if case.agent is not None}
-        team_ids = {case.team.id for case in selected if case.team is not None}
-        for resource_type, resource_ids in (("agents", agent_ids), ("teams", team_ids)):
-            for resource_id in sorted(resource_ids):  # type: ignore[type-var]
-                await _require_eval_target_run_access(request, resource_type=resource_type, resource_id=resource_id)  # type: ignore[arg-type]
+        if creator_user_id is not None:
+            overrides["user_id"] = creator_user_id
+        # Runtime-owned metadata keys (version stamp, dispatch lineage) are stripped as on the run routes,
+        # so a posted case cannot forge them.
+        selected = tuple(
+            replace(
+                case, **{**overrides, "metadata": strip_reserved_run_metadata(overrides.get("metadata", case.metadata))}
+            )
+            for case in selected
+        )
         # A case pinned to a session must not write into another user's session, as on the run routes.
         for case in selected:
             if case.session_id:
@@ -854,10 +860,10 @@ def attach_routes(
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, RemoteDb):
-            raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote databases")
+            raise HTTPException(status_code=501, detail="Eval suites are not supported for remote databases")
         eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
         if eval_suite is None:
-            raise HTTPException(status_code=404, detail=f"Evaluation suite with id '{suite_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
         suite_run_input = suite_run_input or EvalSuiteRunInput()
         return await _run_eval_suite(
             request,
@@ -929,9 +935,9 @@ def attach_routes(
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, RemoteDb):
-            raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote databases")
+            raise HTTPException(status_code=501, detail="Eval suites are not supported for remote databases")
         # One target per suite, as every eval stamps exactly one agent or team.
-        targets = {(case.agent_id, case.team_id) for case in eval_suite_input.cases}
+        targets = {(case.agent_id or None, case.team_id or None) for case in eval_suite_input.cases}
         if len(targets) > 1:
             raise HTTPException(status_code=400, detail="All cases in a suite must run the same agent or team")
         agent_id, team_id = targets.pop()
@@ -951,7 +957,7 @@ def attach_routes(
                 raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
             if not isinstance(resolved_agent, Agent):
                 raise HTTPException(
-                    status_code=501, detail="Evaluation suites are not supported for remote or external agents"
+                    status_code=501, detail="Eval suites are not supported for remote or external agents"
                 )
             agent = resolved_agent
         else:
@@ -959,7 +965,7 @@ def attach_routes(
             if resolved_team is None:
                 raise HTTPException(status_code=404, detail=f"Team with id '{team_id}' not found")
             if not isinstance(resolved_team, Team):
-                raise HTTPException(status_code=501, detail="Evaluation suites are not supported for remote teams")
+                raise HTTPException(status_code=501, detail="Eval suites are not supported for remote teams")
             team = resolved_team
         # A posted case names its judge as text; it is built here, as POST /eval-runs builds its model.
         judge_models: List[Optional[Model]] = []

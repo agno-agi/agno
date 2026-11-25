@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
+from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.eval import Case, EvalSuite, SuiteResult
 from agno.models.response import ToolExecution
 from agno.os import AgentOS
@@ -192,13 +193,13 @@ def test_eval_suite_without_an_id_or_cases_is_dropped(db, suite):
     no_id = EvalSuite(id="", cases=suite.cases)
     no_cases = EvalSuite(id="empty", cases=())
     agent_os = AgentOS(id=TEST_OS_ID, agents=[agent], eval_suites=[no_id, no_cases, suite], db=db, telemetry=False)
-    assert [eval_suite.id for eval_suite in agent_os.eval_suites] == ["assistant-quality"]
+    assert [eval_suite.id for eval_suite in agent_os._eval_suites] == ["assistant-quality"]
 
 
 def test_eval_suite_targeting_an_unregistered_agent_is_dropped(db, suite):
     agent_os = AgentOS(id=TEST_OS_ID, agents=[Agent(id="other", db=db)], eval_suites=[suite], db=db, telemetry=False)
     client = TestClient(agent_os.get_app())
-    assert agent_os.eval_suites is None
+    assert agent_os._eval_suites is None
     assert client.get("/eval-suites").json() == []
 
 
@@ -220,7 +221,7 @@ def test_eval_suite_over_an_agent_and_a_team_is_dropped(db):
         ),
     )
     agent_os = AgentOS(id=TEST_OS_ID, agents=[agent], teams=[team], eval_suites=[mixed], db=db, telemetry=False)
-    assert agent_os.eval_suites is None
+    assert agent_os._eval_suites is None
     assert TestClient(agent_os.get_app()).get("/eval-suites").json() == []
 
 
@@ -322,6 +323,54 @@ def test_run_eval_suite_runs_every_case_as_the_caller(db):
         resp = TestClient(agent_os.get_app()).post("/eval-suites/as-ceo/runs", json={}, headers=auth_header("alice"))
     assert resp.status_code == 200
     assert seen == ["alice"]
+
+
+def test_scheduled_eval_suite_runs_as_the_schedule_owner(db):
+    """With isolation off, a scheduled suite still runs and is stored as the schedule's owner."""
+    agent = Agent(id="assistant", name="Assistant", db=db)
+    eval_suite = EvalSuite(
+        id="nightly", cases=(Case(name="c", agent=agent, input="10 times 5", expected_tool_calls=("multiply",)),)
+    )
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[agent],
+        eval_suites=[eval_suite],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        telemetry=False,
+    )
+    client = TestClient(agent_os.get_app())
+    client.app.state.internal_service_token = "internal"
+    seen = []
+
+    async def _record_user(*args, **kwargs):
+        seen.append(kwargs.get("user_id"))
+        async for event in _tool_run():
+            yield event
+
+    with patch.object(Agent, "arun", side_effect=_record_user):
+        resp = client.post(
+            "/eval-suites/nightly/runs",
+            json={},
+            headers={"Authorization": "Bearer internal", SCHEDULE_OWNER_HEADER: "bob"},
+        )
+    assert resp.status_code == 200
+    assert seen == ["bob"]
+    assert resp.json()["user_id"] == "bob"
+
+
+def test_eval_suite_dropped_at_startup_is_served_after_resync(db, suite):
+    """A suite dropped because its agent was not registered is served once the agent is added and the OS resyncs."""
+    agent_os = AgentOS(id=TEST_OS_ID, eval_suites=[suite], db=db, telemetry=False)
+    app = agent_os.get_app()
+    assert TestClient(app).get("/eval-suites").json() == []
+
+    agent_os.agents = [suite.cases[0].agent]
+    agent_os.resync(app)
+
+    assert [eval_suite["id"] for eval_suite in TestClient(app).get("/eval-suites").json()] == ["assistant-quality"]
+    assert app.state.eval_suites == [suite]
 
 
 def test_eval_suites_are_listed_only_for_readable_targets(db):
@@ -428,3 +477,19 @@ def test_run_eval_suite_refuses_another_users_pinned_session(db):
         resp = client.post("/eval-suites/pinned/runs", json={}, headers=auth_header("bob"))
     assert resp.status_code == 404
     assert arun.call_count == 0
+
+
+def test_run_eval_suite_from_body_strips_runtime_metadata_keys(client):
+    """A posted case cannot forge the version stamp or dispatch lineage, as on the run routes."""
+    forged = {"agno_component_version": 99, "agno_dispatch_depth": 0, "team": "ok"}
+    case = {**_posted_suite()["cases"][0], "metadata": forged}
+    seen = []
+
+    async def _capture(selected, **kwargs):
+        seen.extend(selected)
+        return SuiteResult(results=[])
+
+    with patch("agno.os.routers.evals.evals.arun_cases", side_effect=_capture):
+        resp = client.post("/eval-suites", json=_posted_suite(cases=[case]), headers=auth_header("alice"))
+    assert resp.status_code == 200
+    assert seen[0].metadata == {"team": "ok"}

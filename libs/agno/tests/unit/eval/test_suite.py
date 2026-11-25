@@ -120,9 +120,10 @@ def _install_fake_evals(
             self.kwargs = kwargs
             judge_instances.append(self)
 
-        async def arun(self, *, input, output):
+        async def arun(self, *, input, output, run_metrics=None):
             self.input = input
             self.output = output
+            self.run_metrics = run_metrics
             if judge_delay:
                 await asyncio.sleep(judge_delay)
             if judge_error is not None:
@@ -185,6 +186,24 @@ def test_run_cases_accepts_an_eval_suite(monkeypatch):
 
     assert [r.name for r in result.results] == ["a"]
     assert cli(eval_suite, argv=["--list"]) == 0
+
+
+def test_judge_metrics_are_added_to_the_case_run_metrics(monkeypatch):
+    # The judge gets a copy of the case's run metrics, and the payload carries the copy.
+    from agno.metrics import RunMetrics
+
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    run_metrics = RunMetrics(input_tokens=10, output_tokens=5, total_tokens=15)
+    case = _make_case(agent=StubAgent(output=_output(content="stub response", metrics=run_metrics)))
+
+    result = run_cases([case])
+    # The judge adds its own tokens to the copy it was given, as accumulate_eval_metrics does.
+    judge_instances[0].run_metrics.total_tokens += 7
+
+    assert judge_instances[0].run_metrics is not run_metrics
+    assert result.to_dict()["cases"][0]["metrics"]["total_tokens"] == 22
+    # The run itself, which a cached session holds, keeps only the agent's tokens.
+    assert run_metrics.total_tokens == 15
 
 
 def test_empty_expected_tool_calls_with_criteria_skips_reliability(monkeypatch):
@@ -919,6 +938,7 @@ def test_to_dict_matches_contract(monkeypatch):
         "score_value",
         "score_passed",
         "score_reason",
+        "metrics",
     ]
     assert case_payload["name"] == "capital_of_france"
     assert case_payload["agent_id"] == "geo-agent"
@@ -1691,16 +1711,16 @@ def test_case_scorer_inside_timeout_and_gradeable_only(monkeypatch):
 
 
 def test_suite_to_dict_is_additive(monkeypatch):
-    # With no scorer configured the payload is byte-identical except for the three new
-    # null keys at the end of the case payload. This is the frozen CI contract.
+    # With no scorer configured the payload is byte-identical except for the new keys
+    # appended at the end of the case payload. This is the frozen CI contract.
     _install_fake_evals(monkeypatch)
 
     payload = run_cases([_make_case()]).to_dict()
 
     case_payload = payload["cases"][0]
     keys = list(case_payload.keys())
-    assert keys[-3:] == ["score_value", "score_passed", "score_reason"]
-    assert keys[:-3] == [
+    assert keys[-4:] == ["score_value", "score_passed", "score_reason", "metrics"]
+    assert keys[:-4] == [
         "name",
         "agent_id",
         "team_id",

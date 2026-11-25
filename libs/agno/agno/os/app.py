@@ -541,6 +541,7 @@ class AgentOS:
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.eval_suites = eval_suites
+        self._eval_suites: Optional[List[EvalSuite]] = None
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -821,7 +822,7 @@ class AgentOS:
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
-        self._drop_eval_suites_with_unregistered_targets()
+        self._drop_invalid_eval_suites()
 
         if self.tracing:
             self._setup_tracing()
@@ -961,7 +962,8 @@ class AgentOS:
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
-        self._drop_eval_suites_with_unregistered_targets()
+        self._drop_invalid_eval_suites()
+        app.state.eval_suites = self._eval_suites
         self._auto_discover_databases()
         self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
@@ -1047,7 +1049,7 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
-                eval_suites=self.eval_suites,
+                eval_suites=self._eval_suites,
             ),
             get_metrics_router(
                 dbs=self.dbs,
@@ -1267,7 +1269,7 @@ class AgentOS:
         if duplicate_ids:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
-    def _drop_eval_suites_with_unregistered_targets(self) -> None:
+    def _drop_invalid_eval_suites(self) -> None:
         """Keep only the eval suites this OS can serve: a unique id, at least one case, and every case
         running the same local agent or team registered on this OS.
 
@@ -1306,7 +1308,7 @@ class AgentOS:
                 continue
             seen_ids.add(eval_suite.id)
             registered.append(eval_suite)
-        self.eval_suites = registered or None
+        self._eval_suites = registered or None
 
     @property
     def _agents(self) -> List[Agent]:
@@ -2199,7 +2201,7 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
-                eval_suites=self.eval_suites,
+                eval_suites=self._eval_suites,
             ),
             get_metrics_router(
                 dbs=self.dbs,
@@ -2368,7 +2370,7 @@ class AgentOS:
         fastapi_app.state.agent_os_id = self.id
         fastapi_app.state.cors_allowed_origins = self.cors_allowed_origins
         # The schedule permission check resolves a suite run endpoint to the suite's agent or team
-        fastapi_app.state.eval_suites = self.eval_suites
+        fastapi_app.state.eval_suites = self._eval_suites
 
         # Store internal service token for scheduler auth bypass
         if self._internal_service_token:
