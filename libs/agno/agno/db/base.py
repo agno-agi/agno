@@ -447,12 +447,15 @@ class BaseDb(ABC):
         from agno.db.utils import company_migration_required_error, legacy_company_table
 
         legacy_table = legacy_company_table(self, table_type)
+        creates_company_table = False
         if legacy_table is not None and self.table_exists(legacy_table):
             from agno.db.migrations.versions.v3_3_0 import company_table_pending
 
             # An agno 3.2 process that starts after the migration creates its table again.
             if company_table_pending(self, table_type):
                 raise company_migration_required_error(legacy_table, table_name)
+        elif legacy_table is not None and create_table_if_not_found:
+            creates_company_table = not self.table_exists(table_name)
         if not create_table_if_not_found and not self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
@@ -460,9 +463,14 @@ class BaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            return self._resolve_table(
+            table = self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+        if creates_company_table:
+            from agno.db.migrations.versions.v3_3_0 import record_company_tables
+
+            record_company_tables(self)
+        return table
 
     def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
@@ -3047,11 +3055,14 @@ class AsyncBaseDb(ABC):
         from agno.db.utils import company_migration_required_error, legacy_company_table
 
         legacy_table = legacy_company_table(self, table_type)
+        creates_company_table = False
         if legacy_table is not None and await self.table_exists(legacy_table):
             from agno.db.migrations.versions.v3_3_0 import acompany_table_pending
 
             if await acompany_table_pending(self, table_type):
                 raise company_migration_required_error(legacy_table, table_name)
+        elif legacy_table is not None and create_table_if_not_found:
+            creates_company_table = not await self.table_exists(table_name)
         if not create_table_if_not_found and not await self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
@@ -3059,9 +3070,14 @@ class AsyncBaseDb(ABC):
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            return await self._resolve_table(
+            table = await self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
+        if creates_company_table:
+            from agno.db.migrations.versions.v3_3_0 import arecord_company_tables
+
+            await arecord_company_tables(self)
+        return table
 
     async def _resolve_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False

@@ -1014,17 +1014,45 @@ async def test_two_details_tables_with_rows_stop_the_migration(database):
     assert database.describe() == before
 
 
-async def test_an_empty_table_gives_way_to_the_3_2_0_table(database):
+async def test_an_empty_table_beside_the_3_2_0_table_is_not_dropped(database):
+    """Another session could add a Goal between a check that the table is empty and its drop."""
     _write_3_2_0(database)
     database._patch.setattr("agno.db.utils.legacy_company_table", lambda db, table_type: None)
-    db = database.db()
-    for table_type in ("goals", "company"):
-        await _call(db._get_table, table_type, create_table_if_not_found=True)
+    await _call(database.db()._get_table, "goals", create_table_if_not_found=True)
     database._patch.undo()
+    before = database.describe()
 
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="agno_company_goals"):
+        await MigrationManager(database.db()).up()
+
+    assert database.describe() == before
+
+
+@pytest.mark.parametrize("children", [None, "product_id", "goal_id"])
+async def test_two_goals_tables_with_no_record_are_never_taken_as_migrated(database, children):
+    _write_3_2_0(database)
+    await _start_before_migrating(database)
+    database._patch.undo()
+    for name in ("sources", "projects", "tasks"):
+        if children is None:
+            database.execute(f"DROP TABLE {database._ref(f'agno_company_{name}')}")
+        elif children == "goal_id":
+            database.execute(f"ALTER TABLE {database._ref(f'agno_company_{name}')} RENAME COLUMN product_id TO goal_id")
+
+    with pytest.raises(MigrationRequiredError):
+        await _call(database.db().get_goals)
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError):
+        await MigrationManager(database.db()).up()
+
+
+async def test_tables_3_2_creates_beside_those_of_a_new_database_are_not_used(database):
+    """A database that never needed the migration records that too."""
+    await _call(database.db()._get_table, "goals", create_table_if_not_found=True)
+    await _recreate_3_2_0_tables(database)
+
+    assert (await _call(database.db().get_goals))[1] == 0
     await MigrationManager(database.db()).up()
-
-    await _assert_carried_over(database)
+    assert (await _call(database.db().get_goals))[1] == 0
 
 
 # -------------------------------------------------------- agno 3.2 started again after the migration

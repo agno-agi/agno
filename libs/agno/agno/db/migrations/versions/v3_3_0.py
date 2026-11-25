@@ -24,10 +24,11 @@ The Company tables change as one unit. MigrationManager calls ``up`` once for ea
 the unit runs for the first Company table type it is called with and finds nothing to do for the
 others. It acts on the tables and columns the database holds, not on a table's version stamp.
 
-A table that holds a row is never dropped. An agno 3.2 process that starts after the migration
-creates its products and details tables again: those are left as they are and not used, and the
-current tables stay the stored data. Where both tables hold rows and the migration has not run, it
-raises ``CompanyGoalsMigrationError`` before it changes anything.
+No table is dropped. The versions table records that the rename is done, or that the tables were
+created under their current names. An agno 3.2 process that starts after that creates its products
+and details tables again: those are left as they are and not used. Where a table stands beside its
+3.2.0 table and nothing is recorded, the migration raises ``CompanyGoalsMigrationError`` before it
+changes anything.
 
 PostgreSQL changes the Company tables in one transaction. SQLite keeps a table or column rename
 when the transaction around it fails, so there a run that stops part way is finished by the next
@@ -35,6 +36,7 @@ run: every step first checks what is already done.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from inspect import signature
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -54,6 +56,8 @@ except ImportError:
 COMPANY_TABLE_TYPES = ("goals", "sources", "projects", "tasks")
 
 GOALS_TABLE_NAME = "agno_company_goals"
+# The row of the versions table that records the rename. It is not the name of a table.
+COMPANY_RENAME_RECORD = "agno_company_goals_rename"
 SQL_DB_TYPES = ("PostgresDb", "SqliteDb", "AsyncPostgresDb", "AsyncSqliteDb")
 MONGO_DB_TYPES = ("MongoDb", "AsyncMongoDb")
 # How long a statement of the migration waits for a table lock on PostgreSQL before it fails.
@@ -153,9 +157,6 @@ class _Sql:
     def rename_table(self, old: str, new: str) -> None:
         self.sess.execute(text(f"ALTER TABLE {self.ref(old)} RENAME TO {self.quote(new)}"))
 
-    def drop_table(self, name: str) -> None:
-        self.sess.execute(text(f"DROP TABLE {self.ref(name)}"))
-
     def rename_column(self, table_name: str, old: str, new: str) -> None:
         self.sess.execute(
             text(f"ALTER TABLE {self.ref(table_name)} RENAME COLUMN {self.quote(old)} TO {self.quote(new)}")
@@ -224,42 +225,55 @@ def _has_rows(sql: _Sql, name: str) -> bool:
     return sql._first(f"SELECT 1 FROM {sql.ref(name)}") is not None
 
 
-def _children_migrated(sql: _Sql, tables: _CompanyTables) -> bool:
-    """Whether the migration has run on the tables that hold a Goal's records. True when there are none."""
-    columns = [sql.columns(name) for name in (tables.projects, tables.tasks, tables.sources) if sql.table_exists(name)]
-    return any("goal_id" in found for found in columns) or not any("product_id" in found for found in columns)
+def _rename_recorded(sql: _Sql, tables: _CompanyTables) -> bool:
+    """Whether the database records that its Company tables carry their current names."""
+    if not sql.table_exists(tables.versions):
+        return False
+    found = sql._first(f"SELECT 1 FROM {sql.ref(tables.versions)} WHERE table_name = :name", name=COMPANY_RENAME_RECORD)
+    return found is not None
+
+
+def _record_rename(sql: _Sql, tables: _CompanyTables) -> bool:
+    """Record that the rename is done, so a 3.2.0 table found later is known to be created after it."""
+    if tables.legacy_goals is None or not sql.table_exists(tables.versions) or _rename_recorded(sql, tables):
+        return False
+    if not (sql.table_exists(tables.goals) or sql.table_exists(tables.details)):
+        return False
+    sql.sess.execute(
+        text(
+            f"INSERT INTO {sql.ref(tables.versions)} (table_name, version, created_at) "
+            "VALUES (:name, '3.3.0', :now) ON CONFLICT (table_name) DO NOTHING"
+        ),
+        {"name": COMPANY_RENAME_RECORD, "now": datetime.now().isoformat()},
+    )
+    return True
 
 
 def _is_pending(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], current: str) -> bool:
     """Whether a 3.2.0 table still has to take its current name.
 
-    An agno 3.2 process that starts after the migration creates its tables again. They are not the
-    stored data: the current table is, as soon as it holds a row.
+    An agno 3.2 process that starts after the rename creates its tables again. The record of the
+    rename says that those are not the stored data.
     """
     if legacy is None or not sql.table_exists(legacy):
         return False
     if not sql.table_exists(current):
         return True
-    if not _has_rows(sql, legacy):
-        return False
-    return not _has_rows(sql, current) or not _children_migrated(sql, tables)
+    return _has_rows(sql, legacy) and not _rename_recorded(sql, tables)
 
 
 def _refuse_two_tables(sql: _Sql, tables: _CompanyTables) -> None:
-    """Raise when a table and its 3.2.0 table both hold rows and the migration has not run.
+    """Raise when a table stands beside its 3.2.0 table and no rename is recorded.
 
-    Either could be the one to keep, so nothing is dropped.
+    Either could be the one to keep. The current table is not dropped even when it is empty: another
+    session could add a row before the drop.
     """
     for legacy, current in ((tables.legacy_goals, tables.goals), (tables.legacy_details, tables.details)):
-        if legacy is None or not _is_pending(sql, tables, legacy, current) or not sql.table_exists(current):
-            continue
-        if sql.postgres:
-            # No other session may add a row between this check and the drop of an empty table.
-            sql.sess.execute(text(f"LOCK TABLE {sql.ref(current)} IN ACCESS EXCLUSIVE MODE"))
-        if _has_rows(sql, current):
+        if _is_pending(sql, tables, legacy, current) and sql.table_exists(current):
             raise CompanyGoalsMigrationError(
-                f"Tables {legacy} and {current} both hold rows. Nothing was changed. Keep the rows you want in "
-                f"{legacy}, under its column names, then drop {current} and run the migration again."
+                f"Tables {legacy} and {current} both exist. Nothing was changed. Stop the processes that use them, "
+                f"keep the rows you want in {legacy}, under its column names, drop {current}, then run the "
+                "migration again."
             )
 
 
@@ -267,9 +281,6 @@ def _rename_table(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], curr
     """Give a 3.2.0 table its current name, and its indexes the names that go with it."""
     changed = False
     if legacy is not None and _is_pending(sql, tables, legacy, current):
-        if sql.table_exists(current):
-            # Empty: a table that holds a row was refused before.
-            sql.drop_table(current)
         sql.rename_table(legacy, current)
         changed = True
     if legacy is None or not sql.table_exists(current):
@@ -336,6 +347,23 @@ async def acompany_table_pending(db: Any, table_type: str) -> bool:
     tables = _CompanyTables.of(db)
     async with db.async_session_factory() as sess:
         return await sess.run_sync(lambda sync_sess: _table_pending(sync_sess, type(db).__name__, tables, table_type))
+
+
+def _record_in(sess: Any, db_type: str, tables: _CompanyTables) -> None:
+    _record_rename(_Sql(sess, db_type, tables.schema), tables)
+
+
+def record_company_tables(db: Any) -> None:
+    """Record that the Company tables were created under their current names."""
+    with db.Session() as sess, sess.begin():
+        _record_in(sess, type(db).__name__, _CompanyTables.of(db))
+
+
+async def arecord_company_tables(db: Any) -> None:
+    """Async version of record_company_tables."""
+    tables = _CompanyTables.of(db)
+    async with db.async_session_factory() as sess, sess.begin():
+        await sess.run_sync(lambda sync_sess: _record_in(sync_sess, type(db).__name__, tables))
 
 
 def company_rename_pending(db: BaseDb) -> bool:
@@ -409,7 +437,8 @@ def _rename_company(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
         changed = _rename_column(sql, name, "product_id", "goal_id") or changed
     for name in (tables.projects, tables.tasks):
         changed = _rename_archive_parents(sql, name) or changed
-    return _move_version_stamps(sql, tables) or changed
+    changed = _move_version_stamps(sql, tables) or changed
+    return _record_rename(sql, tables) or changed
 
 
 def _goal_routine(schedule: Dict[str, Any]) -> Dict[str, Any]:

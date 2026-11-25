@@ -98,7 +98,9 @@ def get_database_router(
         summary="Migrate All Databases",
         description=(
             "Migrate all database schemas to the given target version. "
-            "If a target version is not provided, all databases will be migrated to the latest version."
+            "If a target version is not provided, all databases will be migrated to the latest version. "
+            "A separate Company database is migrated too. If Company could not start because a database was not "
+            "migrated, it is started afterwards, with no restart."
         ),
         responses={
             200: {
@@ -157,7 +159,9 @@ def get_database_router(
         summary="Migrate Database",
         description=(
             "Migrate the given database schema to the given target version. "
-            "If a target version is not provided, the database will be migrated to the latest version."
+            "If a target version is not provided, the database will be migrated to the latest version. "
+            "The id of a separate Company database is accepted too. If Company could not start because a database "
+            "was not migrated, it is started afterwards, with no restart."
         ),
         responses={
             200: {
