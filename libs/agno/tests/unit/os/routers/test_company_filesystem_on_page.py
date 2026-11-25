@@ -19,6 +19,9 @@ from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
 FILES_ONLY = ["filesystem:read"]
+# What the Company routes ask for, beside filesystem:read.
+COMPANY_READ = [*FILES_ONLY, "wiki:read", "tasks:read"]
+COUNTS = ("file_count", "folder_count", "total_bytes")
 COMPANY_ENTRY = {
     "backend_type": "db",
     "table_name": "agno_fs",
@@ -52,18 +55,22 @@ def written(system) -> dict:
     return ids
 
 
+def without_counts(entry: dict) -> dict:
+    return {key: value for key, value in entry.items() if key not in COUNTS}
+
+
 def entry_of(entries: list, namespace: str) -> dict:
     found = [entry for entry in entries if entry["namespace"] == namespace]
     assert len(found) == 1, entries
-    return {key: value for key, value in found[0].items() if key != "db_id"}
+    return {key: value for key, value in without_counts(found[0]).items() if key != "db_id"}
 
 
 # ------------------------------------------------------------------ the Company file system
 
 
-def test_the_company_filesystem_is_listed_and_read_with_filesystem_read_alone(system):
+def test_the_company_filesystem_is_listed_and_read_with_the_company_read_scopes(system):
     ids = written(system)
-    caller = headers(FILES_ONLY)
+    caller = headers(COMPANY_READ)
 
     config = system.client.get("/config", headers=headers(["config:read"]))
     assert config.status_code == 200
@@ -97,7 +104,7 @@ def test_the_company_filesystem_is_listed_and_read_with_filesystem_read_alone(sy
         "status.md",
     ]
 
-    # A file an agent wrote is read here by a caller with neither wiki:read nor tasks:read.
+    # A file an agent wrote is read here by a caller who may read it on the Company routes.
     for path, content in (
         (f"tasks/{ids['task']}/report.md", "The report needle"),
         (f"goals/{ids['goal']}/research.md", "Research needle"),
@@ -115,14 +122,80 @@ def test_the_company_filesystem_is_listed_and_read_with_filesystem_read_alone(sy
     assert {row["filesystem_id"] for row in rows} == {"company"}
     assert f"tasks/{ids['task']}/report.md" in [row["path"] for row in rows]
 
-    # The Company routes still ask for their own scopes.
+    # The same caller reads them on the Company routes.
     for url in ("/company/wiki", "/company/notes", f"/company/tasks/{ids['task']}/files"):
-        assert system.client.get(url, headers=caller).status_code == 403, url
+        assert system.client.get(url, headers=caller).status_code == 200, url
+
+
+@pytest.mark.parametrize("scopes", [FILES_ONLY, [*FILES_ONLY, "tasks:read"]])
+def test_without_wiki_read_the_company_filesystem_is_not_listed_and_not_read(system, scopes):
+    ids = written(system)
+    caller = headers(scopes)
+
+    assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+    assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+    for address in ({"filesystem_id": "company"}, {"namespace": "company"}):
+        for path, params in (
+            ("/filesystem/entries", {}),
+            ("/filesystem/content", {"path": f"tasks/{ids['task']}/report.md"}),
+            ("/filesystem/search", {"query": "needle"}),
+            ("/filesystem/files", {}),
+        ):
+            refused = system.client.get(path, params={**address, **params}, headers=caller)
+            assert refused.status_code == 403, (address, path)
+            assert "wiki:read" in refused.json()["detail"] and "The report" not in refused.text
+
+
+def test_without_tasks_read_the_files_of_tasks_are_left_out_and_refused(system):
+    ids = written(system)
+    caller, full = headers([*FILES_ONLY, "wiki:read"]), headers(COMPANY_READ)
+    by_id = {"filesystem_id": "company"}
+
+    top = system.client.get("/filesystem/entries", params=by_id, headers=caller).json()
+    assert [entry["path"] for entry in top["entries"]] == ["goals", "notes", "wiki"]
+    search = system.client.get("/filesystem/search", params={**by_id, "query": "needle", "limit": 100}, headers=caller)
+    assert search.json()["entries"] and not [e for e in search.json()["entries"] if e["path"].startswith("tasks/")]
+    rows = system.client.get("/filesystem/files", params={"limit": 100}, headers=caller).json()["entries"]
+    assert rows and not [row for row in rows if row["path"].startswith("tasks/")]
+    report = f"tasks/{ids['task']}/report.md"
+    for path, params in (
+        ("/filesystem/content", {"path": report}),
+        ("/filesystem/content", {"path": "/" + report, "user_id": "alice"}),
+        ("/filesystem/entries", {"directory": "tasks"}),
+        ("/filesystem/search", {"query": "needle", "directory": "tasks"}),
+    ):
+        refused = system.client.get(path, params={**by_id, **params}, headers=caller)
+        assert refused.status_code == 403 and "tasks:read" in refused.json()["detail"], (path, params)
+        if "user_id" not in params:
+            assert system.client.get(path, params={**by_id, **params}, headers=full).status_code == 200, path
+
+    # The counts cover what the caller can read, and agree with the usage of the store.
+    def counted(who) -> tuple:
+        listed = system.client.get("/filesystem/namespaces", headers=who).json()["namespaces"][0]
+        usage = system.client.get("/filesystem/entries", params=by_id, headers=who).json()["usage"]
+        assert (listed["file_count"], listed["total_bytes"]) == (usage["file_count"], usage["total_bytes"])
+        return listed["file_count"], listed["folder_count"]
+
+    assert (counted(full)[0] - counted(caller)[0], counted(full)[1] - counted(caller)[1]) == (1, 2)
+
+
+def test_a_declared_filesystem_on_the_company_store_asks_for_the_company_scopes(tmp_path):
+    system = System(tmp_path)
+    try:
+        written(system)
+        handle = SqliteDb(id="handle", db_file=system.db.db_file)
+        system.os.filesystems.append(FileSystem(handle, namespace="company"))
+        caller = headers(FILES_ONLY)
+        assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+        assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+        handle.close()
+    finally:
+        system.db.close()
 
 
 def test_a_request_by_namespace_alone_reads_the_company_filesystem(system):
     ids = written(system)
-    caller = headers(FILES_ONLY)
+    caller = headers(COMPANY_READ)
     by_namespace = {"namespace": "company"}
 
     top = system.client.get("/filesystem/entries", params=by_namespace, headers=caller)
@@ -177,7 +250,7 @@ def test_a_request_for_the_company_filesystem_loads_no_agent(system, monkeypatch
         ("/filesystem/search", {"query": "needle"}),
         ("/filesystem/files", {}),
     ):
-        response = system.client.get(path, params={"filesystem_id": "company", **params}, headers=headers(FILES_ONLY))
+        response = system.client.get(path, params={"filesystem_id": "company", **params}, headers=headers(COMPANY_READ))
         assert response.status_code == 200, path
     assert resolved == []
 
@@ -187,7 +260,7 @@ def test_the_company_filesystem_is_shared_under_user_isolation(tmp_path):
     try:
         written(system)
         for user in ("alice", "bob"):
-            caller = headers(FILES_ONLY, user=user)
+            caller = headers(COMPANY_READ, user=user)
             entry = entry_of(
                 system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"], "company"
             )
@@ -224,7 +297,7 @@ def test_a_database_that_cannot_hold_files_has_no_company_entry():
         assert client.get("/filesystem/namespaces").json() == {"namespaces": []}
 
 
-def test_the_company_store_declared_or_held_by_an_agent_is_one_entry(tmp_path):
+def test_the_company_store_declared_is_one_entry_and_an_agent_is_refused_it(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     declared = FileSystem(db, namespace="company", user_scoped=False)
     reader = Agent(
@@ -239,15 +312,82 @@ def test_the_company_store_declared_or_held_by_an_agent_is_one_entry(tmp_path):
                 client.get("/filesystem/namespaces").json()["namespaces"],
             ):
                 assert [(e["id"], e["declared"], e["company"], e["agents"]) for e in entries] == [
-                    ("company", True, True, [{"id": "reader", "access": "read_only"}])
+                    ("company", True, True, [])
                 ]
             read = client.get("/filesystem/content", params={"filesystem_id": "company", "path": "wiki/people.md"})
             assert read.json()["content"] == "Ada"
+            # The agent is refused the namespace, a read-only one too.
+            assert client.get("/filesystem/entries", params={"agent_id": "reader"}).status_code == 400
     finally:
         db.close()
 
 
 # ------------------------------------------------------------------ the list of file systems
+
+
+def test_the_list_counts_files_and_folders_at_every_depth(tmp_path):
+    from agno.fs.db import DbFileSystem
+
+    class Down(DbFileSystem):
+        def list(self, *args, **kwargs):
+            raise RuntimeError("down")
+
+    db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    handbook, empty = FileSystem(db, namespace="handbook"), FileSystem(db, namespace="empty")
+    for path in ("readme.md", "notes/a.md", "notes/2026/b.md"):
+        handbook.write(path, "abc")
+    down = FileSystem(Down(db=db, table_name="other_fs"), namespace="down")
+    agent_os = AgentOS(db=db, filesystem=[handbook, empty, down], telemetry=False)
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            listed = client.get("/filesystem/namespaces")
+            assert listed.status_code == 200
+            counts = {e["id"]: tuple(e.get(key) for key in COUNTS) for e in listed.json()["namespaces"]}
+            # A filesystem that cannot be read is left uncounted, and the others are still counted.
+            assert counts == {"handbook": (3, 2, 9), "empty": (0, 0, 0), "down": (None, None, None)}
+    finally:
+        db.close()
+
+
+def test_the_list_counts_the_partition_of_the_caller_and_every_partition_for_an_admin(tmp_path):
+    system = System(tmp_path, user_isolation=True)
+    try:
+        diary = FileSystem(system.db, namespace="diary", user_scoped=True)
+        diary.resolve(user_id="alice").write("notes/a.md", "12")
+        diary.resolve(user_id="bob").write("notes/b.md", "345")
+        system.os.filesystems.append(diary)
+
+        def counts(scopes, user) -> tuple:
+            listed = system.client.get("/filesystem/namespaces", headers=headers(scopes, user=user)).json()
+            return tuple(next(e for e in listed["namespaces"] if e["namespace"] == "diary")[key] for key in COUNTS)
+
+        assert counts(FILES_ONLY, "alice") == (1, 1, 2)
+        assert counts(FILES_ONLY, "bob") == (1, 1, 3)
+        # A folder two users have is one folder.
+        assert counts(["agent_os:admin"], "root") == (2, 1, 5)
+    finally:
+        system.db.close()
+
+
+def test_notes_that_wait_to_be_moved_are_refused_and_not_counted_as_none(tmp_path):
+    os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+    company_db = SqliteDb(id="company-db", db_file=str(tmp_path / "company.db"))
+    FileSystem(os_db, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False, auto_provision_dbs=False)
+    by_id = {"filesystem_id": "company"}
+    try:
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            entry = next(e for e in client.get("/filesystem/namespaces").json()["namespaces"] if e["company"])
+            assert not [key for key in COUNTS if key in entry]
+            refused = client.get("/filesystem/entries", params={**by_id, "directory": "notes"})
+            assert refused.status_code == 500 and refused.json()["error_id"] == "migration_required_error"
+            assert client.get("/filesystem/entries", params=by_id).status_code == 200
+            assert client.post("/databases/all/migrate").status_code == 200
+            read = client.get("/filesystem/content", params={**by_id, "path": "notes/ideas.md"})
+            assert read.json()["content"] == "A note"
+    finally:
+        os_db.close()
+        company_db.close()
 
 
 def test_the_list_sees_the_agents_the_browse_routes_see(tmp_path):
@@ -353,7 +493,7 @@ def test_an_id_from_config_can_name_two_stores_that_the_list_tells_apart(tmp_pat
         archive.close()
 
 
-def test_the_company_id_with_an_agent_opens_it_only_when_that_agent_holds_it(tmp_path):
+def test_the_company_id_with_an_agent_names_nothing(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     holder = Agent(
         id="holder", db=db, filesystem=FileSystem(db, namespace="company", user_scoped=False, read_only=True)
@@ -369,7 +509,8 @@ def test_the_company_id_with_an_agent_opens_it_only_when_that_agent_holds_it(tmp
                 return response.status_code, response.json().get("filesystem_id")
 
             assert opened(filesystem_id="company") == (200, "company")
-            assert opened(filesystem_id="company", agent_id="holder") == (200, "company")
+            # An agent that names the Company namespace is refused it.
+            assert opened(filesystem_id="company", agent_id="holder") == (400, None)
             # The other agent does not hold the Company filesystem, so the two name nothing.
             assert opened(filesystem_id="company", agent_id="other") == (404, None)
             assert opened(agent_id="other") == (200, "other-notes")
@@ -378,7 +519,7 @@ def test_the_company_id_with_an_agent_opens_it_only_when_that_agent_holds_it(tmp
                 entries = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
                 return [(entry["id"], entry["company"], entry["agents"]) for entry in entries]
 
-            assert listed("holder") == [("company", True, [{"id": "holder", "access": "read_only"}])]
+            assert client.get("/filesystem/namespaces", params={"agent_id": "holder"}).status_code == 400
             assert listed("other") == [("other-notes", False, [{"id": "other"}])]
     finally:
         db.close()
@@ -500,7 +641,15 @@ def test_the_list_describes_each_filesystem_as_config_does(tmp_path):
     try:
         with TestClient(agent_os.get_app()) as client:
             listed = client.get("/filesystem/namespaces").json()["namespaces"]
-            assert listed == client.get("/config").json()["filesystem"]["namespaces"]
+            # The list adds the counts of what can be read. /config reads no file.
+            config = client.get("/config").json()["filesystem"]["namespaces"]
+            assert [without_counts(entry) for entry in listed] == config
+            assert not [key for entry in config for key in entry if key in COUNTS]
+            assert [tuple(entry.get(key) for key in COUNTS) for entry in listed] == [
+                (None, None, None),
+                (None, None, None),
+                (0, 0, 0),
+            ]
             assert [(e["id"], e["declared"], e["user_isolation"], e["agents"]) for e in listed] == [
                 ("diary", True, True, []),
                 ("journals/{user_id}", True, True, []),
@@ -519,11 +668,11 @@ def test_the_list_shows_only_what_the_caller_can_reach(system_with_stores):
         assert response.status_code == 200, (scopes, response.text)
         return sorted((entry["id"], entry["agents"]) for entry in response.json()["namespaces"])
 
-    # filesystem:read alone: what the AgentOS holds itself.
-    assert ids(FILES_ONLY) == [("company", []), ("handbook", [])]
+    # filesystem:read alone: what the AgentOS declares. The Company filesystem asks for wiki:read too.
+    assert ids(FILES_ONLY) == [("handbook", [])]
+    assert ids([*FILES_ONLY, "wiki:read"]) == [("company", []), ("handbook", [])]
     # With access to the agent that holds one, that filesystem too, and the agent is named.
     assert ids([*FILES_ONLY, "agents:writer:read"]) == [
-        ("company", []),
         ("handbook", []),
         ("writer-notes", [{"id": "writer"}]),
     ]
@@ -543,8 +692,13 @@ def test_an_agent_that_cannot_be_loaded_is_left_out_of_the_list(tmp_path):
             listed = client.get("/filesystem/namespaces")
             assert listed.status_code == 200
             assert [entry["id"] for entry in listed.json()["namespaces"]] == ["handbook", "notes"]
-            # The table of files reads every agent and fails with the one that cannot be built.
-            assert client.get("/filesystem/files").status_code == 500
+            # What the list names opens, and the table of files leaves the broken agent out.
+            assert client.get("/filesystem/files").status_code == 200
+            for filesystem_id in ("handbook", "notes"):
+                opened = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id})
+                assert opened.status_code == 200, filesystem_id
+            # An id nothing has may be the broken agent's, so its failure is reported.
+            assert client.get("/filesystem/entries", params={"filesystem_id": "gone"}).status_code == 500
             # Naming the agent that cannot be built still says so.
             assert client.get("/filesystem/namespaces", params={"agent_id": "broken"}).status_code == 500
     finally:
@@ -605,8 +759,15 @@ def test_a_wiki_page_as_deep_as_3_2_0_allows_is_listed_and_read_after_the_migrat
     wiki.write(DEEP_PAGE, "Deep page needle")
     wiki.write("brief.md", "# Company\n")
 
-    with caplog.at_level(logging.WARNING):
+    # agno logs through one of three loggers that do not propagate, and an earlier test can leave any of them active.
+    loggers = [logging.getLogger(name) for name in ("agno", "agno-team", "agno-workflow")]
+    for logger in loggers:
+        logger.addHandler(caplog.handler)
+    try:
         assert move_company_files(db) is True
+    finally:
+        for logger in loggers:
+            logger.removeHandler(caplog.handler)
     stored = f"wiki/{DEEP_PAGE}"
     assert len(stored.split("/")) > MAX_SEGMENTS
     # The migration names each path that is now longer than a write accepts, and only those.

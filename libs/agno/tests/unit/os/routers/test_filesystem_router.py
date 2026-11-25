@@ -2099,8 +2099,9 @@ def test_another_agent_that_cannot_be_built_does_not_fail_a_request_that_names_a
 
     monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
 
-    # A listing of every agent's files reads the broken agent and fails.
-    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
+    # A listing of every agent's files leaves the broken agent out.
+    every = client.get("/filesystem/files", headers=_headers("alice"))
+    assert every.status_code == 200 and [row["path"] for row in every.json()["entries"]] == ["mine.md"]
     # A request for one agent reads the others only to settle the ids.
     rows = client.get("/filesystem/files", params={"agent_id": "writer"}, headers=_headers("alice"))
     assert rows.status_code == 200
