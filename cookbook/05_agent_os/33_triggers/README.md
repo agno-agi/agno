@@ -32,6 +32,7 @@ agent_os = AgentOS(
 | File | What it shows |
 | --- | --- |
 | `github_issues.py` | A new issue starts a triage run, a reply continues it, a label starts one for anyone's issue, and a digest runs on a schedule |
+| `stored_triggers.py` | A trigger is created over REST and another by an agent with `TriggerTools`; an event is replayed |
 | `REAL_GITHUB.md` | The checks to run against GitHub itself, which `--check` cannot do |
 
 ## What a trigger does with a delivery
@@ -118,3 +119,34 @@ export GITHUB_WEBHOOK_SECRET=<the webhook's secret>
 export GITHUB_REPOSITORY=owner/name
 .venvs/demo/bin/python cookbook/05_agent_os/33_triggers/github_issues.py
 ```
+
+## Triggers as data
+
+A source is code: it holds the secret and the endpoint, and it goes in
+`interfaces=[...]`. A trigger is data. Besides declaring triggers in code, they
+can be created while the app runs, on the sources that are declared.
+
+| Route | What it does |
+| --- | --- |
+| `GET /triggers/sources` | The declared sources and the event kinds each commonly sends |
+| `GET /triggers`, `POST /triggers` | List and create triggers |
+| `GET`, `PATCH`, `DELETE /triggers/{id}` | Read, change and remove one |
+| `POST /triggers/{id}/enable`, `/disable` | Turn one on or off |
+| `GET /triggers/events`, `GET /triggers/{id}/events` | Stored events with their status and reason |
+| `POST /triggers/{id}/events/{event_id}/replay` | Run a finished event again, as a second event |
+
+The scopes are `triggers:read`, `triggers:write` and `triggers:delete`. Creating
+a trigger also needs the right to run its target, and the trigger's runs act as
+the person who created it. A trigger declared in code is changed in code: the
+API can turn it off and on, and cannot edit or delete it.
+
+`TriggerTools` gives an agent the same operations:
+
+```python
+operations_agent = Agent(
+    model=OpenAIResponses(id="gpt-5.6-luna"),
+    tools=[TriggerTools(db=db, sources=[github])],
+)
+```
+
+Super Agent holds `TriggerTools` whenever the AgentOS declares a source.
