@@ -390,6 +390,78 @@ def test_max_pages_cap_across_children_preserves_order():
     assert not any(url.endswith("/d") for url in requested)
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "first_locs",
+    [
+        ["https://example.com/p1", "https://example.com/p1"],
+        ["https://example.com/p1/", "https://example.com/p1/index.html"],
+        ["https://other.com/p1", "https://other.com/p2"],
+        ["https://example.com/p1", "https://other.com/p1"],
+    ],
+    ids=["duplicates", "canonical-aliases", "filtered-hosts", "mixed"],
+)
+def test_index_page_budget_counts_unique_allowed_pages(first_locs, asynchronous):
+    routes = {
+        "https://example.com/sitemap.xml": (
+            sitemapindex_xml("https://example.com/sm1.xml", "https://example.com/sm2.xml"),
+            "application/xml",
+        ),
+        "https://example.com/sm1.xml": (urlset_xml(*first_locs), "application/xml"),
+        "https://example.com/sm2.xml": (
+            urlset_xml("https://example.com/p1", "https://example.com/p2"),
+            "application/xml",
+        ),
+        "https://example.com/p1": ("First page", "text/plain"),
+        "https://example.com/p1/": ("First page", "text/plain"),
+        "https://example.com/p2": ("Second page", "text/plain"),
+    }
+    reader = make_reader(max_pages=2, chunk=False)
+    with mock_site(routes) as requested:
+        documents = (
+            asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+            if asynchronous
+            else reader.read("https://example.com/sitemap.xml")
+        )
+
+    assert [document.id for document in documents] == ["https://example.com/p1", "https://example.com/p2"]
+    assert [document.content for document in documents] == ["First page", "Second page"]
+    assert "https://example.com/sm2.xml" in requested
+    assert not any(url.startswith("https://other.com/") for url in requested)
+    assert all("discovery_incomplete" not in document.meta_data for document in documents)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_index_duplicates_across_shards_do_not_consume_page_budget(asynchronous):
+    routes = {
+        "https://example.com/sitemap.xml": (
+            sitemapindex_xml(*(f"https://example.com/sm{i}.xml" for i in range(1, 5))),
+            "application/xml",
+        ),
+        "https://example.com/sm1.xml": (urlset_xml("https://example.com/p1"), "application/xml"),
+        "https://example.com/sm2.xml": (
+            urlset_xml("https://example.com/p1/", "https://example.com/p1/index.html"),
+            "application/xml",
+        ),
+        "https://example.com/sm3.xml": (urlset_xml("https://example.com/p2"), "application/xml"),
+        "https://example.com/sm4.xml": (urlset_xml("https://example.com/p3"), "application/xml"),
+        "https://example.com/p1": ("First page", "text/plain"),
+        "https://example.com/p2": ("Second page", "text/plain"),
+    }
+    reader = make_reader(max_pages=2, chunk=False)
+    with mock_site(routes) as requested:
+        documents = (
+            asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+            if asynchronous
+            else reader.read("https://example.com/sitemap.xml")
+        )
+
+    assert [document.id for document in documents] == ["https://example.com/p1", "https://example.com/p2"]
+    assert "https://example.com/sm3.xml" in requested
+    assert "https://example.com/sm4.xml" not in requested
+    assert all(document.meta_data["discovery_incomplete"] is True for document in documents)
+
+
 def test_no_sitemap_falls_back_to_single_page():
     routes = {
         "https://example.com/about": (html_page("About", "Just this page"), "text/html"),
