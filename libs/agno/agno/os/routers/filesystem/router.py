@@ -314,7 +314,13 @@ def _numbered_ids(
     return {
         ids[key]
         for key, source in sources.items()
-        if key not in own and (ids[key] not in source.forms or counts[ids[key]] > 1)
+        if key not in own
+        and (
+            ids[key] not in source.forms
+            or counts[ids[key]] > 1
+            # A store that is not loaded can have the same names.
+            or (ids[key] == source.forms[-1] and _can_share_every_name(key))
+        )
     }
 
 
