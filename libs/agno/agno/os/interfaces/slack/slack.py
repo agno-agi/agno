@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import fields
 from ssl import SSLContext
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -95,13 +96,14 @@ class Slack(BaseInterface):
             unfurl_media: Let Slack expand media previews in replies
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
-            default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
+            default_role: Deprecated; use authorize_senders with UserDirectory(default_role=...). Managed role
+                a user not in users gets, under authorization; the user still acts as themselves
             authorize_senders: Run each message as its sender's own user in the user directory. The user is
                 created on their first message, as on a first sign-in, and their role and disabled switch are
                 read on every message. With resolve_user_identity the user is the sender's confirmed email,
                 so one person is one user in Slack and on the web. A sender whose role does not cover the
-                agent, team or workflow gets a private reply. Under it, default_role is the role of a
-                sender who holds none.
+                agent, team or workflow gets a private reply. It takes no default_role: the role a new user
+                gets is UserDirectory(default_role=...).
         """
         self.agent = agent
         self.team = team
@@ -133,6 +135,13 @@ class Slack(BaseInterface):
             raise ValueError("Slack requires an agent, team, or workflow")
 
         self.ctx: SlackContext = self._build_context()
+        if default_role is not None:
+            warnings.warn(
+                "Slack(default_role=) is deprecated; use Slack(authorize_senders=True) with "
+                "UserDirectory(default_role=...), so each sender is a user in the user directory.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._task_delivery: Optional["TaskDelivery"] = None
 
     @property

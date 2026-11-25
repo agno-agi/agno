@@ -531,30 +531,25 @@ async def test_unmapped_user_gets_result_through_the_default_role(tmp_path, user
 
 
 @pytest.mark.parametrize(
-    "role, disabled, users, default_role, posted",
+    "role, disabled, users, posted",
     [
-        ("asker", False, None, None, True),
+        ("asker", False, None, True),
         # The run's user is asked again before a delayed post: disabled, or moved to a role that cannot read Tasks
-        ("asker", True, None, None, False),
-        ("runner", False, None, None, False),
-        # Their own role decides, not the Slack default role, which is for a sender who holds none
-        ("runner", False, None, "slack-bot", False),
-        (None, False, None, "slack-bot", True),
+        ("asker", True, None, False),
+        ("runner", False, None, False),
+        (None, False, None, False),
         # A sender users= leaves out is their own user
-        ("asker", False, USERS, None, True),
+        ("asker", False, USERS, True),
     ],
-    ids=["own-role", "disabled", "lesser-role", "own-role-not-the-default", "default-role", "not-in-users"],
+    ids=["own-role", "disabled", "lesser-role", "no-role", "not-in-users"],
 )
 @pytest.mark.asyncio
-async def test_a_senders_result_follows_their_own_user_as_it_is_now(
-    tmp_path, role, disabled, users, default_role, posted
-):
+async def test_a_senders_result_follows_their_own_user_as_it_is_now(tmp_path, role, disabled, users, posted):
     from agno.os.authz import UserDirectory
 
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
     auth.define_role("asker", [f"teams:{ENTITY_ID}:run", "tasks:read"])
     auth.define_role("runner", [f"teams:{ENTITY_ID}:run"])
-    auth.define_role("slack-bot", [f"teams:{ENTITY_ID}:run", "tasks:read"])
     directory = UserDirectory()
     db_file = str(tmp_path / "company.db")
     task = _seed_task(db_file)
@@ -577,7 +572,7 @@ async def test_a_senders_result_follows_their_own_user_as_it_is_now(
     _finish_attempt(db, task, "run-1", "U_DAVE")
     _save_turn(db, "run-1", "U_DAVE")
     slack = FakeSlack(root_user="U_DAVE")
-    await _delivery(agent_os, db, slack, users=users, default_role=default_role, authorize_senders=True).sweep()
+    await _delivery(agent_os, db, slack, users=users, authorize_senders=True).sweep()
     assert bool(slack.posted()) is posted
 
 

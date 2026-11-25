@@ -106,6 +106,11 @@ def build_context(
     entity = agent or team or workflow
     if entity is None:
         raise ValueError("Slack requires an agent, team, or workflow")
+    if authorize_senders and default_role is not None:
+        raise ValueError(
+            "Slack(authorize_senders=True) takes no default_role: a sender's role comes from the user directory. "
+            "Set the role a new user gets with UserDirectory(default_role=...)."
+        )
     # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
     # Member HITL needs member runs embedded on Team run (member_responses).
