@@ -387,24 +387,31 @@ def test_notes_left_behind_are_refused_through_the_synchronous_tree_too(tmp_path
     assert move_company_notes(os_db, company_db) == 1
     assert files.read("notes/ideas.md")["content"] == "A note"
 
-    # A synchronous use cannot ask an asynchronous AgentOS database. What the last asynchronous use found stands.
+    # A synchronous use cannot ask an asynchronous AgentOS database, so it refuses until an asynchronous
+    # check finds nothing waiting.
     later_file = str(tmp_path / "later.db")
     FileSystem(SqliteDb(db_file=later_file), namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
     later_os, later_company = AsyncSqliteDb(db_file=later_file), SqliteDb(db_file=str(tmp_path / "later-company.db"))
     set_company_notes_source(later_company, later_os)
     later = CompanyFiles(later_company, notes_db=later_company)
-    assert later.list("notes")["files"] == []
+    for use in (lambda: later.list("notes"), lambda: later.write("notes/new.md", "Not written")):
+        with pytest.raises(MigrationRequiredError, match="amove_company_notes"):
+            use()
+    assert stored(later_company) == {}
 
-    async def use_async() -> None:
+    async def move_and_check() -> None:
+        from agno.db.migrations.versions.v3_3_0 import amove_company_notes
+
         try:
+            with pytest.raises(MigrationRequiredError, match="move_company_notes"):
+                await later.alist("notes")
+            assert await amove_company_notes(later_os, later_company) == 1
             await later.alist("notes")
         finally:
             await later_os.db_engine.dispose()
 
-    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
-        asyncio.run(use_async())
-    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
-        later.list("notes")
+    asyncio.run(move_and_check())
+    assert later.read("notes/ideas.md")["content"] == "A note"
     for db in (os_db, company_db, later_company):
         db.close()
 
@@ -1268,3 +1275,30 @@ def test_a_goal_whose_id_is_longer_than_a_name_keeps_its_pages(system):
     assert manager.read_wiki(longest, "status.md").content == "Kept from 3.2.0"
     with pytest.raises(InvalidPathError, match="and 0 characters"):
         manager.write_wiki(goal_id=longest, path="new.md", content="x", expected_version=0)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_folder_with_a_limit_of_its_own_holds_every_write_and_append_to_it(tmp_path, use_async):
+    db = (AsyncSqliteDb if use_async else SqliteDb)(db_file=str(tmp_path / "files.db"))
+    capped = company_folder(db, "tasks/t", max_folder_bytes=1500)
+    other = company_folder(db, "tasks/u", max_folder_bytes=1500)
+
+    async def run() -> None:
+        async def do(store, method: str, *args, **kwargs):
+            if use_async:
+                return await getattr(store, f"a{method}")(*args, **kwargs)
+            return getattr(store, method)(*args, **kwargs)
+
+        await do(capped, "write", "report.md", "x" * 1000)
+        with pytest.raises(QuotaExceededError, match="folder is full") as refused:
+            await do(capped, "append", "log.md", "y" * 600)
+        assert (refused.value.scope, refused.value.current, refused.value.limit) == ("folder", 1000, 1500)
+        with pytest.raises(QuotaExceededError, match="folder is full"):
+            await do(capped, "write", "more.md", "y" * 600)
+        # A file of the same size in its place does not grow the folder.
+        assert (await do(capped, "write", "report.md", "z" * 1000)).version == 2
+        assert (await do(other, "append", "log.md", "y" * 600)).path == "log.md"
+        if use_async:
+            await db.db_engine.dispose()
+
+    asyncio.run(run())
