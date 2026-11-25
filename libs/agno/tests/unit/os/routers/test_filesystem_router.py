@@ -1279,8 +1279,8 @@ def test_filesystem_id_and_namespace_must_name_the_same_filesystem(db, client_fa
 def test_a_declared_filesystem_is_partitioned_by_user_under_isolation(db, user_scoped, client_factory):
     handbook = FileSystem(db, namespace="handbook", user_scoped=user_scoped)
     client = client_factory(db=db, filesystem=handbook, user_isolation=True)
-    # Left unset, the store follows the isolation setting of the OS.
-    assert handbook.user_scoped is True
+    # Left unset, the store follows the isolation setting of the OS. The declared object is as it was.
+    assert handbook.user_scoped is user_scoped
     handbook.resolve(user_id="alice").write("a.md", "alice's\n")
     handbook.resolve(user_id="bob").write("a.md", "bob's\n")
 
@@ -1329,9 +1329,18 @@ def test_a_declared_filesystem_with_user_scoped_false_stays_shared_under_isolati
 
 def test_a_declared_filesystem_stays_shared_without_isolation(db, client_factory):
     handbook = FileSystem(db, namespace="handbook")
-    client_factory(db=db, filesystem=handbook)
+    client = client_factory(db=db, filesystem=handbook)
+    handbook.write("style.md", "shared\n")
 
-    assert handbook.user_scoped is False
+    assert _config_entries(client, _headers("alice", ["config:read"]))[0]["user_isolation"] is False
+    for user in ("alice", "bob"):
+        content = client.get(
+            "/filesystem/content",
+            params={"filesystem_id": "handbook", "path": "style.md"},
+            headers=_headers(user, FILES_ONLY),
+        )
+        assert (content.json()["content"], content.json()["user_id"]) == ("shared\n", None)
+    assert handbook.user_scoped is None
 
 
 def test_a_declared_user_namespace_resolves_for_each_caller(db, client_factory):
@@ -1430,7 +1439,7 @@ def test_one_store_declared_twice_is_one_filesystem_described_by_the_first(db, c
 
 
 @pytest.mark.parametrize("enabled", [True, False])
-def test_resync_applies_the_isolation_setting_to_a_filesystem_declared_later(db, enabled):
+def test_a_filesystem_declared_after_start_follows_the_isolation_setting(db, enabled):
     agent_os = AgentOS(
         id=OS_ID,
         db=db,
@@ -1443,7 +1452,10 @@ def test_resync_applies_the_isolation_setting_to_a_filesystem_declared_later(db,
 
     agent_os.resync(app)
 
-    assert later.user_scoped is enabled
+    with TestClient(app, raise_server_exceptions=False) as client:
+        entries = _config_entries(client, _headers("alice", ["config:read"]))
+    assert [(entry["id"], entry["user_isolation"]) for entry in entries] == [("later", enabled)]
+    assert later.user_scoped is None
 
 
 def test_filesystem_routes_are_read_only(db, client_factory):
@@ -1672,3 +1684,345 @@ def test_a_filesystem_on_an_async_database_is_browsable_on_every_route(tmp_path,
         assert [entry["path"] for entry in search.json()["entries"]] == ["guides/style.md"]
         rows = client.get("/filesystem/files", params=by_id, headers=_headers("alice"))
         assert [row["path"] for row in rows.json()["entries"]] == ["guides/style.md"]
+
+
+# --- One FileSystem declared on two AgentOS instances ---
+
+
+def _serve(db, filesystem, user_isolation: bool) -> TestClient:
+    agent_os = AgentOS(
+        id=OS_ID,
+        db=db,
+        filesystem=filesystem,
+        authorization=Authorization(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        user_isolation=user_isolation,
+    )
+    return TestClient(agent_os.get_app(), raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize("isolated_first", [True, False])
+def test_one_filesystem_declared_on_two_agentos_follows_the_isolation_setting_of_each(db, isolated_first):
+    handbook = FileSystem(db, namespace="handbook")
+    chose_shared = FileSystem(db, namespace="shared", user_scoped=False)
+    chose_partitions = FileSystem(db, namespace="private", user_scoped=True)
+    declared = [handbook, chose_shared, chose_partitions]
+    if isolated_first:
+        isolated, open_to_all = _serve(db, declared, True), _serve(db, declared, False)
+    else:
+        open_to_all, isolated = _serve(db, declared, False), _serve(db, declared, True)
+
+    # The objects are the caller's: neither AgentOS wrote its setting onto them.
+    assert (handbook.user_scoped, chose_shared.user_scoped, chose_partitions.user_scoped) == (None, False, True)
+
+    def isolation(client: TestClient) -> dict:
+        entries = _config_entries(client, _headers("alice", ["config:read"]))
+        return {entry["id"]: entry["user_isolation"] for entry in entries}
+
+    # Left unset, a store follows each AgentOS. A store that chose keeps its choice on both.
+    assert isolation(isolated) == {"handbook": True, "shared": False, "private": True}
+    assert isolation(open_to_all) == {"handbook": False, "shared": False, "private": True}
+
+    handbook.write("a.md", "everyone's\n")
+    handbook.resolve(user_id="alice").write("a.md", "alice's\n")
+    by_id = {"filesystem_id": "handbook", "path": "a.md"}
+    for client, content, owner in ((isolated, "alice's\n", "alice"), (open_to_all, "everyone's\n", None)):
+        read = client.get("/filesystem/content", params=by_id, headers=_headers("alice", FILES_ONLY))
+        assert read.status_code == 200
+        assert (read.json()["content"], read.json()["user_id"]) == (content, owner)
+    isolated.close()
+    open_to_all.close()
+
+
+# --- Ids are the same with and without an agent filter ---
+
+
+def test_an_id_from_an_agent_filtered_listing_opens_that_filesystem_on_its_own(tmp_path, db, client_factory):
+    from agno.fs.local import LocalFileSystem
+
+    in_db = FileSystem(db, namespace="notes")
+    on_disk = FileSystem(backend=LocalFileSystem(root=str(tmp_path / "files")), namespace="notes")
+    client = client_factory(
+        Agent(id="db-agent", db=db, filesystem=in_db), Agent(id="disk-agent", db=db, filesystem=on_disk)
+    )
+    in_db.write("a.md", "db\n")
+    on_disk.write("b.md", "disk\n")
+    ids = {"db-agent": ("notes:filesystem-db", "a.md"), "disk-agent": ("notes:files", "b.md")}
+
+    for agent_id, (filesystem_id, path) in ids.items():
+        by_agent = {"agent_id": agent_id}
+        rows = client.get("/filesystem/files", params=by_agent, headers=_headers("alice")).json()["entries"]
+        assert [(row["filesystem_id"], row["path"]) for row in rows] == [(filesystem_id, path)]
+        for route, params in ONE_FILESYSTEM_ROUTES:
+            listed = client.get(route, params={**params, **by_agent, "path": path}, headers=_headers("alice"))
+            assert listed.status_code == 200, route
+            assert listed.json()["filesystem_id"] == filesystem_id, route
+            # The id an agent-filtered response carries opens the same filesystem with no agent named.
+            alone = client.get(
+                route, params={**params, "filesystem_id": filesystem_id, "path": path}, headers=_headers("alice")
+            )
+            assert alone.status_code == 200, route
+            assert alone.json()["filesystem_id"] == filesystem_id, route
+            # The namespace names both stores. With the agent that holds one, it is that one, under its id.
+            shared_form = client.get(
+                route, params={**params, **by_agent, "filesystem_id": "notes", "path": path}, headers=_headers("alice")
+            )
+            assert shared_form.status_code == 200, route
+            assert shared_form.json()["filesystem_id"] == filesystem_id, route
+            assert (
+                client.get(route, params={**params, "filesystem_id": "notes"}, headers=_headers("alice")).status_code
+                == 409
+            )
+
+
+def test_a_filesystem_id_and_an_agent_id_must_name_the_same_filesystem(tmp_path, db, archive_db, client_factory):
+    declared = FileSystem(db, namespace="handbook")
+    elsewhere = FileSystem(archive_db, namespace="handbook")
+    declared.write("style.md", "declared\n")
+    elsewhere.write("style.md", "the archivist's own\n")
+
+    def content(client, **params) -> tuple:
+        response = client.get("/filesystem/content", params={"path": "style.md", **params}, headers=_headers("alice"))
+        return response.status_code, response.json().get("content")
+
+    # No agent holds the declared store. Its id names it and nothing else, whatever agent is named with it.
+    client = client_factory(Agent(id="archivist", db=db, filesystem=elsewhere), db=db, filesystem=declared)
+    assert content(client, filesystem_id="handbook") == (200, "declared\n")
+    assert content(client, filesystem_id="handbook", agent_id="archivist") == (404, None)
+    assert content(client, filesystem_id="handbook:filesystem-db", agent_id="archivist") == (404, None)
+    assert content(client, filesystem_id="handbook:archive-db", agent_id="archivist") == (200, "the archivist's own\n")
+    assert content(client, agent_id="archivist") == (200, "the archivist's own\n")
+    rows = client.get(
+        "/filesystem/files", params={"filesystem_id": "handbook", "agent_id": "archivist"}, headers=_headers("alice")
+    )
+    assert rows.status_code == 200 and rows.json()["entries"] == []
+
+    # An agent that holds the declared store is named with it.
+    client = client_factory(
+        Agent(id="archivist", db=db, filesystem=elsewhere),
+        Agent(id="reader", db=db, filesystem=FileSystem(db, namespace="handbook")),
+        db=db,
+        filesystem=declared,
+    )
+    entries = _config_entries(client, _headers("alice", ["config:read", "agents:read"]))
+    assert {entry["id"]: [agent["id"] for agent in entry["agents"]] for entry in entries} == {
+        "handbook": ["reader"],
+        "handbook:archive-db": ["archivist"],
+    }
+    assert content(client, filesystem_id="handbook", agent_id="archivist") == (404, None)
+    assert content(client, filesystem_id="handbook", agent_id="reader") == (200, "declared\n")
+    assert content(client, filesystem_id="handbook:archive-db", agent_id="reader") == (404, None)
+
+
+def test_an_agent_alone_still_selects_its_own_first_filesystem(db, client_factory):
+    first, second = FileSystem(db, namespace="zeta"), FileSystem(db, namespace="alpha")
+    client = client_factory(
+        # An agent listed earlier holds the second store, and a declaration names it too.
+        Agent(id="a-early", db=db, filesystem=FileSystem(db, namespace="alpha")),
+        Agent(id="writer", db=db, tools=[first.tools(name="own_files"), second.tools(read_only=True)]),
+        db=db,
+        filesystem=FileSystem(db, namespace="alpha"),
+    )
+    first.write("mine.md", "first\n")
+
+    listed = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
+    assert listed.status_code == 200
+    assert (listed.json()["filesystem_id"], listed.json()["agent_ids"]) == ("zeta", ["writer"])
+    assert [entry["path"] for entry in listed.json()["entries"]] == ["mine.md"]
+
+
+def test_a_request_that_names_an_agent_reads_the_store_as_that_agent_holds_it(db, client_factory):
+    declared = FileSystem(db, namespace="handbook")
+    smaller = FileSystem(db, namespace="handbook", max_namespace_bytes=5_000_000)
+    client = client_factory(
+        Agent(id="abe", db=db, filesystem=FileSystem(db, namespace="handbook")),
+        Agent(id="writer", db=db, filesystem=smaller),
+        db=db,
+        filesystem=declared,
+    )
+
+    def listed(**params) -> tuple:
+        body = client.get("/filesystem/entries", params=params, headers=_headers("alice")).json()
+        return body["filesystem_id"], body["agent_ids"], body["usage"]["bytes_limit"]
+
+    # Read by its id alone, the declared store loads no agent.
+    assert listed(filesystem_id="handbook") == ("handbook", [], 20_000_000)
+    # With an agent named it is the same store under the same id, with the limit of that agent.
+    assert listed(agent_id="writer") == ("handbook", ["abe", "writer"], 5_000_000)
+    assert listed(agent_id="writer", filesystem_id="handbook") == ("handbook", ["abe", "writer"], 5_000_000)
+    assert listed(agent_id="abe") == ("handbook", ["abe", "writer"], 20_000_000)
+
+
+def test_another_agent_that_cannot_be_built_does_not_fail_a_request_that_names_an_agent(
+    db, client_factory, monkeypatch
+):
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    own = FileSystem(db, namespace="own")
+    own.write("mine.md", "mine\n")
+    client = client_factory(_failing_factory(db), Agent(id="writer", db=db, filesystem=own), db=db)
+    resolved: list[str] = []
+    resolve_agent = filesystem_router.resolve_agent
+
+    async def spy(agent_id, *args, **kwargs):
+        resolved.append(agent_id)
+        return await resolve_agent(agent_id, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
+
+    # A listing of every agent's files reads the broken agent and fails.
+    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
+    # A request for one agent reads the others only to settle the ids.
+    rows = client.get("/filesystem/files", params={"agent_id": "writer"}, headers=_headers("alice"))
+    assert rows.status_code == 200
+    assert [(row["filesystem_id"], row["path"]) for row in rows.json()["entries"]] == [("own", "mine.md")]
+    resolved.clear()
+    listed = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
+    assert listed.status_code == 200 and listed.json()["filesystem_id"] == "own"
+    # Each agent is loaded once, the named one included.
+    assert sorted(resolved) == ["broken", "writer"]
+    # The named agent's own failure is the request's.
+    assert (
+        client.get("/filesystem/entries", params={"agent_id": "broken"}, headers=_headers("alice")).status_code == 500
+    )
+
+
+# --- Reading one file as an admin ---
+
+
+def test_an_admin_reads_a_file_of_a_partitioned_store_on_an_async_database(tmp_path, client_factory):
+    import asyncio
+
+    from agno.db.sqlite import AsyncSqliteDb
+
+    async_db = AsyncSqliteDb(id="async-db", db_file=str(tmp_path / "async.db"))
+    handbook = FileSystem(async_db, namespace="handbook", user_scoped=True)
+
+    async def seed() -> None:
+        await handbook.partition(None).awrite("style.md", "shared\n")
+        await handbook.resolve(user_id="alice").awrite("style.md", "alice's\n")
+
+    asyncio.run(seed())
+    client = client_factory(db=async_db, filesystem=handbook, user_isolation=True)
+    admin = _admin_headers()
+    by_id = {"filesystem_id": "handbook", "path": "style.md"}
+
+    # With no user named an admin reads the shared partition.
+    shared = client.get("/filesystem/content", params=by_id, headers=admin)
+    assert shared.status_code == 200, shared.text
+    assert (shared.json()["content"], shared.json()["user_id"]) == ("shared\n", None)
+    named = client.get("/filesystem/content", params={**by_id, "user_id": "alice"}, headers=admin)
+    assert (named.json()["content"], named.json()["user_id"]) == ("alice's\n", "alice")
+
+
+def test_reading_one_file_does_not_list_the_users_of_the_store(db, client_factory, monkeypatch):
+    handbook = FileSystem(db, namespace="handbook", user_scoped=True)
+    handbook.partition(None).write("style.md", "shared\n")
+    handbook.resolve(user_id="alice").write("style.md", "alice's\n")
+    client = client_factory(db=db, filesystem=handbook, user_isolation=True)
+
+    def refuse(self):
+        raise AssertionError("one file is read from one partition: the users are not listed")
+
+    monkeypatch.setattr(FileSystem, "partitions", refuse)
+    monkeypatch.setattr(FileSystem, "apartitions", refuse)
+    read = client.get(
+        "/filesystem/content", params={"filesystem_id": "handbook", "path": "style.md"}, headers=_admin_headers()
+    )
+    assert read.status_code == 200, read.text
+    assert (read.json()["content"], read.json()["user_id"]) == ("shared\n", None)
+
+
+# --- One table reached through two wrappers ---
+
+
+@pytest.mark.parametrize("held_through", ["engine", "database"])
+def test_two_wrappers_on_one_engine_table_and_namespace_are_one_filesystem(tmp_path, db, held_through, client_factory):
+    from agno.fs.db import DbFileSystem
+
+    declared = FileSystem(backend=DbFileSystem(db_engine=db.db_engine), namespace="handbook")
+    if held_through == "engine":
+        held = FileSystem(backend=DbFileSystem(db_engine=db.db_engine), namespace="handbook")
+    else:
+        held = FileSystem(db, namespace="handbook")
+    other_table = FileSystem(backend=DbFileSystem(db_engine=db.db_engine, table_name="other_fs"), namespace="handbook")
+    client = client_factory(Agent(id="writer", db=db, filesystem=held), db=db, filesystem=[declared, other_table])
+    declared.write("style.md", "one store\n")
+
+    entries = _config_entries(client, _headers("alice", ["config:read", "agents:read"]))
+    assert [
+        (entry["table_name"], entry["declared"], [agent["id"] for agent in entry["agents"]]) for entry in entries
+    ] == [
+        ("agno_fs", True, ["writer"]),
+        ("other_fs", True, []),
+    ]
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["path"], row["agent_ids"]) for row in rows] == [("style.md", ["writer"])]
+
+
+def test_the_backend_key_names_the_database_and_table_not_the_wrapper(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.fs.db import DbFileSystem
+    from agno.os.routers.filesystem.utils import _database_place, _filesystem_backend_key
+
+    path = tmp_path / "one.db"
+    one, same = create_engine(f"sqlite:///{path}"), create_engine(f"sqlite:///{path}")
+    other = create_engine(f"sqlite:///{tmp_path / 'other.db'}")
+
+    def key(backend) -> tuple:
+        return _filesystem_backend_key(FileSystem(backend=backend, namespace="handbook"))
+
+    base = key(DbFileSystem(db_engine=one))
+    # Another wrapper, another engine, a database object and an asynchronous one: all one table.
+    assert key(DbFileSystem(db_engine=one)) == base
+    assert key(DbFileSystem(db_engine=same)) == base
+    assert key(DbFileSystem(db=SqliteDb(id="named", db_file=str(path)))) == base
+    assert _filesystem_backend_key(FileSystem(AsyncSqliteDb(db_file=str(path)), namespace="handbook")) == base
+    # Another table or another database is another store.
+    assert key(DbFileSystem(db_engine=one, table_name="other_fs")) != base
+    assert key(DbFileSystem(db_engine=other)) != base
+    # Each in-memory database is its own.
+    memory = [create_engine("sqlite://"), create_engine("sqlite://")]
+    assert key(DbFileSystem(db_engine=memory[0])) == key(DbFileSystem(db_engine=memory[0]))
+    assert key(DbFileSystem(db_engine=memory[0])) != key(DbFileSystem(db_engine=memory[1]))
+    # A path is the same file however it is written.
+    monkeypatch.chdir(tmp_path)
+    relative = create_engine("sqlite:///one.db")
+    assert key(DbFileSystem(db_engine=relative)) == base
+    for engine in (one, same, other, relative, *memory):
+        engine.dispose()
+
+    def place(url: str) -> tuple:
+        return _database_place(SimpleNamespace(url=make_url(url)))
+
+    # A PostgreSQL database is the same through either driver and for any user, and another on another server.
+    assert place("postgresql+psycopg://ai:ai@db.internal:5432/app") == place(
+        "postgresql+psycopg_async://reader@db.internal:5432/app"
+    )
+    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@db.internal:5432/other")
+    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@replica.internal:5432/app")
+    assert place("postgresql://ai@/app?host=/var/run/one") != place("postgresql://ai@/app?host=/var/run/two")
+
+
+# --- A namespace that names a team ---
+
+
+def test_a_team_namespace_held_by_an_agent_is_listed_as_written_and_cannot_be_opened(db, client_factory):
+    template = FileSystem(db, namespace="teams/{team_id}/notes")
+    client = client_factory(Agent(id="writer", db=db, filesystem=template), db=db, filesystem=template)
+
+    # An agent fills {agent_id} only. /config lists the namespace as it is written.
+    entries = _config_entries(client, _headers("alice", ["config:read", "agents:read"]))
+    assert [(entry["id"], entry["namespace"], entry["declared"], entry["agents"]) for entry in entries] == [
+        ("teams/{team_id}/notes", "teams/{team_id}/notes", False, [{"id": "writer"}])
+    ]
+    # No request fills {team_id}, so the routes do not open it.
+    by_id = client.get(
+        "/filesystem/entries", params={"filesystem_id": "teams/{team_id}/notes"}, headers=_headers("alice")
+    )
+    assert by_id.status_code == 404
+    by_agent = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
+    assert by_agent.status_code == 400 and "team_id" in by_agent.json()["detail"]
+    assert client.get("/filesystem/files", headers=_headers("alice")).json()["entries"] == []

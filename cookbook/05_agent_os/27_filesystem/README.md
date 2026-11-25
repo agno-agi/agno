@@ -84,11 +84,22 @@ Any backend works: a database, or a local folder. Namespaces are not restricted.
 Two declared file systems may use one namespace on two databases, or on two
 tables of one database.
 
-A namespace may use `{user_id}`, which is filled from the caller. A namespace
-that uses `{agent_id}` or `{team_id}` is filled from the agent that holds the
-store, so it has no entry in `/config` until an agent holds it.
+A namespace may use `{user_id}`, which is filled from the caller.
+
+A namespace that uses `{agent_id}` is filled from the agent that holds the
+store. It has no entry in `/config` until an agent holds it, and then it is
+listed with that agent's id in place: `scratch/{agent_id}` held by the agent
+`writer` is the file system `scratch/writer`.
+
+A namespace that uses `{team_id}` is filled only when a team runs. Nothing on
+these routes fills it. Declared alone it has no entry in `/config`. When an
+agent holds it, `/config` lists the namespace as it is written, for example
+`teams/{team_id}/notes`, and the `/filesystem` routes do not open it.
+
 `AgentOS(user_isolation=True)` partitions a declared file system by user unless
-the store sets `user_scoped` itself.
+the store sets `user_scoped` itself. The setting is applied to what the AgentOS
+serves, not written onto the `FileSystem` you declared, so one `FileSystem`
+declared on two AgentOS instances follows the setting of each.
 
 ## Namespaces and isolation
 
@@ -152,6 +163,11 @@ filesystem keeps its id whatever agents hold.
   `filesystem_id`.
 - `agent_id` alone browses that agent's first filesystem (the setting, then `tools` order).
 - Both together pick one of an agent's several filesystems.
+
+A filesystem has one id, with or without `agent_id`. `filesystem_id` with
+`agent_id` opens a filesystem only when that agent holds the one the id names;
+otherwise the request returns 404. A request that names an agent reads the
+store with that agent's limits.
 
 A filesystem only an agent holds is reachable through the agents the caller may
 read: one none of them holds returns 404, the same as one that does not exist.

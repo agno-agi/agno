@@ -79,3 +79,13 @@ Earlier config output in this log records the previous schema.
 **Result:** `/config` listed four entries, each with an `id`: `handbook` (`declared: true`, `agents: []`), `shared` (`declared: true`, agents `editor` read-only and `writer`), `drafts` and `notes-agent` (`declared: false`). `/filesystem/entries?filesystem_id=handbook` listed the `onboarding` directory with `agent_ids: []`, `/filesystem/content?filesystem_id=handbook&path=onboarding/welcome.md` returned the seeded page, `/filesystem/search?filesystem_id=shared&query=filesystem` found `notes/standup.md`, and `/filesystem/files` listed the three seeded files, each row with its `filesystem_id`. `namespace=handbook` and `agent_id=editor` still returned 200, and an id nothing uses returned 404. `/agents` reported no file system for the plain agent. Agent runs against a model were not exercised.
 
 ---
+
+### os_level_filesystem.py (after the review fixes)
+
+**Status:** PASS
+
+**Description:** Requested on 2026-11-25 through a FastAPI test client on the cookbook's `app`, not on a served port. No model call. The same stores and agents as above.
+
+**Result:** `/config` listed the same four entries. `agent_id=editor` opened `drafts`, and `agent_id=editor&filesystem_id=shared` opened `shared` with `agent_ids` `editor` and `writer`. `agent_id=editor&filesystem_id=handbook` returned 404: the editor does not hold the handbook. `/filesystem/files?agent_id=editor` listed the editor's two files under the ids `drafts` and `shared`, the ids the unfiltered listing gives them.
+
+---

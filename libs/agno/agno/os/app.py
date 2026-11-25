@@ -808,7 +808,6 @@ class AgentOS:
         self._apply_manager_manifest()
 
         self._initialize_agents()
-        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -963,7 +962,6 @@ class AgentOS:
     def resync(self, app: FastAPI) -> None:
         """Resync the AgentOS to discover, initialize and configure: agents, teams, workflows, databases and knowledge bases."""
         self._initialize_agents()
-        self._initialize_filesystems()
         self._initialize_teams()
         self._initialize_workflows()
 
@@ -1457,12 +1455,23 @@ class AgentOS:
             )
         )
 
-    def _initialize_filesystems(self) -> None:
-        """Set ``user_scoped`` from the ``user_isolation`` setting on declared filesystems that left it unset."""
+    def _served_filesystems(self) -> List["FileSystem"]:
+        """The declared filesystems as this AgentOS serves them.
+
+        One that left ``user_scoped`` unset takes the ``user_isolation`` setting of this AgentOS.
+        The value is set on a copy, so the declared FileSystem is not changed and one declared on
+        two AgentOS instances follows each. One that set ``user_scoped``, True or False, keeps it.
+        """
+        from copy import copy
+
         user_isolation = self._user_isolation_enabled()
+        served: List["FileSystem"] = []
         for filesystem in self.filesystems:
             if filesystem.user_scoped is None:
+                filesystem = copy(filesystem)
                 filesystem.user_scoped = user_isolation
+            served.append(filesystem)
+        return served
 
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
@@ -3382,7 +3391,7 @@ class AgentOS:
 
         # Declared filesystems come first and stand without an agent; an agent
         # holding the same store is linked to the same entry below.
-        for filesystem in self.filesystems:
+        for filesystem in self._served_filesystems():
             if any(name != "user_id" for name in filesystem._placeholders):
                 # Only an agent holding the store fills {agent_id} or {team_id}.
                 continue

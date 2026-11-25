@@ -1,7 +1,7 @@
 from collections import Counter
 from hashlib import sha1
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
@@ -10,9 +10,30 @@ if TYPE_CHECKING:
 _ID_SEPARATOR = ":"
 
 
+def _database_place(engine: Any) -> tuple:
+    """The database an engine connects to: the same for every engine on it, synchronous or not."""
+    url = engine.url
+    backend_name, database = url.get_backend_name(), url.database
+    if backend_name == "sqlite":
+        if not database or database == ":memory:":
+            # An in-memory database belongs to the engine that opened it.
+            return (backend_name, id(engine))
+        database = str(Path(database).resolve())
+    # A server reached through a socket is named in the query.
+    return (backend_name, url.host or url.query.get("host"), url.port, database)
+
+
 def _filesystem_backend_key(filesystem: "FileSystem") -> tuple:
-    """Identify a shared backend within the current process."""
+    """Identify a shared backend within the current process.
+
+    A table in a database is one backend however it is reached: through a
+    database object, through an engine, or through two of either.
+    """
     backend = filesystem.backend
+    engine = getattr(backend, "db_engine", None)
+    table_name = getattr(backend, "table_name", None)
+    if engine is not None and table_name is not None:
+        return ("db", _database_place(engine), getattr(backend, "db_schema", None), table_name)
     db = getattr(backend, "db", None)
     if db is not None:
         return (
