@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncGenerator, Dict, Generator, List, Optional
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.migrations.utils import quote_db_identifier
+from agno.db.migrations.utils import get_db_type, quote_db_identifier
 from agno.db.utils import CustomJSONEncoder
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -152,7 +152,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         # The learnings re-key is a content move, identical on every backend that
@@ -205,7 +205,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     Returns:
         bool: True if any migration was applied, False otherwise.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         # See the sync twin: the learnings re-key is a content move.
@@ -249,7 +249,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
         )
         return False
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "PostgresDb":
@@ -305,7 +305,7 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
         )
         return False
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     try:
         if db_type == "AsyncPostgresDb":
@@ -752,7 +752,7 @@ async def _async_sqlite_has_unique_on(sess, quoted_table: str, columns: List[str
 def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -814,7 +814,7 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
 async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for async PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -984,7 +984,7 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
 def _revert_postgres_sessions(db: BaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -1034,7 +1034,7 @@ def _revert_postgres_sessions(db: BaseDb, table_name: str) -> bool:
 async def _revert_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for async PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     quoted_table = quote_db_identifier(db_type, table_name)
     full_table = f"{quoted_schema}.{quoted_table}"
@@ -2541,7 +2541,7 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 def _table_schema(db, table_type: str) -> Optional[Dict[str, Any]]:
     """The adapter's own schema definition for this table type, or None if it has none."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
 
     schemas: Any
     if db_type in ("PostgresDb", "AsyncPostgresDb"):
@@ -2788,7 +2788,7 @@ def _swap_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, ful
     then dropped both ways: Postgres refuses DROP INDEX on an index a constraint owns,
     and DROP CONSTRAINT does not see a hand-created index of that name.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     applied = False
     declared = _metrics_unique_constraint(db, table_name)
     if declared is not None:
@@ -2823,7 +2823,7 @@ def _swap_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, ful
 
 async def _swap_async_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async PostgreSQL variant of :func:`_swap_postgres_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     applied = False
     declared = _metrics_unique_constraint(db, table_name)
     if declared is not None:
@@ -2865,7 +2865,7 @@ def _swap_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str, f
     MySQL commits each ALTER on its own, so dropping first would leave no key at all if
     the add then failed.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     applied = False
     declared = _metrics_unique_constraint(db, table_name)
     if declared is not None:
@@ -2904,7 +2904,7 @@ def _swap_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str, f
 
 async def _swap_async_mysql_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async MySQL variant of :func:`_swap_mysql_like_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     applied = False
     declared = _metrics_unique_constraint(db, table_name)
     if declared is not None:
@@ -3068,7 +3068,7 @@ async def _async_sqlite_schedule_unique_backstop(db: Any, table_name: str, quote
 def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Add the user_id column to the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
@@ -3161,7 +3161,7 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
 async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async PostgreSQL variant of :func:`_migrate_postgres_user_id`."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
@@ -3333,7 +3333,7 @@ def _metrics_user_id_modify_ddl(db) -> Optional[str]:
 
 def _migrate_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Add the user_id column to the given table for MySQL or SingleStore."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
     if column_ddl is None:
@@ -3409,7 +3409,7 @@ def _migrate_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) ->
 
 async def _migrate_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async MySQL variant of :func:`_migrate_mysql_like_user_id`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
     if column_ddl is None:
@@ -3516,7 +3516,7 @@ def _migrate_sqlite_metrics_table(db: BaseDb, table_type: str, table_name: str) 
     unique_columns = declared[1]
     create_sql, index_sqls = ddl
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     backup_name = f"{table_name}_pre_v3_0_0"
     quoted_table = quote_db_identifier(db_type, table_name)
     quoted_backup = quote_db_identifier(db_type, backup_name)
@@ -3591,7 +3591,7 @@ async def _migrate_async_sqlite_metrics_table(db: AsyncBaseDb, table_type: str, 
     unique_columns = declared[1]
     create_sql, index_sqls = ddl
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     backup_name = f"{table_name}_pre_v3_0_0"
     quoted_table = quote_db_identifier(db_type, table_name)
     quoted_backup = quote_db_identifier(db_type, backup_name)
@@ -3660,7 +3660,7 @@ async def _migrate_async_sqlite_metrics_table(db: AsyncBaseDb, table_type: str, 
 
 def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Add the user_id column to the given table for SQLite."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
@@ -3733,7 +3733,7 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
 
 async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async SQLite variant of :func:`_migrate_sqlite_user_id`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
@@ -3842,7 +3842,7 @@ def _drop_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, ful
     The key covers user_id, so it has to go before the column can be dropped; the
     legacy key goes back afterwards (:func:`_restore_postgres_metrics_unique`).
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     declared = _metrics_unique_constraint(db, table_name)
     if declared is None:
         return False
@@ -3861,7 +3861,7 @@ def _drop_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, ful
 
 async def _drop_async_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async PostgreSQL variant of :func:`_drop_postgres_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     declared = _metrics_unique_constraint(db, table_name)
     if declared is None:
         return False
@@ -3884,7 +3884,7 @@ def _restore_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, 
     A table with no unique key at all would break the v2 upsert's ON CONFLICT.
     Safe only because the revert refuses while any row is owned.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     if _metrics_unique_constraint(db, table_name) is None:
         return False
 
@@ -3903,7 +3903,7 @@ def _restore_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, 
 
 async def _restore_async_postgres_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async PostgreSQL variant of :func:`_restore_postgres_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     if _metrics_unique_constraint(db, table_name) is None:
         return False
 
@@ -3922,7 +3922,7 @@ async def _restore_async_postgres_metrics_unique(sess, db, db_schema: str, table
 
 def _drop_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """MySQL / SingleStore variant of :func:`_drop_postgres_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     declared = _metrics_unique_constraint(db, table_name)
     if declared is None:
         return False
@@ -3937,7 +3937,7 @@ def _drop_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str, f
 
 async def _drop_async_mysql_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async MySQL variant of :func:`_drop_mysql_like_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     declared = _metrics_unique_constraint(db, table_name)
     if declared is None:
         return False
@@ -3956,7 +3956,7 @@ def _restore_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str
     Restored last, after the column is gone: MySQL commits each ALTER on its own, so a
     failed DROP COLUMN leaves no key rather than one that merges owners.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     if _metrics_unique_constraint(db, table_name) is None:
         return False
 
@@ -3976,7 +3976,7 @@ def _restore_mysql_like_metrics_unique(sess, db, db_schema: str, table_name: str
 
 async def _restore_async_mysql_metrics_unique(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async MySQL variant of :func:`_restore_mysql_like_metrics_unique`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     if _metrics_unique_constraint(db, table_name) is None:
         return False
 
@@ -4003,7 +4003,7 @@ def _drop_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str
     column drop's cascade, so the revert names exactly what the forward
     migration created.
     """
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     applied = False
 
@@ -4025,7 +4025,7 @@ def _drop_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str
 
 async def _drop_async_postgres_schedule_provenance(sess, db, db_schema: str, table_name: str, full_table: str) -> bool:
     """Async PostgreSQL variant of :func:`_drop_postgres_schedule_provenance`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     applied = False
 
@@ -4048,7 +4048,7 @@ async def _drop_async_postgres_schedule_provenance(sess, db, db_schema: str, tab
 def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
@@ -4101,7 +4101,7 @@ def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bo
 async def _revert_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async PostgreSQL variant of :func:`_revert_postgres_user_id`."""
     db_schema = db.db_schema or "ai"  # type: ignore
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_schema = quote_db_identifier(db_type, db_schema)
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
@@ -4153,7 +4153,7 @@ async def _revert_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table
 
 def _revert_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for MySQL or SingleStore."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     index_name = f"idx_{table_name}_user_id"
 
     with db.Session() as sess, sess.begin():  # type: ignore
@@ -4219,7 +4219,7 @@ def _revert_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> 
 
 async def _revert_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async MySQL variant of :func:`_revert_mysql_like_user_id`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     index_name = f"idx_{table_name}_user_id"
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
@@ -4302,7 +4302,7 @@ def _revert_sqlite_metrics_table(db: BaseDb, table_type: str, table_name: str) -
     unique_columns = declared[1]
     legacy_ddl, legacy_index_sqls = ddl
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     backup_name = f"{table_name}_pre_v3_0_0"
     quoted_table = quote_db_identifier(db_type, table_name)
     quoted_backup = quote_db_identifier(db_type, backup_name)
@@ -4361,7 +4361,7 @@ async def _revert_async_sqlite_metrics_table(db: AsyncBaseDb, table_type: str, t
     unique_columns = declared[1]
     legacy_ddl, legacy_index_sqls = ddl
 
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     backup_name = f"{table_name}_pre_v3_0_0"
     quoted_table = quote_db_identifier(db_type, table_name)
     quoted_backup = quote_db_identifier(db_type, backup_name)
@@ -4464,7 +4464,7 @@ async def _drop_async_sqlite_schedule_provenance(sess, table_name: str, quoted_t
 
 def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Drop the user_id column from the given table for SQLite."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
 
@@ -4530,7 +4530,7 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
 
 async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async SQLite variant of :func:`_revert_sqlite_user_id`."""
-    db_type = type(db).__name__
+    db_type = get_db_type(db)
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
 
