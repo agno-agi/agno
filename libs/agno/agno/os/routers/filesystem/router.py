@@ -204,16 +204,23 @@ def _get_declared_filesystems(os: "AgentOS", request: Request) -> list[_Declared
 
 
 async def _get_sources(
-    os: "AgentOS", request: Request, agent_id: Optional[str], declared: list[_DeclaredFileSystem]
-) -> tuple[dict[tuple, _Source], Optional[dict[tuple, FileSystem]]]:
+    os: "AgentOS",
+    request: Request,
+    agent_id: Optional[str],
+    declared: list[_DeclaredFileSystem],
+    *,
+    skip_failed: bool = False,
+) -> tuple[dict[tuple, _Source], Optional[dict[tuple, FileSystem]], Optional[HTTPException]]:
     """Every filesystem the caller may read, keyed by backend and namespace, and those ``agent_id`` holds.
 
     The search covers the declared filesystems, then those of every agent the
     caller may read; an agent that cannot be browsed is left out. It covers them
     with an agent named too, so a filesystem has one id whether or not a request
     names an agent. The named agent's errors are raised, and its filesystems are
-    returned as it holds them, in its own order.
+    returned as it holds them, in its own order. With ``skip_failed``, the first
+    failure of an agent is returned instead of raised.
     """
+    failure: Optional[HTTPException] = None
     sources: dict[tuple, _Source] = {
         entry.key: _Source(entry.filesystem, [], entry.forms) for entry in declared if entry.filesystem is not None
     }
@@ -237,14 +244,17 @@ async def _get_sources(
                 # With an agent named, another agent only settles the ids: its failure is not the request's.
                 if agent_id is not None or e.status_code in (400, 404, 501):
                     continue
-                raise
+                if not skip_failed:
+                    raise
+                failure = failure or e
+                continue
         for filesystem in agent_filesystems:
             key = _filesystem_key(filesystem)
             source = sources.get(key)
             if source is None:
                 source = sources[key] = _Source(filesystem, [], _filesystem_id_forms(filesystem))
             source.agent_ids.append(candidate_id)
-    return sources, held
+    return sources, held, failure
 
 
 async def _select_filesystems(
@@ -283,7 +293,10 @@ async def _select_filesystems(
                 raise HTTPException(status_code=400, detail=str(named[0].error))
             return [(declared_ids[named[0].key], _Source(named[0].filesystem, [], named[0].forms))], declared
 
-    sources, held = await _get_sources(os, request, agent_id, declared)
+    # A failing agent must not hide the declared filesystems. An id is settled over every agent, so it still fails.
+    sources, held, failure = await _get_sources(
+        os, request, agent_id, declared, skip_failed=filesystem_id is None and bool(declared)
+    )
     ids = _filesystem_ids(declared_forms, [(key, source.forms) for key, source in sources.items()])
     keys = list(sources)
     if filesystem_id is not None:
@@ -298,6 +311,10 @@ async def _select_filesystems(
         for key in keys
         if namespace is None or sources[key].filesystem.namespace == namespace
     ]
+    if failure is not None and not any(
+        entry.filesystem is not None and namespace in (None, entry.forms[0]) for entry in declared
+    ):
+        raise failure
     if filesystem_id is not None and len(selected) > 1:
         raise HTTPException(status_code=409, detail=_AMBIGUOUS_ID_DETAIL)
     return selected, declared

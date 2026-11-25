@@ -162,7 +162,8 @@ curl "http://localhost:7777/filesystem/entries?filesystem_id=handbook"
 
 The id is the namespace resolved for the caller. When two filesystems share a
 namespace, each id also names its backend: `handbook:main-db`, and
-`handbook:main-db:fs.agno_fs` when the two are tables of one database. A declared
+`handbook:main-db:fs.agno_fs` when the two are tables of one database. A digest of
+the database follows when those names are the same too. A declared
 filesystem keeps its id whatever agents hold.
 
 `namespace` and `agent_id` are still accepted:
