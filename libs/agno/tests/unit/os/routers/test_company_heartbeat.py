@@ -125,6 +125,44 @@ def test_routine_delete_requires_admin(tmp_path):
         assert client.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
+def test_bulk_product_delete_reports_an_executing_routine_run(system):
+    import time
+
+    client, _, db = system
+    blocked = client.post("/company/products", json={"name": "Docs"}).json()["id"]
+    free = client.post("/company/products", json={"name": "Notes"}).json()["id"]
+    body = dict(product_id=blocked, name="review", executor_type="agent", executor_id="reader", instructions="Review")
+    routine = client.post("/company/routines", json=body).json()
+    db.create_schedule_run(
+        {
+            "id": "schedule-run",
+            "schedule_id": routine["id"],
+            "attempt": 1,
+            "triggered_at": int(time.time()),
+            "status": "running",
+            "run_id": "routine-run",
+            "session_id": "routine-session",
+            "created_at": int(time.time()),
+        }
+    )
+    response = client.request("DELETE", "/company/products", json={"product_ids": [blocked, free]})
+    assert response.status_code == 200, response.text
+    detail = {
+        "message": "Cannot delete with executing Routine runs",
+        "tasks": [],
+        "routines": [{"id": routine["id"], "name": routine["name"]}],
+    }
+    assert response.json() == {
+        "results": [
+            {"id": blocked, "status_code": 409, "detail": detail},
+            {"id": free, "status_code": 204, "detail": None},
+        ]
+    }
+    assert client.get("/company/products/" + blocked).status_code == 200
+    assert client.get("/company/routines/" + routine["id"]).status_code == 200
+    assert client.get("/company/products/" + free, params={"include_deleted": True}).status_code == 404
+
+
 def test_routine_cancel_stops_the_running_run(system):
     import time
 
@@ -841,7 +879,7 @@ def test_members_manage_products_and_routines_they_did_not_create_under_isolatio
             renamed = client.patch("/company/products/" + product_id, headers=headers("bob"), json={"name": "x"})
             assert renamed.status_code == 200, renamed.text
         assert db.get_product(owned["id"])["user_id"] == "alice"
-        client.delete("/company/products/" + owned["id"], headers=headers("bob")).raise_for_status()
+        client.post("/company/products/" + owned["id"] + "/archive", headers=headers("bob")).raise_for_status()
         archived = client.post("/company/routines", headers=headers("bob"), json={**body, "product_id": owned["id"]})
         assert archived.status_code == 404
     db.close()
@@ -1616,7 +1654,7 @@ def test_managed_schedule_mutations_use_company_routes(system):
     assert client.patch("/schedules/" + identifier, json={"payload": {"message": "Break metadata"}}).status_code == 409
     assert client.delete("/schedules/" + identifier).status_code == 409
     assert client.post("/schedules/" + identifier + "/enable").status_code == 409
-    assert client.delete("/company/products/" + product["id"]).status_code == 204
+    assert client.post("/company/products/" + product["id"] + "/archive").status_code == 200
     assert client.post("/company/routines/" + identifier + "/pause").status_code == 200
     assert client.post("/company/routines/" + identifier + "/resume").status_code == 404
 

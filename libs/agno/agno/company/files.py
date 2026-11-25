@@ -97,6 +97,14 @@ def _store(db: Any, namespace: str, **options: Any) -> FileSystem:
         raise NotImplementedError("Company files require a supported FileSystem database") from exc
 
 
+async def _adelete_folders(db: Any, namespaces: List[str]) -> None:
+    """Delete every file in each namespace, for a permanently deleted Product, Project or Task."""
+    for namespace in namespaces:
+        store = _store(db, namespace)
+        for meta in await store.alist(""):
+            await store.adelete(meta.path)
+
+
 def _edited(tree_path: str, current: Optional[str], old_text: Optional[str], new_text: str) -> str:
     """The page after one confirmed change: a new page, one exact replacement, or text added at the end."""
     if current is None:

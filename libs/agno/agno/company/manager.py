@@ -325,6 +325,13 @@ class CompanyManager:
         """Restore a Product and only children archived by it; return None if already active."""
         return self.db.restore_product(product_id, user_id=user_id)
 
+    def permanently_delete(self, product_id: str) -> bool:
+        """Remove the rows of an archived Product; returns False for a missing or active one.
+
+        The DELETE route also removes its Routines and files.
+        """
+        return self.db.permanently_delete_product(product_id)
+
     def create_project(
         self,
         *,
@@ -425,6 +432,18 @@ class CompanyManager:
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
         return self.db.restore_project(project_id, user_id=user_id)
+
+    def permanently_delete_project(self, project_id: str) -> bool:
+        """Remove the rows of an archived Project; returns False for a missing or active one.
+
+        The DELETE route also removes its Tasks' files.
+        """
+        from agno.company.routines import _require_routine_product
+
+        record = self.db.get_project(project_id, include_deleted=True)
+        if record is not None:
+            _require_routine_product(record["product_id"])
+        return self.db.permanently_delete_project(project_id)
 
     def transition_project(
         self,
@@ -607,6 +626,19 @@ class CompanyManager:
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return self.db.restore_task(task_id, user_id=user_id)
+
+    def permanently_delete_task(self, task_id: str) -> bool:
+        """Remove the row of an archived Task; returns False for a missing or active one.
+
+        The DELETE route also removes its files.
+        """
+        return self.db.permanently_delete_task(task_id)
+
+    def get_descendant_tasks(
+        self, *, product_id: Optional[str] = None, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Id, title, status and deleted_at of every Task in a Product or Project, archived ones included."""
+        return self.db.get_descendant_tasks(product_id=product_id, project_id=project_id)
 
     def _accept_task(self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]) -> None:
         """Check that the executor can accept this Task before it enters Ready."""
@@ -1296,6 +1328,13 @@ class AsyncCompanyManager:
         """Restore a Product and only children archived by it; return None if already active."""
         return await self.db.restore_product(product_id, user_id=user_id)
 
+    async def permanently_delete(self, product_id: str) -> bool:
+        """Remove the rows of an archived Product; returns False for a missing or active one.
+
+        The DELETE route also removes its Routines and files.
+        """
+        return await self.db.permanently_delete_product(product_id)
+
     async def create_project(
         self,
         *,
@@ -1396,6 +1435,18 @@ class AsyncCompanyManager:
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a Project and only Tasks archived by it."""
         return await self.db.restore_project(project_id, user_id=user_id)
+
+    async def permanently_delete_project(self, project_id: str) -> bool:
+        """Remove the rows of an archived Project; returns False for a missing or active one.
+
+        The DELETE route also removes its Tasks' files.
+        """
+        from agno.company.routines import _require_routine_product
+
+        record = await self.db.get_project(project_id, include_deleted=True)
+        if record is not None:
+            _require_routine_product(record["product_id"])
+        return await self.db.permanently_delete_project(project_id)
 
     async def transition_project(
         self,
@@ -1580,6 +1631,19 @@ class AsyncCompanyManager:
     async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted task."""
         return await self.db.restore_task(task_id, user_id=user_id)
+
+    async def permanently_delete_task(self, task_id: str) -> bool:
+        """Remove the row of an archived Task; returns False for a missing or active one.
+
+        The DELETE route also removes its files.
+        """
+        return await self.db.permanently_delete_task(task_id)
+
+    async def get_descendant_tasks(
+        self, *, product_id: Optional[str] = None, project_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Id, title, status and deleted_at of every Task in a Product or Project, archived ones included."""
+        return await self.db.get_descendant_tasks(product_id=product_id, project_id=project_id)
 
     async def _accept_task(
         self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]

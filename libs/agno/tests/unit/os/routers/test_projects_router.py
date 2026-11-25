@@ -50,13 +50,73 @@ def test_lifecycle(client):
     assert all(x["reason"] == "Reviewed" for x in response.json()["transitions"])
     assert transition(client, path, "cancelled").status_code == 409
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
     assert client.get("/company/projects").json()["meta"]["total_count"] == 0
     assert client.get("/company/projects?include_deleted=true").json()["meta"]["total_count"] == 1
     assert client.post(path + "/restore").json()["status"] == "done"
+
+
+def test_archive_lifecycle(client):
+    record = create(client)
+    path = "/company/projects/" + record["id"]
+    assert client.post("/company/projects/missing/archive").status_code == 404
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == record["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
+def test_bulk_archive_reports_each_project(client):
+    a, b, c, d = (create(client)["id"] for _ in range(4))
+    assert client.post("/company/projects/" + c + "/archive").status_code == 200
+    response = client.post("/company/projects/archive", json={"project_ids": [a, "missing", c, b, a]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Project not found"},
+            {"id": c, "status_code": 404, "detail": "Project not found"},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    }
+    for project_id in [a, b]:
+        path = "/company/projects/" + project_id
+        assert client.get(path).status_code == 404
+        assert isinstance(client.get(path, params={"include_deleted": True}).json()["deleted_at"], int)
+    for body in [{"project_ids": []}, {"project_ids": [d], "force": True}]:
+        assert client.post("/company/projects/archive", json=body).status_code == 422
+    assert client.get("/company/projects/" + d).json()["deleted_at"] is None
+
+
+def test_bulk_delete_reports_each_project(client):
+    active = create(client)["id"]
+    archived = create(client)["id"]
+    assert client.post("/company/projects/" + archived + "/archive").status_code == 200
+    body = {"project_ids": [active, "missing", archived, active]}
+    response = client.request("DELETE", "/company/projects", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": active, "status_code": 204, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Project not found"},
+            {"id": archived, "status_code": 204, "detail": None},
+        ]
+    }
+    for project_id in (active, archived):
+        assert client.get("/company/projects/" + project_id, params={"include_deleted": True}).status_code == 404
+    kept = create(client)["id"]
+    for body in ({"project_ids": []}, {"project_ids": [kept], "force": True}):
+        assert client.request("DELETE", "/company/projects", json=body).status_code == 422
+    assert client.get("/company/projects/" + kept).status_code == 200
 
 
 @pytest.mark.parametrize("states", [[], ["active"]])
@@ -112,6 +172,17 @@ def test_unsupported_database(db):
         ("patch", "/company/projects/missing", {"name": "Work"}),
         ("delete", "/company/projects/missing", None),
         ("post", "/company/projects/missing/restore", None),
+        ("post", "/company/projects/missing/archive", None),
         ("post", "/company/projects/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
     ]:
         assert c.request(method, path, json=body).status_code == 503
+    response = c.post("/company/projects/archive", json={"project_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company projects not supported by the configured database"
+    )
+    response = c.request("DELETE", "/company/projects", json={"project_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company projects not supported by the configured database"
+    )

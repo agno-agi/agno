@@ -111,13 +111,168 @@ def test_lifecycle(client):
     assert response.json()["transitions"][1]["attempt"] == 1
     assert transition(client, path, "done").status_code == 409
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
     assert client.get("/company/tasks").json()["meta"]["total_count"] == 0
     assert client.get("/company/tasks?include_deleted=true").json()["meta"]["total_count"] == 1
     assert client.post(path + "/restore").json()["status"] == "done"
+
+
+def test_archive_lifecycle(client):
+    record = create(client)
+    path = "/company/tasks/" + record["id"]
+    assert client.post("/company/tasks/missing/archive").status_code == 404
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == record["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
+def test_bulk_delete_reports_each_task(client):
+    active = create(client)["id"]
+    archived = create(client)["id"]
+    assert client.post("/company/tasks/" + archived + "/archive").status_code == 200
+    response = client.request("DELETE", "/company/tasks", json={"task_ids": [active, "missing", archived, active]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": active, "status_code": 204, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Task not found"},
+            {"id": archived, "status_code": 204, "detail": None},
+        ]
+    }
+    for task_id in (active, archived):
+        assert client.get("/company/tasks/" + task_id, params={"include_deleted": True}).status_code == 404
+
+
+def test_bulk_delete_validates_before_deleting(client):
+    task_id = create(client)["id"]
+    for body in ({"task_ids": []}, {"task_ids": [task_id], "force": True}):
+        assert client.request("DELETE", "/company/tasks", json=body).status_code == 422
+    assert client.get("/company/tasks/" + task_id).status_code == 200
+
+
+@pytest.mark.parametrize("parent", ["product", "project"])
+def test_archive_parent_with_active_task_refused(client, parent):
+    task = create(client)
+    assert transition(client, "/company/tasks/" + task["id"], "ready").status_code == 200
+    response = client.post(f"/company/{parent}s/{task[parent + '_id']}/archive")
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "message": "Cannot archive with active Tasks",
+        "tasks": [{"id": task["id"], "title": "Ship"}],
+    }
+    assert client.get("/company/products/" + task["product_id"]).status_code == 200
+    assert client.get("/company/projects/" + task["project_id"]).status_code == 200
+    assert client.get("/company/tasks/" + task["id"]).json()["status"] == "ready"
+
+
+def test_archive_product_cascades_and_restores(client):
+    task = create(client)
+    project_path = "/company/projects/" + task["project_id"]
+    task_path = "/company/tasks/" + task["id"]
+    product_path = "/company/products/" + task["product_id"]
+    assert client.post(product_path + "/archive").status_code == 200
+    assert client.get(project_path).status_code == 404
+    assert client.get(task_path).status_code == 404
+    assert client.post(product_path + "/restore").status_code == 200
+    assert client.get(project_path).status_code == 200
+    assert client.get(task_path).json()["status"] == "backlog"
+
+
+def test_bulk_archive_reports_each_task(client):
+    a, b, c = (create(client)["id"] for _ in range(3))
+    assert client.post("/company/tasks/" + c + "/archive").status_code == 200
+    response = client.post("/company/tasks/archive", json={"task_ids": [a, "missing", c, b, a]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Task not found"},
+            {"id": c, "status_code": 404, "detail": "Task not found"},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    }
+    for task_id in [a, b]:
+        path = "/company/tasks/" + task_id
+        assert client.get(path).status_code == 404
+        assert isinstance(client.get(path, params={"include_deleted": True}).json()["deleted_at"], int)
+
+
+def test_bulk_archive_validates_before_archiving(client):
+    task_id = create(client)["id"]
+    for body in [{"task_ids": []}, {"task_ids": [task_id], "force": True}]:
+        assert client.post("/company/tasks/archive", json=body).status_code == 422
+    assert client.get("/company/tasks/" + task_id).json()["deleted_at"] is None
+
+
+@pytest.mark.parametrize("parent", ["product", "project"])
+def test_bulk_archive_reports_a_refused_parent(client, parent):
+    blocked, free = create(client), create(client)
+    assert transition(client, "/company/tasks/" + blocked["id"], "ready").status_code == 200
+    x, y = blocked[parent + "_id"], free[parent + "_id"]
+    response = client.post(f"/company/{parent}s/archive", json={parent + "_ids": [x, y]})
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {
+            "id": x,
+            "status_code": 409,
+            "detail": {
+                "message": "Cannot archive with active Tasks",
+                "tasks": [{"id": blocked["id"], "title": "Ship"}],
+            },
+        },
+        {"id": y, "status_code": 200, "detail": None},
+    ]
+    assert client.get(f"/company/{parent}s/{x}").status_code == 200
+    assert client.get("/company/tasks/" + blocked["id"]).json()["status"] == "ready"
+    assert client.get(f"/company/{parent}s/{y}").status_code == 404
+    assert client.get("/company/tasks/" + free["id"]).status_code == 404
+
+
+def test_bulk_archive_stops_at_a_server_error(client, monkeypatch):
+    a, b, c = (create(client)["id"] for _ in range(3))
+    db = client.app.state.task_test_db
+    delete_task = db.delete_task
+
+    def fail_for_b(task_id, *args, **kwargs):
+        # Raised on the call, before an async database creates its coroutine, so both managers see it.
+        if task_id == b:
+            raise NotImplementedError
+        return delete_task(task_id, *args, **kwargs)
+
+    monkeypatch.setattr(db, "delete_task", fail_for_b)
+    body = {"task_ids": [a, b, c]}
+    response = client.post("/company/tasks/archive", json=body)
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Company tasks not supported by the configured database"
+    assert client.get("/company/tasks/" + a).status_code == 404
+    assert [client.get("/company/tasks/" + task_id).json()["deleted_at"] for task_id in [b, c]] == [None, None]
+    monkeypatch.undo()
+    response = client.post("/company/tasks/archive", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [
+        {"id": a, "status_code": 404, "detail": "Task not found"},
+        {"id": b, "status_code": 200, "detail": None},
+        {"id": c, "status_code": 200, "detail": None},
+    ]
+
+
+def test_apply_each_reports_an_empty_answer_as_204():
+    from agno.os.routers.company.tasks import _apply_each
+
+    async def route(record_id):
+        return None
+
+    assert asyncio.run(_apply_each(["a", "a"], route)) == {"results": [{"id": "a", "status_code": 204, "detail": None}]}
 
 
 @pytest.mark.parametrize("states", [[], ["ready"], ["ready", "in_progress"], ["ready", "in_progress", "in_review"]])
@@ -235,8 +390,11 @@ def test_unsupported_database(db):
         ("post", "/company/tasks", {"product_id": "p", "project_id": "p", "title": "Work"}),
         ("patch", "/company/tasks/missing", {"title": "Work"}),
         ("delete", "/company/tasks/missing", None),
+        ("delete", "/company/tasks", {"task_ids": ["missing"]}),
         ("post", "/company/tasks/missing/restore", None),
+        ("post", "/company/tasks/missing/archive", None),
         ("post", "/company/tasks/missing/transitions", {"target": "cancelled", "reason": "Stop"}),
+        ("post", "/company/tasks/archive", {"task_ids": ["missing"]}),
     ]:
         response = c.request(method, path, json=body)
         assert response.status_code == 503

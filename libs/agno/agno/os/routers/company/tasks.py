@@ -1,19 +1,54 @@
 """Collaborative Company task reads, edits and lifecycle transitions."""
 
 import asyncio
-from typing import Any, Dict, List, Literal, Optional, Union, get_args
+import json
+from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    BulkResponse,
+    TaskBulkArchive,
+    TaskBulkDelete,
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
 from agno.registry._reserved import MINI_AGENT_ID
+
+
+async def _apply_each(ids: List[str], route: Callable[[str], Awaitable[Any]]) -> Dict[str, Any]:
+    """Call a single-record route for each id in turn and report each answer; a 5xx ends the request."""
+    results: List[Dict[str, Any]] = []
+    # A repeated id is handled once, at its first position.
+    for record_id in dict.fromkeys(ids):
+        try:
+            response = await route(record_id)
+        except HTTPException as exc:
+            # A 5xx is about the database or run store, not this record, so the ids after it would fail the same way.
+            if exc.status_code >= 500:
+                raise
+            results.append({"id": record_id, "status_code": exc.status_code, "detail": exc.detail})
+            continue
+        if isinstance(response, JSONResponse):
+            # A refusal that lists the Tasks or Routines blocking the action.
+            detail = json.loads(bytes(response.body))["detail"]
+            results.append({"id": record_id, "status_code": response.status_code, "detail": detail})
+        else:
+            # A route that returns the record answers 200; one that returns nothing answers 204.
+            status_code = 200 if isinstance(response, dict) else 204
+            results.append({"id": record_id, "status_code": status_code, "detail": None})
+    return {"results": results}
 
 
 def get_tasks_router(
@@ -32,7 +67,14 @@ def get_tasks_router(
 
     async def _call(
         method: Literal[
-            "create_task", "get_task", "list_tasks", "update_task", "delete_task", "restore_task", "transition_task"
+            "create_task",
+            "get_task",
+            "list_tasks",
+            "update_task",
+            "delete_task",
+            "restore_task",
+            "transition_task",
+            "permanently_delete_task",
         ],
         *args: Any,
         **kwargs: Any,
@@ -59,7 +101,7 @@ def get_tasks_router(
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
             conflict = (
-                method in {"transition_task", "restore_task", "delete_task"}
+                method in {"transition_task", "restore_task", "delete_task", "permanently_delete_task"}
                 or str(exc) == "Accepted task scope requires a return to Backlog"
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
@@ -256,10 +298,64 @@ def get_tasks_router(
         return await task_response(request, task)
 
     @router.delete("/tasks/{task_id}", status_code=204)
-    async def delete_task(task_id: str, _: bool = Depends(auth_dependency)) -> None:
+    async def delete_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> None:
+        from agno.company.files import _adelete_folders
+        from agno.job_queue.session import HOLDING_STATUSES
+
+        existing = await _existing(task_id, include_deleted=True)
+        queue = getattr(request.app.state, "queue_worker", None)
+
+        async def refuse_live_run(task: Dict[str, Any]) -> None:
+            # The ticket decides, not the Task's status: an archived Task's status can be stale.
+            if not task.get("job_id") or queue is None:
+                return
+            try:
+                # A failed lookup must not read as "no ticket" and let the delete leave an executing run.
+                try:
+                    job = await queue.store.get_job(task["job_id"], strict=True)
+                except TypeError:
+                    job = await queue.store.get_job(task["job_id"])
+            except Exception:
+                raise HTTPException(status_code=503, detail="Could not verify the Task run; retry the request")
+            if job is not None and job["status"] in HOLDING_STATUSES:
+                detail = f"Cancel the run with POST /company/runs/{task['job_id']}/cancel, then delete the Task"
+                raise HTTPException(status_code=409, detail=detail)
+
+        await refuse_live_run(existing)
+        archived = existing.get("deleted_at") is None and await _call("delete_task", task_id, user_id=None)
+        try:
+            # A run can start before the archive lands; once archived, no later run starts.
+            # Read the Task again: a run started in between has a new job_id.
+            await refuse_live_run(await _existing(task_id, include_deleted=True))
+        except HTTPException:
+            if archived:
+                await _call("restore_task", task_id, user_id=None)
+            raise
+        await _adelete_folders(db, [f"company/tasks/{task_id}"])
+        if await _call("permanently_delete_task", task_id):
+            return
+        if await _call("get_task", task_id, user_id=None, include_deleted=True) is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=409, detail="Task was restored during delete; repeat DELETE")
+
+    @router.delete("/tasks", response_model=BulkResponse)
+    async def delete_tasks(
+        body: TaskBulkDelete, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await _apply_each(body.task_ids, lambda task_id: delete_task(task_id, request))
+
+    @router.post("/tasks/{task_id}/archive", response_model=TaskResponse)
+    async def archive_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         await _existing(task_id)
         if not await _call("delete_task", task_id, user_id=None):
             raise HTTPException(status_code=404, detail="Task not found")
+        return await task_response(request, await _existing(task_id, include_deleted=True))
+
+    @router.post("/tasks/archive", response_model=BulkResponse)
+    async def archive_tasks(
+        body: TaskBulkArchive, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        return await _apply_each(body.task_ids, lambda task_id: archive_task(task_id, request))
 
     @router.post("/tasks/{task_id}/restore", response_model=TaskResponse)
     async def restore_task(task_id: str, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:

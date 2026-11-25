@@ -19,10 +19,27 @@ For HTTP access, configure `AgentOS(db=db, company=CompanyConfig())` using
 overrides the OS database. Omitting Company leaves its routes and scopes absent.
 
 The routes are `GET` and `POST /company/products`, `GET`, `PATCH` and
-`DELETE /company/products/{id}`, and `POST /company/products/{id}/restore`.
+`DELETE /company/products/{id}`, `POST /company/products/{id}/archive` and
+`POST /company/products/{id}/restore`. Archive returns the archived Product;
+`DELETE` removes the Product permanently (see Permanent delete below).
 Lists return `{data, meta}` with `limit` and `page`; reads accept
-`include_deleted=true`. Restore requires `products:delete`, like deletion.
+`include_deleted=true`. Archive and restore require `products:delete`;
+`DELETE` requires `agent_os:admin`.
 Read and create/update require `products:read` and `products:write` respectively.
+
+`POST /company/products/archive` with `{"product_ids": [...]}`,
+`POST /company/projects/archive` with `{"project_ids": [...]}` and
+`POST /company/tasks/archive` with `{"task_ids": [...]}` archive many records in
+one request and need `products:delete`, `projects:delete` and `tasks:delete`
+respectively, like a single archive. Each record goes through its single
+archive in turn, in request order; a repeated id is archived once. The response
+is 200 with `results`, one `{id, status_code, detail}` per record: 200 when
+archived, otherwise the 404 or 409 its single archive returns, with a Product's
+or Project's blocking Tasks as an object. It is not all-or-nothing: a refused
+record does not stop the others or bring back those already archived. Match
+results by `id`. If the database fails, the request returns that 503 or 500 and
+stops; repeating it answers 404 for the records already archived and continues.
+There is no limit on the number of ids.
 
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
 database and exposes the same methods as coroutines. `list()` returns rows and
@@ -141,7 +158,7 @@ requires an earlier run attempt.
 A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
-CRUD, paging, soft delete and restore conventions as Products, plus
+CRUD, paging, archive, restore and permanent delete conventions as Products, plus
 `POST /{id}/transitions`. Task Ready requests include `executor_type` and
 `executor_id`; the API applies the scheduler's caller run-permission check.
 Acceptance also validates the executor against the registry, then the published
@@ -157,7 +174,9 @@ requires the caller's executor run permission; accepted Tasks keep their brief,
 Project, evidence and executor until returned to Backlog, because an accepted
 Task runs under its accepter's permissions. The title stays editable at any
 stage (Company tools run by Routines and executors edit Backlog Tasks only).
-Delete and restore need the delete scope, not ownership.
+Archive and restore need the delete scope, not ownership; `DELETE` needs `agent_os:admin`.
+`POST /company/projects/archive` and `POST /company/tasks/archive` archive many
+records in one request, as described for Products.
 New work can use another owner's Product or Project, with the Task and
 Project still required to belong to the same Product. Manager and storage
 methods retain explicit owner filters for direct callers.
@@ -597,6 +616,70 @@ when the parent's own read includes archived records. Managers and HTTP use
 `BaseDb.get_product_counts(ids)` or `get_project_counts(ids)` and their async
 twins, issuing one grouped query for the entire returned page. A warmed list
 page uses three SQL statements in total, regardless of the number of cards.
+
+## Permanent delete
+
+`DELETE /company/products/{id}`, `DELETE /company/projects/{id}` and
+`DELETE /company/tasks/{id}` remove the record permanently and return 204. They
+need `agent_os:admin`; archive and restore keep the resource's delete scope.
+Active and archived records can be deleted. A record that is already gone returns
+404, including on a repeated `DELETE`. `POST /{id}/archive` is the reversible
+alternative.
+
+Deleting a Product removes its Projects, Tasks and Sources, its wiki pages, its
+summary state, the files of each of its Tasks, and its Routines with their run
+history. Deleting a Project removes its Tasks and their files. Deleting a Task
+removes its files. Sessions, agent, team and workflow run history, and the company
+decision log are kept.
+
+A Product or Project delete returns 409 and removes nothing while any Task inside
+is Ready, In progress or In review, archived Tasks included: a Task archived on its
+own can still be mid-run. The body is `{"detail": {"message", "tasks"}}`, with
+`id`, `title`, `status` and `deleted_at` for each Task. A Product's body also has
+`routines`, the `{id, name}` of each Routine with an executing run; a paused
+Routine run does not block. To unblock a Task, restore it, let its run finish or
+cancel it, move it to Done or Cancelled, then delete again. An archived Task inside
+an archived Project or Product can be restored only after that parent is restored.
+Restoring an open Task is refused if its Project was completed or cancelled
+meanwhile; the Task then stays archived.
+Python callers using `CompanyManager.transition_task` can move a Task out of In
+progress while its run is executing; the route's run check does not apply to them.
+
+A single Task delete returns 409 only while its run is running or paused; the
+message names `POST /company/runs/{run_id}/cancel`. The Task's status otherwise
+does not matter, so deleting a Task in review discards its result. If the run
+cannot be verified the delete returns 503; retry it. Without a queue worker the
+run check is skipped.
+
+`DELETE /company/tasks` with `{"task_ids": [...]}`, `DELETE /company/projects`
+with `{"project_ids": [...]}` and `DELETE /company/products` with
+`{"product_ids": [...]}` delete many records in one request and need
+`agent_os:admin`. Each record goes through its single `DELETE` in turn, in request
+order; a repeated id is deleted once. The response is 200 with `results`, one
+`{id, status_code, detail}` per record: 204 when deleted, otherwise the 404 or 409
+its single `DELETE` returns, with a Project's or Product's blocking Tasks and
+Routines as an object. It is not all-or-nothing: a refused record does not stop
+the others or bring back those already deleted. Match results by `id`. If the
+database or run store fails, the request returns that 503 or 500 and stops;
+repeating it answers 404 for the records already deleted and continues. There is
+no limit on the number of ids, so a large batch, especially of Products, takes as
+long as that many single deletes.
+
+A delete archives the record first, then removes Routines and files, then the
+rows. If a step fails, the record stays archived and repeating `DELETE` finishes
+it. Restoring it instead brings back its rows only: Routines and files already
+removed stay removed. If the record is restored while the delete runs, the delete
+returns 409 and asks for the `DELETE` to be repeated.
+
+A Product declared in code is created again on the next startup unless its
+declaration is removed. A Task or Project that an older release left active under
+an archived parent is removed only by deleting its Product. After a delete, the
+same Source item or Routine Project can be proposed again as new work.
+
+`CompanyManager.permanently_delete`, `permanently_delete_project` and
+`permanently_delete_task`, and their async twins, remove the rows of an archived
+record only and return `False` for a missing or active one. They do not remove
+Routines or files. `delete()`, `delete_project()` and `delete_task()` still archive.
 
 ## Heartbeat
 

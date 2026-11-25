@@ -79,7 +79,7 @@ def test_isolation_off_allows_scoped_readers_and_writers(make_client):
     path = "/company/projects/" + a
     assert c.patch(path, json={"outcome": "Updated"}, headers=headers("bob")).status_code == 200
     assert c.get(path, headers=read).json()["user_id"] == "alice"
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
 
 
@@ -102,7 +102,7 @@ def test_isolation_on_shares_reads_edits_and_deletion(make_client):
     assert edited.json()["name"] == "Collaborative work"
     assert edited.json()["user_id"] == "alice"
     # Archive and restore need the scope, not ownership; the creator stays recorded.
-    assert c.delete(path, headers=headers("bob")).status_code == 204
+    assert c.post(path + "/archive", headers=headers("bob")).status_code == 200
     assert c.get(path + "?include_deleted=true", headers=headers("bob")).status_code == 200
     assert c.get("/company/projects?include_deleted=true", headers=headers("bob")).json()["meta"]["total_count"] == 4
     assert c.post(path + "/restore", headers=headers("bob")).status_code == 200
@@ -116,12 +116,50 @@ def test_admin_bypass_and_creator_attribution(make_client):
     path = "/company/projects/" + a
     assert c.get(path, headers=admin).status_code == 200
     assert c.patch(path, json={"name": "renamed"}, headers=admin).status_code == 200
-    assert c.delete(path, headers=admin).status_code == 204
+    assert c.post(path + "/archive", headers=admin).status_code == 200
     assert c.post(path + "/restore", headers=admin).status_code == 200
     parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
     response = c.post("/company/projects", json={"name": "Admin work", "product_id": parent}, headers=admin)
     assert response.status_code == 201
     assert response.json()["user_id"] == "admin"
+
+
+def test_bulk_archive_requires_delete_scope(make_client):
+    c = make_client(False)
+    project_id = create(c, "alice")
+    path = "/company/projects/" + project_id
+    body = {"project_ids": [project_id]}
+    assert c.post("/company/projects/archive", json=body, headers=headers("bob", ["projects:write"])).status_code == 403
+    assert c.get(path, headers=headers("bob")).json()["deleted_at"] is None
+    response = c.post("/company/projects/archive", json=body, headers=headers("bob", ["projects:delete"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["results"] == [{"id": project_id, "status_code": 200, "detail": None}]
+    assert c.get(path, headers=headers("bob")).status_code == 404
+
+
+def test_permanent_delete_requires_admin(make_client):
+    c = make_client(True)
+    path = "/company/projects/" + create(c, "alice")
+    # The delete scope still archives and restores, but only an admin removes the record.
+    assert c.delete(path, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    assert c.delete(path, headers=admin).status_code == 204
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
+
+
+def test_bulk_delete_requires_admin(make_client):
+    c = make_client(True)
+    project_id = create(c, "alice")
+    path = "/company/projects/" + project_id
+    body = {"project_ids": [project_id]}
+    assert c.request("DELETE", "/company/projects", json=body, headers=headers("alice")).status_code == 403
+    assert c.get(path, headers=headers("alice")).status_code == 200
+    admin = headers("admin", ["agent_os:admin"])
+    response = c.request("DELETE", "/company/projects", json=body, headers=admin)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"results": [{"id": project_id, "status_code": 204, "detail": None}]}
+    assert c.get(path, params={"include_deleted": True}, headers=admin).status_code == 404
 
 
 @pytest.mark.parametrize("isolation", [False, True])
@@ -135,6 +173,7 @@ def test_scopes_apply_to_every_route(make_client, isolation):
         ("patch", path, {"name": "No"}, ["projects:read"]),
         ("delete", path, None, ["projects:write"]),
         ("post", path + "/restore", None, ["projects:write"]),
+        ("post", path + "/archive", None, ["projects:write"]),
         ("post", path + "/transitions", {"target": "cancelled", "reason": "Stop"}, ["projects:read"]),
     ]:
         assert c.request(method, url, json=body, headers=headers("bob", scopes)).status_code == 403

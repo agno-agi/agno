@@ -1214,7 +1214,7 @@ async def test_worker_recovers_task_projection_after_committed_enqueue(system, m
             await client.post(path + "/transitions", json={"target": "backlog", "reason": "Withdraw"})
         ).status_code == 200
     elif recovery == "archive_restore":
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
         restored = await client.post(path + "/restore")
         assert restored.status_code == 200, restored.text
         assert restored.json()["transitions"] == value["transitions"]
@@ -1427,7 +1427,7 @@ async def test_task_archive_restore_preserves_queued_acceptance(system, monkeypa
     try:
         if running is not None:
             await asyncio.wait_for(entered.wait(), timeout=10)
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
         restored = await client.post(path + "/restore")
         assert restored.status_code == 200, restored.text
         for key in ["transitions", "session_id", "job_id", "evidence", "result", "accepted_at", "accepted_by"]:
@@ -4039,3 +4039,149 @@ async def test_terminal_reconciliation_preserves_task_and_session_guards(system,
     else:
         assert await _reconcile_task_run(db, db, reserved, run, None) is False
     assert await _call(db, "get_task", task["id"]) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [False, True])
+@pytest.mark.parametrize("status", ["running", "paused"])
+async def test_live_run_refuses_task_delete(system, status, archived):
+    client, _, worker, _, _ = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    run_id = (await client.post(path + "/runs")).json()["run_id"]
+    claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert claimed["id"] == run_id
+    if status == "paused":
+        assert await worker.store.complete_job(run_id, worker.worker_id, claimed["attempt"], "paused")
+    if archived:
+        # An archived Task's own status can be stale, so its ticket still decides.
+        assert (await client.post(path + "/archive")).status_code == 200
+    response = await client.delete(path)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == f"Cancel the run with POST /company/runs/{run_id}/cancel, then delete the Task"
+    saved = (await client.get(path, params={"include_deleted": True})).json()
+    assert saved["status"] == "in_progress" and (saved["deleted_at"] is not None) == archived
+
+
+@pytest.mark.asyncio
+async def test_bulk_task_delete_keeps_a_task_with_a_live_run(system):
+    client, _, worker, _, _ = system
+    live = await accepted(client)
+    idle = await accepted(client)
+    path = f"/company/tasks/{live['id']}"
+    run_id = (await client.post(path + "/runs")).json()["run_id"]
+    claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+    assert claimed["id"] == run_id
+    before = (await client.get(path)).json()
+    response = await client.request("DELETE", "/company/tasks", json={"task_ids": [live["id"], idle["id"]]})
+    assert response.status_code == 200, response.text
+    detail = f"Cancel the run with POST /company/runs/{run_id}/cancel, then delete the Task"
+    assert response.json() == {
+        "results": [
+            {"id": live["id"], "status_code": 409, "detail": detail},
+            {"id": idle["id"], "status_code": 204, "detail": None},
+        ]
+    }
+    assert (await client.get(path)).json() == before
+    assert (await client.get(f"/company/tasks/{idle['id']}", params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_bulk_task_delete_stops_at_an_unverifiable_run(system, monkeypatch):
+    client, _, worker, _, _ = system
+    idle = await accepted(client)
+    ticketed = await accepted(client)
+    path = f"/company/tasks/{ticketed['id']}"
+    assert (await client.post(path + "/runs")).status_code == 202
+    before = (await client.get(path)).json()
+
+    async def unreadable(*args, **kwargs):
+        raise RuntimeError("Injected job read failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(worker.store, "get_job", unreadable)
+        body = {"task_ids": [idle["id"], ticketed["id"]]}
+        response = await client.request("DELETE", "/company/tasks", json=body)
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Could not verify the Task run; retry the request"
+    assert (await client.get(f"/company/tasks/{idle['id']}", params={"include_deleted": True})).status_code == 404
+    assert (await client.get(path)).json() == before
+
+
+@pytest.mark.asyncio
+async def test_queued_task_delete_removes_it_and_the_worker_refuses_the_run(system):
+    client, _, worker, _, _ = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    assert (await client.post(path + "/runs")).status_code == 202
+    assert (await client.delete(path)).status_code == 204
+    assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+    assert (await execute(worker))["status"] == "failed"
+    assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_finished_task_delete_needs_a_readable_ticket_and_keeps_the_session(system, monkeypatch):
+    from agno.company.execution import _call
+    from agno.db.base import SessionType
+
+    client, db, worker, _, _ = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    assert (await client.post(path + "/runs")).status_code == 202
+    assert (await execute(worker))["status"] == "completed"
+    saved = (await client.get(path)).json()
+    assert saved["status"] == "in_review"
+
+    async def unreadable(*args, **kwargs):
+        raise RuntimeError("Injected job read failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(worker.store, "get_job", unreadable)
+        response = await client.delete(path)
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == "Could not verify the Task run; retry the request"
+    assert (await client.get(path)).json()["deleted_at"] is None
+    assert (await client.delete(path)).status_code == 204
+    assert (await client.get(path, params={"include_deleted": True})).status_code == 404
+    assert await _call(db, "get_session", saved["session_id"], SessionType.AGENT) is not None
+
+
+@pytest.mark.asyncio
+async def test_run_started_before_the_archive_refuses_task_delete(system, monkeypatch):
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+
+    client, db, worker, _, _ = system
+    value = await accepted(client)
+    path = f"/company/tasks/{value['id']}"
+    loop = asyncio.get_running_loop()
+    started = []
+
+    async def start_run():
+        run_id = (await client.post(path + "/runs")).json()["run_id"]
+        claimed = await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds)
+        assert claimed["id"] == run_id
+        started.append(run_id)
+
+    # The run starts after DELETE's first ticket check, which found no run, and before its archive.
+    cls = AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager
+    original = cls.delete_task
+    if cls is AsyncCompanyManager:
+
+        async def delete_task(self, *args, **kwargs):
+            await start_run()
+            return await original(self, *args, **kwargs)
+
+    else:
+
+        def delete_task(self, *args, **kwargs):
+            asyncio.run_coroutine_threadsafe(start_run(), loop).result(timeout=30)
+            return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, "delete_task", delete_task)
+    response = await client.delete(path)
+    assert response.status_code == 409, response.text
+    detail = f"Cancel the run with POST /company/runs/{started[0]}/cancel, then delete the Task"
+    assert response.json()["detail"] == detail
+    saved = (await client.get(path)).json()
+    assert saved["deleted_at"] is None and saved["status"] == "in_progress"

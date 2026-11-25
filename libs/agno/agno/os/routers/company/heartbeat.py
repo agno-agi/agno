@@ -1,4 +1,4 @@
-"""Sources, Routine schedule wrappers and blank-deployment setup."""
+"""Sources, Routine schedule wrappers, Product permanent and bulk delete and blank-deployment setup."""
 
 import asyncio
 import inspect
@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,6 +19,7 @@ from agno.db.base import AsyncBaseDb
 from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
+from agno.os.routers.company.schema import BulkResponse, ProductBulkDelete
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -135,6 +137,19 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             raise HTTPException(403, str(exc))
         except ValueError as exc:
             raise HTTPException(422, str(exc))
+
+    async def refusable(fn, *args):
+        """As call, but a refusal that lists the blocking Tasks is a 409 keeping that list."""
+
+        async def run():
+            try:
+                return await fn(*args) if inspect.iscoroutinefunction(fn) else await asyncio.to_thread(fn, *args)
+            except ValueError as exc:
+                if exc.args and isinstance(exc.args[0], dict):
+                    raise HTTPException(409, exc.args[0]) from exc
+                raise
+
+        return await call(run)
 
     async def product(product_id, include_deleted=False):
         row = await call(manager.get, product_id, include_deleted=include_deleted)
@@ -537,6 +552,65 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         # Deleting the schedule also deletes its run history.
         await call(handlers["delete_schedule"], routine_id, request)
         await call(manager._unlink_routine, product_id, routine_id)
+
+    @router.delete("/products/{product_id}", status_code=204, tags=["Products"])
+    async def delete_product(product_id: str, request: Request, _: bool = Depends(auth)):
+        from agno.company.files import _adelete_folders
+        from agno.db.schemas.tasks import OPEN_TASK_STATUSES
+        from agno.scheduler import ScheduleManager
+
+        record = await product(product_id, include_deleted=True)
+        # Every check runs before anything changes: removed Routines and files cannot be brought back.
+        tasks = await call(manager.get_descendant_tasks, product_id=product_id)
+        routines: List[Dict[str, Any]] = []
+        # Routines live in the AgentOS database's schedules table. Without that database, or before the
+        # scheduler or a first Routine creates the table, the Product has no Routines.
+        if schedule_db is not None and await call(schedule_db.table_exists, schedule_db.schedules_table_name):
+            routines = [
+                row.to_dict()
+                for row in await call(ScheduleManager(schedule_db).alist_all)
+                if row.managed_by == "company"
+                and (row.payload or {}).get("metadata", {}).get("product_id") == product_id
+            ]
+        open_tasks = [task for task in tasks if task["status"] in OPEN_TASK_STATUSES]
+        executing = [{"id": row["id"], "name": row["name"]} for row in routines if await running_runs(row, request)]
+        if open_tasks or executing:
+            reasons = [
+                text for text, found in (("active Tasks", open_tasks), ("executing Routine runs", executing)) if found
+            ]
+            detail = {
+                "message": "Cannot delete with " + " and ".join(reasons),
+                "tasks": open_tasks,
+                "routines": executing,
+            }
+            return JSONResponse(status_code=409, content={"detail": detail})
+        try:
+            # Archive first: it stops new work and Routine runs, and if a step below fails, a repeat DELETE
+            # finishes the archived Product.
+            if record.get("deleted_at") is None:
+                await refusable(manager.delete, product_id)
+            for row in routines:
+                # Deleting the schedule also deletes its run history.
+                await call(handlers["delete_schedule"], row["id"], request)
+            namespaces = [f"company/products/{product_id}/{name}" for name in ("wiki", "summary-state")]
+            await _adelete_folders(db, namespaces + [f"company/tasks/{task['id']}" for task in tasks])
+            deleted = await refusable(manager.permanently_delete, product_id)
+        except HTTPException as exc:
+            if exc.status_code == 409 and isinstance(exc.detail, dict):
+                # Keep the Task list structured through AgentOS's string error handler.
+                return JSONResponse(status_code=409, content={"detail": exc.detail})
+            raise
+        if deleted:
+            return Response(status_code=204)
+        if await call(manager.get, product_id, include_deleted=True) is None:
+            raise HTTPException(404, "Product not found")
+        raise HTTPException(409, "Product was restored during delete; repeat DELETE")
+
+    @router.delete("/products", response_model=BulkResponse, tags=["Products"])
+    async def delete_products(body: ProductBulkDelete, request: Request, _: bool = Depends(auth)):
+        from agno.os.routers.company.tasks import _apply_each
+
+        return await _apply_each(body.product_ids, lambda product_id: delete_product(product_id, request))
 
     @router.post("/routines/{routine_id}/restore", response_model=RoutineResponse)
     async def restore_routine(routine_id: str, request: Request, _: bool = Depends(auth)):

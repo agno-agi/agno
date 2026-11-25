@@ -32,13 +32,16 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
     return stmt
 
 
-def lock_product(sess: Any, products: Any, product_id: str) -> None:
+def lock_product(sess: Any, products: Any, product_id: str, *, include_archived: bool = False) -> None:
     """Serialize hierarchy writes on the Product, including on SQLite.
 
     A no-op UPDATE obtains a write lock without changing the activity timestamp.
     Every child creation, move, transition and restore shares this lock with archive.
+    Permanent delete passes include_archived, because it removes archived records.
     """
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    stmt = products.update().where(products.c.id == product_id)
+    if not include_archived:
+        stmt = stmt.where(products.c.deleted_at.is_(None))
     row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
     if row is None:
         raise ValueError("Product is missing or archived")
@@ -193,23 +196,67 @@ def _restore_children(sess: Any, table: Any, condition: Any, parent: Dict[str, s
         )
 
 
-def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
-    # Archived Tasks are hidden from lists and counts, so they must not block either.
-    rows = (
-        sess.execute(
-            select(tasks.c.id, tasks.c.title)
-            .where(
-                condition,
-                tasks.c.deleted_at.is_(None),
-                tasks.c.status.in_(["ready", "in_progress", "in_review"]),
-            )
-            .order_by(tasks.c.id)
-        )
-        .mappings()
-        .all()
-    )
+def _refuse_open_tasks(
+    sess: Any, tasks: Any, condition: Any, *, include_archived: bool = False, action: str = "archive"
+) -> None:
+    # Archived Tasks are hidden from lists and counts, so they must not block an archive. A delete
+    # counts them: a Task archived on its own can still be mid-run, and its status says so.
+    columns = [tasks.c.id, tasks.c.title, *((tasks.c.status, tasks.c.deleted_at) if include_archived else ())]
+    stmt = select(*columns).where(condition, tasks.c.status.in_(["ready", "in_progress", "in_review"]))
+    if not include_archived:
+        stmt = stmt.where(tasks.c.deleted_at.is_(None))
+    rows = sess.execute(stmt.order_by(tasks.c.id)).mappings().all()
     if rows:
-        raise ValueError({"message": "Cannot archive with active Tasks", "tasks": [dict(row) for row in rows]})
+        raise ValueError({"message": f"Cannot {action} with active Tasks", "tasks": [dict(row) for row in rows]})
+
+
+def descendant_tasks(sess: Any, tasks: Any, condition: Any) -> List[Dict[str, Any]]:
+    """Every matching Task, archived ones and children of archived parents included."""
+    stmt = select(tasks.c.id, tasks.c.title, tasks.c.status, tasks.c.deleted_at).where(condition)
+    return [dict(row) for row in sess.execute(stmt.order_by(tasks.c.id)).mappings().all()]
+
+
+def _archived_row(sess: Any, products: Any, table: Any, record_id: str) -> Optional[Dict[str, Any]]:
+    """Lock the record's Product and return the record only while it is archived."""
+    row = sess.execute(select(table).where(table.c.id == record_id)).first()
+    if row is None:
+        return None
+    product_id = row._mapping["product_id"] if table is not products else record_id
+    lock_product(sess, products, product_id, include_archived=True)
+    # Read again under the lock: a restore may have won it.
+    row = sess.execute(select(table).where(table.c.id == record_id, table.c.deleted_at.is_not(None))).first()
+    return dict(row._mapping) if row is not None else None
+
+
+def delete_product_rows(sess: Any, products: Any, projects: Any, tasks: Any, sources: Any, product_id: str) -> bool:
+    """Remove an archived Product with its Projects, Tasks and Sources; False if missing or active."""
+    if _archived_row(sess, products, products, product_id) is None:
+        return False
+    _refuse_open_tasks(sess, tasks, tasks.c.product_id == product_id, include_archived=True, action="delete")
+    sess.execute(tasks.delete().where(tasks.c.product_id == product_id))
+    sess.execute(projects.delete().where(projects.c.product_id == product_id))
+    if sources is not None:
+        sess.execute(sources.delete().where(sources.c.product_id == product_id))
+    sess.execute(products.delete().where(products.c.id == product_id))
+    return True
+
+
+def delete_project_rows(sess: Any, products: Any, projects: Any, tasks: Any, project_id: str) -> bool:
+    """Remove an archived Project with its Tasks; False if missing or active."""
+    if _archived_row(sess, products, projects, project_id) is None:
+        return False
+    _refuse_open_tasks(sess, tasks, tasks.c.project_id == project_id, include_archived=True, action="delete")
+    sess.execute(tasks.delete().where(tasks.c.project_id == project_id))
+    sess.execute(projects.delete().where(projects.c.id == project_id))
+    return True
+
+
+def delete_task_rows(sess: Any, products: Any, tasks: Any, task_id: str) -> bool:
+    """Remove an archived Task; False if missing or active."""
+    if _archived_row(sess, products, tasks, task_id) is None:
+        return False
+    sess.execute(tasks.delete().where(tasks.c.id == task_id))
+    return True
 
 
 def archive_product(

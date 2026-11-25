@@ -128,7 +128,7 @@ async def test_live_job_blocks_after_task_mutation(sandbox_system, mutation):
             value = await _call(db, "get_task", first["id"])
             await _call(db, "start_task_run", first["id"], 2, value["transitions"], run_db_id=worker.config.db.id)
     elif mutation == "archived":
-        assert (await client.delete(path)).status_code == 204
+        assert (await client.post(path + "/archive")).status_code == 200
     blocked = await client.post(second_path)
     assert blocked.status_code == 409 and "live job" in blocked.text, blocked.text
     assert (await worker.store.get_job(job["id"]))["status"] == "running"

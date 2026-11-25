@@ -48,10 +48,10 @@ def test_lifecycle(client):
     assert updated.json()["updated_at"] is not None
     assert client.patch(path, json={}).json() == updated.json()
     assert client.post(path + "/restore").status_code == 409
-    assert client.delete(path).status_code == 204
+    assert client.post(path + "/archive").status_code == 200
     assert client.get(path).status_code == 404
     assert client.patch(path, json={"name": "Hidden"}).status_code == 404
-    assert client.delete(path).status_code == 404
+    assert client.post(path + "/archive").status_code == 404
     deleted = client.get(path, params={"include_deleted": True}).json()
     assert isinstance(deleted["deleted_at"], int)
     assert client.get("/company/products").json()["meta"]["total_count"] == 0
@@ -60,6 +60,63 @@ def test_lifecycle(client):
     assert restored.status_code == 200
     assert restored.json()["deleted_at"] is None
     assert restored.json()["created_at"] == product["created_at"]
+
+
+def test_archive_lifecycle(client):
+    product = client.post("/company/products", json={"name": "SDK"}).json()
+    path = "/company/products/" + product["id"]
+    archived = client.post(path + "/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["id"] == product["id"]
+    assert isinstance(archived.json()["deleted_at"], int)
+    assert client.get(path).status_code == 404
+    assert client.get(path, params={"include_deleted": True}).json() == archived.json()
+    assert client.post(path + "/archive").status_code == 404
+    restored = client.post(path + "/restore")
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+
+
+def test_bulk_archive_reports_each_product(client):
+    a, b, c, d = (client.post("/company/products", json={"name": "SDK"}).json()["id"] for _ in range(4))
+    assert client.post("/company/products/" + c + "/archive").status_code == 200
+    response = client.post("/company/products/archive", json={"product_ids": [a, "missing", c, b, a]})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": a, "status_code": 200, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Product not found"},
+            {"id": c, "status_code": 404, "detail": "Product not found"},
+            {"id": b, "status_code": 200, "detail": None},
+        ]
+    }
+    for product_id in [a, b]:
+        path = "/company/products/" + product_id
+        assert client.get(path).status_code == 404
+        assert isinstance(client.get(path, params={"include_deleted": True}).json()["deleted_at"], int)
+    for body in [{"product_ids": []}, {"product_ids": [d], "force": True}]:
+        assert client.post("/company/products/archive", json=body).status_code == 422
+    assert client.get("/company/products/" + d).json()["deleted_at"] is None
+
+
+def test_bulk_delete_reports_each_product(client):
+    active, archived, kept = (client.post("/company/products", json={"name": "SDK"}).json()["id"] for _ in range(3))
+    assert client.post("/company/products/" + archived + "/archive").status_code == 200
+    body = {"product_ids": [active, "missing", archived, active]}
+    response = client.request("DELETE", "/company/products", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "results": [
+            {"id": active, "status_code": 204, "detail": None},
+            {"id": "missing", "status_code": 404, "detail": "Product not found"},
+            {"id": archived, "status_code": 204, "detail": None},
+        ]
+    }
+    for product_id in (active, archived):
+        assert client.get("/company/products/" + product_id, params={"include_deleted": True}).status_code == 404
+    for body in ({"product_ids": []}, {"product_ids": [kept], "force": True}):
+        assert client.request("DELETE", "/company/products", json=body).status_code == 422
+    assert client.get("/company/products/" + kept).status_code == 200
 
 
 def test_pagination_and_duplicate_display_names(client):
@@ -95,6 +152,7 @@ def test_invalid_pagination(client, query):
         ("patch", "/company/products/missing", {"name": "SDK"}),
         ("delete", "/company/products/missing", None),
         ("post", "/company/products/missing/restore", None),
+        ("post", "/company/products/missing/archive", None),
     ],
 )
 def test_missing(client, method, path, body):
@@ -124,7 +182,7 @@ def test_database_resolution_once_and_override(tmp_path):
             for path, methods in client.app.openapi()["paths"].items()
             if path.startswith("/company/products") and "/wiki" not in path
         }
-        assert sum(len(methods) for methods in paths.values()) == 6
+        assert sum(len(methods) for methods in paths.values()) == 9
         assert client.get("/company/products").status_code == 200
     default.close()
     override.close()
@@ -169,6 +227,7 @@ def test_import_without_company_changes_no_routes_tables_or_scopes(tmp_path):
     assert get_default_scope_mappings() == mappings
     assert not any("products:" in scope for scopes in mappings.values() for scope in scopes)
     assert get_default_scope_mappings(company=True)["POST /company/products/*/restore"] == ["products:delete"]
+    assert get_default_scope_mappings(company=True)["POST /company/products/*/archive"] == ["products:delete"]
 
 
 @pytest.mark.parametrize("db", [None, InMemoryDb()])
@@ -181,8 +240,19 @@ def test_unavailable_database_all_routes(db):
         ("patch", "/company/products/missing", {"name": "SDK"}),
         ("delete", "/company/products/missing", None),
         ("post", "/company/products/missing/restore", None),
+        ("post", "/company/products/missing/archive", None),
     ]:
         assert client.request(method, path, json=body).status_code == 503
+    response = client.post("/company/products/archive", json={"product_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company products not supported by the configured database"
+    )
+    response = client.request("DELETE", "/company/products", json={"product_ids": ["missing"]})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Company requires a database" if db is None else "Company heartbeat not supported by the configured database"
+    )
 
 
 def test_manager_unsupported():
