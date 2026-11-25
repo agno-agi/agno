@@ -1748,7 +1748,6 @@ def test_private_uri_memory_databases_are_two_filesystems(client_factory):
 
 def test_the_backend_key_follows_the_port_the_schema_and_the_sqlite_uri(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
-    from sqlalchemy.engine import make_url
 
     from agno.fs.db import DbFileSystem
     from agno.os.routers.filesystem.utils import _database_place, _filesystem_backend_key
@@ -1756,15 +1755,17 @@ def test_the_backend_key_follows_the_port_the_schema_and_the_sqlite_uri(tmp_path
     monkeypatch.delenv("PGPORT", raising=False)
 
     def place(url: str) -> tuple:
-        return _database_place(SimpleNamespace(url=make_url(url)))
+        return _database_place(create_engine(url))
 
-    assert place("postgresql://db/app") == place("postgresql://db:5432/app")
-    assert place("postgresql://db/app") != place("postgresql://db:5433/app")
-    assert place("postgresql:///app?host=/run&port=5433") == place("postgresql://:5433/app?host=/run")
+    assert place("postgresql+psycopg://db/app") == place("postgresql+psycopg://db:5432/app")
+    assert place("postgresql+psycopg://db/app") != place("postgresql+psycopg://db:5433/app")
+    assert place("postgresql+psycopg:///app?host=/run&port=5433") != place(
+        "postgresql+psycopg:///app?host=/run&port=5434"
+    )
     monkeypatch.setenv("PGPORT", "5433")
-    assert place("postgresql://db/app") == place("postgresql://db:5433/app")
+    assert place("postgresql+psycopg://db/app") == place("postgresql+psycopg://db:5433/app")
     # No host in the URL: the driver chooses the server, so engines are not compared.
-    first, second = (SimpleNamespace(url=make_url("postgresql:///app")) for _ in range(2))
+    first, second = (create_engine("postgresql+psycopg:///app") for _ in range(2))
     assert _database_place(first) != _database_place(second)
     # A SQLite file is one file through a URI too.
     path = tmp_path / "one.db"
@@ -1778,6 +1779,59 @@ def test_the_backend_key_follows_the_port_the_schema_and_the_sqlite_uri(tmp_path
     # Without a schema the search_path names the table; with one, the user does not matter.
     assert key("postgresql+psycopg://one@db/app", None) != key("postgresql+psycopg://two@db/app", None)
     assert key("postgresql+psycopg://one@db/app", "fs") == key("postgresql+psycopg://two@db/app", "fs")
+
+
+@pytest.mark.parametrize("option", ["dbname", "host", "hostaddr", "port", "service"])
+@pytest.mark.parametrize("through", ["query", "connect_args"])
+def test_a_connection_override_names_another_database(option, through, client_factory):
+    from sqlalchemy import create_engine
+
+    from agno.fs.db import DbFileSystem
+
+    url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+    engines = [
+        create_engine(f"{url}?{option}={value}")
+        if through == "query"
+        else create_engine(url, connect_args={option: value})
+        for value in ("1", "2")
+    ]
+    stores = [FileSystem(DbFileSystem(db_engine=engine), namespace="notes") for engine in engines]
+    client = client_factory(filesystem=stores, authorization=False)
+
+    ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+    assert len(set(ids)) == 2
+
+
+def test_an_engine_whose_database_is_not_known_is_its_own_place():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+    base = _database_place(create_engine(url))
+    # Options that do not choose the database, and the asynchronous driver, keep the place.
+    assert base == ("postgresql", "localhost", "5432", "ai")
+    assert _database_place(create_engine(url, connect_args={"application_name": "x"}, pool_size=1)) == base
+    assert _database_place(create_async_engine(url).sync_engine) == base
+    # An override that repeats the URL is the same database.
+    assert _database_place(create_engine(f"{url}?dbname=ai")) == base
+
+    listened = create_engine(url)
+    event.listen(listened, "do_connect", lambda *args: None)
+    for unknown in (create_engine(url, creator=lambda: None), listened, create_engine(f"{url}?dbname=host%3Dother")):
+        assert _database_place(unknown) == ("engine", id(unknown))
+
+
+def test_a_sqlite_name_is_a_uri_only_when_opened_as_one(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    monkeypatch.chdir(tmp_path)
+    as_uri = _database_place(create_engine("sqlite:///file:one.db?uri=true"))
+    assert as_uri == _database_place(create_engine("sqlite:///one.db"))
+    assert as_uri != _database_place(create_engine("sqlite:///file:one.db"))
 
 
 def test_a_failing_agent_does_not_hide_a_declared_filesystem(db, client_factory):
@@ -2132,7 +2186,6 @@ def test_two_wrappers_on_one_engine_table_and_namespace_are_one_filesystem(tmp_p
 
 def test_the_backend_key_names_the_database_and_table_not_the_wrapper(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
-    from sqlalchemy.engine import make_url
 
     from agno.db.sqlite import AsyncSqliteDb
     from agno.fs.db import DbFileSystem
@@ -2166,15 +2219,21 @@ def test_the_backend_key_names_the_database_and_table_not_the_wrapper(tmp_path, 
         engine.dispose()
 
     def place(url: str) -> tuple:
-        return _database_place(SimpleNamespace(url=make_url(url)))
+        return _database_place(create_engine(url))
 
     # A PostgreSQL database is the same through either driver and for any user, and another on another server.
     assert place("postgresql+psycopg://ai:ai@db.internal:5432/app") == place(
         "postgresql+psycopg_async://reader@db.internal:5432/app"
     )
-    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@db.internal:5432/other")
-    assert place("postgresql://ai@db.internal:5432/app") != place("postgresql://ai@replica.internal:5432/app")
-    assert place("postgresql://ai@/app?host=/var/run/one") != place("postgresql://ai@/app?host=/var/run/two")
+    assert place("postgresql+psycopg://ai@db.internal:5432/app") != place(
+        "postgresql+psycopg://ai@db.internal:5432/other"
+    )
+    assert place("postgresql+psycopg://ai@db.internal:5432/app") != place(
+        "postgresql+psycopg://ai@replica.internal:5432/app"
+    )
+    assert place("postgresql+psycopg://ai@/app?host=/var/run/one") != place(
+        "postgresql+psycopg://ai@/app?host=/var/run/two"
+    )
 
 
 # --- A namespace that names a team ---
