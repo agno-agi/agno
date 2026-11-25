@@ -559,6 +559,53 @@ class TestWhoMayDecide:
 
 class TestRestoredAuthority:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change, refusal",
+        [
+            (None, None),
+            ("disable", security._DISABLED_MESSAGE),
+            ("lesser-role", security._NO_ACCESS_MESSAGE.format(name="Test Agent")),
+        ],
+    )
+    async def test_a_senders_paused_run_resumes_only_while_their_user_still_covers_it(self, tmp_path, change, refusal):
+        # Under authorize_senders the run's user is asked again, as they are now, when the approval is clicked
+        from agno.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from agno.os.authz import Authorization, Role, UserDirectory
+
+        authz = Authorization(
+            verification_keys=["approval-test-signing-key-at-least-32-characters"],
+            algorithm="HS256",
+            roles=[Role("runner", scopes=["agents:run"]), Role("viewer", scopes=["agents:read"])],
+        )
+        directory = UserDirectory()
+        agent_os = AgentOS(
+            db=SqliteDb(db_file=str(tmp_path / "os.db")),
+            agents=[Agent(id="agent-1")],
+            authorization=authz,
+            user_directory=directory,
+            telemetry=False,
+        )
+        app = agent_os.get_app()
+        authz.assign(OWNER, "runner")
+        directory.upsert(OWNER)
+        entity = _make_entity(_paused_run([_make_requirement()], user_id=OWNER))
+        ctx = make_ctx(agent=entity, authorize_senders=True).bind(app)
+        if change == "disable":
+            directory.set_disabled(OWNER, True)
+        if change == "lesser-role":
+            authz.set_role(OWNER, "viewer")
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), client, ctx)
+
+        assert len(fake.calls) == (0 if refusal else 1)
+        assert _ephemerals(client) == ([refusal] if refusal else [])
+
+    @pytest.mark.asyncio
     async def test_click_after_registry_clear_restores_owner_authority(self):
         entity = _make_entity(_paused_run([_make_requirement()], user_id="principal-1"))
         ctx = make_ctx(agent=entity, users={OWNER: "principal-1"})

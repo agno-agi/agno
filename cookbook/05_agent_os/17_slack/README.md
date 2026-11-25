@@ -37,6 +37,7 @@ hands each event to the interface. The demo environment installs both.
 | `codex_harness.py` | A Codex agent with native command approvals |
 | `sandbox_review.py` | A sandboxed Codex reviewer in a Docker container, with native approvals |
 | `super_agent.py` | Super Agent starts Company Tasks and posts their results back to the thread |
+| `authorize_senders.py` | Each sender runs as their own user in the user directory, with the role they hold there |
 
 ## Slack App Setup
 
@@ -311,6 +312,45 @@ authz.define_role(
 
 Slack(team=agent_os.manager, default_role="slack-member")
 ```
+
+## Senders as Users in the User Directory
+
+`authorize_senders.py` runs each message as its sender's own user:
+
+```python
+member = Role("member", scopes=READ + RUN)
+platform = Role("platform", scopes=READ + RUN + PLATFORM)
+
+agent_os = AgentOS(
+    db=db,
+    manager=OSManager(model=model),
+    authorization=Authorization(roles=[member, platform]),
+    user_directory=UserDirectory(default_role=member),
+)
+agent_os.interfaces.append(
+    Slack(team=agent_os.manager, authorize_senders=True, resolve_user_identity=True)
+)
+```
+
+- **Who the sender is.** With `resolve_user_identity=True` the user id is the
+  sender's confirmed Slack email, the same id as their sign-in on the web, so one
+  person is one user. An email Slack has not confirmed is never used: that sender's
+  user id is their Slack member ID. The app needs the `users:read` and
+  `users:read.email` scopes.
+- **First message.** The user is created in the user directory, as on a first
+  sign-in, with the directory's default role if one is set.
+- **Every message.** The user's role and disabled switch are read again, so a
+  change an admin makes applies to the next message. The same holds when a
+  paused run is resumed and before a Task's result is posted back.
+- **Not allowed.** The sender gets a private reply that says to ask their admin.
+  For Super Agent the reply asks for platform access.
+- **Guests and people from other organizations** (shared channels) start
+  disabled. An admin enables them in the user directory.
+- **Other apps** are not run. Map an app in `users=` to run it as a principal.
+- `users=` still names the senders it lists, and `default_role=` is the role of a
+  sender who holds none.
+
+Without `authorize_senders` nothing changes: see the next sections.
 
 ## Workspace Search Action
 
