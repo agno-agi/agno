@@ -24,11 +24,17 @@ session id alone never proves which computer answers. The claim lives on this
 microVM's own disk and dies with it, and carries a random incarnation that every
 later request must name. An unclaimed microVM, or one claimed again after its
 predecessor ended, therefore never runs work for an older handle.
+
+Session storage, when mounted, outlives the microVM but enforces no permissions,
+so it holds only a copy of the latest checkpoint. A resume claims a replacement
+microVM with a fresh incarnation and imports that copy only when it matches the
+SHA-256 and size the host names from its own store.
 """
 
 import base64
 import ctypes
 import fcntl
+import hashlib
 import ipaddress
 import json
 import os
@@ -69,6 +75,12 @@ _PYTHON = [sys.executable, "-I"]
 _USER = 1000
 _GROUP = 1000
 _ROOTS = {"workspace": _WORKSPACE, "native": _RUNTIME / "native"}
+# AgentCore session storage, when the runtime mounts it here: a volume per session
+# that survives a stop but not a runtime update. It enforces no permissions, so
+# agent code can read or replace anything on it. A copy of the latest checkpoint
+# is kept there, and a resume imports it only if it matches the host's digest.
+_STORAGE = Path("/mnt/agno")
+_KEPT = "checkpoint.tar"
 # Lifecycle markers, root-only like the claim. "used" is set once a command or a
 # runtime turn starts, "restoring" while an import runs, "capturing" while an export
 # has the agent's processes stopped, and "failed" after an import or lifetime
@@ -361,7 +373,7 @@ def _forward(method: str, path: str, body: Optional[bytes], *, timeout: float) -
 # Operations
 
 
-def _claim(request: Dict[str, Any]) -> Dict[str, Any]:
+def _claim_fields(request: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, str], int]:
     metadata, env, lifetime = request.get("metadata"), request.get("env"), request.get("lifetime")
     if not isinstance(metadata, dict) or not all(isinstance(v, str) for v in metadata.values()):
         raise ValueError("Claim metadata must map strings to strings")
@@ -371,6 +383,11 @@ def _claim(request: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("The runtime token is generated per computer; do not set it in env")
     if type(lifetime) is not int or lifetime < 60:
         raise ValueError("Claim lifetime must be at least 60 seconds")
+    return metadata, env, lifetime
+
+
+def _claim(request: Dict[str, Any]) -> Dict[str, Any]:
+    metadata, env, lifetime = _claim_fields(request)
     _control_dir()
     existing = _load_claim()
     if existing is not None:
@@ -563,6 +580,9 @@ def _export(request: Dict[str, Any]) -> Dict[str, Any]:
     The freeze also stops the runtime server, which runs as UID 1000, so host polls
     fail until the export finishes. Docker's pause does the same and the client's
     cursor reconnect absorbs it, so a failed poll here does not mean a lost turn.
+
+    With session storage mounted, a copy of the archive is also kept there for a
+    later resume, after the agent's processes run again.
     """
     _require(request)
     target = _transfer_file(request["name"])
@@ -602,7 +622,71 @@ def _export(request: Dict[str, Any]) -> Dict[str, Any]:
         finally:
             _thaw(stopped)
             (_CONTROL / _CAPTURING).unlink(missing_ok=True)
-    return {"size": size}
+        kept = _keep(target)
+    return {"size": size, "kept": kept}
+
+
+def _storage_mounted() -> bool:
+    return os.path.ismount(_STORAGE)
+
+
+def _keep(source: Path) -> bool:
+    """Copy a captured archive onto session storage for a later resume, best effort.
+
+    A UID 1000 child writes the copy, so root never writes where agent code can
+    plant links. A copy that fails, for example over the 1 GB storage limit, only
+    means a later resume is refused and the caller restores from the store.
+    """
+    if not _storage_mounted():
+        return False
+    try:
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            child = _as_agent(
+                [*_PYTHON, "-m", "agno.sandbox.agentcore.server", "checkpoint-keep", str(_STORAGE)],
+                stdin=descriptor,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                cwd="/",
+            )
+            _finish(child, None)
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError):
+        return False
+    return child.returncode == 0
+
+
+def _copy_kept(name: str, digest: str, size: int) -> None:
+    """Copy the checkpoint kept on session storage into the control directory, if it
+    is exactly the one the host names; otherwise refuse with "unkept"."""
+    if not _storage_mounted():
+        raise _Refused("unkept", "This runtime has no session storage")
+    try:
+        source = os.open(_STORAGE / _KEPT, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise _Refused("unkept", "No checkpoint kept on session storage: " + str(error.strerror)) from None
+    target = _transfer_file(name)
+    mismatch = _Refused("unkept", "The checkpoint kept on session storage is not the one named")
+    try:
+        info = os.fstat(source)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+            raise mismatch
+        hasher, copied = hashlib.sha256(), 0
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            # The agent may still be writing the file; read no more than was named.
+            while copied < size and (chunk := os.read(source, min(1024 * 1024, size - copied))):
+                hasher.update(chunk)
+                output.write(chunk)
+                copied += len(chunk)
+        if copied != size or hasher.hexdigest() != digest:
+            raise mismatch
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        os.close(source)
 
 
 def _finish(child: "subprocess.Popen[bytes]", job: Optional[bytes]) -> Tuple[bytes, bytes]:
@@ -661,46 +745,86 @@ def _import(request: Dict[str, Any]) -> Dict[str, Any]:
     failure marks the computer failed, so it refuses all further work.
     """
     _require(request, restoring=True)
-    source = _transfer_file(request["name"])
-    job = json.dumps({"roots": _roots(), "limits": request["limits"]})
+    with _lock:
+        return _restore(_transfer_file(request["name"]), request["limits"])
+
+
+def _restore(source: Path, limits: Dict[str, Any]) -> Dict[str, Any]:
+    """Restore the archive at ``source`` into this unused generation; the caller holds the server lock."""
+    job = json.dumps({"roots": _roots(), "limits": limits})
+    with _lifecycle():
+        if _marked(_USED) or _marked(_RESTORING) or _marked(_CAPTURING):
+            source.unlink(missing_ok=True)
+            raise ValueError("Restore requires an empty, unused generation")
+        _mark(_RESTORING)
+        # Set under the same lock: a repeated claim treats a restoring marker
+        # without a running import as an interrupted restore and fails the computer.
+        _state["importing"] = True
+    stopped: List[int] = []
+    try:
+        stopped = _freeze()
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            child = _as_agent(
+                [*_PYTHON, "-m", "agno.sandbox.agentcore.server", "checkpoint-restore", job],
+                stdin=descriptor,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd="/",
+            )
+            output, error = _finish(child, None)
+        finally:
+            os.close(descriptor)
+        if child.returncode:
+            raise ValueError("Checkpoint restore failed: " + error.decode(errors="replace")[-1500:])
+        state = json.loads(output)
+        with _lifecycle():
+            _mark(_USED)
+            (_CONTROL / _RESTORING).unlink()
+        return {"state": state}
+    except BaseException:
+        _mark(_FAILED)
+        raise
+    finally:
+        _state["importing"] = False
+        _thaw(stopped)
+        source.unlink(missing_ok=True)
+
+
+def _resume(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Claim this replacement microVM for an ended generation and restore the
+    checkpoint kept on session storage.
+
+    The host names the checkpoint by the SHA-256 and size from its own store, and
+    only an exact copy is imported, so agent code that rewrote the copy can only
+    make the resume fail. The claim gets a fresh incarnation like any first claim,
+    so handles to the ended microVM stay refused.
+    """
+    metadata, env, lifetime = _claim_fields(request)
+    digest, size = request.get("sha256"), request.get("size")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Resume needs the checkpoint's SHA-256")
+    if type(size) is not int or not 0 < size <= _MAX_TRANSFER:
+        raise ValueError("Resume needs the checkpoint's size, at most 2 GiB")
+    _control_dir()
+    name = secrets.token_hex(16)
     with _lock:
         with _lifecycle():
-            if _marked(_USED) or _marked(_RESTORING) or _marked(_CAPTURING):
-                source.unlink(missing_ok=True)
-                raise ValueError("Restore requires an empty, unused generation")
-            _mark(_RESTORING)
-            # Set under the same lock: a repeated claim treats a restoring marker
-            # without a running import as an interrupted restore and fails the computer.
-            _state["importing"] = True
-        stopped: List[int] = []
+            if _load_claim() is not None:
+                raise _Refused("claimed", "This computer is claimed: the generation is still running")
+            if _marked(_FAILED):
+                raise _Refused("unusable", "This microVM replaced an ended one and was retired; it must be replaced")
+            _mark(_CLAIMING)
         try:
-            stopped = _freeze()
-            descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
             try:
-                child = _as_agent(
-                    [*_PYTHON, "-m", "agno.sandbox.agentcore.server", "checkpoint-restore", job],
-                    stdin=descriptor,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    cwd="/",
-                )
-                output, error = _finish(child, None)
+                _copy_kept(name, digest, size)
+                claimed = _first_claim(metadata, env, lifetime)
             finally:
-                os.close(descriptor)
-            if child.returncode:
-                raise ValueError("Checkpoint restore failed: " + error.decode(errors="replace")[-1500:])
-            state = json.loads(output)
-            with _lifecycle():
-                _mark(_USED)
-                (_CONTROL / _RESTORING).unlink()
-            return {"state": state}
-        except BaseException:
-            _mark(_FAILED)
-            raise
+                (_CONTROL / _CLAIMING).unlink(missing_ok=True)
+            restored = _restore(_transfer_file(name), request["limits"])
         finally:
-            _state["importing"] = False
-            _thaw(stopped)
-            source.unlink(missing_ok=True)
+            _transfer_file(name).unlink(missing_ok=True)
+    return dict(claimed, **restored)
 
 
 def _refusal(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -802,6 +926,7 @@ _OPERATIONS = {
     "get": _get,
     "put": _put,
     "import": _import,
+    "resume": _resume,
     "remove": _remove,
     "refusal": _refusal,
 }
@@ -1019,6 +1144,20 @@ def _checkpoint_restore(arguments: str) -> None:
     sys.stdout.write(json.dumps(state))
 
 
+def _checkpoint_keep(directory: str) -> None:
+    """Run as UID 1000: replace the checkpoint kept on session storage with the archive on stdin."""
+    descriptor, temporary = tempfile.mkstemp(prefix=".checkpoint-", dir=directory)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            shutil.copyfileobj(sys.stdin.buffer, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, os.path.join(directory, _KEPT))
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 def main() -> None:
     command = sys.argv[1:2]
     if command == ["serve"]:
@@ -1035,6 +1174,8 @@ def main() -> None:
         _checkpoint_capture()
     elif command == ["checkpoint-restore"] and len(sys.argv) == 3:
         _checkpoint_restore(sys.argv[2])
+    elif command == ["checkpoint-keep"] and len(sys.argv) == 3:
+        _checkpoint_keep(sys.argv[2])
     else:
         sys.exit("usage: python -I -m agno.sandbox.agentcore.server serve | exec [--stdin NAME] -- ARGV...")
 
