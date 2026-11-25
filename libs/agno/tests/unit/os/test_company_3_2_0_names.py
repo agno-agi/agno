@@ -987,3 +987,45 @@ def test_model_copy_reads_the_3_2_0_names():
 
     with pytest.raises(ValueError, match="Give objective or purpose, not both"):
         goal.model_copy(update={"purpose": "a", "objective": "b"})
+
+
+def test_a_mapping_for_a_renamed_route_keeps_its_place():
+    from agno.os.scopes import get_required_scopes_for_route, with_renamed_routes
+
+    mappings = with_renamed_routes(
+        {
+            "GET /company/products/open": [],
+            "GET /company/products*": ["custom:read"],
+            "GET /*": [],
+        }
+    )
+
+    for path, scopes in (("/open", []), ("", ["custom:read"]), ("/docs", ["custom:read"])):
+        assert get_required_scopes_for_route(mappings, "GET", "/company/products" + path) == scopes
+        assert get_required_scopes_for_route(mappings, "GET", "/company/goals" + path) == scopes
+    # A mapping written for the current path keeps its own place and scopes.
+    written = {"GET /company/goals/*": ["a"], "GET /company/products/*": ["b"]}
+    assert with_renamed_routes(written) == written
+
+
+@pytest.mark.parametrize("route", ["all", "same"])
+def test_a_company_database_with_the_id_of_another_is_migrated(tmp_path, route):
+    import sqlite3
+
+    path = str(tmp_path / "company.db")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE agno_company_products (id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, purpose TEXT, "
+            "user_id VARCHAR, metadata JSON, created_at BIGINT NOT NULL, updated_at BIGINT, deleted_at BIGINT)"
+        )
+        conn.execute("INSERT INTO agno_company_products (id, name, created_at) VALUES ('docs', 'Docs', 1)")
+    company = CompanyConfig(db=SqliteDb(db_file=path, id="same"))
+    os_db = SqliteDb(db_file=str(tmp_path / "os.db"), id="same")
+    app = AgentOS(db=os_db, company=company, telemetry=False, auto_provision_dbs=False).get_app()
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert client.get("/company/goals").status_code == 500
+        assert client.post(f"/databases/{route}/migrate").status_code == 200
+        listed = client.get("/company/goals")
+
+    assert [goal["id"] for goal in listed.json()["data"]] == ["docs"]

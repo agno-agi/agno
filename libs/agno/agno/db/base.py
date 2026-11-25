@@ -448,7 +448,11 @@ class BaseDb(ABC):
 
         legacy_table = legacy_company_table(self, table_type)
         if legacy_table is not None and self.table_exists(legacy_table):
-            raise company_migration_required_error(legacy_table, table_name)
+            from agno.db.migrations.versions.v3_3_0 import company_table_pending
+
+            # An agno 3.2 process that starts after the migration creates its table again.
+            if company_table_pending(self, table_type):
+                raise company_migration_required_error(legacy_table, table_name)
         if not create_table_if_not_found and not self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None
@@ -3044,7 +3048,10 @@ class AsyncBaseDb(ABC):
 
         legacy_table = legacy_company_table(self, table_type)
         if legacy_table is not None and await self.table_exists(legacy_table):
-            raise company_migration_required_error(legacy_table, table_name)
+            from agno.db.migrations.versions.v3_3_0 import acompany_table_pending
+
+            if await acompany_table_pending(self, table_type):
+                raise company_migration_required_error(legacy_table, table_name)
         if not create_table_if_not_found and not await self.table_exists(table_name):
             log_debug(f"Table '{table_name}' does not exist", log_level=2)
             return None

@@ -24,11 +24,10 @@ The Company tables change as one unit. MigrationManager calls ``up`` once for ea
 the unit runs for the first Company table type it is called with and finds nothing to do for the
 others. It acts on the tables and columns the database holds, not on a table's version stamp.
 
-A deployment started on this version before the migration leaves two tables behind: a goals table
-holding the Goals it declares, and a details table holding the configured name. When every id in
-that goals table is also in the products table, no Goal there was edited, and that details row was
-never edited, both are dropped and the 3.2.0 tables take their names. Otherwise the migration raises
-``CompanyGoalsMigrationError`` before it changes anything.
+A table that holds a row is never dropped. An agno 3.2 process that starts after the migration
+creates its products and details tables again: those are left as they are and not used, and the
+current tables stay the stored data. Where both tables hold rows and the migration has not run, it
+raises ``CompanyGoalsMigrationError`` before it changes anything.
 
 PostgreSQL changes the Company tables in one transaction. SQLite keeps a table or column rename
 when the transaction around it fails, so there a run that stops part way is finished by the next
@@ -41,7 +40,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
-from agno.db.schemas.goals import goal_metadata
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID
 from agno.db.utils import LEGACY_GOALS_TABLE_NAME
 from agno.utils.log import log_info
@@ -222,84 +220,55 @@ def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -
     return None
 
 
-def _goal_rows(sql: _Sql, table_name: str, objective: str) -> Dict[str, Any]:
-    """The rows of a goals table by id, with the objective read from the given column."""
-    rows = table(
-        table_name,
-        column("id"),
-        column("name"),
-        column(objective),
-        column("user_id"),
-        column("metadata", sql.json),
-        column("updated_at"),
-        column("deleted_at"),
-        schema=sql.schema,
-    )
-    found = sql.sess.execute(select(rows)).mappings().all()
-    return {row["id"]: {**row, "objective": row[objective]} for row in found}
+def _has_rows(sql: _Sql, name: str) -> bool:
+    return sql._first(f"SELECT 1 FROM {sql.ref(name)}") is not None
 
 
-def _goal_edited(current: Dict[str, Any], stored: Dict[str, Any]) -> bool:
-    """Whether a Goal in the new table holds a change that its 3.2.0 row does not.
+def _children_migrated(sql: _Sql, tables: _CompanyTables) -> bool:
+    """Whether the migration has run on the tables that hold a Goal's records. True when there are none."""
+    columns = [sql.columns(name) for name in (tables.projects, tables.tasks, tables.sources) if sql.table_exists(name)]
+    return any("goal_id" in found for found in columns) or not any("product_id" in found for found in columns)
 
-    Start-up links Routines, which moves updated_at, so an updated row is compared by content.
+
+def _is_pending(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], current: str) -> bool:
+    """Whether a 3.2.0 table still has to take its current name.
+
+    An agno 3.2 process that starts after the migration creates its tables again. They are not the
+    stored data: the current table is, as soon as it holds a row.
     """
-    if current["updated_at"] is None and current["deleted_at"] is None:
+    if legacy is None or not sql.table_exists(legacy):
         return False
-    current_metadata, stored_metadata = goal_metadata(current["metadata"]), goal_metadata(stored["metadata"])
-    linked = set(current_metadata.pop("routine_ids", None) or [])
-    if linked - set(stored_metadata.pop("routine_ids", None) or []):
+    if not sql.table_exists(current):
         return True
-    return (
-        any(current[field] != stored[field] for field in ("name", "objective", "user_id"))
-        or (current["deleted_at"] is None) != (stored["deleted_at"] is None)
-        or current_metadata != stored_metadata
-    )
+    if not _has_rows(sql, legacy):
+        return False
+    return not _has_rows(sql, current) or not _children_migrated(sql, tables)
 
 
-def _left_by_an_early_start(sql: _Sql, tables: _CompanyTables) -> Tuple[bool, bool]:
-    """Whether the goals table and the details table hold only what a start before this migration wrote.
+def _refuse_two_tables(sql: _Sql, tables: _CompanyTables) -> None:
+    """Raise when a table and its 3.2.0 table both hold rows and the migration has not run.
 
-    Each is True when the table exists beside its 3.2.0 table and can be dropped. Raises when it
-    holds anything else, before the migration changes a table.
+    Either could be the one to keep, so nothing is dropped.
     """
-    drop_goals = drop_details = False
-    if tables.legacy_goals and sql.table_exists(tables.legacy_goals) and sql.table_exists(tables.goals):
-        declared = _goal_rows(sql, tables.goals, "objective")
-        stored = _goal_rows(sql, tables.legacy_goals, "purpose")
-        only_new = sorted(set(declared) - set(stored))
-        if only_new:
+    for legacy, current in ((tables.legacy_goals, tables.goals), (tables.legacy_details, tables.details)):
+        if legacy is None or not _is_pending(sql, tables, legacy, current) or not sql.table_exists(current):
+            continue
+        if sql.postgres:
+            # No other session may add a row between this check and the drop of an empty table.
+            sql.sess.execute(text(f"LOCK TABLE {sql.ref(current)} IN ACCESS EXCLUSIVE MODE"))
+        if _has_rows(sql, current):
             raise CompanyGoalsMigrationError(
-                f"Tables {tables.legacy_goals} and {tables.goals} both hold Goals, and {tables.goals} holds ids "
-                f"that {tables.legacy_goals} does not: {only_new}. Nothing was changed. Copy those rows into "
-                f"{tables.legacy_goals} with their old column names, or delete them, then run the migration again."
+                f"Tables {legacy} and {current} both hold rows. Nothing was changed. Keep the rows you want in "
+                f"{legacy}, under its column names, then drop {current} and run the migration again."
             )
-        changed = sorted(id for id, row in declared.items() if _goal_edited(row, stored[id]))
-        if changed:
-            raise CompanyGoalsMigrationError(
-                f"Tables {tables.legacy_goals} and {tables.goals} both hold Goals, and {tables.goals} holds rows "
-                f"that were changed: {changed}. Nothing was changed by the migration. Copy the changes you want "
-                f"to keep into {tables.legacy_goals} with its column names, delete those rows from "
-                f"{tables.goals}, then run the migration again."
-            )
-        drop_goals = True
-    if tables.legacy_details and sql.table_exists(tables.legacy_details) and sql.table_exists(tables.details):
-        edited = sql._first(f"SELECT 1 FROM {sql.ref(tables.details)} WHERE created_at <> updated_at")
-        if edited is not None:
-            raise CompanyGoalsMigrationError(
-                f"Tables {tables.legacy_details} and {tables.details} both hold company details, and the row in "
-                f"{tables.details} was edited. Nothing was changed. Drop the table whose details you do not "
-                "want to keep, then run the migration again."
-            )
-        drop_details = True
-    return drop_goals, drop_details
 
 
-def _rename_table(sql: _Sql, legacy: Optional[str], current: str, drop_current: bool) -> bool:
+def _rename_table(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], current: str) -> bool:
     """Give a 3.2.0 table its current name, and its indexes the names that go with it."""
     changed = False
-    if legacy is not None and sql.table_exists(legacy):
-        if drop_current:
+    if legacy is not None and _is_pending(sql, tables, legacy, current):
+        if sql.table_exists(current):
+            # Empty: a table that holds a row was refused before.
             sql.drop_table(current)
         sql.rename_table(legacy, current)
         changed = True
@@ -339,14 +308,34 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
 def _rename_pending(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
     """Whether a Company table still has its 3.2.0 name or columns."""
     sql = _Sql(sess, db_type, tables.schema)
-    legacy = (tables.legacy_goals, tables.legacy_details)
-    if any(name is not None and sql.table_exists(name) for name in legacy):
+    pairs = ((tables.legacy_goals, tables.goals), (tables.legacy_details, tables.details))
+    if any(_is_pending(sql, tables, legacy, current) for legacy, current in pairs):
         return True
     old_columns = (
         (tables.goals, "purpose"),
         *((n, "product_id") for n in (tables.projects, tables.tasks, tables.sources)),
     )
     return any(sql.table_exists(name) and old in sql.columns(name) for name, old in old_columns)
+
+
+def _table_pending(sess: Any, db_type: str, tables: _CompanyTables, table_type: str) -> bool:
+    sql = _Sql(sess, db_type, tables.schema)
+    if table_type == "goals":
+        return _is_pending(sql, tables, tables.legacy_goals, tables.goals)
+    return _is_pending(sql, tables, tables.legacy_details, tables.details)
+
+
+def company_table_pending(db: Any, table_type: str) -> bool:
+    """Whether the goals or the company details table is still stored under its 3.2.0 name."""
+    with db.Session() as sess:
+        return _table_pending(sess, type(db).__name__, _CompanyTables.of(db), table_type)
+
+
+async def acompany_table_pending(db: Any, table_type: str) -> bool:
+    """Async version of company_table_pending."""
+    tables = _CompanyTables.of(db)
+    async with db.async_session_factory() as sess:
+        return await sess.run_sync(lambda sync_sess: _table_pending(sync_sess, type(db).__name__, tables, table_type))
 
 
 def company_rename_pending(db: BaseDb) -> bool:
@@ -412,9 +401,9 @@ def _move_version_stamps(sql: _Sql, tables: _CompanyTables) -> bool:
 def _rename_company(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
     """Rename every Company table, column and stored value that names a Product."""
     sql = _Sql(sess, db_type, tables.schema)
-    drop_goals, drop_details = _left_by_an_early_start(sql, tables)
-    changed = _rename_table(sql, tables.legacy_goals, tables.goals, drop_goals)
-    changed = _rename_table(sql, tables.legacy_details, tables.details, drop_details) or changed
+    _refuse_two_tables(sql, tables)
+    changed = _rename_table(sql, tables, tables.legacy_goals, tables.goals)
+    changed = _rename_table(sql, tables, tables.legacy_details, tables.details) or changed
     changed = _rename_column(sql, tables.goals, "purpose", "objective") or changed
     for name in (tables.projects, tables.tasks, tables.sources):
         changed = _rename_column(sql, name, "product_id", "goal_id") or changed

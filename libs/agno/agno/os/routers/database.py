@@ -117,7 +117,9 @@ def get_database_router(
         all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
         company_db = _company_db()
         if company_db is not None:
-            all_dbs.setdefault(company_db.id, company_db)
+            # A separate database can have the id of a registered one. Both are migrated.
+            name = company_db.id if company_db.id not in all_dbs else f"{company_db.id} (Company)"
+            all_dbs[name] = company_db
         local_dbs = {db_id: db for db_id, db in all_dbs.items() if not isinstance(db, RemoteDb)}
         skipped_dbs = [db_id for db_id in all_dbs if db_id not in local_dbs]
         if skipped_dbs:
@@ -172,7 +174,8 @@ def get_database_router(
     )
     async def migrate_database(db_id: str, target_version: Optional[str] = None):
         company_db = _company_db()
-        db = company_db if company_db is not None and company_db.id == db_id else await get_db(os.dbs, db_id)
+        separate = company_db if company_db is not None and company_db.id == db_id else None
+        db = separate if separate is not None and db_id not in os.dbs else await get_db(os.dbs, db_id)
         if not db:
             raise HTTPException(status_code=404, detail="Database not found")
 
@@ -184,6 +187,9 @@ def get_database_router(
 
         try:
             await _migrate_single_db(db, target_version)
+            if separate is not None and separate is not db:
+                # The Company database has the id of a registered one. Both are migrated.
+                await _migrate_single_db(separate, target_version)
             await _start_company()
 
             version_msg = f"version {target_version}" if target_version else "latest version"

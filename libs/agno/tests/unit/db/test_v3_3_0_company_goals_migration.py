@@ -30,6 +30,7 @@ from agno.company.scheduler import CompanyScheduleExecutor
 from agno.company.summary import _summary_state_filesystem
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.startup import migrate_at_startup
 from agno.db.migrations.versions import v3_3_0
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, Schedule
@@ -987,102 +988,94 @@ async def test_stamped_tables_do_not_hide_a_pending_rename(database):
 # -------------------------------------------------------------------- a start before the migration
 
 
-async def test_a_start_before_the_migration_is_migrated(database):
+async def test_two_tables_with_rows_stop_the_migration(database):
+    """Before the migration has run, either table could be the one to keep."""
     _write_3_2_0(database)
     await _start_before_migrating(database)
-    # The table that start-up created is stamped with the newest version.
-    assert database.versions()["agno_company_goals"] == "3.3.0"
-    assert database.versions()["agno_company_products"] == "3.0.0"
+    before = database.describe()
+
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError) as stopped:
+        await MigrationManager(database.db()).up()
+
+    message = str(stopped.value)
+    assert "agno_company_products" in message and "agno_company_goals" in message
+    assert database.describe() == before
+
+
+async def test_two_details_tables_with_rows_stop_the_migration(database):
+    _write_3_2_0(database)
+    database._patch.setattr("agno.db.utils.legacy_company_table", lambda db, table_type: None)
+    await _call(database.db().initialize_company, "Company", None)
+    before = database.describe()
+
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="agno_company_products_details"):
+        await MigrationManager(database.db()).up()
+
+    assert database.describe() == before
+
+
+async def test_an_empty_table_gives_way_to_the_3_2_0_table(database):
+    _write_3_2_0(database)
+    database._patch.setattr("agno.db.utils.legacy_company_table", lambda db, table_type: None)
+    db = database.db()
+    for table_type in ("goals", "company"):
+        await _call(db._get_table, table_type, create_table_if_not_found=True)
+    database._patch.undo()
 
     await MigrationManager(database.db()).up()
 
     await _assert_carried_over(database)
-    versions = database.versions()
-    assert versions["agno_company_goals"] == "3.3.0" and "agno_company_products" not in versions
 
 
-async def test_a_goal_only_in_the_new_table_stops_the_migration(database):
+# -------------------------------------------------------- agno 3.2 started again after the migration
+
+
+async def _recreate_3_2_0_tables(database: _Database) -> None:
+    """What an agno 3.2 process writes when it starts on a migrated database."""
+    engine = create_engine(database.url)
+    name = database._ref("agno_company_products")
+    details = database._ref("agno_company_products_details")
+    json_type = "JSONB" if database.postgres else "JSON"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"CREATE TABLE {name} (id VARCHAR PRIMARY KEY, name VARCHAR, purpose TEXT, user_id VARCHAR, "
+                f"metadata {json_type}, created_at BIGINT, updated_at BIGINT, deleted_at BIGINT)"
+            )
+        )
+        conn.execute(text(f"INSERT INTO {name} (id, name, purpose, created_at) VALUES ('{GOAL}', 'AgentOS', 'x', 1)"))
+        conn.execute(
+            text(
+                f"CREATE TABLE {details} (id VARCHAR PRIMARY KEY, name VARCHAR, description TEXT, "
+                "created_at BIGINT, updated_at BIGINT)"
+            )
+        )
+        conn.execute(text(f"INSERT INTO {details} VALUES ('company', 'Other', NULL, 1, 1)"))
+        versions = database._ref("agno_schema_versions")
+        for table in ("agno_company_products", "agno_company_products_details"):
+            statement = f"INSERT INTO {versions} (table_name, version, created_at) VALUES (:name, '3.0.0', :now)"
+            conn.execute(text(statement), {"name": table, "now": "2026-11-25T00:00:00"})
+    engine.dispose()
+
+
+@pytest.mark.parametrize("force", [False, True])
+async def test_tables_3_2_creates_again_do_not_replace_the_stored_ones(database, force):
     _write_3_2_0(database)
-    await _start_before_migrating(database)
+    await MigrationManager(database.db()).up()
+    before = {name: table for name, table in database.describe().items() if name.startswith("agno_company_goals")}
+    await _recreate_3_2_0_tables(database)
+
+    outcome = await migrate_at_startup(database.db())
+    await MigrationManager(database.db()).up(force=force)
+
+    assert outcome.status == "current"
+    described = database.describe()
+    assert {name: table for name, table in described.items() if name.startswith("agno_company_goals")} == before
+    # Nothing 3.2 wrote is dropped either.
+    assert described["agno_company_products"]["rows"] and described["agno_company_products_details"]["rows"]
     db = database.db()
-    await _call(
-        db.create_goal,
-        {
-            "id": "made-after-the-upgrade",
-            "name": "Support",
-            "objective": None,
-            "metadata": None,
-            "user_id": None,
-            "created_at": NOW + 90,
-            "updated_at": None,
-            "deleted_at": None,
-        },
-    )
-    before = database.describe()
-
-    with pytest.raises(v3_3_0.CompanyGoalsMigrationError) as stopped:
-        await MigrationManager(db).up()
-
-    message = str(stopped.value)
-    assert "agno_company_products" in message and "agno_company_goals" in message
-    assert "made-after-the-upgrade" in message and GOAL not in message
-    assert database.describe() == before
-
-
-async def test_edited_details_in_the_new_table_stop_the_migration(database):
-    _write_3_2_0(database)
-    await _start_before_migrating(database)
-    db = database.db()
-    details = await _call(db.get_company)
-    await _call(db.update_company, details["updated_at"], name="Renamed after the upgrade")
-    before = database.describe()
-
-    with pytest.raises(v3_3_0.CompanyGoalsMigrationError) as stopped:
-        await MigrationManager(db).up()
-
-    message = str(stopped.value)
-    assert "agno_company_products_details" in message and "agno_company_goals_details" in message
-    assert database.describe() == before
-
-
-@pytest.mark.parametrize("change", ["objective", "archive", "restored"])
-async def test_a_goal_edited_in_the_new_table_stops_the_migration(database, change):
-    _write_3_2_0(database)
-    await _start_before_migrating(database)
-    if change == "objective":
-        await _call(database.db().update_goal, GOAL, objective="Edited after the upgrade")
-    elif change == "archive":
-        database.execute(f"UPDATE {database._ref('agno_company_goals')} SET deleted_at = 5, updated_at = 5")
-    else:
-        # Archived on 3.2.0 and restored after the upgrade.
-        database.execute(f"UPDATE {database._ref('agno_company_goals')} SET updated_at = 5")
-        database.execute(f"UPDATE {database._ref('agno_company_products')} SET deleted_at = 5")
-    before = database.describe()
-
-    with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="were changed") as stopped:
-        await MigrationManager(database.db()).up()
-
-    assert GOAL in str(stopped.value)
-    assert database.describe() == before
-
-
-@pytest.mark.parametrize("routine_id, migrates", [(ROUTINE, True), ("linked-after-the-upgrade", False)])
-async def test_a_routine_linked_before_the_migration(database, routine_id, migrates):
-    """Start-up links the stored Routines again, which is not an edit; a new link is one."""
-    _write_3_2_0(database)
-    await _start_before_migrating(database)
-    metadata = {"archive_window_days": 14, "routine_ids": [routine_id]}
-    cast = "CAST(:metadata AS JSONB)" if database.postgres else ":metadata"
-    database.execute(
-        f"UPDATE {database._ref('agno_company_goals')} SET metadata = {cast}, updated_at = 5",
-        metadata=json.dumps(metadata),
-    )
-    if migrates:
-        await MigrationManager(database.db()).up()
-        await _assert_carried_over(database)
-    else:
-        with pytest.raises(v3_3_0.CompanyGoalsMigrationError, match="were changed"):
-            await MigrationManager(database.db()).up()
+    assert (await _call(db.get_goal, GOAL))["objective"] == "Keep this AgentOS current, secure and working."
+    assert (await _call(db.get_company))["name"] == "Company"
 
 
 async def test_a_subclassed_adapter_is_migrated(database):

@@ -22,6 +22,7 @@ from packaging import version as packaging_version
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.manager import TABLE_TYPE_TO_ATTR, MigrationManager
 from agno.db.utils import legacy_company_table
+from agno.utils.log import log_warning
 
 try:
     from sqlalchemy import select, text
@@ -97,10 +98,12 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
     stamps = await _stamps(db)
     names = [getattr(db, attr) for attr in TABLE_TYPE_TO_ATTR.values()]
     pending, behind, unstamped = False, [], []
-    # Until the newest migration renames it, the goals table is stamped under its 3.2.0 name.
-    for name in [*names, legacy_company_table(db, "goals")]:
-        if name is None:
-            continue
+    # Until the newest migration renames them, the goals and details tables are stamped under their
+    # 3.2.0 names. An agno 3.2 process that starts after the migration stamps them again.
+    legacy = [name for name in (legacy_company_table(db, kind) for kind in ("goals", "company")) if name in stamps]
+    if legacy and not await manager._company_rename_pending():
+        legacy = []
+    for name in [*names, *legacy]:
         if name not in stamps:
             unstamped.append(name)
             continue
@@ -241,9 +244,23 @@ async def _migrate_locked(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
     return StartupMigration("migrated")
 
 
+async def _warn_of_unused_tables(db: Union[BaseDb, AsyncBaseDb]) -> None:
+    """Say which tables an agno 3.2 process created again after the migration."""
+    stamps = await _stamps(db)
+    stored = [name for name in (legacy_company_table(db, kind) for kind in ("goals", "company")) if name in stamps]
+    unused = [name for name in stored if await _call(db.table_exists, name)]  # type: ignore[union-attr]
+    if unused:
+        log_warning(
+            f"{', '.join(unused)}: created by an agno 3.2 process after {db.__class__.__name__} (id: {db.id}) was "
+            "migrated, and not used. Stop every process that still runs agno 3.2. Copy any row you need, then drop "
+            "what is left."
+        )
+
+
 async def _migrate(db: Union[BaseDb, AsyncBaseDb]) -> StartupMigration:
     pending, _ = await _pending(db)
     if not pending:
+        await _warn_of_unused_tables(db)
         return StartupMigration("current")
     postgres = _is_db_type(db, _POSTGRES_DB_TYPES)
     lock_path = None if postgres else await _sqlite_lock_path(db)
