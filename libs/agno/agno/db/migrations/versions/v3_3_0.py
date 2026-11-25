@@ -657,7 +657,7 @@ def _limit_lock_wait(sess: Any) -> None:
 
     A rename waits for every session that has read the table in an open transaction, and every
     later query on the table waits behind the rename. Without a limit, one session left open keeps
-    the migration, and an AgentOS that migrates as it starts, waiting for as long as it stays open.
+    the migration waiting for as long as it stays open.
     """
     if sess.bind.dialect.name == "postgresql":
         sess.execute(text(f"SET LOCAL lock_timeout = '{int(LOCK_TIMEOUT_SECONDS)}s'"))
