@@ -274,8 +274,28 @@ addressed by ID, and listing `goals/` shows each name beside its ID. Pages in
 store in the Company database, the namespace `company`, with each file at its
 path in the tree. `notes/` is a folder of it. Without Company, Super Agent still
 has `notes/`: the same store in the AgentOS database holds it. The wiki API above
-serves the same pages. A deployment upgraded from 3.2.0 runs the 3.3.0 migration,
-which moves each file to its tree path.
+serves the same pages.
+
+The folder of a Goal or a Task is its ID written as one path segment. An ID made
+of letters, digits and `. - _ @ +` is its own folder name. Any other character
+is escaped, so `Docs Team` is stored under `goals/Docs%20Team/` and no two IDs
+share a folder. The tools and the routes still name a Goal by its ID.
+
+**Upgrading from 3.2.** AgentOS moves the files as it starts. The 3.3.0
+migration moves each file to its tree path with its content, version and
+timestamps. With a separate Company database, the notes then move into it from
+the AgentOS database.
+
+- When the migration did not run, AgentOS still starts and the Company file
+  system refuses each use with an error that names what to run:
+  `MigrationManager(db).up()` or `POST /databases/all/migrate`. This is the case
+  with `auto_provision_dbs=False`, or when a different file is already stored at
+  a path a file moves to.
+- The migration never guesses where a file belongs. Files of a Goal or Task it
+  cannot be sure of stay where they are and are reported in the log.
+  `company_files_left(db)` lists them, and
+  `move_company_files(db, owners={namespace: id})` moves a namespace to the
+  owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
