@@ -68,13 +68,14 @@ def get_database_router(
                     f"Another process is migrating database '{db.id}'. Try again when it has finished."
                 )
             if target_version:
-                # Use the session table as proxy for the database schema version
+                # Use the session table as proxy for the database schema version. At that version
+                # another table can still be behind it, and up() migrates only those.
                 if isinstance(db, AsyncBaseDb):
                     current_version = await db.get_latest_schema_version(db.session_table_name)
                 else:
                     current_version = db.get_latest_schema_version(db.session_table_name)
 
-                if version.parse(target_version) > version.parse(current_version):  # type: ignore
+                if version.parse(target_version) >= version.parse(current_version):  # type: ignore
                     await MigrationManager(db).up(target_version)  # type: ignore
                 else:
                     await MigrationManager(db).down(target_version)  # type: ignore

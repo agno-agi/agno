@@ -16,6 +16,8 @@ In the database that holds the Company tables (SQLite or PostgreSQL):
 
 In the database that holds the schedules (SQLite, PostgreSQL or MongoDB):
 - ``payload.metadata.product_id`` of a Routine becomes ``goal_id``.
+- A Company tool that ``payload.message`` of a Routine names by its 3.2.0 name gets its current name,
+  for example ``read_product_source`` becomes ``read_goal_source``.
 - ``work_scope.product_ids`` in a Routine's auto-accept policy becomes ``goal_ids``.
 - The ``disabled_reason`` ``company_product_archived`` becomes ``company_goal_archived``.
 - ``automation_failure.product_id`` in the output of a schedule run becomes ``goal_id``.
@@ -77,6 +79,7 @@ that call has run: notes left in the AgentOS database would look empty.
 """
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -105,6 +108,23 @@ SQL_DB_TYPES = ("PostgresDb", "SqliteDb", "AsyncPostgresDb", "AsyncSqliteDb")
 MONGO_DB_TYPES = ("MongoDb", "AsyncMongoDb")
 # How long a statement of the migration waits for a table lock on PostgreSQL before it fails.
 LOCK_TIMEOUT_SECONDS = 10
+
+# The Company tools under their 3.2.0 names. The instructions saved in a Routine can name them, and
+# a run can call a tool only by its current name.
+TOOLS_3_2_0 = {
+    "add_product_source": "add_goal_source",
+    "create_company_product": "create_company_goal",
+    "create_product_routine": "create_goal_routine",
+    "get_company_product": "get_company_goal",
+    "intake_product_source": "intake_goal_source",
+    "list_company_products": "list_company_goals",
+    "list_product_sources": "list_goal_sources",
+    "read_product_source": "read_goal_source",
+    "refresh_company_product": "refresh_company_goal",
+    "summarize_company_product": "summarize_company_goal",
+    "update_product_status": "update_goal_status",
+}
+_TOOL_3_2_0 = re.compile(r"\b(" + "|".join(TOOLS_3_2_0) + r")\b")
 
 
 class CompanyGoalsMigrationError(RuntimeError):
@@ -510,6 +530,10 @@ def _goal_routine(schedule: Dict[str, Any]) -> Dict[str, Any]:
     if schedule.get("managed_by") != "company":
         return changes
     payload = schedule.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+        message = _TOOL_3_2_0.sub(lambda found: TOOLS_3_2_0[found.group()], payload["message"])
+        if message != payload["message"]:
+            payload = changes["payload"] = {**payload, "message": message}
     if isinstance(payload, dict) and isinstance(payload.get("metadata"), dict):
         renamed = dict(payload["metadata"])
         if "product_id" in renamed and "goal_id" not in renamed:
