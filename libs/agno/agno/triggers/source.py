@@ -3,7 +3,7 @@
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 # An event's text fields are cut to this many characters before they reach a model.
 MAX_FIELD_CHARS = 20000
@@ -74,6 +74,12 @@ class TriggerSource(Protocol):
 
     id: str
     type: str
+    # The event kinds the source commonly sends, offered as choices. A trigger may name any kind.
+    event_kinds: Sequence[str]
+
+    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """A trigger's filter as this source stores it. Raises ValueError for one it cannot apply."""
+        ...
 
     def check(self, event: Any, filters: Dict[str, Any]) -> Verdict:
         """Whether an event passes a trigger's filter."""

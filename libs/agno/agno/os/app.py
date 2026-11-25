@@ -76,6 +76,7 @@ from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
+from agno.os.routers.triggers import get_trigger_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -1133,6 +1134,7 @@ class AgentOS:
                     agent_os=self,
                 )
             )
+            updated_routers.append(get_trigger_router(os_db=self.db, settings=self.settings, agent_os=self))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
             updated_routers.extend(self._admin_api_routers())
@@ -2321,6 +2323,7 @@ class AgentOS:
                     agent_os=self,
                 )
             )
+            routers.append(get_trigger_router(os_db=self.db, settings=self.settings, agent_os=self))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:

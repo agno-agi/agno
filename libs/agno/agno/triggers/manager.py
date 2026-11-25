@@ -7,13 +7,21 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID, build_run_endpoint
-from agno.db.schemas.triggers import StoredTrigger, TriggerEvent
+from agno.db.schemas.triggers import (
+    EVENT_IGNORED,
+    NO_TRIGGER_ID,
+    UNFINISHED_EVENT_STATUSES,
+    StoredTrigger,
+    TriggerEvent,
+    new_trigger_event_id,
+)
 from agno.run.authorization import (
     arequire_schedule_target,
     current_authorization,
     require_schedule_target,
     stamp_authorization,
 )
+from agno.triggers.source import CHECK_SENDER_KEY
 from agno.utils.log import log_debug
 
 TARGET_TYPES = ("agent", "team", "workflow")
@@ -90,6 +98,32 @@ def _fields(
         "max_retries": max_retries,
         "retry_delay_seconds": retry_delay_seconds,
     }
+
+
+def _replayed(row: Dict[str, Any], trigger: Optional[StoredTrigger]) -> Dict[str, Any]:
+    """A new event that runs a stored one again. Raises ValueError when the stored one cannot be replayed."""
+    event_id = row["id"]
+    if row["trigger_id"] == NO_TRIGGER_ID or trigger is None:
+        raise ValueError(f"Event {event_id} belongs to no trigger, so there is nothing to run")
+    if row["status"] == EVENT_IGNORED:
+        raise ValueError(f"Event {event_id} was ignored and stored without its payload, so it cannot be run")
+    if row["status"] in UNFINISHED_EVENT_STATUSES:
+        raise ValueError(f"Event {event_id} is still being handled")
+    if not trigger.enabled:
+        raise ValueError(f"Trigger '{trigger.name}' is disabled; enable it before replaying its events")
+    return TriggerEvent(
+        id=new_trigger_event_id(),
+        source_id=row["source_id"],
+        # A delivery is stored once for each trigger, so a replay is stored as a delivery of its own.
+        delivery_id=f"{row['delivery_id']}:replay:{uuid4().hex[:12]}",
+        trigger_id=row["trigger_id"],
+        kind=row["kind"],
+        event_key=row.get("event_key"),
+        # The sender was let through when the event first arrived; a replay is somebody's own decision.
+        event={key: value for key, value in (row.get("event") or {}).items() if key != CHECK_SENDER_KEY},
+        session_id=row.get("session_id"),
+        user_id=row.get("user_id"),
+    ).to_dict()
 
 
 class TriggerManager:
@@ -344,6 +378,26 @@ class TriggerManager:
             )
         )
 
+    def replay_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[TriggerEvent]:
+        """Store a finished event again, so its trigger runs it once more.
+
+        The first event keeps its record; the replay is a new event with a run of its own, in the
+        same conversation. It waits its turn behind any event for the same key that is not finished.
+
+        Returns:
+            The new event, or None when no event has this id.
+
+        Raises:
+            ValueError: The event cannot be replayed: it matched no trigger, it was ignored and so
+                has no payload, it is still being handled, or its trigger is disabled.
+        """
+        row = self._call("get_trigger_event", event_id, user_id=user_id)
+        if row is None:
+            return None
+        new = _replayed(row, self.get(row["trigger_id"]) if row["trigger_id"] else None)
+        self._call("create_trigger_event", new)
+        return TriggerEvent.from_dict(new)
+
     # --- Async API ---
 
     async def acreate(
@@ -497,3 +551,12 @@ class TriggerManager:
                 user_id=user_id,
             )
         )
+
+    async def areplay_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[TriggerEvent]:
+        """Async store a finished event again, so its trigger runs it once more. See ``replay_event``."""
+        row = await self._acall("get_trigger_event", event_id, user_id=user_id)
+        if row is None:
+            return None
+        new = _replayed(row, await self.aget(row["trigger_id"]) if row["trigger_id"] else None)
+        await self._acall("create_trigger_event", new)
+        return TriggerEvent.from_dict(new)

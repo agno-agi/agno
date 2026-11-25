@@ -335,6 +335,11 @@ class TriggerRuntime:
                 continues = delivery.kind in (trigger.get("continue_on") or [])
                 if not starts and not continues:
                     continue
+                if trigger.get("managed_by") != CODE_MANAGED and trigger["name"] in self.declared:
+                    # A trigger declared in code has the name: a stored one that shares it stands aside.
+                    reason = f"trigger '{trigger['name']}' is declared in code, and that one is used"
+                    rows.append(self._row(delivery, trigger, EVENT_IGNORED, reason))
+                    continue
                 verdict = source.check(delivery.event, trigger.get("filters") or {})
                 if verdict.reason is not None and not verdict.check_sender:
                     rows.append(self._row(delivery, trigger, EVENT_IGNORED, verdict.reason))

@@ -8,6 +8,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.github.events import (
     ALLOW_ANYONE,
     ALLOW_MEMBERS,
+    COMMON_EVENT_KINDS,
     DEFAULT_EVENTS,
     GitHubEvent,
     parse_event,
@@ -117,6 +118,9 @@ class GitHub(BaseInterface):
         name = self.prefix.strip("/")
         return "github" if name == "github" else f"github/{name}"
 
+    # Offered as choices when a trigger is created. A trigger may name any kind GitHub sends.
+    event_kinds = COMMON_EVENT_KINDS
+
     @property
     def accepts_triggers(self) -> bool:
         """Whether deliveries go to triggers: true when there is no handler."""
@@ -146,14 +150,33 @@ class GitHub(BaseInterface):
             raise ValueError("This GitHub interface has a handler; triggers need one without: GitHub(repositories=...)")
         if not events or not all(isinstance(kind, str) and kind for kind in events):
             raise ValueError('on() takes event kinds, e.g. github.on("issues.opened")')
+        filters = self.validate_filters({"allow": allow, "labels": labels})
+        return Events(source_id=self.id, kinds=tuple(events), filters=filters, source=self)
+
+    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """A trigger's filter as it is stored: who may start a run, and the labels it is limited to.
+
+        Raises:
+            ValueError: The filter names something a GitHub trigger does not filter on.
+        """
+        given = dict(filters or {})
+        unknown = sorted(set(given) - {"allow", "labels"})
+        if unknown:
+            raise ValueError(f"A GitHub trigger filters on allow and labels, got {unknown}")
+        allow = given.get("allow") or ALLOW_MEMBERS
         if allow not in (ALLOW_MEMBERS, ALLOW_ANYONE):
             raise ValueError(f'allow must be "{ALLOW_MEMBERS}" or "{ALLOW_ANYONE}", got {allow!r}')
+        labels = given.get("labels")
         if isinstance(labels, str):
             labels = [labels]
-        filters: Dict[str, Any] = {"allow": allow}
+        if labels is not None and not (
+            isinstance(labels, (list, tuple)) and all(isinstance(label, str) and label for label in labels)
+        ):
+            raise ValueError("labels is a list of label names")
+        stored: Dict[str, Any] = {"allow": allow}
         if labels:
-            filters["labels"] = [label.lower() for label in labels]
-        return Events(source_id=self.id, kinds=tuple(events), filters=filters, source=self)
+            stored["labels"] = [label.lower() for label in labels]
+        return stored
 
     # -- What the trigger runtime asks of a source --
 

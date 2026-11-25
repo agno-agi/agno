@@ -529,6 +529,16 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /schedules/*/trigger": ["schedules:write"],
         "GET /schedules/*/runs": ["schedules:read"],
         "GET /schedules/*/runs/*": ["schedules:read"],
+        # Triggers: the same shape as schedules, plus the sources, the stored events and replay.
+        "GET /triggers": ["triggers:read"],
+        "GET /triggers/*": ["triggers:read"],
+        "POST /triggers": ["triggers:write"],
+        "PATCH /triggers/*": ["triggers:write"],
+        "DELETE /triggers/*": ["triggers:delete"],
+        "POST /triggers/*/enable": ["triggers:write"],
+        "POST /triggers/*/disable": ["triggers:write"],
+        "GET /triggers/*/events": ["triggers:read"],
+        "POST /triggers/*/events/*/replay": ["triggers:write"],
         # Approval endpoints
         "GET /approvals": ["approvals:read"],
         "GET /approvals/count": ["approvals:read"],
