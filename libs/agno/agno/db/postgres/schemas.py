@@ -374,7 +374,7 @@ LEARNINGS_TABLE_SCHEMA = {
 
 SOURCES_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
-    "product_id": {"type": String, "nullable": False, "index": True},
+    "goal_id": {"type": String, "nullable": False, "index": True},
     "reference": {"type": Text, "nullable": False},
     "type": {"type": String, "nullable": False},
     "credential_ref": {"type": String, "nullable": True},
@@ -385,10 +385,10 @@ SOURCES_TABLE_SCHEMA = {
     "deleted_at": {"type": BigInteger, "nullable": True},
 }
 
-PRODUCTS_TABLE_SCHEMA = {
+GOALS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
     "name": {"type": String, "nullable": True, "index": True},
-    "purpose": {"type": Text, "nullable": True},
+    "objective": {"type": Text, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "metadata": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
@@ -398,7 +398,7 @@ PRODUCTS_TABLE_SCHEMA = {
 
 TASKS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
-    "product_id": {"type": String, "nullable": False, "index": True},
+    "goal_id": {"type": String, "nullable": False, "index": True},
     "project_id": {"type": String, "nullable": True, "index": True},
     "title": {"type": String, "nullable": True, "index": True},
     "brief": {"type": Text, "nullable": True},
@@ -421,7 +421,7 @@ TASKS_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "deleted_at": {"type": BigInteger, "nullable": True},
     "_unique_constraints": [
-        {"name": "uq_company_task_evidence", "columns": ["product_id", "dedupe_key"]},
+        {"name": "uq_company_task_evidence", "columns": ["goal_id", "dedupe_key"]},
     ],
 }
 
@@ -434,7 +434,7 @@ PROJECTS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "deleted_at": {"type": BigInteger, "nullable": True},
-    "product_id": {"type": String, "nullable": False, "index": True},
+    "goal_id": {"type": String, "nullable": False, "index": True},
     "status": {"type": String, "nullable": False, "index": True},
     "target_date": {"type": BigInteger, "nullable": True},
 }
@@ -789,7 +789,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "company": COMPANY_TABLE_SCHEMA,
-        "products": PRODUCTS_TABLE_SCHEMA,
+        "goals": GOALS_TABLE_SCHEMA,
         "sources": SOURCES_TABLE_SCHEMA,
         "projects": PROJECTS_TABLE_SCHEMA,
         "tasks": TASKS_TABLE_SCHEMA,

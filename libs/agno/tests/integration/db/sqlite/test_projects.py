@@ -12,7 +12,7 @@ def test_project_storage(tmp_path):
     m = CompanyManager(db)
     try:
         parent = m.create(name="SDK")
-        record = m.create_project(product_id=parent["id"], name="Work", user_id="alice")
+        record = m.create_project(goal_id=parent["id"], name="Work", user_id="alice")
         assert db.get_project(record["id"], user_id="alice") == record
         assert db.delete_project(record["id"], user_id="bob") is False
         assert db.delete_project(record["id"], user_id="alice") is True

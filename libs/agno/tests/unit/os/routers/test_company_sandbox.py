@@ -48,7 +48,7 @@ def test_retired_executor_and_derived_capability():
     with pytest.raises(ValueError):
         validate_task_fields({"executor_type": "engineering"})
     for schema, fields in [
-        (TaskCreate, {"product_id": "p", "project_id": "pr", "title": "t"}),
+        (TaskCreate, {"goal_id": "p", "project_id": "pr", "title": "t"}),
         (TaskUpdate, {}),
         (TaskTransition, {"target": "ready", "reason": "ok", "executor_id": "a"}),
     ]:
@@ -71,7 +71,7 @@ def test_retired_executor_and_derived_capability():
 @pytest.mark.parametrize("field", ["sandboxed", "metadata"])
 def test_task_checkout_and_capability_are_read_only(field):
     with pytest.raises(ValidationError):
-        TaskCreate(product_id="p", project_id="pr", title="t", **{field: True})
+        TaskCreate(goal_id="p", project_id="pr", title="t", **{field: True})
     with pytest.raises(ValidationError):
         TaskUpdate(**{field: True})
 

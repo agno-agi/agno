@@ -233,7 +233,7 @@ async def test_project_completion_failure_history(system, tmp_path, monkeypatch,
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy["complete_projects"] = True
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, schedule = await automation(system)
     if failure == "database":
         original = db.get_tasks

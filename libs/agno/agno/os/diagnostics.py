@@ -115,11 +115,11 @@ async def arun_diagnostics(
         )
     source_env: set[str] = set()
     if agent_os.company is not None:
-        for declaration in agent_os.company.products:
-            from agno.company.declarations import Product
+        for declaration in agent_os.company.goals:
+            from agno.company.declarations import Goal
 
-            product = declaration if isinstance(declaration, Product) else Product.model_validate(declaration)
-            source_env.update(source.credential_ref for source in product.sources if source.credential_ref)
+            goal = declaration if isinstance(declaration, Goal) else Goal.model_validate(declaration)
+            source_env.update(source.credential_ref for source in goal.sources if source.credential_ref)
         if agent_os._company_db is not None:
             try:
                 page = 1

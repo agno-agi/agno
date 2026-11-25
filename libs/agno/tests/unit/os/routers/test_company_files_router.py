@@ -17,7 +17,7 @@ from agno.os.scopes import get_default_scope_mappings, get_required_scopes_for_r
 
 SECRET = "company-files-router-test-key-long-enough"
 OS_ID = "company-files-test"
-SCOPES = ["products:write", "projects:write", "tasks:read", "tasks:write", "tasks:delete", "wiki:read"]
+SCOPES = ["goals:write", "projects:write", "tasks:read", "tasks:write", "tasks:delete", "wiki:read"]
 
 
 def headers(user, scopes=None):
@@ -56,9 +56,9 @@ def make(request, tmp_path):
 
 
 def new_task(client, auth=None):
-    product = client.post("/company/products", json={"name": "SDK"}, headers=auth).json()
-    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}, headers=auth)
-    body = {"title": "Report", "product_id": product["id"], "project_id": project.json()["id"]}
+    goal = client.post("/company/goals", json={"name": "SDK"}, headers=auth).json()
+    project = client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"}, headers=auth)
+    body = {"title": "Report", "goal_id": goal["id"], "project_id": project.json()["id"]}
     response = client.post("/company/tasks", json=body, headers=auth)
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -456,7 +456,7 @@ def matched_row(method, path):
         ("/company/tasks/t1/runs", "GET /company/tasks/*", ["tasks:read"]),
         ("/company/wiki", "GET /company/wiki", ["wiki:read"]),
         ("/company/wiki/notes/ideas.md", "GET /company/wiki/*", ["wiki:read"]),
-        ("/company/products/p1/wiki/files/report.md", "GET /company/products/*/wiki/*", ["wiki:read"]),
+        ("/company/goals/p1/wiki/files/report.md", "GET /company/goals/*/wiki/*", ["wiki:read"]),
     ],
 )
 def test_each_route_matches_its_own_scope_row(path, row, scopes):

@@ -61,10 +61,8 @@ def make_client(request, tmp_path):
 
 
 def create(client, user):
-    parent = client.post("/company/products", json={"name": user}, headers=headers(user, ["products:write"])).json()[
-        "id"
-    ]
-    response = client.post("/company/projects", json={"name": user, "product_id": parent}, headers=headers(user))
+    parent = client.post("/company/goals", json={"name": user}, headers=headers(user, ["goals:write"])).json()["id"]
+    response = client.post("/company/projects", json={"name": user, "goal_id": parent}, headers=headers(user))
     assert response.status_code == 201, response.text
     assert response.json()["user_id"] == user
     return response.json()["id"]
@@ -118,8 +116,8 @@ def test_admin_bypass_and_creator_attribution(make_client):
     assert c.patch(path, json={"name": "renamed"}, headers=admin).status_code == 200
     assert c.delete(path, headers=admin).status_code == 204
     assert c.post(path + "/restore", headers=admin).status_code == 200
-    parent = c.post("/company/products", json={"name": "Admin product"}, headers=admin).json()["id"]
-    response = c.post("/company/projects", json={"name": "Admin work", "product_id": parent}, headers=admin)
+    parent = c.post("/company/goals", json={"name": "Admin goal"}, headers=admin).json()["id"]
+    response = c.post("/company/projects", json={"name": "Admin work", "goal_id": parent}, headers=admin)
     assert response.status_code == 201
     assert response.json()["user_id"] == "admin"
 
@@ -150,8 +148,8 @@ def test_service_account_scopes_on_company_routes(tmp_path, authorization):
 
     db = SqliteDb(db_file=str(tmp_path / "service-accounts.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="Shared product", user_id="alice")
-    shared = manager.create_project(product_id=product["id"], name="Shared work", user_id="alice")
+    goal = manager.create(name="Shared goal", user_id="alice")
+    shared = manager.create_project(goal_id=goal["id"], name="Shared work", user_id="alice")
     token, token_hash, token_prefix = generate_token()
     db.create_service_account(
         {
