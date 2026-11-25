@@ -1,12 +1,13 @@
 """The Company file system: every Company file in one store, at its path in the tree.
 
     wiki/
-    goals/<goal-id>/
-    tasks/<task-id>/
+    goals/<folder of the Goal>/
+    tasks/<folder of the Task>/
     notes/
 
 The store is the namespace ``company`` of the Company database. It is shared: it belongs to the
-company and is not partitioned by user. One size limit covers the whole store.
+company and is not partitioned by user. One size limit covers the whole store. The folder of a
+Goal or a Task is its id written as one path segment, by ``folder_name``.
 
 A version of Agno before 3.3.0 kept each folder in a namespace of its own, and notes in the AgentOS
 database. Until the 3.3.0 migration has moved them the store refuses every use, with the error that
