@@ -1355,3 +1355,104 @@ def test_a_step_refused_because_another_connection_writes_is_tried_again(databas
         databases.run(move_company_notes, amove_company_notes, os_db, company_db)
     assert calls == [1]
     assert ("company", "notes/more.md") in rows(os_reader)
+
+
+# ------------------------------------------------------------------ what a run says, and two namespaces for one folder
+
+
+def test_one_run_of_the_migration_reports_the_files_it_leaves_once(databases, caplog):
+    import logging
+
+    from agno.db.migrations.manager import MigrationManager
+
+    db, reader = databases.new()
+    CompanyManager(reader).create(name="Launch", id="launch")
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    write_3_2_0(reader, "company/products/gone/wiki", "status.md", "Of a Goal that was deleted")
+    write_3_2_0(reader, "company/wiki", "people.md", "Ada")
+
+    async def migrate() -> None:
+        try:
+            await MigrationManager(db).up()
+        finally:
+            if databases.is_async:
+                await db.db_engine.dispose()
+
+    agno_logger = logging.getLogger("agno")
+    agno_logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            asyncio.run(migrate())
+            first = [r.getMessage() for r in caplog.records if "left where a version before" in r.getMessage()]
+            # The manager runs the migration once for each Company table type. The report is made once.
+            assert len(first) == 1 and "company/products/gone/wiki (status.md)" in first[0]
+            assert ("company", "wiki/people.md") in rows(reader)
+            # A later run that finds the same files left says nothing new.
+            caplog.clear()
+            assert databases.run(move_company_files, amove_company_files, db) is False
+            assert not [r for r in caplog.records if "left where a version before" in r.getMessage()]
+    finally:
+        agno_logger.removeHandler(caplog.handler)
+
+
+def test_two_namespaces_are_not_moved_into_one_folder_in_one_run(databases):
+    db, reader = databases.new()
+    manager = CompanyManager(reader)
+    manager.create(name="Launch", id="launch")
+    for meta in in_store(reader).list():
+        in_store(reader).delete(meta.path)
+    # The Goal's own pages wait, and an operator gives it the pages of a Goal that is gone, in the same run.
+    write_3_2_0(reader, "company/products/launch/wiki", "status.md", "Go")
+    write_3_2_0(reader, "company/products/gone/wiki", "status.md", "Of a Goal that was deleted")
+    before = rows(reader)
+    owners = {"company/products/gone/wiki": "launch"}
+
+    def move():
+        return databases.run(
+            lambda d: move_company_files(d, owners=owners), lambda d: amove_company_files(d, owners=owners), db
+        )
+
+    with pytest.raises(CompanyFilesMigrationError, match="goals/launch"):
+        move()
+    assert rows(reader) == before
+    # One at a time: the Goal's own pages first, then the others, where a page of the same name stops the move.
+    assert databases.run(move_company_files, amove_company_files, db) is True
+    with pytest.raises(CompanyFilesMigrationError, match="goals/launch/status.md"):
+        move()
+    after = rows(reader)
+    assert after[("company", "goals/launch/status.md")] == before[("company/products/launch/wiki", "status.md")]
+    assert after[("company/products/gone/wiki", "status.md")] == before[("company/products/gone/wiki", "status.md")]
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_a_postgres_role_that_cannot_read_the_cluster_identifier_still_tells_one_database_from_two(
+    postgres_server, monkeypatch, is_async
+):
+    if not postgres_server:
+        pytest.skip(f"Postgres server not reachable at {POSTGRES_URL}")
+    from sqlalchemy.engine import make_url
+
+    from agno.db.migrations.versions import v3_3_0
+    from agno.db.postgres import AsyncPostgresDb, PostgresDb
+
+    # What a role without the right to call it gets: the statement fails.
+    monkeypatch.setattr(v3_3_0, "_CLUSTER_ID", "SELECT system_identifier FROM pg_control_system_not_allowed()")
+    databases = Databases("async-postgres" if is_async else "postgres", None)
+    try:
+        db, reader = databases.new()
+        other_db, other_reader = databases.new()
+        in_store(reader).write("notes/ideas.md", "A note")
+        before = every_row(reader)
+        by_address = make_url(db.db_url).set(host="127.0.0.1").render_as_string(hide_password=False)
+        same = (AsyncPostgresDb if is_async else PostgresDb)(db_url=by_address)
+        databases._opened.append((same, is_async))
+
+        # One database under two host names is still one place, and another database is another.
+        assert _run(is_async, company_notes_to_move, acompany_notes_to_move, db, same) is False
+        assert _run(is_async, move_company_notes, amove_company_notes, db, same) == 0
+        assert every_row(reader) == before
+        assert _run(is_async, move_company_notes, amove_company_notes, db, other_db) == 1
+        assert every_row(other_reader) == before and every_row(reader) == {}
+    finally:
+        databases.close()

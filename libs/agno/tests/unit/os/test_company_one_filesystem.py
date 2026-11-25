@@ -11,6 +11,7 @@ from agno.company.filesystem import (
     _Folder,
     company_filesystem,
     company_folder,
+    folder_name,
 )
 from agno.company.manager import CompanyManager
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
@@ -1217,3 +1218,31 @@ def test_notes_are_not_moved_at_the_start_while_a_database_is_not_migrated(tmp_p
     assert "notes/ideas.md" not in stored(company_db)
     os_reader.close()
     company_db.close()
+
+
+def test_a_goal_whose_id_is_longer_than_a_name_keeps_its_pages(system):
+    from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS
+
+    manager = CompanyManager(system.db, system.os.registry)
+    # An id whose folder name is longer than a name of a path may be: 3.2.0 kept its pages, and so does this.
+    long_id = "\u540d" * 50
+    assert len(company_folder(system.db, f"goals/{folder_name(long_id)}").backend.folder) > MAX_SEGMENT_CHARS
+    manager.create(name="Long", id=long_id)
+    written = manager.write_wiki(goal_id=long_id, path="notes/plan.md", content="The plan", expected_version=0)
+    assert written.version == 1 and manager.read_wiki(long_id, "notes/plan.md").content == "The plan"
+    assert sorted(page.path for page in manager.list_wiki(long_id, limit=100)[0]) == [
+        "brief.md",
+        "notes/plan.md",
+        "status.md",
+    ]
+
+    # An id so long that its folder leaves no room in a path: what the migration stored is read, nothing is written.
+    longest = "g" * MAX_PATH_CHARS
+    manager.create(name="Longest", id=longest)
+    FileSystem(system.db, namespace="company", user_scoped=False).backend.write(
+        "company", f"goals/{longest}/status.md", "Kept from 3.2.0"
+    )
+    assert [page.path for page in manager.list_wiki(longest, limit=100)[0]] == ["status.md"]
+    assert manager.read_wiki(longest, "status.md").content == "Kept from 3.2.0"
+    with pytest.raises(InvalidPathError, match="and 0 characters"):
+        manager.write_wiki(goal_id=longest, path="new.md", content="x", expected_version=0)

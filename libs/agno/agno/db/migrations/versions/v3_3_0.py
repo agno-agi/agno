@@ -80,7 +80,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from inspect import signature
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -93,7 +93,7 @@ from agno.utils.log import log_info, log_warning
 try:
     from sqlalchemy import JSON, column, select, table, text, update
     from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.exc import IntegrityError, OperationalError
+    from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -665,6 +665,9 @@ _WIKI, _NOTES = "company/wiki", "company/notes"
 _GOAL_PREFIX, _GOAL_SUFFIX, _TASK_PREFIX = "company/products/", "/wiki", "company/tasks/"
 # The paths of one namespace a log line names before it counts the rest.
 _REPORTED_PATHS = 20
+# The namespaces already reported as left in place, by database: one run of the migration calls the
+# file move once for each Company table type, and says it once.
+_reported_left: Set[Tuple[str, Tuple[str, ...]]] = set()
 
 
 class CompanyFilesMigrationError(RuntimeError):
@@ -856,6 +859,18 @@ def _plan(sess: Any, db: Any, namespaces: List[str], owners: Optional[Dict[str, 
                 plan.defaults[folder] = _defaults(by_id[could_own[0]])
             else:
                 plan.folders[namespace] = f"tasks/{folder_name(could_own[0])}"
+    # An owner named by hand can send a second namespace to a folder. One run moves one namespace into
+    # a folder, so a page both hold is found in the way by the next run and nothing is overwritten.
+    into: Dict[str, List[str]] = {}
+    for namespace, folder in plan.folders.items():
+        into.setdefault(folder, []).append(namespace)
+    shared = {folder: names for folder, names in into.items() if len(names) > 1}
+    if shared:
+        folder, names = sorted(shared.items())[0]
+        raise CompanyFilesMigrationError(
+            f"Company files were not moved: {' and '.join(sorted(names))} would both move into {folder}/. "
+            "Move one of them first, then name the owner of the other."
+        )
     return plan
 
 
@@ -990,7 +1005,9 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
         moved = _move(conn, backend.table, plan.folders, plan.defaults)
         log_info(f"Moved {moved} Company files into the Company file system")
         _report_size(conn, backend.table, db)
-    if plan.left:
+    reported = (conn.engine.url.render_as_string(hide_password=True), tuple(sorted(plan.left)))
+    if plan.left and reported not in _reported_left:
+        _reported_left.add(reported)
         _report_left(_paths_left(conn, backend.table, plan.left))
     return bool(plan.folders)
 
@@ -1117,6 +1134,9 @@ async def amove_company_files(db: Any, owners: Optional[Dict[str, str]] = None) 
 _NOTE_COLUMNS = ("path", "content", "size_bytes", "version", "created_at", "updated_at")
 # Holds one row while a move makes sure its two databases are two: never a note.
 _PROBE_NAMESPACE = "company/notes-move"
+# What tells one PostgreSQL cluster from another, and what does when a role may not ask for it.
+_CLUSTER_ID = "SELECT system_identifier FROM pg_control_system()"
+_CLUSTER_START = "SELECT pg_postmaster_start_time()"
 
 
 def _file_place(sess: Any, db: Any) -> tuple:
@@ -1133,9 +1153,13 @@ def _file_place(sess: Any, db: Any) -> tuple:
     backend: Any = FileSystem(db, namespace=COMPANY_NAMESPACE, user_scoped=False).backend
     table = (backend.db_schema, backend.table_name)
     if conn.dialect.name == "postgresql":
-        cluster, database = conn.execute(
-            text("SELECT (SELECT system_identifier FROM pg_control_system()), current_database()")
-        ).one()
+        try:
+            with conn.begin_nested():
+                cluster = conn.execute(text(_CLUSTER_ID)).scalar()
+        except DBAPIError:
+            # Every connection to one server reads the same start time, and two servers do not share one.
+            cluster = conn.execute(text(_CLUSTER_START)).scalar()
+        database = conn.execute(text("SELECT current_database()")).scalar()
         return ("postgresql", str(cluster), database, *table)
     file = next((row[2] for row in conn.execute(text("PRAGMA database_list")).fetchall() if row[1] == "main"), "")
     if not file:

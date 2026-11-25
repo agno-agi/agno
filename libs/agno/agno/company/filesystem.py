@@ -232,6 +232,21 @@ def company_folder(db: Any, folder: str) -> FileSystem:
     )
 
 
+def stored_path_fits(folder: str, path: str) -> bool:
+    """Whether a path inside a folder may be written: the stored path is within the limits of a path.
+
+    The whole stored path is held to the length and the depth a path may have. Each name of the path
+    inside the folder is held to the length of a name. The folder's own name is not: it is the id of
+    a Goal or a Task as one segment, and an id written that way can be longer than a name.
+    """
+    stored = f"{folder}/{path}"
+    return (
+        len(stored) <= MAX_PATH_CHARS
+        and stored.count("/") < MAX_SEGMENTS
+        and all(len(name) <= MAX_SEGMENT_CHARS for name in path.split("/"))
+    )
+
+
 class _Folder(BaseFS):
     """A backend that reads and writes one folder of another backend.
 
@@ -242,7 +257,10 @@ class _Folder(BaseFS):
 
     def __init__(self, backend: BaseFS, folder: str) -> None:
         self.backend = backend
-        self.folder = normalize_path(folder)
+        # The folder is named by the caller that opens the view: an area, or an area and a folder name.
+        if not folder or folder != folder.strip("/") or any(name in ("", ".", "..") for name in folder.split("/")):
+            raise InvalidPathError(f"invalid folder {folder!r}")
+        self.folder = folder
 
     def _inside(self, path: str) -> str:
         """The stored path of a file in the folder. Only a normalized relative path names one."""
@@ -253,15 +271,13 @@ class _Folder(BaseFS):
     def _to_write(self, path: str) -> str:
         """The stored path of a file to write. The limits of a path count the folder's own name."""
         stored = self._inside(path)
-        try:
-            normalize_path(stored)
-        except InvalidPathError:
+        if not stored_path_fits(self.folder, path):
             names = MAX_SEGMENTS - self.folder.count("/") - 1
-            chars = MAX_PATH_CHARS - len(self.folder) - 1
+            chars = max(MAX_PATH_CHARS - len(self.folder) - 1, 0)
             raise InvalidPathError(
-                f"invalid path {path!r}: inside {self.folder}/ a path is at most {names} names deep and {chars} "
+                f"invalid path {path!r}: in this folder a path is at most {names} names deep and {chars} "
                 f"characters, each name at most {MAX_SEGMENT_CHARS} characters."
-            ) from None
+            )
         return stored
 
     def _directory(self, directory: str) -> str:
