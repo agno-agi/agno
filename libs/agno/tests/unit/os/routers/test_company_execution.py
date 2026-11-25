@@ -513,7 +513,7 @@ async def test_routine_payload_cannot_grant_or_widen_authorization(system, monke
 @pytest.fixture(params=[False, True], ids=["shared", "isolated"])
 def managed_system(request, tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "managed-company.db"))
-    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256")
+    authz = Authorization(db=db, verification_keys=[SECRET], algorithm="HS256", trust_token_scopes=False)
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("runner", [*SCOPES, "projects:write"])
     authz.define_role("viewer", [scope for scope in SCOPES if scope != "agents:writer:run"])

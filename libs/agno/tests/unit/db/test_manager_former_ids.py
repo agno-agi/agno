@@ -142,3 +142,13 @@ def test_role_declared_in_code_with_a_former_id_blocks_startup(tmp_path):
         with TestClient(app):
             pass
     db.close()
+
+
+def test_role_declared_in_code_with_a_former_id_blocks_startup_on_an_async_database(tmp_path):
+    # An async database stores roles from code at startup, so the check must run after they land
+    db = AsyncSqliteDb(db_file=str(tmp_path / "code.db"))
+    auth = _authorization().define_role("legacy", ["teams:*:run", ("teams:os-manager-internal:run", "deny")])
+    app = AgentOS(id="former", db=db, authorization=auth, telemetry=False).get_app()
+    with pytest.raises(ValueError, match="replaced in Agno 3.2"):
+        with TestClient(app):
+            pass

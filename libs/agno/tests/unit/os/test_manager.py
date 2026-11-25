@@ -68,9 +68,9 @@ def test_routines_run_on_mini_agent_and_no_other_framework_agent(db):
 
 
 @pytest.mark.parametrize("identity", ["jwt", "managed_role", "service_account", "service_account_open"])
-@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("grants", ["ordinary", "named", "admin"])
 @pytest.mark.parametrize("target", [MANAGER_TEAM_ID, BUILDER_ID])
-def test_manager_execution_accepts_ordinary_run_grants(db, workspace, identity, admin, target):
+def test_manager_execution_needs_the_built_in_by_name(db, workspace, identity, grants, target):
     import jwt
 
     from agno.db.schemas.service_accounts import ServiceAccount
@@ -78,9 +78,18 @@ def test_manager_execution_accepts_ordinary_run_grants(db, workspace, identity, 
     from agno.os.service_accounts import generate_token
 
     secret = "manager-test-signing-key-at-least-32-characters"
-    # Broad pre-existing grants must not expose newly enabled manager capabilities.
-    scopes = ["agent_os:admin"] if admin else ["agents:run", "teams:run", "schedules:write"]
-    auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
+    family = "teams" if target == MANAGER_TEAM_ID else "agents"
+    # A type-wide run grant does not reach a built-in component: it is named, or the caller is an admin.
+    ordinary = ["agents:run", "teams:run", "schedules:write"]
+    scopes = {"ordinary": ordinary, "named": ordinary + [f"{family}:{target}:run"], "admin": ["agent_os:admin"]}[grants]
+    reached = grants != "ordinary"
+    # For the managed role the role store decides alone, so the admin claim on its token does not count
+    auth = Authorization(
+        verification_keys=[secret],
+        algorithm="HS256",
+        audience="manager-test",
+        trust_token_scopes=False if identity == "managed_role" else None,
+    )
     if identity == "managed_role":
         auth.define_role("caller", scopes)
         auth.assign("alice", "caller")
@@ -118,12 +127,12 @@ def test_manager_execution_accepts_ordinary_run_grants(db, workspace, identity, 
             algorithm="HS256",
         )
     headers = {"Authorization": f"Bearer {token}"}
-    family = "teams" if target == MANAGER_TEAM_ID else "agents"
     client = TestClient(os.get_app())
     response = client.post(f"/{family}/{target}/runs", headers=headers, data={"message": "hello", "stream": "false"})
-    assert response.status_code == (200 if target == MANAGER_TEAM_ID else 422), response.text
-    ordinary = client.post("/agents/ordinary/runs", headers=headers, data={"message": "hello", "stream": "false"})
-    assert ordinary.status_code == 200, ordinary.text
+    served = 200 if target == MANAGER_TEAM_ID else 422
+    assert response.status_code == (served if reached else 403), response.text
+    ordinary_run = client.post("/agents/ordinary/runs", headers=headers, data={"message": "hello", "stream": "false"})
+    assert ordinary_run.status_code == 200, ordinary_run.text
     scheduled = client.post(
         "/schedules",
         headers=headers,
@@ -134,7 +143,11 @@ def test_manager_execution_accepts_ordinary_run_grants(db, workspace, identity, 
             "payload": {"message": "hello"},
         },
     )
-    assert scheduled.status_code == (201 if target == MANAGER_TEAM_ID else 409), scheduled.text
+    # Platform Builder is refused as a schedule target before any grant is read
+    if target == BUILDER_ID:
+        assert scheduled.status_code == 409, scheduled.text
+    else:
+        assert scheduled.status_code == (201 if reached else 403), scheduled.text
 
 
 def test_manager_cannot_dispatch_for_a_caller_with_only_its_run_scope(db):
@@ -270,9 +283,9 @@ async def test_slack_interfaces_sharing_a_bot_token_post_task_results_once_per_i
 
 
 @pytest.mark.parametrize("service_account", [False, True])
-@pytest.mark.parametrize("admin", [False, True])
+@pytest.mark.parametrize("grants", ["ordinary", "named", "admin"])
 @pytest.mark.parametrize("path", ["/teams/superagent/runs", "/agents/platform-builder/runs"])
-async def test_manager_mcp_accepts_ordinary_run_grants(db, monkeypatch, service_account, admin, path):
+async def test_manager_mcp_needs_the_built_in_by_name(db, monkeypatch, service_account, grants, path):
     from types import SimpleNamespace
 
     from fastmcp.server import dependencies
@@ -288,13 +301,22 @@ async def test_manager_mcp_accepts_ordinary_run_grants(db, monkeypatch, service_
             authorization_enabled=True,
             user_id="alice",
             claims={},
-            scopes=["agent_os:admin"] if admin else ["agents:run", "teams:run"],
+            scopes={
+                "ordinary": ["agents:run", "teams:run"],
+                "named": ["agents:run", "teams:run", "teams:superagent:run", "agents:platform-builder:run"],
+                "admin": ["agent_os:admin"],
+            }[grants],
             service_account_name="caller" if service_account else None,
             admin_scope="agent_os:admin",
         ),
     )
     monkeypatch.setattr(dependencies, "get_http_request", lambda: request)
-    await _require_tool_scopes("POST", path)
+    if grants == "ordinary":
+        # A type-wide run grant does not reach a built-in component
+        with pytest.raises(Exception, match="Insufficient permissions"):
+            await _require_tool_scopes("POST", path)
+    else:
+        await _require_tool_scopes("POST", path)
 
 
 class OfflineModel(Model):
@@ -1286,7 +1308,8 @@ def _slack_super_agent(db, authorization, **slack_kwargs):
     secret = "manager-test-signing-key-at-least-32-characters"
     auth = Authorization(verification_keys=[secret], algorithm="HS256", audience="manager-test")
     if authorization == "default_role":
-        auth.define_role("slack-member", ["teams:run", "agents:restricted:run"])
+        # Super Agent is run through its own scope: a type-wide teams:run does not reach it
+        auth.define_role("slack-member", ["teams:superagent:run", "agents:restricted:run"])
         auth.assign("slack-bot", "slack-member")
         slack_kwargs["default_role"] = "slack-bot"
     restricted = Agent(id="restricted", model=ManagerAnswerModel("restricted ran"), db=db)
@@ -2601,7 +2624,15 @@ def test_user_and_internal_id_denies_do_not_cross(db, async_mode, family, user_i
     db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{internal_id}", "run", "deny")])
     assert check(user_id)
     assert not check(internal_id)
-    db.set_authz_role_policies("member", [(f"{family}/*", "run", "allow"), (f"{family}/{user_id}", "run", "deny")])
+    # The internal id is granted by its own row: a wildcard does not reach a built-in component
+    db.set_authz_role_policies(
+        "member",
+        [
+            (f"{family}/*", "run", "allow"),
+            (f"{family}/{internal_id}", "run", "allow"),
+            (f"{family}/{user_id}", "run", "deny"),
+        ],
+    )
     assert not check(user_id)
     assert check(internal_id)
 

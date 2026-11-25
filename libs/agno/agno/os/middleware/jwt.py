@@ -28,6 +28,7 @@ from agno.os.scopes import (
     get_required_scopes_for_route,
     get_resource_context_from_path,
     has_required_scopes,
+    is_built_in,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -1263,9 +1264,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """The log line for a route-gate denial, worded for the plane that actually decided.
 
         When the caller's token scopes are what the gate compared, "required vs held" is the
-        truth. Under a managed-roles or ReBAC provider the token's scopes were never consulted,
-        so listing them as what the user "has" reads as a contradiction (the required scope is
-        right there in the list) and hides the real reason: the provider denied the subject.
+        truth. When a role store decides beside the scope plane, both refused, so the line names
+        the role the store held as well. Under a managed-roles or ReBAC provider the token's
+        scopes were never consulted, so listing them as what the user "has" reads as a
+        contradiction (the required scope is right there in the list) and hides the real reason:
+        the provider denied the subject.
         ``held_roles`` is what the engine decided on: the roles carried on the token when the
         store reads a ``roles_claim`` and the token has one (``roles_from_token``), else the
         subject's stored assignments; None when no role store is configured. ``explicit_deny``
@@ -1277,12 +1280,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ``trust_token_scopes=False``, the one case where that flag is why the token's scopes did not
         count; under any other provider the flag is not the reason and is not cited.
         """
-        from agno.os.auth import caller_scopes_are_authoritative
+        from agno.os.auth import _caller_is_service_account, caller_scopes_are_authoritative
 
-        if caller_scopes_are_authoritative(request):
-            return f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
-        subject = getattr(request.state, "user_id", None)
-        line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
+        scopes_decide = caller_scopes_are_authoritative(request)
+        if scopes_decide:
+            line = f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
+            # A service account is decided on its own scopes alone. For anyone else, a role store
+            # beside the scope plane refused the request too, so the line goes on to say what it held.
+            if held_roles is None or _caller_is_service_account(request):
+                return line
+            line += "."
+        else:
+            subject = getattr(request.state, "user_id", None)
+            line = f"Denied {method} {path} for {subject!r}: the configured authorization provider refused it."
         if held_roles and roles_from_token:
             line += f" The token carries role(s) {held_roles}, which do not authorize {method} {path}."
         elif held_roles and via_default:
@@ -1296,6 +1306,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             line += " The subject holds no role in the role store."
         if explicit_deny:
             line += f" An explicit deny on '{explicit_deny}' applies (deny overrides any wider allow)."
+        if scopes_decide:
+            return line
         if scopes and token_scopes_ignored:
             on_token = [sc for sc in scopes if sc in required_scopes] or scopes
             line += (
@@ -1852,6 +1864,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
           The same holds for managed roles read from a ``roles_claim``: the owner's role
           is on their IdP token, the executor has no such token, and stored assignments
           are empty for an IdP user, so re-asking would refuse every owned schedule.
+          Where token scopes are trusted beside managed roles, an owner who holds a
+          stored role is still asked through it when the schedule saved no authority.
 
         An unowned (system) schedule forwards no owner and is not affected. A denial is
         written to the decision trail and answered 403, so the executor records a failed
@@ -1875,12 +1889,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         resource_id=resource_id,
                         action=_route_action(required),
                     )
-                    if not await authority.provider.aauthorize_route(ctx, required):
+                    if not await authority.aauthorizes_route(ctx, required):
                         raise PermissionError("Scheduled target is not permitted")
             except Exception:
                 return self._create_error_response(
                     403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
                 )
+        elif self.authorization and is_built_in(*get_resource_context_from_path(path)):
+            # No saved authority, so nobody can be shown to hold the built-in's own scope
+            await self._arecord_decision(
+                request,
+                allowed=False,
+                method=method,
+                path=path,
+                principal=unquote(request.headers.get(SCHEDULE_OWNER_HEADER) or "") or None,
+                required_scopes=self._get_required_scopes(method, path),
+                scopes=[],
+                reason="scheduled_built_in_without_authority",
+            )
+            return self._create_error_response(
+                403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins
+            )
 
         raw = request.headers.get(SCHEDULE_OWNER_HEADER)
         if raw is None:
@@ -1932,12 +1961,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         from agno.os.auth import resolve_authorization_provider, token_scopes_are_authoritative
         from agno.os.authz.provider import AuthorizationContext
 
-        if token_scopes_are_authoritative(request):
-            return None
         # Roles read from a token claim are grants this OS never stores; the executor's
         # request carries no such claim, so a stored-assignment decision for the owner
         # would be a false denial. The create-time check stands, as for token scopes.
         if getattr(getattr(request.app.state, "role_store", None), "roles_claim", None):
+            return None
+        # With token scopes trusted, the owner may hold the target through a token this OS never
+        # sees, so the stored role cannot be asked alone for everyone. A saved authority was
+        # asked again above: its stored role as it is now, its token scopes as they were saved.
+        # With none saved, an owner who holds a stored role must still be allowed by it, and an
+        # owner who holds none got in on a token, where the create-time check stands.
+        scopes_trusted = token_scopes_are_authoritative(request)
+        role_store = self._deciding_role_store(request) if scopes_trusted else None
+        if scopes_trusted and (role_store is None or request.headers.get(AUTHORIZATION_HEADER)):
             return None
         required_scopes = self._get_required_scopes(method, path)
         if not required_scopes:
@@ -1953,6 +1989,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             admin_scope=self.admin_scope,
         )
         try:
+            if role_store is not None and not await role_store.aroles_of(owner):
+                return None
             allowed = await resolve_authorization_provider(request).aauthorize_route(ctx, required_scopes)
             reason = "schedule_owner_denied"
         except Exception as e:

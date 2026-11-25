@@ -150,7 +150,10 @@ def make_os(db, *, manager=False, model=None, authorization=False, isolation=Fal
 
 @asynccontextmanager
 async def system(tmp_path, *, mode="standalone", identity="scope", isolation=True, scopes=None):
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="routine-test")
+    # With a role defined, the role store decides alone: a managed caller's token scopes do not count
+    auth = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", audience="routine-test", trust_token_scopes=False
+    )
     scopes = SCOPES if scopes is None else scopes
     if identity == "managed":
         auth.define_role("reviewer", scopes)
