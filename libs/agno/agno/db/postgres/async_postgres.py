@@ -6088,8 +6088,12 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def get_trigger(self, trigger_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         return await self._trigger_storage(triggers_sql.get_trigger, ("triggers",), trigger_id, user_id=user_id)
 
-    async def get_trigger_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        return await self._trigger_storage(triggers_sql.get_trigger_by_name, ("triggers",), name, user_id=user_id)
+    async def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return await self._trigger_storage(
+            triggers_sql.get_trigger_by_name, ("triggers",), name, user_id=user_id, os_id=os_id
+        )
 
     async def get_triggers(
         self,

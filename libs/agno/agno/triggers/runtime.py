@@ -74,8 +74,9 @@ async def adeclare_triggers(
     is no longer declared is disabled with a reason and keeps its history; declaring it again enables it.
 
     Every row is marked with the AgentOS that declared it, and only rows with that mark are turned
-    off. Another AgentOS on the same database, and a row that carries no mark, are left alone. A row
-    with no mark becomes the property of the AgentOS that declares a trigger of its name.
+    off. Another AgentOS on the same database, and a row that carries no mark, are left alone. Names
+    are unique within one AgentOS: two apps that declare the same name each have their own row. A row
+    with no mark becomes the property of the first AgentOS that declares a trigger of its name.
 
     Args:
         with_schedules: Also look through the stored schedules for ones a trigger declared. An AgentOS
@@ -90,6 +91,12 @@ async def adeclare_triggers(
         declared = set()
         for trigger in events:
             assert isinstance(trigger.on, Events)
+            if await manager.aget_by_name(trigger.name, os_id=os_id) is None:
+                unmarked = await manager.aget_by_name(trigger.name)
+                if unmarked is not None:
+                    # A trigger tied to no AgentOS becomes the property of the first one that
+                    # declares its name. Any other AgentOS that declares the name gets its own row.
+                    await acall_db(db, "update_trigger", unmarked.id, os_id=os_id)
             stored = await manager.acreate(
                 name=trigger.name,
                 source_id=trigger.on.source_id,

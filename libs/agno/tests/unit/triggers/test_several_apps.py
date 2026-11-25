@@ -218,3 +218,56 @@ async def test_a_schedule_stored_before_its_trigger_marked_it_is_marked_when_dec
 
     (schedule,) = [row for row in await schedules.alist_all() if row.name == "nightly-report"]
     assert schedule.id == old.id and schedule.managed_by == schedule_manager_of("the-os")
+
+
+async def test_two_apps_that_declare_the_same_name_each_have_their_own_trigger(make_os):
+    first_model, second_model = RecordingModel(), RecordingModel()
+    first = await make_os(lambda github, agent: triage(github, agent), model=first_model, os_options={"id": "first-os"})
+    second = await make_os(
+        lambda github, agent: [
+            Trigger(name="triage-issues", on=github.on("issues.opened"), agent=agent, input="The second app's.")
+        ],
+        model=second_model,
+        os_options={"id": "second-os"},
+    )
+
+    rows = sorted(await TriggerManager(first.db).alist(), key=lambda row: row.os_id)
+    assert [(row.name, row.os_id, row.enabled) for row in rows] == [
+        ("triage-issues", "first-os", True),
+        ("triage-issues", "second-os", True),
+    ]
+    assert rows[0].id != rows[1].id and rows[0].input == INSTRUCTION and rows[1].input == "The second app's."
+
+    # Each runs its own, with its own instruction.
+    await first.deliver(issue_payload())
+    await second.deliver(issue_payload(), delivery="d-2")
+    await first.run_events()
+    await second.run_events()
+    assert len(first_model.inputs) == 1 and first_model.inputs[0].startswith(INSTRUCTION)
+    assert len(second_model.inputs) == 1 and second_model.inputs[0].startswith("The second app's.")
+
+    # One stops declaring it. Only its own row is turned off.
+    await make_os(nothing, os_options={"id": "second-os"})
+    rows = sorted(await TriggerManager(first.db).alist(), key=lambda row: row.os_id)
+    assert [(row.os_id, row.enabled) for row in rows] == [("first-os", True), ("second-os", False)]
+
+
+async def test_a_trigger_with_no_agentos_id_is_adopted_by_the_first_app_that_declares_its_name(make_os):
+    os = await make_os(nothing, declare_now=False, os_options={"id": "first-os"})
+    old = await TriggerManager(os.db).acreate(
+        name="triage-issues",
+        source_id=os.github.id,
+        events=["issues.opened"],
+        target_type="agent",
+        target_id="engineer",
+        input="An older instruction.",
+        provenance={"managed_by": CODE_MANAGED},
+    )
+
+    await make_os(triage, os_options={"id": "first-os"})
+    await make_os(triage, os_options={"id": "second-os"})
+
+    # The first app took the row that had no id. The second got a row of its own.
+    rows = sorted(await TriggerManager(os.db).alist(), key=lambda row: row.os_id)
+    assert [row.os_id for row in rows] == ["first-os", "second-os"]
+    assert rows[0].id == old.id and rows[1].id != old.id

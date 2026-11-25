@@ -3,7 +3,7 @@ unless that run is known to have failed or been cancelled."""
 
 import asyncio
 
-import httpx
+import pytest
 
 from agno.db.schemas.triggers import EVENT_FAILED, EVENT_PENDING, EVENT_RUNNING, EVENT_SUCCESS
 from agno.triggers import Trigger
@@ -85,33 +85,32 @@ async def test_a_worker_that_lost_its_claim_during_the_run_reports_nothing(make_
     row = await recorded_run(os)
 
     # The first worker is still following its run when its claim expires and a second worker takes
-    # the event. The run has not stopped, so the second worker starts nothing and leaves the event.
+    # the event. The second one follows the same run: it starts nothing.
     await age_claim(os.db, row["id"], 121)
     second = await call(os.db, "claim_trigger_event", "second-worker:1", 120)
     assert second is not None
-    await os.runtime.executor.execute_event(second, os.db, os.runtime)
+    taken_over = asyncio.create_task(os.runtime.executor.execute_event(second, os.db, os.runtime))
+    await asyncio.sleep(0.2)
     assert len(model.inputs) == 1
 
-    # The run ends. The first worker sees it, and reports nothing: the event is no longer its own.
+    # The run ends. Both workers see it. Only the one that holds the event reports and records it.
     model.gate.set()
-    await os.run_events()
-    assert completed == []
-    (row,) = await os.events()
-    assert row["status"] == EVENT_RUNNING and row["claimed_by"] == "second-worker:1"
-
-    # A later attempt settles the event, and its end is reported once.
-    await age_claim(os.db, row["id"], 121)
+    await taken_over
     await os.run_events()
     (row,) = await os.events()
-    assert row["status"] == EVENT_SUCCESS
+    assert row["status"] == EVENT_SUCCESS and row["claimed_by"] == "second-worker:1"
     assert len(completed) == 1
-    assert model.most_at_once == 1
+    assert len(model.inputs) == 1 and model.most_at_once == 1
 
 
-async def test_an_earlier_run_still_going_is_replaced_only_once_it_has_stopped(make_os):
+async def test_an_earlier_run_still_going_is_followed_to_its_end(make_os):
+    completed = []
     model = RecordingModel()
     model.gate = asyncio.Event()
-    os = await make_os(triage, model=model)
+    os = await make_os(
+        lambda github, agent: triage(github, agent, on_complete=lambda event, run: completed.append(run)),
+        model=model,
+    )
     await os.deliver(issue_payload())
 
     assert await os.runtime.poller.poll_once() == 1
@@ -123,29 +122,55 @@ async def test_an_earlier_run_still_going_is_replaced_only_once_it_has_stopped(m
     (row,) = await os.events()
     assert row["status"] == EVENT_PENDING and row["run_id"] == first_run
 
-    # After the restart the run it left is asked to stop. Until it is seen to have stopped, nothing
-    # is started in its place and the event keeps its claim.
-    os.runtime.executor._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=os.app), timeout=30)
-    await os.run_events()
+    # After the restart a worker takes the event and finds its run still going. It follows that run:
+    # it starts nothing, and it does not ask the run to stop.
+    sent = os.fail_reads(times=0)
+    assert await os.runtime.poller.poll_once() == 1
+    await asyncio.sleep(0.3)
     (row,) = await os.events()
-    assert row["status"] == EVENT_RUNNING and row["claimed_by"] is not None
-    assert row["run_id"] == first_run
-    assert row["error"].startswith("waiting: ")
+    assert row["status"] == EVENT_RUNNING and row["run_id"] == first_run
     assert len(model.inputs) == 1
+    assert [request for request in sent.requests if request.method == "POST"] == []
 
-    # The run stops. A later attempt sees that, and only then is the event run again.
+    # The run ends, and its result is the event's result.
     model.gate.set()
-    await until(lambda: model.running == 0)
-    await age_claim(os.db, row["id"], 121)
     await os.run_events()
     (row,) = await os.events()
-    assert (await os.run({**row, "run_id": first_run}))["status"] == "CANCELLED"
-    assert row["status"] == EVENT_SUCCESS
-    assert row["run_id"] != first_run
-    assert row["error"] is None
-    # Two runs, one after the other, never at once.
-    assert len(model.inputs) == 2
-    assert model.most_at_once == 1
+    assert row["status"] == EVENT_SUCCESS and row["run_id"] == first_run
+    assert row["output"] == {"content": "done", "content_type": "str"}
+    assert (await os.run(row))["status"] == "COMPLETED"
+    # One run, reported once, by the worker that adopted it.
+    assert len(model.inputs) == 1 and model.most_at_once == 1
+    (report,) = completed
+    assert report.status == EVENT_SUCCESS and report.run_id == first_run and report.output == "done"
+    assert [request for request in sent.requests if request.method == "POST"] == []
+
+
+@pytest.mark.parametrize("max_retries, runs, status", [(0, 1, EVENT_FAILED), (1, 2, EVENT_SUCCESS)])
+async def test_a_followed_run_that_fails_is_retried_as_the_trigger_allows(make_os, max_retries, runs, status):
+    model = RecordingModel(fail_first=1)
+    model.gate = asyncio.Event()
+    os = await make_os(
+        lambda github, agent: triage(github, agent, max_retries=max_retries, retry_delay_seconds=0), model=model
+    )
+    await os.deliver(issue_payload())
+
+    assert await os.runtime.poller.poll_once() == 1
+    await until(lambda: model.running == 1)
+    first_run = (await recorded_run(os))["run_id"]
+    await os.runtime.poller.stop()
+
+    # A worker takes the event over and follows the run, which then fails.
+    os.fail_reads(times=0)
+    model.gate.set()
+    await os.run_events()
+
+    # The run it followed was the event's first attempt: it is tried again only if the trigger allows.
+    (row,) = await os.events()
+    assert row["status"] == status
+    assert len(model.inputs) == runs and model.most_at_once == 1
+    assert (row["run_id"] == first_run) == (runs == 1)
+    assert row["attempt"] == runs
 
 
 async def test_a_run_that_outlives_its_timeout_is_not_submitted_again(make_os):

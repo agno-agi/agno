@@ -212,6 +212,8 @@ class TriggerManager:
                 stored state, including under ``if_exists="update"``; use enable/disable to change it.
         """
         _validated(name, source_id, events, target_type, target_id, input, if_exists, user_id, provenance)
+        # Names are unique within one AgentOS, so the name is looked up where the trigger is stored.
+        os_id = (provenance or {}).get("os_id")
         require_schedule_target(build_run_endpoint(target_type, target_id))
         fields = _fields(
             source_id,
@@ -229,7 +231,7 @@ class TriggerManager:
             retry_delay_seconds,
         )
 
-        existing = self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id))
+        existing = self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id, os_id=os_id))
         if existing is None:
             try:
                 created = self._to_trigger(
@@ -237,7 +239,7 @@ class TriggerManager:
                 )
             except Exception:
                 # Another process declared the same name first: the unique index refused this insert.
-                existing = self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id))
+                existing = self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id, os_id=os_id))
                 if existing is None:
                     raise
             else:
@@ -257,9 +259,15 @@ class TriggerManager:
         """Get a trigger by ID."""
         return self._to_trigger(self._call("get_trigger", trigger_id, user_id=user_id))
 
-    def get_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[StoredTrigger]:
-        """Get a trigger by name. ``user_id=None`` matches only unowned triggers."""
-        return self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id))
+    def get_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[StoredTrigger]:
+        """Get a trigger by name.
+
+        Names are unique for each AgentOS and, within it, for each owner. ``user_id=None`` matches
+        only an unowned trigger, and ``os_id=None`` only one tied to no AgentOS.
+        """
+        return self._to_trigger(self._call("get_trigger_by_name", name, user_id=user_id, os_id=os_id))
 
     def list(
         self,
@@ -360,6 +368,8 @@ class TriggerManager:
     ) -> StoredTrigger:
         """Async create a trigger. See ``create``."""
         _validated(name, source_id, events, target_type, target_id, input, if_exists, user_id, provenance)
+        # Names are unique within one AgentOS, so the name is looked up where the trigger is stored.
+        os_id = (provenance or {}).get("os_id")
         await arequire_schedule_target(build_run_endpoint(target_type, target_id))
         fields = _fields(
             source_id,
@@ -377,7 +387,7 @@ class TriggerManager:
             retry_delay_seconds,
         )
 
-        existing = self._to_trigger(await self._acall("get_trigger_by_name", name, user_id=user_id))
+        existing = self._to_trigger(await self._acall("get_trigger_by_name", name, user_id=user_id, os_id=os_id))
         if existing is None:
             try:
                 created = self._to_trigger(
@@ -385,7 +395,9 @@ class TriggerManager:
                 )
             except Exception:
                 # Another process declared the same name first: the unique index refused this insert.
-                existing = self._to_trigger(await self._acall("get_trigger_by_name", name, user_id=user_id))
+                existing = self._to_trigger(
+                    await self._acall("get_trigger_by_name", name, user_id=user_id, os_id=os_id)
+                )
                 if existing is None:
                     raise
             else:
@@ -405,9 +417,11 @@ class TriggerManager:
         """Async get a trigger by ID."""
         return self._to_trigger(await self._acall("get_trigger", trigger_id, user_id=user_id))
 
-    async def aget_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[StoredTrigger]:
-        """Async get a trigger by name. ``user_id=None`` matches only unowned triggers."""
-        return self._to_trigger(await self._acall("get_trigger_by_name", name, user_id=user_id))
+    async def aget_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[StoredTrigger]:
+        """Async get a trigger by name. See ``get_by_name``."""
+        return self._to_trigger(await self._acall("get_trigger_by_name", name, user_id=user_id, os_id=os_id))
 
     async def alist(
         self,

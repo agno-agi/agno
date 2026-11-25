@@ -776,11 +776,22 @@ TRIGGERS_TABLE_SCHEMA = {
         # Serves the match of a delivery against the enabled triggers of its source.
         {"name": "source_enabled", "columns": ["source_id", "enabled"]},
     ],
-    # Names are unique per owner. NULLs are distinct in a plain unique constraint, so two
-    # partial unique indexes cover the owned and the unowned bucket.
+    # Names are unique for each AgentOS and, within it, for each owner: two apps on one database
+    # can each have a trigger of the same name. NULLs are distinct in a plain unique constraint,
+    # so a partial unique index covers each combination of no AgentOS and no owner.
     "_partial_unique_indexes": [
-        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
-        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
+        {
+            "name": "uq_os_user_name",
+            "columns": ["os_id", "user_id", "name"],
+            "where": "os_id IS NOT NULL AND user_id IS NOT NULL",
+        },
+        {
+            "name": "uq_os_unowned_name",
+            "columns": ["os_id", "name"],
+            "where": "os_id IS NOT NULL AND user_id IS NULL",
+        },
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "os_id IS NULL AND user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "os_id IS NULL AND user_id IS NULL"},
     ],
 }
 

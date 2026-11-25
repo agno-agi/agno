@@ -2379,10 +2379,13 @@ class BaseDb(ABC):
         """Get a trigger by ID."""
         raise NotImplementedError
 
-    def get_trigger_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a trigger by name within one owner bucket.
+    def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a trigger by name.
 
-        Names are unique per owner: ``user_id=None`` matches only unowned triggers.
+        Names are unique for each AgentOS and, within it, for each owner. ``user_id=None`` matches
+        only an unowned trigger, and ``os_id=None`` only one tied to no AgentOS.
         """
         raise NotImplementedError
 
@@ -4642,10 +4645,13 @@ class AsyncBaseDb(ABC):
         """Get a trigger by ID."""
         raise NotImplementedError
 
-    async def get_trigger_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Get a trigger by name within one owner bucket.
+    async def get_trigger_by_name(
+        self, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a trigger by name.
 
-        Names are unique per owner: ``user_id=None`` matches only unowned triggers.
+        Names are unique for each AgentOS and, within it, for each owner. ``user_id=None`` matches
+        only an unowned trigger, and ``os_id=None`` only one tied to no AgentOS.
         """
         raise NotImplementedError
 

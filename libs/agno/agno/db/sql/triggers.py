@@ -37,10 +37,14 @@ def get_trigger(sess: Any, triggers: Any, trigger_id: str, user_id: Optional[str
     return _row(sess.execute(stmt).fetchone())
 
 
-def get_trigger_by_name(sess: Any, triggers: Any, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def get_trigger_by_name(
+    sess: Any, triggers: Any, name: str, user_id: Optional[str] = None, os_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     stmt = select(triggers).where(triggers.c.name == name)
     # Names are unique per owner: None matches only unowned triggers, never another owner's.
     stmt = stmt.where(triggers.c.user_id.is_(None) if user_id is None else triggers.c.user_id == user_id)
+    # And per AgentOS: None matches only a trigger tied to no AgentOS, never another one's.
+    stmt = stmt.where(triggers.c.os_id.is_(None) if os_id is None else triggers.c.os_id == os_id)
     return _row(sess.execute(stmt).fetchone())
 
 

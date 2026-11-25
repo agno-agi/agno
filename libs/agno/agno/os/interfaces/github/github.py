@@ -14,7 +14,7 @@ from agno.os.interfaces.github.events import (
     start_refusal,
 )
 from agno.os.interfaces.github.router import DeliveryLog, EventHandler, attach_routes
-from agno.triggers.source import Delivery, EventField, Verdict
+from agno.triggers.source import Delivery, EventField, SenderCheckFailed, Verdict
 from agno.triggers.trigger import Events
 
 # The permissions GitHub reports for a user on a repository that let them push to it.
@@ -235,7 +235,11 @@ class GitHub(BaseInterface):
         return metadata
 
     async def asender_refusal(self, event: GitHubEvent) -> Optional[str]:
-        """Ask GitHub for the sender's permission on the repository; the reason when it is below write."""
+        """Ask GitHub for the sender's permission on the repository; the reason when it is below write.
+
+        Raises:
+            SenderCheckFailed: GitHub refused the credentials (401 or 403).
+        """
         if self.credentials is None:
             return f"{event.sender} is not shown as a member or collaborator, and no GitHub App credentials are set"
         import httpx
@@ -253,6 +257,12 @@ class GitHub(BaseInterface):
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
+            )
+        if response.status_code in (401, 403):
+            # An answer about the credentials, not about the sender. Asking again changes nothing.
+            raise SenderCheckFailed(
+                f"GitHub refused the credentials ({response.status_code}) for {event.repository}; "
+                "check the GitHub App's permissions and its installation"
             )
         # GitHub answers 404 for a user who is not a collaborator.
         permission = "none"

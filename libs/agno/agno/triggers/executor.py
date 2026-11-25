@@ -17,13 +17,9 @@ from agno.db.schemas.triggers import (
     EVENT_SUCCESS,
 )
 from agno.scheduler.executor import ScheduleExecutor, terminal_run_status
-from agno.triggers.source import render_input
+from agno.triggers.source import CHECK_SENDER_KEY, CHECK_SENDER_SINCE_KEY, SenderCheckFailed, render_input
 from agno.triggers.trigger import TriggerRun
 from agno.utils.log import log_debug, log_error
-
-# Set on a stored event whose payload did not show that the sender may start a run. The source is
-# asked when the event is claimed, never while the delivery is being answered.
-CHECK_SENDER_KEY = "check_sender"
 
 # Called with the run id and session id as soon as a run is accepted. False when the worker no
 # longer holds the event.
@@ -86,6 +82,7 @@ class TriggerExecutor(ScheduleExecutor):
         stop_grace_seconds: float = 30.0,
         sender_check_attempts: int = 4,
         sender_check_backoff: float = 2.0,
+        sender_check_seconds: int = 3600,
     ) -> None:
         """
         Args:
@@ -97,6 +94,7 @@ class TriggerExecutor(ScheduleExecutor):
             sender_check_attempts: How many times a source is asked whether a sender may start a
                 run before the event is left for a later attempt.
             sender_check_backoff: Seconds before the second of those questions; doubled for each one after.
+            sender_check_seconds: How long a source that gives no answer is asked before the event fails.
         """
         super().__init__(
             base_url=base_url,
@@ -110,6 +108,7 @@ class TriggerExecutor(ScheduleExecutor):
         self.stop_grace_seconds = stop_grace_seconds
         self.sender_check_attempts = sender_check_attempts
         self.sender_check_backoff = sender_check_backoff
+        self.sender_check_seconds = sender_check_seconds
 
     # --- Following a run ---
 
@@ -206,16 +205,25 @@ class TriggerExecutor(ScheduleExecutor):
         }
 
     async def _follow_run(
-        self, resource_type: str, resource_id: str, run_id: str, session_id: str, timeout_seconds: int
+        self,
+        resource_type: str,
+        resource_id: str,
+        run_id: str,
+        session_id: Optional[str],
+        timeout_seconds: int,
+        remaining: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Follow an accepted run until it ends or its timeout passes.
 
         A read that fails is tried again at the next poll: a run that was accepted is never answered
         with a second one. When the timeout passes the run is asked to stop. One that is seen to stop
         has failed and may be retried; one that is not may still be going, and is not.
+
+        Args:
+            remaining: Seconds of the timeout that are left, for a run that was started earlier.
         """
         url = self._run_url(resource_type, resource_id, run_id)
-        deadline = time.monotonic() + timeout_seconds
+        deadline = time.monotonic() + (timeout_seconds if remaining is None else remaining)
         while True:
             _, data = await self._read_run(url, session_id)
             if data is not None and terminal_run_status(data, False) is not None:
@@ -271,13 +279,16 @@ class TriggerExecutor(ScheduleExecutor):
     async def _recorded_run(self, endpoint: str, row: Dict[str, Any], timeout_seconds: int) -> Optional[Dict[str, Any]]:
         """What the run an earlier claim started means for this event.
 
-        Its result, when that run completed or is waiting on a person. None when it is known to have
-        failed or been cancelled: only then may the event be run again. A run that is still going is
-        asked to stop, and is replaced only once it is seen to have stopped.
+        A run that is still going is followed to its end by this worker, as the worker that started
+        it would have followed it: nothing is submitted while it may be alive, and it is asked to
+        stop only when its timeout passes. How it ends is the result.
+
+        A run that had already ended: its result, when it completed or is waiting on a person. None
+        when it failed or was cancelled, which is most likely with its worker: the event is run again.
 
         Raises:
-            Deferred: The run could not be read, or was not seen to stop, so how it ended is not
-                known. The event keeps its claim and nothing is submitted.
+            Deferred: The run could not be read, so nothing is known about it. The event keeps its
+                claim and nothing is submitted.
         """
         match = RUN_ENDPOINT_RE.match(endpoint)
         if match is None:
@@ -292,38 +303,57 @@ class TriggerExecutor(ScheduleExecutor):
                 )
             raise Deferred(f"run {run_id}, started by an earlier worker, could not be read")
         if terminal_run_status(data, False) is None:
-            stopped = await self._stop_run(url, session_id)
-            if stopped is None:
-                started_at = data.get("created_at")
-                if isinstance(started_at, (int, float)) and time.time() >= started_at + timeout_seconds:
-                    return self._not_run_again(
-                        run_id, session_id, f"Run {run_id} did not stop after its timeout of {timeout_seconds}s"
-                    )
-                raise Deferred(f"run {run_id}, started by an earlier worker, was asked to stop and has not")
-            data = stopped
+            # The timeout counts from when the run was started, not from when this worker found it.
+            started_at = data.get("created_at")
+            remaining = None
+            if isinstance(started_at, (int, float)):
+                remaining = max(0.0, started_at + timeout_seconds - time.time())
+            return await self._follow_run(
+                match.group(1), match.group(2), run_id, session_id, timeout_seconds, remaining=remaining
+            )
         result = self._result(data, run_id, session_id)
         return result if result["status"] in (EVENT_SUCCESS, EVENT_PAUSED) else None
 
     # --- Handling an event ---
 
-    async def _sender_refusal(self, source: Any, event: Any, event_id: str) -> Optional[str]:
+    async def _sender_refusal(self, source: Any, event: Any, row: Dict[str, Any], db: Any) -> Optional[str]:
         """Ask the source whether the sender may start a run; the reason when they may not.
 
-        Only an answer counts. A question that fails is asked again, with a longer wait each time.
+        Only an answer about the sender counts. A question that gets no answer is asked again, with
+        a longer wait each time, for at most ``sender_check_seconds`` from the first one.
 
         Raises:
-            Deferred: The source gave no answer. The event keeps its claim, so the events behind it
-                for the same key wait, and a later attempt asks again.
+            SenderCheckFailed: The question cannot be asked as configured, or it went unanswered
+                for the whole time allowed. The event fails.
+            Deferred: The source gave no answer yet. The event keeps its claim, so the events
+                behind it for the same key wait, and a later attempt asks again.
         """
+        event_id, claim = row["id"], row["claimed_by"]
         error: Optional[Exception] = None
         for attempt in range(max(1, self.sender_check_attempts)):
             if attempt:
                 await asyncio.sleep(self.sender_check_backoff * 2 ** (attempt - 1))
             try:
                 return await source.asender_refusal(event)
+            except SenderCheckFailed as exc:
+                raise SenderCheckFailed(f"the sender's access could not be checked: {exc}") from exc
             except Exception as exc:
                 error = exc
                 log_debug(f"Trigger event {event_id}: the sender's access could not be checked: {exc}")
+
+        stored = row.get("event") or {}
+        now = int(time.time())
+        since = stored.get(CHECK_SENDER_SINCE_KEY)
+        if not isinstance(since, (int, float)):
+            # The first question that went unanswered. It is kept on the event, so the asking ends.
+            since = now
+            marked = {**stored, CHECK_SENDER_SINCE_KEY: since}
+            if await acall_db(db, "update_trigger_event", event_id, held_by=claim, event=marked) is None:
+                raise ClaimLost()
+        if now - since >= self.sender_check_seconds:
+            raise SenderCheckFailed(
+                f"the sender's access could not be checked for {self.sender_check_seconds}s: {error}"
+            )
         raise Deferred(f"the sender's access could not be checked: {error}")
 
     async def execute_event(self, row: Dict[str, Any], db: Any, runtime: Any) -> Dict[str, Any]:
@@ -404,12 +434,21 @@ class TriggerExecutor(ScheduleExecutor):
         endpoint = build_run_endpoint(trigger["target_type"], trigger["target_id"])
         timeout_seconds = trigger.get("timeout_seconds") or self.timeout
 
+        max_attempts = max(1, int(trigger.get("max_retries") or 0) + 1)
+        retry_delay = trigger.get("retry_delay_seconds")
+        retry_delay = 60 if retry_delay is None else retry_delay
+
         # An earlier claim may have started a run for this event. It is read before anything else:
         # an event that already has its run is not checked, prepared or started a second time.
         result = await self._recorded_run(endpoint, row, timeout_seconds) if row.get("run_id") else None
-        attempt = 0
+        # A run this worker followed to its end was the attempt the event records.
+        attempt = int(row.get("attempt") or 0) if result is not None else 0
 
-        if result is None:
+        # Only a run known to have failed is tried again, and only as often as the trigger allows.
+        def retried(outcome: Dict[str, Any]) -> bool:
+            return outcome["status"] == EVENT_FAILED and outcome.get("resubmit") is not False and attempt < max_attempts
+
+        if result is None or retried(result):
             if row["kind"] not in (trigger.get("events") or []):
                 # The event only continues a conversation. Events for one key are handled in the
                 # order they arrived, so the one that opens the conversation is behind us by now:
@@ -428,7 +467,11 @@ class TriggerExecutor(ScheduleExecutor):
                     return await finish(EVENT_IGNORED, reason=reason)
 
             if stored.get(CHECK_SENDER_KEY):
-                refusal = await self._sender_refusal(source, event, event_id)
+                try:
+                    refusal = await self._sender_refusal(source, event, row, db)
+                except SenderCheckFailed as exc:
+                    # Nobody was refused: the question could not be answered. That is a failure.
+                    return await finish(EVENT_FAILED, error=str(exc))
                 if refusal:
                     return await finish(EVENT_IGNORED, reason=refusal)
 
@@ -482,10 +525,10 @@ class TriggerExecutor(ScheduleExecutor):
                     return True
                 return held is not None
 
-            max_attempts = max(1, int(trigger.get("max_retries") or 0) + 1)
-            retry_delay = trigger.get("retry_delay_seconds")
-            retry_delay = 60 if retry_delay is None else retry_delay
             while True:
+                if result is not None:
+                    log_debug(f"Trigger '{trigger['name']}': retrying event {event_id} in {retry_delay}s")
+                    await asyncio.sleep(retry_delay)
                 attempt += 1
                 # Only the worker that holds the event starts its run.
                 if await acall_db(db, "update_trigger_event", event_id, held_by=claim, attempt=attempt) is None:
@@ -501,11 +544,8 @@ class TriggerExecutor(ScheduleExecutor):
                     result = {"status": EVENT_FAILED, "error": str(exc)}
                 finally:
                     _on_accepted.reset(token)
-                # Only a run known to have failed is tried again.
-                if result["status"] != EVENT_FAILED or result.get("resubmit") is False or attempt >= max_attempts:
+                if not retried(result):
                     break
-                log_debug(f"Trigger '{trigger['name']}': retrying event {event_id} in {retry_delay}s")
-                await asyncio.sleep(retry_delay)
 
         recorded: Dict[str, Any] = {
             "status_code": result.get("status_code"),

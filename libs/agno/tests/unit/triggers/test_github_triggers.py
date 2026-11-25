@@ -16,6 +16,7 @@ from agno.db.schemas.triggers import (
     EVENT_SKIPPED,
     EVENT_SUCCESS,
     NOT_DECLARED_REASON,
+    UNNAMED_OS_ID,
 )
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
@@ -593,7 +594,7 @@ async def test_a_trigger_removed_from_code_stops_and_one_put_back_starts_again(m
 
     # A later version of the code declares neither.
     await adeclare_triggers(os.db, [])
-    trigger = await manager.aget_by_name("triage-issues")
+    trigger = await manager.aget_by_name("triage-issues", os_id=UNNAMED_OS_ID)
     schedule = (await schedules.alist())[0]
     assert trigger.enabled is False and trigger.disabled_reason == NOT_DECLARED_REASON
     assert schedule.enabled is False and schedule.disabled_reason == NOT_DECLARED_REASON
@@ -606,7 +607,7 @@ async def test_a_trigger_removed_from_code_stops_and_one_put_back_starts_again(m
 
     # Put back in code, both are enabled again and keep their rows.
     await adeclare_triggers(os.db, os.agent_os.triggers)
-    again = await manager.aget_by_name("triage-issues")
+    again = await manager.aget_by_name("triage-issues", os_id=UNNAMED_OS_ID)
     assert again.id == trigger.id and again.enabled is True and again.disabled_reason is None
     schedule_again = (await schedules.alist())[0]
     assert schedule_again.id == schedule.id and schedule_again.enabled is True
@@ -615,7 +616,7 @@ async def test_a_trigger_removed_from_code_stops_and_one_put_back_starts_again(m
     # One a person turned off stays off when the app starts.
     await manager.adisable(trigger.id, reason="paused for the release")
     await adeclare_triggers(os.db, os.agent_os.triggers)
-    paused = await manager.aget_by_name("triage-issues")
+    paused = await manager.aget_by_name("triage-issues", os_id=UNNAMED_OS_ID)
     assert paused.enabled is False and paused.disabled_reason == "paused for the release"
 
 
@@ -633,7 +634,7 @@ async def test_an_event_for_a_trigger_disabled_after_it_arrived_is_skipped(make_
 
 async def test_declaring_updates_a_stored_trigger_in_place(make_os):
     os = await make_os(triage)
-    before = await TriggerManager(os.db).aget_by_name("triage-issues")
+    before = await TriggerManager(os.db).aget_by_name("triage-issues", os_id=UNNAMED_OS_ID)
     assert before.managed_by == CODE_MANAGED and before.user_id is None
     assert before.filters == {"allow": "members"}
 
@@ -644,7 +645,7 @@ async def test_declaring_updates_a_stored_trigger_in_place(make_os):
         input="Triage it again.",
     )
     await adeclare_triggers(os.db, [changed])
-    after = await TriggerManager(os.db).aget_by_name("triage-issues")
+    after = await TriggerManager(os.db).aget_by_name("triage-issues", os_id=UNNAMED_OS_ID)
     assert after.id == before.id
     assert after.events == ["issues.opened", "issues.reopened"]
     assert after.filters == {"allow": "anyone"} and after.input == "Triage it again."
@@ -764,6 +765,50 @@ async def test_a_sender_whose_access_cannot_be_checked_is_not_ignored(make_os):
     assert opened["status"] == EVENT_SUCCESS and opened["error"] is None
     assert reply["status"] == EVENT_SUCCESS
     assert len(os.model.inputs) == 2
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_credentials_github_refuses_fail_the_event(make_os, status):
+    os = await make_os(triage_with_replies, credentials=Credentials())
+    os.github._http_transport, requests = failing_then("write", failures=1000, status=status)
+
+    await os.deliver(issue_payload(association="CONTRIBUTOR", sender="carol"))
+    await os.deliver(comment_payload(), event="issue_comment", delivery="d-2")
+    await os.run_events()
+
+    # GitHub answered, and the answer is about the credentials. Asking again would change nothing,
+    # so the event ends, as failed: nobody was refused, the lookup could not be made.
+    opened, reply = await os.events()
+    assert opened["status"] == EVENT_FAILED and opened["claimed_by"] is not None
+    assert opened["error"] == (
+        f"the sender's access could not be checked: GitHub refused the credentials ({status}) "
+        "for agno-agi/agno; check the GitHub App's permissions and its installation"
+    )
+    assert len(requests) == 1 and os.model.inputs == []
+    # The reply waited behind the issue, and has no conversation to continue.
+    assert reply["status"] == EVENT_IGNORED and "started none" in reply["reason"]
+
+
+async def test_a_lookup_that_fails_for_an_hour_fails_the_event(make_os):
+    os = await make_os(triage, credentials=Credentials())
+    os.github._http_transport, requests = failing_then("write", failures=1000)
+
+    await os.deliver(issue_payload(association="CONTRIBUTOR", sender="carol"))
+    await os.run_events()
+    (row,) = await os.events()
+    assert row["status"] == EVENT_RUNNING
+
+    # An hour after the first failed lookup GitHub still gives no answer.
+    stored = dict(row["event"])
+    stored["check_sender_since"] = stored["check_sender_since"] - 3601
+    await call(os.db, "update_trigger_event", row["id"], event=stored)
+    await age_claim(os.db, row["id"], 121)
+    await os.run_events()
+
+    (row,) = await os.events()
+    assert row["status"] == EVENT_FAILED
+    assert row["error"].startswith("the sender's access could not be checked for 3600s: ")
+    assert os.model.inputs == []
 
 
 async def test_a_trusted_sender_is_never_looked_up(make_os):

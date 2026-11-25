@@ -113,37 +113,54 @@ async def test_a_run_that_cannot_be_read_is_left_for_a_later_attempt():
     assert methods(requests) == ["GET"] * executor.read_attempts
 
 
-async def test_a_run_still_going_is_replaced_once_it_is_seen_to_stop():
-    executor, requests = executor_seeing(RUNNING, RUNNING, CANCELLED)
-
-    assert await executor._recorded_run(ENDPOINT, ROW, 3600) is None
-    assert methods(requests) == ["GET", "POST", "GET", "GET"]
-    assert str(requests[1].url) == f"{RUN_URL}/cancel?session_id=session-1"
-    assert requests[1].headers["authorization"] == "Bearer internal-token"
-
-
-async def test_a_run_that_ends_while_it_is_asked_to_stop_is_the_events_result():
-    executor, requests = executor_seeing(RUNNING, COMPLETED)
+async def test_a_run_still_going_is_followed_to_its_end():
+    executor, requests = executor_seeing(RUNNING, RUNNING, COMPLETED)
 
     result = await executor._recorded_run(ENDPOINT, ROW, 3600)
 
+    # It is read until it ends, and never asked to stop: its result is the event's result.
     assert result is not None and result["status"] == "success"
-    assert methods(requests) == ["GET", "POST", "GET"]
+    assert result["output"] == {"content": "done", "content_type": "str"}
+    assert methods(requests) == ["GET", "GET", "GET"]
 
 
-async def test_a_run_not_seen_to_stop_is_left_for_a_later_attempt():
-    executor, requests = executor_seeing(RUNNING)
+@pytest.mark.parametrize("ended, status", [("CANCELLED", "cancelled"), ("ERROR", "failed")])
+async def test_a_followed_run_that_ends_badly_is_the_events_result(ended, status):
+    executor, requests = executor_seeing(RUNNING, (200, {"status": ended}))
 
-    with pytest.raises(Deferred):
-        await executor._recorded_run(ENDPOINT, ROW, 3600)
-    assert methods(requests)[:2] == ["GET", "POST"]
+    result = await executor._recorded_run(ENDPOINT, ROW, 3600)
+
+    # This worker saw it end, so it is the attempt's own result: a failed one may be retried as
+    # the trigger allows, a cancelled one is not.
+    assert result is not None and result["status"] == status
+    assert result.get("resubmit") is not False
+    assert methods(requests) == ["GET", "GET"]
+
+
+async def test_a_run_still_going_is_asked_to_stop_only_when_its_timeout_has_passed():
+    started = int(time.time()) - 7200
+    executor, requests = executor_seeing(
+        (200, {"status": "RUNNING", "created_at": started}), (200, {"status": "RUNNING"}), CANCELLED
+    )
+
+    result = await executor._recorded_run(ENDPOINT, ROW, 3600)
+
+    # Its timeout passed before this worker found it. Seen to stop, it has failed and may be retried.
+    assert result is not None and result["status"] == "failed"
+    assert result["error"] == "Run run-1 was stopped after its timeout of 3600s"
+    assert result.get("resubmit") is not False
+    assert methods(requests)[:3] == ["GET", "GET", "POST"]
+    assert str(requests[2].url) == f"{RUN_URL}/cancel?session_id=session-1"
+    assert requests[2].headers["authorization"] == "Bearer internal-token"
 
 
 async def test_a_refused_cancel_is_not_taken_for_a_stopped_run():
-    executor, requests = executor_seeing(RUNNING, cancel_status=500)
+    started = int(time.time()) - 7200
+    executor, requests = executor_seeing((200, {"status": "RUNNING", "created_at": started}), cancel_status=500)
 
-    with pytest.raises(Deferred):
-        await executor._recorded_run(ENDPOINT, ROW, 3600)
+    result = await executor._recorded_run(ENDPOINT, ROW, 3600)
+
+    assert result is not None and result["status"] == "failed" and result["resubmit"] is False
 
 
 async def test_a_run_past_its_timeout_that_does_not_stop_fails_the_event_without_a_second_run():

@@ -347,3 +347,30 @@ async def test_events_can_be_listed_by_whether_they_started_a_run(db):
     rows, total = await call(db, "get_trigger_events", event_key="agno-agi/agno#7", started_run=False)
     assert total == 1 and rows[0]["id"] == declined["id"]
     assert (await call(db, "get_trigger_events", event_key="agno-agi/agno#7"))[1] == 2
+
+
+async def test_trigger_names_are_unique_within_one_agentos(db):
+    def named_triage(row_id, **fields):
+        return {**trigger_row(row_id, **fields), "name": "triage"}
+
+    await call(db, "create_trigger", named_triage("first", os_id="first-os"))
+    await call(db, "create_trigger", named_triage("second", os_id="second-os"))
+    await call(db, "create_trigger", named_triage("anyones"))
+    await call(db, "create_trigger", named_triage("alice", os_id="first-os", user_id="alice"))
+
+    # The name is looked up where the trigger belongs.
+    assert (await call(db, "get_trigger_by_name", "triage", os_id="first-os"))["id"] == "trg-first"
+    assert (await call(db, "get_trigger_by_name", "triage", os_id="second-os"))["id"] == "trg-second"
+    assert (await call(db, "get_trigger_by_name", "triage"))["id"] == "trg-anyones"
+    assert (await call(db, "get_trigger_by_name", "triage", user_id="alice", os_id="first-os"))["id"] == "trg-alice"
+    assert await call(db, "get_trigger_by_name", "triage", user_id="alice", os_id="second-os") is None
+
+    # A second one of the name in the same AgentOS, for the same owner, is refused.
+    for again in (
+        named_triage("first-again", os_id="first-os"),
+        named_triage("anyones-again"),
+        named_triage("alice-again", os_id="first-os", user_id="alice"),
+    ):
+        with pytest.raises(Exception):
+            await call(db, "create_trigger", again)
+    assert (await call(db, "get_triggers"))[1] == 4
