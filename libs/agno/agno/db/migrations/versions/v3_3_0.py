@@ -967,6 +967,35 @@ def _report_left(entries: List[Dict[str, Any]]) -> None:
     )
 
 
+def _over_the_write_limit(conn: Any, files: Any, folders: Dict[str, str]) -> List[str]:
+    """The paths that, once inside their folder, are longer than a write accepts.
+
+    A page written through the wiki API could be as deep as a path may be. Its folder's name now
+    comes first, so its stored path can be deeper. It is read and listed as it is.
+    """
+    from sqlalchemy import func, or_
+
+    from agno.company.filesystem import stored_path_fits
+    from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENTS
+
+    found: List[str] = []
+    for namespace, folder in folders.items():
+        prefix = f"{folder}/"
+        names = func.length(files.c.path) - func.length(func.replace(files.c.path, "/", "")) + 1
+        rows = conn.execute(
+            select(files.c.path).where(
+                files.c.namespace == namespace,
+                files.c.user_id == _SHARED,
+                or_(
+                    func.length(files.c.path) > MAX_PATH_CHARS - len(prefix),
+                    names > MAX_SEGMENTS - prefix.count("/"),
+                ),
+            )
+        ).all()
+        found.extend(f"{prefix}{row[0]}" for row in rows if not stored_path_fits(folder, row[0]))
+    return sorted(found)
+
+
 def _report_size(conn: Any, files: Any, db: Any) -> None:
     """Say so when the store holds more than it may. Before 3.3.0 each folder had a limit of its own."""
     from sqlalchemy import func
@@ -1002,9 +1031,17 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
         return False
     plan = _plan(sess, db, namespaces, owners)
     if plan.folders:
+        too_long = _over_the_write_limit(conn, backend.table, plan.folders)
         moved = _move(conn, backend.table, plan.folders, plan.defaults)
         log_info(f"Moved {moved} Company files into the Company file system")
         _report_size(conn, backend.table, db)
+        if too_long:
+            shown = ", ".join(too_long[:_REPORTED_PATHS])
+            more = f" and {len(too_long) - _REPORTED_PATHS} more" if len(too_long) > _REPORTED_PATHS else ""
+            log_warning(
+                f"{len(too_long)} Company files are now stored at a path longer than a write accepts: {shown}{more}. "
+                "They are read and listed as they are. To change one, move it to a shorter path."
+            )
     reported = (conn.engine.url.render_as_string(hide_password=True), tuple(sorted(plan.left)))
     if plan.left and reported not in _reported_left:
         _reported_left.add(reported)

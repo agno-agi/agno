@@ -25,10 +25,14 @@ def _invalid_path(original: object, reason: str) -> InvalidPathError:
     return InvalidPathError(f"invalid path {original!r}: {reason}. Use relative paths like notes/topic.md.")
 
 
-def normalize_path(path: str) -> str:
+def normalize_path(path: str, *, limits: bool = True) -> str:
     """Validate and canonicalize a file path (or namespace name) per the FileSystem grammar.
 
     Canonical form has no leading slash. Raises ``InvalidPathError`` on any violation.
+
+    The length limits are limits on what may be written. ``limits=False`` leaves them
+    out, for a path that names a file to read, list or remove: a file that is stored
+    is never refused for the length of its path.
     """
     original = path
     if not isinstance(path, str):
@@ -47,17 +51,27 @@ def normalize_path(path: str) -> str:
         raise _invalid_path(original, "trailing slashes are not allowed, paths address files")
     if not value:
         raise _invalid_path(original, "path is empty")
-    if len(value) > MAX_PATH_CHARS:
+    if limits and len(value) > MAX_PATH_CHARS:
         raise _invalid_path(original, f"path is longer than {MAX_PATH_CHARS} characters")
     segments = value.split("/")
-    if len(segments) > MAX_SEGMENTS:
+    if limits and len(segments) > MAX_SEGMENTS:
         raise _invalid_path(original, f"path has more than {MAX_SEGMENTS} segments")
     for segment in segments:
         if segment in (".", ".."):
             raise _invalid_path(original, "segments '.' and '..' are not allowed")
-        if len(segment) > MAX_SEGMENT_CHARS:
+        if limits and len(segment) > MAX_SEGMENT_CHARS:
             raise _invalid_path(original, f"a segment is longer than {MAX_SEGMENT_CHARS} characters")
     return value
+
+
+def exceeds_write_limits(path: str) -> bool:
+    """Whether a canonical path is longer than a write accepts."""
+    segments = path.split("/")
+    return (
+        len(path) > MAX_PATH_CHARS
+        or len(segments) > MAX_SEGMENTS
+        or any(len(segment) > MAX_SEGMENT_CHARS for segment in segments)
+    )
 
 
 def parse_namespace_template(name: str) -> Tuple[str, ...]:
@@ -192,13 +206,16 @@ def normalize_template_value(placeholder: str, value: object) -> str:
     return _quote_namespace_value(normalized)
 
 
-def normalize_directory(directory: str) -> str:
-    """Validate a directory parameter. ``""`` and ``"."`` both mean the namespace root."""
+def normalize_directory(directory: str, *, limits: bool = False) -> str:
+    """Validate a directory parameter. ``""`` and ``"."`` both mean the namespace root.
+
+    A directory is only ever read, so its length is not limited unless ``limits`` is set.
+    """
     if not isinstance(directory, str):
         raise _invalid_path(directory, "directory must be a string")
     if directory in ("", "."):
         return ""
-    return normalize_path(directory)
+    return normalize_path(directory, limits=limits)
 
 
 def normalize_line(line: str) -> str:
