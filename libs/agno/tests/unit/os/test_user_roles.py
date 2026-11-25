@@ -232,6 +232,62 @@ def test_the_default_role_also_decides_for_a_user_added_before_it(tmp_path):
     assert authz.roles_of("old@example.com") == []
 
 
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_a_user_an_admin_creates_gets_the_default_role(tmp_path, method):
+    member, platform = _roles()
+    authz = _verified(roles=[member, platform])
+    client = TestClient(_os(_db(tmp_path), authz, user_directory=UserDirectory(default_role=member)).get_app())
+
+    def save(user_id, **fields):
+        if method == "post":
+            return client.post("/users", json={"id": user_id, **fields}, headers=_admin())
+        return client.patch(f"/users/{user_id}", json=fields, headers=_admin())
+
+    created = save("alice@example.com", name="Alice")
+    assert created.status_code == 200, created.text
+    assert authz.roles_of("alice@example.com") == ["member"]
+    # A user who exists keeps the role they hold when an admin saves them again
+    authz.set_role("alice@example.com", "platform")
+    assert save("alice@example.com", name="Alice A").status_code == 200
+    assert authz.roles_of("alice@example.com") == ["platform"]
+    # An id that already holds a role keeps it when its user is created
+    authz.assign("carol@example.com", "platform")
+    assert save("carol@example.com", name="Carol").status_code == 200
+    assert authz.roles_of("carol@example.com") == ["platform"]
+
+
+def test_a_user_an_admin_creates_gets_no_role_without_a_default(tmp_path):
+    member, platform = _roles()
+    authz = _verified(roles=[member, platform])
+    client = TestClient(_os(_db(tmp_path), authz, user_directory=True).get_app())
+    assert client.post("/users", json={"id": "alice@example.com"}, headers=_admin()).status_code == 200
+    assert authz.roles_of("alice@example.com") == []
+
+
+def test_the_scope_catalog_names_each_built_in_component(tmp_path):
+    from agno.registry._reserved import MANAGER_RESOURCES
+
+    client = TestClient(_os(_db(tmp_path), _verified(roles=list(_roles())), user_directory=True).get_app())
+    response = client.get("/authz/scopes", headers=_admin())
+    assert response.status_code == 200, response.text
+    catalog = {item["raw"]: item for item in response.json()}
+    assert len(MANAGER_RESOURCES) == 3
+    for scope in (
+        "teams:superagent:read",
+        "teams:superagent:run",
+        "agents:platform-builder:read",
+        "agents:platform-builder:run",
+        "agents:miniagent:read",
+        "agents:miniagent:run",
+    ):
+        assert scope in catalog, scope
+    # Parsed for the grid: the component is the sub-namespace of its type
+    item = catalog["teams:superagent:run"]
+    assert (item["namespace"], item["sub_namespace"], item["permission"]) == ("teams", "superagent", "run")
+    # Every scope of the PLATFORM list that names a built-in is in the catalog
+    assert {scope for scope in PLATFORM if scope.count(":") == 2} <= set(catalog)
+
+
 def test_two_different_defaults_fail_at_startup(tmp_path):
     member, platform = _roles()
     authz = _verified(roles=[member, platform])
