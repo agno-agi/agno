@@ -10,7 +10,7 @@ from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.fs.errors import InvalidPathError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
-from agno.os.routers.company.schema import CompanyFileReadResponse, WikiPageResponse
+from agno.os.routers.company.schema import MIGRATION_REQUIRED_RESPONSE, CompanyFileReadResponse, WikiPageResponse
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
@@ -19,7 +19,12 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
 
     Without a Company database, notes/ is read from the same store in the AgentOS database.
     """
-    router = APIRouter(prefix="/company", tags=["Company files"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Company files"],
+        dependencies=[Depends(get_scoped_user_id)],
+    )
     auth = get_authentication_dependency(agent_os.settings)
     db = agent_os._company_db
     notes_db = db if db is not None else agent_os.db

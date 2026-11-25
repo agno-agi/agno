@@ -14,19 +14,21 @@ database. Until the 3.3.0 migration has moved them the store refuses every use, 
 names the migration: files left where they were would look like an empty store.
 """
 
-import os
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import lru_cache
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from weakref import WeakKeyDictionary, WeakSet
 
 from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem
+from agno.fs._place import database_place
+from agno.fs._reserved import reserve_namespace
 from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS, normalize_path
 from agno.fs.base import BaseFS, partition_kwargs
 from agno.fs.errors import FileSystemError, InvalidPathError
 from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
+from agno.utils.log import log_warning
 
 COMPANY_NAMESPACE = "company"
 # The size limit of the whole store when CompanyConfig sets none.
@@ -34,39 +36,42 @@ COMPANY_FILESYSTEM_BYTES = 1_000_000_000
 
 # The limit set for a database, by where the database is, so every handle on it has the same limit.
 _limits: Dict[tuple, int] = {}
-# A database kept in memory belongs to the handle that opened it.
-_memory_limits: "WeakKeyDictionary[Any, int]" = WeakKeyDictionary()
+# A database whose place is not known for certain, or that is kept in memory, belongs to its engine.
+_engine_limits: "WeakKeyDictionary[Any, int]" = WeakKeyDictionary()
 
 
-def _where(db: Any) -> Optional[tuple]:
-    """Where a database is, read from its URL: the same for a path written two ways. None when it is in memory."""
+def _limit_entry(db: Any) -> Tuple[Any, Any]:
+    """Where the limit of a database is kept, and under which key."""
     engine = getattr(db, "db_engine", None)
-    url = getattr(getattr(engine, "sync_engine", engine), "url", None)
-    if url is None:
-        return None
-    database = url.database
-    if url.get_backend_name() == "sqlite":
-        if not database or database == ":memory:":
-            return None
-        database = os.path.realpath(database)
-    return (url.get_backend_name(), url.host or url.query.get("host"), url.port, database)
+    engine = getattr(engine, "sync_engine", engine)
+    if engine is None:
+        return _engine_limits, db
+    place = database_place(engine)
+    return (_engine_limits, engine) if place is None else (_limits, place)
 
 
 def set_company_filesystem_bytes(db: Any, max_bytes: int) -> None:
-    """Set the size limit of the Company file system in this database, for every handle on it."""
-    where = _where(db)
-    if where is None:
-        _memory_limits[db] = max_bytes
-    else:
-        _limits[where] = max_bytes
+    """Set the size limit of the Company file system in this database, for every handle on it.
+
+    The default does not replace a limit that was set. Another limit replaces it, and says so.
+    """
+    limits, key = _limit_entry(db)
+    current = limits.get(key)
+    if current is not None and current != max_bytes:
+        if max_bytes == COMPANY_FILESYSTEM_BYTES:
+            return
+        if current != COMPANY_FILESYSTEM_BYTES:
+            log_warning(
+                f"The size limit of the Company file system changes from {current} to {max_bytes} bytes: two "
+                "CompanyConfig on one database set max_filesystem_bytes to different values."
+            )
+    limits[key] = max_bytes
 
 
 def company_filesystem_bytes(db: Any) -> int:
     """The size limit of the Company file system in this database."""
-    where = _where(db)
-    if where is None:
-        return _memory_limits.get(db, COMPANY_FILESYSTEM_BYTES)
-    return _limits.get(where, COMPANY_FILESYSTEM_BYTES)
+    limits, key = _limit_entry(db)
+    return limits.get(key, COMPANY_FILESYSTEM_BYTES)
 
 
 # Stand in a folder name as they are. Every other byte of an id is escaped, "%" included.
@@ -91,6 +96,12 @@ def folder_name(record_id: str) -> str:
 
 # Databases whose file table holds no Company file that waits to be moved. Files do not move back.
 _moved: "WeakSet[Any]" = WeakSet()
+# The folders whose files were left where a version before 3.3.0 kept them, with the namespace, by database.
+_unsettled: "WeakKeyDictionary[Any, Dict[str, str]]" = WeakKeyDictionary()
+
+
+class CompanyFilesUnsettledError(MigrationRequiredError):
+    """The files of this Goal or Task were left in a namespace that several records could own."""
 
 
 def _files_wait_error(table_name: str) -> MigrationRequiredError:
@@ -106,18 +117,34 @@ def _files_wait_error(table_name: str) -> MigrationRequiredError:
     )
 
 
+def _unsettled_error(table_name: str, folder: str, namespace: str) -> CompanyFilesUnsettledError:
+    return CompanyFilesUnsettledError(
+        table_name=table_name,
+        message=(
+            f"The files of {folder}/ are still in {namespace}, which a version of Agno before 3.3.0 used for several "
+            "Goals or Tasks at once, and an empty folder is not served in their place. `company_files_left(db)` "
+            f"lists them. Name the one that keeps them: `move_company_files(db, owners={{{namespace!r}: '<id>'}})` "
+            "(import both from `agno.db.migrations.versions.v3_3_0`; use the `a` variants with an asynchronous "
+            "database). The others then start with empty folders."
+        ),
+    )
+
+
 def _require_files_moved(backend: Any) -> None:
-    """Refuse to use the store while the migration still has a Company file to move."""
-    db = backend.db
-    if db in _moved:
+    """Refuse the store while a Company file waits to be moved, and a folder while its owner is not settled."""
+    db, folder = backend.db, backend.company_folder
+    if db in _moved and folder not in _unsettled.get(db, {}):
         return
-    from agno.db.migrations.versions.v3_3_0 import _files_wait
+    from agno.db.migrations.versions.v3_3_0 import _files_state
 
     with backend._connection() as conn:
-        waiting = _files_wait(conn, db)
+        waiting, unsettled = _files_state(conn, db)
     if waiting:
         raise _files_wait_error(backend.table.fullname)
     _moved.add(db)
+    _unsettled[db] = unsettled
+    if folder in unsettled:
+        raise _unsettled_error(backend.table.fullname, folder, unsettled[folder])
 
 
 @lru_cache(maxsize=None)
@@ -126,6 +153,10 @@ def _store_backend(base: Any) -> Any:
 
     class CompanyStore(base):  # type: ignore[misc, valid-type]
         """Every operation first makes sure the table is there. Here it also makes sure no file waits."""
+
+        owns_reserved_namespace = True
+        # The folder this backend was opened for, or None for the whole store.
+        company_folder: Optional[str] = None
 
         def _ensure_table(self) -> None:
             super()._ensure_table()
@@ -217,6 +248,15 @@ def _settle_notes(company_db: Any, waiting: bool) -> None:
     _notes_moved.add(company_db)
 
 
+def reserve_company_namespace(db: Any) -> None:
+    """Keep the Company namespace of this database from the filesystems agents hold."""
+    try:
+        reserve_namespace(company_filesystem(db).backend, COMPANY_NAMESPACE)
+    except NotImplementedError:
+        # This database holds no files.
+        return
+
+
 def company_folder(db: Any, folder: str) -> FileSystem:
     """One folder of the Company file system, as a file system of its own.
 
@@ -225,6 +265,10 @@ def company_folder(db: Any, folder: str) -> FileSystem:
     limit of the whole store.
     """
     whole = company_filesystem(db)
+    whole.backend.company_folder = folder  # type: ignore[attr-defined]
+    if folder != "notes":
+        # Without Company the store holds Super Agent's notes alone, and the namespace is not kept for it.
+        reserve_namespace(whole.backend, COMPANY_NAMESPACE)
     return FileSystem(
         backend=_Folder(whole.backend, folder),
         namespace=COMPANY_NAMESPACE,

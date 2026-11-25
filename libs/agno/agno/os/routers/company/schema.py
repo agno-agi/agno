@@ -1,11 +1,30 @@
 """Goal request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.os.schema import InternalServerErrorResponse
 from agno.registry._reserved import MINI_AGENT_ID
+
+# Every Company route reads the Company tables, which a database from agno 3.2 must migrate first.
+MIGRATION_REQUIRED_RESPONSE: Dict[Union[int, str], Dict[str, Any]] = {
+    500: {
+        "description": "Internal server error, or the database must be migrated first (migration_required_error)",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Table agno_company_products was written by an older version of Agno and must be "
+                    "renamed to agno_company_goals. Apply the pending migrations.",
+                    "error_id": "migration_required_error",
+                    "error_type": "migration_required_error",
+                }
+            }
+        },
+        "model": InternalServerErrorResponse,
+    }
+}
 
 
 def refuse_product_id(request: Request) -> None:

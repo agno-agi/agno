@@ -603,8 +603,13 @@ class AgentOS:
         self._unmigrated_dbs: Set[int] = set()
         self._company_start_pending = False
         if company is not None and self._company_db is not None:
-            from agno.company.filesystem import set_company_filesystem_bytes, set_company_notes_source
+            from agno.company.filesystem import (
+                reserve_company_namespace,
+                set_company_filesystem_bytes,
+                set_company_notes_source,
+            )
 
+            reserve_company_namespace(self._company_db)
             set_company_filesystem_bytes(self._company_db, company.max_filesystem_bytes)
             if db is not None and db is not self._company_db:
                 # Before 3.3.0 notes were in the AgentOS database: notes/ is refused while any is still there.
@@ -3149,18 +3154,21 @@ class AgentOS:
     async def _move_company_notes(self) -> None:
         """Move notes from the AgentOS database into a Company database that is kept apart from it.
 
-        Before 3.3.0 notes were stored in the AgentOS database. Runs after both databases are migrated.
-        AgentOS starts whatever the outcome: where the notes could not be moved, notes/ is refused at
-        first use with the call that moves them.
+        Before 3.3.0 notes were stored in the AgentOS database. Runs after both databases are migrated,
+        as AgentOS starts or by a migrate endpoint. AgentOS starts whatever the outcome: where the notes
+        could not be moved, notes/ is refused at first use with the call that moves them.
         """
         if self._company_db is None or self.db is None or self._company_db is self.db:
             return
         if id(self.db) in self._unmigrated_dbs or id(self._company_db) in self._unmigrated_dbs:
             return
+        from agno.company.filesystem import arequire_company_notes_moved
         from agno.db.migrations.versions.v3_3_0 import amove_company_notes
 
         try:
             moved = await amove_company_notes(self.db, self._company_db)
+            # A use of notes/ before the move recorded that they wait.
+            await arequire_company_notes_moved(self._company_db)
         except Exception as exc:
             log_error(
                 f"Notes were not moved from the AgentOS database to the Company database: {exc} "
@@ -3171,6 +3179,22 @@ class AgentOS:
             return
         if moved:
             log_info(f"Moved {moved} notes from the AgentOS database to the Company database")
+
+    async def _finish_company_migration(self) -> None:
+        """Move the notes after a migrate endpoint ran, once neither of Company's databases waits for it."""
+        if self._company_db is None or self.db is None or self._company_db is self.db:
+            return
+        from agno.db.migrations.startup import migration_pending
+
+        try:
+            for db in (self.db, self._company_db):
+                if await migration_pending(db):  # type: ignore[arg-type]
+                    return
+                self._unmigrated_dbs.discard(id(db))
+        except Exception as exc:
+            log_error(f"Notes were not moved after the migration: {type(exc).__name__}: {exc}")
+            return
+        await self._move_company_notes()
 
     def _initialize_sync_databases(self) -> None:
         """Initialize sync databases."""

@@ -11,6 +11,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
     ProjectCreate,
     ProjectResponse,
     ProjectStatus,
@@ -25,7 +26,10 @@ from agno.os.settings import AgnoAPISettings
 def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
     """Build Project routes using native async storage or off-thread sync calls."""
     router = APIRouter(
-        prefix="/company", tags=["Projects"], dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)]
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Projects"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
     )
     auth_dependency = get_authentication_dependency(settings)
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db is not None else None

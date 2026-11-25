@@ -10,6 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
     TaskCreate,
     TaskResponse,
     TaskStatus,
@@ -28,7 +29,10 @@ def get_tasks_router(
 ) -> APIRouter:
     """Build Task routes using native async storage or off-thread sync calls."""
     router = APIRouter(
-        prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)]
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Tasks"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
     )
     auth_dependency = get_authentication_dependency(settings)
     manager = (
