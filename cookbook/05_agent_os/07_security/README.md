@@ -19,6 +19,7 @@ the documented construction smoke.
 |---|---|
 | `basic_scopes.py` | HS256 JWT authentication, default scopes, admin bypass, and real audience rejection |
 | `asymmetric_keys.py` | RS256 signing and the production private-key/public-key boundary |
+| `multiple_verification_keys.py` | Several comma-separated public keys in `JWT_VERIFICATION_KEY`, so one AgentOS accepts tokens from several issuers |
 | `per_resource_scopes.py` | Wildcard and per-id scopes for agents, teams, and workflows |
 | `custom_scope_mappings.py` | Add or override route-to-scope mappings |
 | `excluded_routes.py` | Mark custom routes as public using fnmatch patterns |
