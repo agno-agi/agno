@@ -213,10 +213,6 @@ def test_a_stored_policy_scope_reads_product_ids():
     [
         (lambda path: Goal(name="AgentOS", purpose="old", objective="new"), "Give objective or purpose, not both"),
         (
-            lambda path: CompanyConfig(goals=[Goal(name="A")], products=[Goal(name="B")]),
-            "Give goals or products, not both",
-        ),
-        (
             lambda path: CompanyDeclarations.model_validate({"goals": [{"name": "A"}], "products": [{"name": "B"}]}),
             "Give goals or products, not both",
         ),
@@ -228,7 +224,6 @@ def test_a_stored_policy_scope_reads_product_ids():
     ],
     ids=[
         "goal",
-        "company-config",
         "declarations",
         "acceptance-scope",
         "sqlite",
@@ -1027,3 +1022,24 @@ def test_the_component_api_keeps_a_3_2_0_component_on_the_default_table(tmp_path
     assert "products_table" not in config["db"]
     # A component that names no Goals table takes the one the OS db uses.
     assert _resolve_db_in_config({"db": {"id": "os-db"}}, db)["db"]["goals_table"] == "my_goals"
+
+
+# ------------------------------------------------- one config derived from another
+
+
+def test_replace_with_products_derives_a_config_that_has_goals():
+    first, second = Goal(name="Docs"), Goal(name="Website")
+    config = CompanyConfig(goals=[first], name="Acme")
+
+    derived = replace(config, products=[second])
+
+    assert derived.goals == [second] and derived.products == [second]
+    assert derived.name == "Acme"
+    assert config.goals == [first]
+    assert replace(CompanyConfig(products=[first]), products=[second]).goals == [second]
+    assert replace(config, products=[]).goals == []
+    assert replace(config, name="Other").goals == [first]
+    assert replace(config, goals=[second]).goals == [second]
+    # replace passes the copied goals with the new products, as a caller that gives both does. The
+    # constructor cannot tell the two apart, so it uses products for both.
+    assert CompanyConfig(goals=[first], products=[second]).goals == [second]

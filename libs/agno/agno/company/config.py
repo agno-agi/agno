@@ -33,9 +33,8 @@ class CompanyConfig:
         description: Optional[str] = None,
         products: Optional[List["Goal"]] = None,
     ) -> None:
-        # products is the 3.2.0 name of goals.
-        if products is not None and goals:
-            raise ValueError("Give goals or products, not both")
+        # products is the 3.2.0 name of goals. dataclasses.replace(config, products=...) passes the goals
+        # of the config it copies along with the new products, so products is used when both are given.
         self.db = db
         self.model = model
         self.goals = products if products is not None else (goals if goals is not None else [])
