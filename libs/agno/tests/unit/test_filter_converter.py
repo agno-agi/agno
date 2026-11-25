@@ -15,6 +15,7 @@ from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 from sqlalchemy.types import DateTime, Integer
 
 from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+from agno.filters import EQ, NEQ, NOT
 
 
 @pytest.fixture
@@ -548,6 +549,11 @@ class TestErrorHandling:
                 test_table,
             )
 
+    @pytest.mark.parametrize("op", ["GT", "GTE", "LT", "LTE", "CONTAINS", "STARTSWITH"])
+    def test_non_equality_operator_rejects_null(self, test_table, op):
+        with pytest.raises(ValueError, match="requires 'key' and 'value'"):
+            filter_expr_to_sqlalchemy({"op": op, "key": "name", "value": None}, test_table)
+
     def test_eq_missing_value(self, test_table):
         """Test EQ without value raises ValueError."""
         with pytest.raises(ValueError, match="requires 'key' and 'value'"):
@@ -791,6 +797,23 @@ class TestSQLWithData:
             )
             conn.commit()
         return engine, test_table
+
+    @pytest.mark.parametrize(
+        ("expression", "expected_ids"),
+        [
+            (EQ("team_id", None), ["t1", "t3"]),
+            (NEQ("team_id", None), ["t2"]),
+            (NOT(EQ("team_id", None)), ["t2"]),
+            (EQ("created_at", None), []),
+        ],
+    )
+    def test_null_equality_filters_execute(self, populated_table, expression, expected_ids):
+        """Missing component associations can be queried through serialized filters."""
+        engine, table = populated_table
+        clause = filter_expr_to_sqlalchemy(expression.to_dict(), table, allowed_columns=TRACE_COLUMNS)
+        with engine.connect() as conn:
+            ids = conn.execute(select(table.c.trace_id).where(clause).order_by(table.c.trace_id)).scalars().all()
+        assert ids == expected_ids
 
     def test_eq_filters_correctly(self, populated_table):
         """Test EQ returns only matching rows."""
