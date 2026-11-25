@@ -18,6 +18,7 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.fs import FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.session import TeamSession
 from agno.tools.company_files import CompanyFileTools
 from tests.unit.os.test_company_file_tree import call, pages, person, records, routine_run, task_run, tree
 from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
@@ -75,6 +76,21 @@ def test_every_file_is_stored_at_its_tree_path_in_one_namespace(system, use_asyn
     assert served.status_code == 200 and served.json()["content"] == "Report"
     assert system.client.get("/company/notes/ideas.md", headers=headers()).json()["content"] == "A note"
     assert system.client.get("/company/wiki/people.md", headers=headers()).json()["content"] == "Ada\n"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_path_written_on_3_2_0_under_products_names_the_goal_folder(system, use_async):
+    ids = records(system)
+    files = tree(system.os)
+    page = f"goals/{ids['goal']}/research.md"
+    call(files, "write_company_file", use_async=use_async, path=page, content="Research", expected_version=0)
+
+    # A page, a brief or a note written on 3.2.0 names the folder as that version did.
+    for old in (f"products/{ids['goal']}/research.md", f"company/products/{ids['goal']}/research.md"):
+        read = call(files, "read_company_file", use_async=use_async, path=old)
+        assert (read["path"], read["content"]) == (page, "Research")
+    listed = call(files, "list_company_files", use_async=use_async, folder=f"products/{ids['goal']}")
+    assert "research.md" in [entry["path"].rsplit("/", 1)[-1] for entry in listed["files"]]
 
 
 def test_without_company_the_same_store_in_the_agentos_database_holds_notes_alone(tmp_path):
@@ -172,10 +188,10 @@ def test_agentos_starts_with_files_waiting_and_company_refuses_them_until_they_m
     company_db = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
     if two_databases:
         os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
-        agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+        agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), auto_provision_dbs=False, telemetry=False)
     else:
         os_db = company_db
-        agent_os = AgentOS(db=company_db, company=CompanyConfig(), telemetry=False)
+        agent_os = AgentOS(db=company_db, company=CompanyConfig(), auto_provision_dbs=False, telemetry=False)
     urls = {
         "/company/wiki/brief.md": "# Company\n\nWe ship weekly.\n",
         f"/company/goals/{ids['goal']}/wiki/research/notes.md": "three",
@@ -183,7 +199,8 @@ def test_agentos_starts_with_files_waiting_and_company_refuses_them_until_they_m
         "/company/notes/ideas.md": "A better note",
     }
 
-    # AgentOS starts. The Company file system serves no file while files wait where 3.2.0 kept them.
+    # With provisioning off the start migrates nothing. AgentOS starts, and the Company file system
+    # serves no file while files wait where 3.2.0 kept them.
     with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
         for url in urls:
             message = _refused(client.get(url))
@@ -223,6 +240,7 @@ def test_super_agent_without_company_does_not_read_or_write_notes_past_the_ones_
     reader = SqliteDb(db_file=db_file)
     # An AgentOS without Company on 3.2.0: Super Agent's notes, where that version kept them.
     FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note from 3.2.0")
+    reader.upsert_session(TeamSession(session_id="chat", team_id="superagent", created_at=1))
     # Super Agent needs a synchronous AgentOS database. Its tools are called both ways.
     db = SqliteDb(db_file=db_file)
     agent_os = AgentOS(db=db, manager=OSManager(model=ScriptedModel()), telemetry=False)
@@ -418,7 +436,7 @@ def test_agentos_serves_notes_when_none_is_left_behind(tmp_path):
         db.close()
 
 
-def test_the_check_for_waiting_files_runs_at_first_use_and_stops_once_nothing_waits(tmp_path):
+def test_the_check_for_waiting_files_runs_at_the_start_and_first_use_and_stops_once_nothing_waits(tmp_path):
     import logging
 
     from fastapi.testclient import TestClient
@@ -445,8 +463,8 @@ def test_the_check_for_waiting_files_runs_at_first_use_and_stops_once_nothing_wa
     level = logger.level
     try:
         with TestClient(agent_os.get_app()) as client:
-            # Starting AgentOS does not look at the file table for files that wait.
-            assert looked_for_waiting_files(seen) == []
+            # Starting AgentOS looks once: an older version can write a file after the tables are stamped.
+            assert looked_for_waiting_files(seen) == ["db"]
             seen.clear()
             logger.addHandler(handler)
             logger.setLevel(logging.DEBUG)

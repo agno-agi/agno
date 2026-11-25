@@ -15,6 +15,7 @@ from agno.company.filesystem import company_filesystem
 from agno.db.migrations.manager import MigrationManager
 from agno.fs import FileSystem
 from agno.os import AgentOS, CompanyConfig
+from agno.session import TeamSession
 from tests.unit.db.test_v3_3_0_company_goals_migration import (  # noqa: F401
     BACKLOG_TASK,
     GOAL,
@@ -196,6 +197,7 @@ async def test_a_database_with_notes_and_no_company_tables_gets_its_notes_moved(
     notes.write("ideas.md", "A note\n")
     notes.write("ideas.md", "A better note\n")
     FileSystem(reader, namespace="default", user_scoped=False).write("keep.md", "An agent's own file\n")
+    reader.upsert_session(TeamSession(session_id="chat", team_id="superagent", created_at=1))
     before = _rows(reader)
 
     await MigrationManager(database.db()).up()

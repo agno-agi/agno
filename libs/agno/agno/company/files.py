@@ -89,8 +89,11 @@ def _locate(path: str, *, folder: bool = False) -> _Location:
         path = path[:-1]
     value = normalize_directory(path) if folder else normalize_path(path)
     segments = value.split("/") if value else []
-    if segments[:1] == ["company"] and (len(segments) == 1 or segments[1] in AREAS):
+    if segments[:1] == ["company"] and (len(segments) == 1 or segments[1] in (*AREAS, "products")):
         segments = segments[1:]
+    if segments[:1] == ["products"]:
+        # The name of goals/ before 3.3.0: pages and briefs written then still name it.
+        segments[0] = "goals"
     if not segments:
         if folder:
             return _Location("")

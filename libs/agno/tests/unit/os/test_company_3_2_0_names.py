@@ -946,9 +946,15 @@ def test_company_config_init_follows_its_fields():
 
     fields = dataclasses.fields(CompanyConfig)
     parameters = inspect.signature(CompanyConfig.__init__).parameters
-    # Every field, in the order of the fields, then the one 3.2.0 name.
-    assert [name for name in parameters if name != "self"] == [field.name for field in fields] + ["products"]
+    # Every field, in the order of the fields. The one 3.2.0 name comes after the fields that take a
+    # value by position, and a field added since is given by name, so no value changes its position.
+    by_name = ["max_filesystem_bytes"]
+    by_position = [field.name for field in fields if field.name not in by_name] + ["products"]
+    assert [name for name in parameters if name != "self"] == by_position + by_name
+    assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in by_name)
     assert parameters["products"].default is None
+    docs = [Goal(name="Docs")]
+    assert CompanyConfig(None, None, None, None, 30, "0 * * * *", "Company", None, docs).goals == docs
     built = CompanyConfig()
     for field in fields:
         default = parameters[field.name].default

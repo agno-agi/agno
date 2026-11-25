@@ -34,8 +34,9 @@ class CompanyConfig:
         cron_expr: str = "0 * * * *",
         name: str = "Company",
         description: Optional[str] = None,
-        max_filesystem_bytes: int = COMPANY_FILESYSTEM_BYTES,
         products: Optional[List["Goal"]] = None,
+        *,
+        max_filesystem_bytes: int = COMPANY_FILESYSTEM_BYTES,
     ) -> None:
         # products is the 3.2.0 name of goals. dataclasses.replace(config, products=...) passes the goals
         # of the config it copies along with the new products, so products is used when both are given.

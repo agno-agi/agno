@@ -144,6 +144,18 @@ def in_store(db):
     return FileSystem(db, namespace="company", user_scoped=False)
 
 
+def used_by_company(reader) -> None:
+    """A Company table, as Company leaves one in a database it worked on."""
+    reader._get_table("goals", create_table_if_not_found=True)
+
+
+def used_by_super_agent(reader) -> None:
+    """A session of Super Agent, as a chat with it leaves one in the AgentOS database."""
+    from agno.session import TeamSession
+
+    reader.upsert_session(TeamSession(session_id=uuid4().hex, team_id="superagent", created_at=1))
+
+
 def rows(reader) -> dict:
     """Every row of the file table: (namespace, path) -> (content, version, created_at, updated_at, size)."""
     from sqlalchemy import inspect, select
@@ -302,6 +314,36 @@ def test_a_default_page_from_an_early_start_gives_way_to_the_page_that_moves_in(
     assert not [key for key in after if key[0] in ("company/wiki", "company/notes")]
 
 
+def test_a_default_page_an_older_instance_wrote_after_the_move_does_not_stop_the_next_run(databases):
+    db, reader = databases.new()
+    ids = old_layout(reader)
+    assert databases.run(move_company_files, amove_company_files, db) is True
+    moved = rows(reader)
+    assert moved[("company", "wiki/brief.md")][:2] == ("# Company\n\nWe ship weekly.\n", 2)
+    # An instance still on 3.2.0 reads a wiki it finds empty, and writes the default pages where it keeps them.
+    goal = CompanyManager(reader).get(ids["goal"])
+    for namespace, record in (("company/wiki", None), (f"company/products/{ids['goal']}/wiki", goal)):
+        for path, content in _defaults(record).items():
+            FileSystem(reader, namespace=namespace, user_scoped=False).write(path, content)
+
+    databases.run(move_company_files, amove_company_files, db)
+
+    after = rows(reader)
+    # The edited pages stay as they were, and the default pages written over them are gone.
+    assert after[("company", "wiki/brief.md")] == moved[("company", "wiki/brief.md")]
+    goal_brief = ("company", f"goals/{ids['goal']}/brief.md")
+    assert after[goal_brief] == moved[goal_brief]
+    # A default page with no page at its new path moves in.
+    assert after[("company", "wiki/status.md")][:2] == (_defaults(None)["status.md"], 1)
+    assert not [key for key in after if key[0] in ("company/wiki", f"company/products/{ids['goal']}/wiki")]
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+
+    # A page an older instance edited is not a default page: it still stops the move.
+    FileSystem(reader, namespace="company/wiki", user_scoped=False).write("brief.md", "Edited on 3.2.0")
+    with pytest.raises(CompanyFilesMigrationError, match="wiki/brief.md"):
+        databases.run(move_company_files, amove_company_files, db)
+
+
 def test_a_different_file_already_at_the_new_path_stops_the_move(databases):
     db, reader = databases.new()
     ids = old_layout(reader)
@@ -337,6 +379,36 @@ def test_a_database_with_no_file_table_is_left_without_one(databases):
     assert not inspect(backend.db_engine).has_table(backend.table_name, schema=backend.db_schema)
 
 
+def test_a_database_that_shows_no_use_of_company_or_super_agent_keeps_its_files(databases):
+    from agno.db.migrations.manager import MigrationManager
+
+    db, reader = databases.new()
+    # An agent's own shared stores, named as Company named its namespaces before 3.3.0.
+    FileSystem(reader, namespace="company/wiki", user_scoped=False).write("page.md", "An agent's page")
+    FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "An agent's note")
+    FileSystem(reader, namespace="company/tasks/review", user_scoped=False).write("report.md", "An agent's report")
+    FileSystem(reader, namespace="company", user_scoped=False).write("notes/mine.md", "An agent's file")
+    # Sessions of the agent, and no session of Super Agent.
+    from agno.session import AgentSession
+
+    reader.upsert_session(AgentSession(session_id="chat", agent_id="writer", created_at=1))
+    before = rows(reader)
+
+    assert databases.run(company_files_pending, acompany_files_pending, db) is False
+    assert databases.run(move_company_files, amove_company_files, db) is False
+
+    async def migrate(database) -> None:
+        await MigrationManager(database).up()
+
+    databases.run(lambda database: asyncio.run(migrate(database)), migrate, db)
+    assert rows(reader) == before
+    assert [meta.path for meta in FileSystem(reader, namespace="company/wiki", user_scoped=False).list()] == ["page.md"]
+
+    # Once Super Agent has chatted on the database, the notes are its own and they move.
+    used_by_super_agent(reader)
+    assert databases.run(company_files_pending, acompany_files_pending, db) is True
+
+
 def test_files_outside_the_company_namespaces_do_not_move(databases):
     db, reader = databases.new()
     for namespace in (
@@ -351,6 +423,7 @@ def test_files_outside_the_company_namespaces_do_not_move(databases):
     ):
         FileSystem(reader, namespace=namespace, user_scoped=False).write("keep.md", namespace)
     FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    used_by_super_agent(reader)
     before = rows(reader)
 
     assert databases.run(move_company_files, amove_company_files, db) is True
@@ -415,6 +488,7 @@ def test_a_database_that_keeps_no_file_table_has_no_file_pending():
 def test_the_async_pending_check_takes_a_synchronous_database(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     FileSystem(db, namespace="company/wiki", user_scoped=False).write("page.md", "Written on 3.2.0")
+    used_by_company(db)
     assert asyncio.run(acompany_files_pending(db)) is True
     db.db_engine.dispose()
 
@@ -428,6 +502,8 @@ def test_notes_in_another_database_arrive_in_the_company_database_and_leave_the_
     notes.write("people/ada.md", "Ada")
     FileSystem(company_reader, namespace="company/wiki", user_scoped=False).write("brief.md", "# Company\n")
     FileSystem(os_reader, namespace="default", user_scoped=False).write("keep.md", "An agent's own file")
+    used_by_super_agent(os_reader)
+    used_by_company(company_reader)
     # The migration runs on each database first, as it does for every table.
     assert databases.run(move_company_files, amove_company_files, os_db) is True
     assert databases.run(move_company_files, amove_company_files, company_db) is True
@@ -574,6 +650,7 @@ def test_a_subclassed_adapter_has_its_files_and_notes_moved(tmp_path, is_async):
     reader, company_reader = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
     FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
     FileSystem(company_reader, namespace="company/wiki", user_scoped=False).write("brief.md", "# Company\n")
+    used_by_company(company_reader)
 
     async def run() -> tuple:
         os_db, company_db = subclass(db_file=os_file), subclass(db_file=company_file)
@@ -858,6 +935,7 @@ def test_a_move_that_loses_the_race_to_store_a_note_finishes_with_what_is_stored
 def test_files_in_a_user_partition_are_not_company_files(databases):
     os_db, os_reader = databases.new()
     company_db, company_reader = databases.new()
+    used_by_company(os_reader)
     # An agent's own store, partitioned by user, that happens to use these names.
     own = FileSystem(os_reader, namespace="company", user_scoped=True)
     own.resolve(user_id="alice").write("notes/private.md", "Alice's own")
@@ -1193,6 +1271,7 @@ def test_a_file_table_from_before_user_partitions_does_not_stop_the_migration(tm
 def test_the_same_content_at_the_new_path_keeps_the_higher_version(databases):
     db, reader = databases.new()
     # A page three writes old where 3.2.0 kept it, and the same content written once at its new path.
+    used_by_company(reader)
     write_3_2_0(reader, "company/wiki", "people.md", "Ada", "Ada and Bo", "Ada, Bo and Cy")
     in_store(reader).write("wiki/people.md", "Ada, Bo and Cy")
     # The other way round: the new path was written more often than the old one.
@@ -1291,6 +1370,7 @@ def test_the_migration_reports_a_store_that_ends_over_its_limit(databases, caplo
 
     db, reader = databases.new()
     # Before 3.3.0 each folder had a limit of its own, so the folders together can hold more than one store may.
+    used_by_company(reader)
     write_3_2_0(reader, "company/wiki", "people.md", "a" * 40)
     write_3_2_0(reader, "company/notes", "ideas.md", "b" * 40)
     in_store(reader).write("wiki/handbook.md", "c" * 20)
@@ -1466,6 +1546,7 @@ def test_the_company_file_system_refuses_every_use_while_files_wait_and_serves_a
     from agno.exceptions import MigrationRequiredError
 
     db, reader = databases.new()
+    used_by_company(reader)
     write_3_2_0(reader, "company/wiki", "people.md", "Ada", "Ada and Bo")
     in_store(reader).write("notes/ideas.md", "A note")
     before = rows(reader)
