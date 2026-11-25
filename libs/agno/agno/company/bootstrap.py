@@ -233,13 +233,8 @@ async def _start_company(agent_os: Any) -> bool:
                 agent_os._company_db, goal, agent_os.registry, schedule_db=agent_os.db, agent_os=agent_os, trusted=True
             )
     except MigrationRequiredError as exc:
-        message = f"Company is not started: {exc}"
-        # Reported once: not again after the automatic migration of one of Company's two databases
-        # failed, and not again each time the migrate endpoint tries.
-        reported = agent_os._company_start_pending or any(
-            id(db) in agent_os._unmigrated_dbs for db in (agent_os._company_db, agent_os.db) if db is not None
-        )
-        (log_debug if reported else log_error)(message)
+        # Reported once, not again each time the migrate endpoint tries.
+        (log_debug if agent_os._company_start_pending else log_error)(f"Company is not started: {exc}")
         agent_os._company_start_pending = True
         return False
     agent_os._company_start_pending = False
