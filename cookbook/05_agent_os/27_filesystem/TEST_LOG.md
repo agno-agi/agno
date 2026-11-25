@@ -96,7 +96,7 @@ Earlier config output in this log records the previous schema.
 
 **Description:** Imported the module on 2026-11-25 and resolved the analyst's tools (no server, no model call). `analyst/drafts` and `team/handbook` each carry a `description`.
 
-**Result:** Every tool of a store starts its description with the namespace and the purpose, for example `fs_2_team_handbook_read_file`: `Filesystem namespace: 'team/handbook'. Purpose: The team handbook. Read the style guide here before writing.` Each store's instructions carry the same two lines first. The drafts store resolved seven tools and the handbook three. An agent run against a model was not exercised: `OPENAI_API_KEY` was not set, so whether the model picks the right store from the descriptions is not measured.
+**Result:** Every tool of a store starts its description with the namespace and the description, for example `fs_2_team_handbook_read_file`: `Filesystem namespace: 'team/handbook'. Description: The team handbook. Read the style guide here before writing.` Each store's instructions start with the namespace line, then the `Description:` line. The drafts store resolved seven tools and the handbook three. The runs against a model are the two entries below.
 
 ---
 
@@ -104,8 +104,56 @@ Earlier config output in this log records the previous schema.
 
 **Status:** PASS
 
-**Description:** Run on 2026-11-25 with `.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py`, served on port 7777, model `gpt-5.6-luna`. Two requests to `POST /agents/analyst/runs`, each in its own session. Read: "What does our style guide say about numbers? Quote the rule." Write: "Revenue grew 12% in Q3 to 4.1M dollars (source: finance close report). Finish the Q3 review in two sentences and save it."
+**Description:** Run on 2026-11-25 with `.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py`, served on port 7777, model `gpt-5.6-luna`. This run was on an earlier commit of the change, when the line read `Purpose:` and not `Description:`. Two requests to `POST /agents/analyst/runs`, each in its own session. Read: "What does our style guide say about numbers? Quote the rule." Write: "Revenue grew 12% in Q3 to 4.1M dollars (source: finance close report). Finish the Q3 review in two sentences and save it."
 
-**Result:** Read: the agent used only the handbook's tools to find the rule (`fs_2_team_handbook_list_files`, `fs_2_team_handbook_search_content` twice, `fs_2_team_handbook_read_file` on `style.md`) and quoted it correctly. It then also saved the rule to `style-guide-numbers.md` with `fs_1_analyst_drafts_write_file`, which the request did not ask for. Write: it read `style.md` from the handbook, read `q3-review.md` from the drafts, and saved the two sentences with `fs_1_analyst_drafts_replace_lines`. `team/handbook` still holds only `style.md`, unchanged. All eleven tool calls succeeded, and none named a tool the store does not have. The agent's instructions in this cookbook also name the two stores, so this run does not show what the descriptions do on their own.
+**Result:** Eleven tool calls, all successful.
+
+Read request, five calls. The agent read from `team/handbook` and quoted the rule correctly. It also wrote to `analyst/drafts`, which the request did not ask for.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_2_team_handbook_search_content` for "numbers"
+3. `fs_2_team_handbook_search_content` for "numerals"
+4. `fs_2_team_handbook_read_file` on `style.md`
+5. `fs_1_analyst_drafts_write_file` on `style-guide-numbers.md`
+
+Write request, six calls. The agent read from both stores and wrote to `analyst/drafts`.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_1_analyst_drafts_list_files`
+3. `fs_2_team_handbook_read_file` on `style.md`
+4. `fs_1_analyst_drafts_read_file` on `q3-review.md`
+5. `fs_1_analyst_drafts_read_file` on `style-guide-numbers.md`
+6. `fs_1_analyst_drafts_replace_lines` on `q3-review.md`
+
+`team/handbook` still held only `style.md`, unchanged. No call named a tool its store does not have. The agent's instructions in this cookbook also name the two stores, so this run does not show what the descriptions do on their own.
+
+---
+
+### multiple_stores_agent.py (model run with the Description line)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25 with `.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py`, served on port 7777, model `gpt-5.6-luna`, on a new database file. Each store's description reached the model as written, on a `Description:` line. The same two requests as the entry above, each in its own session.
+
+**Result:** Eleven tool calls, all successful.
+
+Read request, five calls. The agent read from `team/handbook` and quoted the rule correctly. As in the first run, it also wrote to `analyst/drafts`, which the request did not ask for.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_2_team_handbook_search_content` for "number"
+3. `fs_2_team_handbook_search_content` for "numeral"
+4. `fs_2_team_handbook_read_file` on `style.md`
+5. `fs_1_analyst_drafts_write_file` on `notes/style-guide.md`
+
+Write request, six calls. The agent read from both stores and wrote to `analyst/drafts`.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_1_analyst_drafts_list_files`
+3. `fs_2_team_handbook_read_file` on `style.md`
+4. `fs_1_analyst_drafts_read_file` on `q3-review.md`
+5. `fs_1_analyst_drafts_read_file` on `notes/style-guide.md`
+6. `fs_1_analyst_drafts_replace_lines` on `q3-review.md`
+
+`team/handbook` still holds only `style.md`, unchanged. `analyst/drafts` holds `q3-review.md` with the two sentences and `notes/style-guide.md`. The agent's instructions in this cookbook also name the two stores, so this run does not show what the descriptions do on their own.
 
 ---
