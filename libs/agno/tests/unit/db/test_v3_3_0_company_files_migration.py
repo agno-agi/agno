@@ -606,7 +606,7 @@ def test_the_migration_reports_each_path_that_ends_up_over_the_write_limit(datab
     import logging
 
     from agno.company.filesystem import company_filesystem
-    from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENTS, exceeds_write_limits
+    from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENTS
     from agno.fs.errors import InvalidPathError
 
     db, reader = databases.new()
@@ -633,7 +633,7 @@ def test_the_migration_reports_each_path_that_ends_up_over_the_write_limit(datab
             assert databases.run(move_company_files, amove_company_files, db) is True
 
         over = [f"goals/{goal['id']}/{long}", f"wiki/{deep}"]
-        assert all(exceeds_write_limits(path) for path in over)
+        assert len(over[0]) > MAX_PATH_CHARS and len(over[1].split("/")) > MAX_SEGMENTS
         reports = [r.getMessage() for r in caplog.records if "longer than a write accepts" in r.getMessage()]
         assert len(reports) == 1 and reports[0].startswith("2 Company files")
         assert all(path in reports[0] for path in over)

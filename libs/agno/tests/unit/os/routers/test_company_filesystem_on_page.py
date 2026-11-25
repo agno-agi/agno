@@ -454,6 +454,40 @@ def test_every_id_the_list_gives_opens_on_every_route(tmp_path):
         archive.close()
 
 
+def test_while_company_files_wait_the_list_still_names_the_company_entry_and_other_stores_open(tmp_path):
+    db = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain words")
+    # A Company page where 3.2.0 kept it: the Company file system refuses every use until the migration moves it.
+    FileSystem(db, namespace="company/wiki", user_scoped=False).write("people.md", "Ada")
+    agent_os = AgentOS(db=db, company=CompanyConfig(), filesystem=handbook, telemetry=False, auto_provision_dbs=False)
+    try:
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            # The list reads no file, so it names every file system, the Company one included.
+            listed = client.get("/filesystem/namespaces")
+            assert listed.status_code == 200
+            assert sorted(entry["id"] for entry in listed.json()["namespaces"]) == ["company", "handbook"]
+            # Another file system opens by its id.
+            assert client.get("/filesystem/entries", params={"filesystem_id": "handbook"}).status_code == 200
+            rows = client.get("/filesystem/files", params={"filesystem_id": "handbook"})
+            assert [row["path"] for row in rows.json()["entries"]] == ["style.md"]
+            # The Company file system answers with the migration to run, and so does a listing of every file.
+            for params in ({"filesystem_id": "company"}, {}):
+                refused = client.get("/filesystem/files", params=params)
+                assert refused.status_code == 500, params
+                assert refused.json()["error_id"] == "migration_required_error"
+                assert "POST /databases/all/migrate" in refused.json()["detail"]
+            # The route the error names moves the page, and the same AgentOS then lists it.
+            assert client.post("/databases/all/migrate").status_code == 200
+            rows = client.get("/filesystem/files").json()["entries"]
+            assert sorted((row["filesystem_id"], row["path"]) for row in rows) == [
+                ("company", "wiki/people.md"),
+                ("handbook", "style.md"),
+            ]
+    finally:
+        db.close()
+
+
 def test_the_list_describes_each_filesystem_as_config_does(tmp_path):
     db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
     shared = FileSystem(db, namespace="shared")
@@ -562,7 +596,7 @@ DEEP_PAGE = "/".join(f"d{index}" for index in range(15)) + "/page.md"  # 16 name
 
 def test_a_wiki_page_as_deep_as_3_2_0_allows_is_listed_and_read_after_the_migration(tmp_path, caplog):
     from agno.db.migrations.versions.v3_3_0 import move_company_files
-    from agno.fs._paths import MAX_SEGMENTS, exceeds_write_limits
+    from agno.fs._paths import MAX_SEGMENTS
 
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
     # As 3.2.0 stores it: a page of the company wiki, in the wiki's own namespace.
@@ -574,7 +608,7 @@ def test_a_wiki_page_as_deep_as_3_2_0_allows_is_listed_and_read_after_the_migrat
     with caplog.at_level(logging.WARNING):
         assert move_company_files(db) is True
     stored = f"wiki/{DEEP_PAGE}"
-    assert exceeds_write_limits(stored) and not exceeds_write_limits("wiki/brief.md")
+    assert len(stored.split("/")) > MAX_SEGMENTS
     # The migration names each path that is now longer than a write accepts, and only those.
     reports = [record.getMessage() for record in caplog.records if "longer than a write accepts" in record.getMessage()]
     assert len(reports) == 1 and stored in reports[0] and "wiki/brief.md" not in reports[0]

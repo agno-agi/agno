@@ -64,16 +64,6 @@ def normalize_path(path: str, *, limits: bool = True) -> str:
     return value
 
 
-def exceeds_write_limits(path: str) -> bool:
-    """Whether a canonical path is longer than a write accepts."""
-    segments = path.split("/")
-    return (
-        len(path) > MAX_PATH_CHARS
-        or len(segments) > MAX_SEGMENTS
-        or any(len(segment) > MAX_SEGMENT_CHARS for segment in segments)
-    )
-
-
 def parse_namespace_template(name: str) -> Tuple[str, ...]:
     """Return the template placeholders embedded in a namespace name, in order.
 
