@@ -228,7 +228,12 @@ def _listed_filesystem_ids(
             name(declared, filesystem, None)
     roster = [agent for agent in agents if isinstance(agent, Agent) and agent.id]
     for agent in sorted(roster, key=lambda agent: str(agent.id)):
-        for filesystem, _ in agent.filesystems:
+        try:
+            filesystems = agent.filesystems
+        except Exception:
+            # No store of this agent can be read, so it has none to name. A request that reads the agent says why.
+            continue
+        for filesystem, _ in filesystems:
             name(held, filesystem, agent.id)
     return _filesystem_ids(declared, held, others)
 

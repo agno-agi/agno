@@ -2430,3 +2430,36 @@ def test_a_database_whose_connection_arguments_cannot_be_read_is_matched_by_its_
     assert (listed.json()["agent_ids"], [row["path"] for row in listed.json()["entries"]]) == (["writer"], ["a.md"])
     for filesystem in (declared, held, other):
         filesystem.backend.db_engine.dispose()
+
+
+# --- An agent whose filesystems cannot be read ---
+
+
+def test_an_agent_whose_file_tools_cannot_be_built_fails_only_the_requests_that_read_it(db, client_factory):
+    own = FileSystem(db, namespace="own")
+    own.write("style.md", "mine needle\n")
+    # The tools are built when the agent's filesystems are read, so the AgentOS starts.
+    unbuildable = FileSystem(db, namespace="unbuildable", include_tools=["no_such_tool"])
+    agents = (Agent(id="broken", db=db, filesystem=unbuildable), Agent(id="writer", db=db, filesystem=own))
+
+    client = client_factory(*agents, db=db)
+    # A request for another agent does not read it.
+    for route, params in (("/filesystem/files", {}), *ONE_FILESYSTEM_ROUTES):
+        response = client.get(route, params={**params, "agent_id": "writer"}, headers=_headers("alice"))
+        assert response.status_code == 200, route
+        body = response.json()["entries"][0] if route == "/filesystem/files" else response.json()
+        assert (body["filesystem_id"], body["agent_ids"]) == ("own", ["writer"]), route
+    # A request that names it, and a listing of every agent's files, report its failure.
+    for params in ({"agent_id": "broken"}, {}):
+        assert client.get("/filesystem/files", params=params, headers=_headers("alice")).status_code == 503
+
+    # Beside a declared filesystem, the listing leaves the agent out instead of failing.
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain words\n")
+    client = client_factory(*agents, db=db, filesystem=handbook)
+    rows = client.get("/filesystem/files", headers=_headers("alice"))
+    assert rows.status_code == 200
+    assert [(row["filesystem_id"], row["agent_ids"]) for row in rows.json()["entries"]] == [
+        ("handbook", []),
+        ("own", ["writer"]),
+    ]
