@@ -106,6 +106,23 @@ def _check_removable(role: str, scope: str) -> None:
         ) from None
 
 
+def _refuse_upserted_and_removed(staged: dict, removals: List[str]) -> None:
+    """Refuse a PATCH that upserts and removes one policy key.
+
+    Removes run after upserts, so the remove would erase the upsert, a deny included. Two spellings
+    can name one key (``agents:read`` and ``agents:*:read``, or ``products:read`` and ``goals:read``).
+    """
+    from agno.os.authz._scope_policy import scope_to_resource_action
+
+    both = [scope for scope in removals if scope_to_resource_action(scope) in staged]
+    if both:
+        upserted = [staged[scope_to_resource_action(scope)][0] for scope in both]
+        raise ValueError(
+            f"{', '.join(both)} in remove and {', '.join(upserted)} in upsert name the same permission. "
+            "Send it in one of the two."
+        )
+
+
 def _validate_role_slug(slug: str) -> None:
     """A role slug is an identifier that names a REST route (``/authz/roles/{slug}``) and a
     grouping-table subject. Whitespace makes ``"admin"`` and ``"admin "`` two roles that look
@@ -526,6 +543,7 @@ class RoleStore:
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
             _check_removable(role, scope)  # raises on an unrecognised scope, with nothing written yet
+        _refuse_upserted_and_removed(staged, removals)
         self._refuse_role_named_after_user(role)
         staged_entries = list(staged.values())
         if _confers_admin(staged_entries) and self.default_role() == role:
@@ -1029,6 +1047,7 @@ class RoleStore:
         removals = [_normalize_scope(entry)[0] for entry in remove or []]
         for scope in removals:
             _check_removable(role, scope)  # validate before the first write (see the sync twin)
+        _refuse_upserted_and_removed(staged, removals)
         await self._arefuse_role_named_after_user(role)
         staged_entries = list(staged.values())
         if _confers_admin(staged_entries) and await self.adefault_role() == role:
