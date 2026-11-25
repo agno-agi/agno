@@ -211,6 +211,140 @@ def test_a_folder_with_more_than_one_page_of_files(make, folder):
         assert client.get(url, params=params).status_code == 422
 
 
+@pytest.mark.parametrize("folder", ["task", "notes"])
+def test_one_folder_lists_what_is_directly_inside_it(make, folder):
+    client, files = make()
+    task_id = new_task(client)
+    tree_folder, url = (
+        (f"tasks/{task_id}", f"/company/tasks/{task_id}/files") if folder == "task" else ("notes", "/company/notes")
+    )
+    sizes = {
+        path: files.write(f"{tree_folder}/{path}", content)["size_bytes"]
+        for path, content in [
+            ("report.md", "The report.\n"),
+            ("data/rows.csv", "a,b\n"),
+            ("data/raw/events.json", "[1, 2, 3]\n"),
+            ("data/raw/more.json", "[4]\n"),
+            ("zeta/last.txt", "last\n"),
+        ]
+    }
+    # Another folder's files are never part of this one's listing.
+    files.write("notes/elsewhere.md" if folder == "task" else f"tasks/{task_id}/elsewhere.md", "Another folder.\n")
+
+    def inside(name, **params):
+        response = client.get(url, params={"folder": name, **params})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def rows(name):
+        return [(row["type"], row["path"], row["size_bytes"]) for row in inside(name)["data"]]
+
+    # Folders first, then files. A folder's size is the total of every file under it.
+    top = inside("")
+    assert rows("") == [
+        ("folder", "data", sizes["data/rows.csv"] + sizes["data/raw/events.json"] + sizes["data/raw/more.json"]),
+        ("folder", "zeta", sizes["zeta/last.txt"]),
+        ("file", "report.md", sizes["report.md"]),
+    ]
+    assert (top["meta"]["total_count"], top["meta"]["total_pages"]) == (3, 1)
+    assert rows(".") == rows("")
+    # A folder counts every file under it, at any depth, so the top folder adds up to the whole listing.
+    assert [(row["path"], row["file_count"]) for row in top["data"]] == [("data", 3), ("zeta", 1), ("report.md", None)]
+    assert sum(row["file_count"] or 1 for row in top["data"]) == len(sizes)
+    # A folder has the latest time of its files and no version. A file keeps both.
+    data, _, report = top["data"]
+    assert data["version"] is None and data["updated_at"] is not None
+    assert report["version"] == 1 and report["user_id"] is None
+
+    # Each path is inside the top folder: a folder's is the next `folder`, a file's is what the read route takes.
+    assert rows("data") == [
+        ("folder", "data/raw", sizes["data/raw/events.json"] + sizes["data/raw/more.json"]),
+        ("file", "data/rows.csv", sizes["data/rows.csv"]),
+    ]
+    assert rows("data/raw") == [
+        ("file", "data/raw/events.json", sizes["data/raw/events.json"]),
+        ("file", "data/raw/more.json", sizes["data/raw/more.json"]),
+    ]
+    # A listing names a folder with or without a trailing slash.
+    assert rows("data/raw/") == rows("data/raw")
+    assert inside("data")["data"][0]["file_count"] == 2
+    assert client.get(url + "/data/raw/events.json").json()["content"] == "[1, 2, 3]\n"
+
+    # A folder with nothing in it, a name that is a file, and a name that only starts like a folder: all empty.
+    for name in ["nope", "report.md", "dat", "data/raw/events.json"]:
+        assert (inside(name)["data"], inside(name)["meta"]["total_count"]) == ([], 0), name
+
+    # The entries of one folder are paged like any listing.
+    assert [row["path"] for row in inside("", limit=2, page=1)["data"]] == ["data", "zeta"]
+    assert [row["path"] for row in inside("", limit=2, page=2)["data"]] == ["report.md"]
+    assert inside("", limit=2, page=2)["meta"]["total_pages"] == 2
+    assert inside("", limit=2, page=3)["data"] == []
+
+    # Without `folder` the listing is unchanged: every file, by its full path, and no folders.
+    flat = client.get(url, params={"limit": LIST_ENTRIES}).json()
+    assert [(row["type"], row["path"]) for row in flat["data"]] == [("file", path) for path in sorted(sizes)]
+    assert flat["meta"]["total_count"] == 5
+
+
+def test_a_folder_holds_more_entries_than_one_page_of_the_tree(make):
+    client, files = make()
+    task_id = new_task(client)
+    count = LIST_ENTRIES + 5
+    names = [f"logs/{index:04d}.md" for index in range(count)]
+    for name in names:
+        files.write(f"tasks/{task_id}/{name}", name)
+    url = f"/company/tasks/{task_id}/files"
+    # The top folder is one entry, however many files are under it.
+    top = client.get(url, params={"folder": ""}).json()
+    assert [(row["type"], row["path"]) for row in top["data"]] == [("folder", "logs")]
+    assert top["meta"]["total_count"] == 1
+    listed = []
+    for page in (1, 2):
+        body = client.get(url, params={"folder": "logs", "limit": LIST_ENTRIES, "page": page}).json()
+        assert body["meta"]["total_count"] == count
+        listed += [row["path"] for row in body["data"]]
+    assert listed == names
+
+
+@pytest.mark.parametrize("name", ["..", "../other", "data/../..", "data\\raw", "x" * (MAX_SEGMENT_CHARS + 1)])
+def test_a_folder_name_cannot_leave_its_folder(make, name):
+    client, files = make()
+    task_id, other = new_task(client), new_task(client)
+    files.write(f"tasks/{other}/secret.md", "Another Task's file.\n")
+    files.write("notes/secret.md", "A note.\n")
+    files.write(f"tasks/{task_id}/own.md", "This Task's file.\n")
+    for url in [f"/company/tasks/{task_id}/files", "/company/notes"]:
+        response = client.get(url, params={"folder": name})
+        assert response.status_code == 422, (url, name, response.status_code, response.text)
+        detail = response.json()["detail"]
+        assert detail.startswith("Invalid file path. A path is at most "), detail
+        assert "notes" not in detail and "tasks" not in detail and task_id not in detail, detail
+    # Naming another folder of the tree stays inside this one, where there is no such folder.
+    for name in [f"tasks/{other}", "notes", f"company/tasks/{other}"]:
+        for url in [f"/company/tasks/{task_id}/files", "/company/notes"]:
+            response = client.get(url, params={"folder": name})
+            assert (response.status_code, response.json()["data"]) == (200, []), (url, name, response.text)
+
+
+def test_the_tree_lists_one_folder_through_its_sync_methods(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "tree.db"))
+    try:
+        files = CompanyFiles(db, notes_db=db)
+        files.write("notes/people/alice.md", "Alice.\n")
+        files.write("notes/ideas.md", "An idea.\n")
+        assert [(entry["type"], entry["path"]) for entry in files.entries("notes")["entries"]] == [
+            ("folder", "notes/people"),
+            ("file", "notes/ideas.md"),
+        ]
+        assert [entry["path"] for entry in files.entries("notes/people/")["entries"]] == ["notes/people/alice.md"]
+        # The top of the tree, and the lists of Products and of Tasks, hold folders and no files.
+        for folder in ["", "tasks", "products"]:
+            with pytest.raises(ValueError, match="holds no files of its own"):
+                files.entries(folder)
+    finally:
+        db.close()
+
+
 def test_a_page_past_the_end_is_empty_with_the_right_totals(make):
     client, files = make()
     task_id = new_task(client)
