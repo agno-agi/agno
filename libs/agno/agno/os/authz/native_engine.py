@@ -43,7 +43,6 @@ from agno.os.authz._request_scope import amemoize, memoize
 from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._scope_policy import (
     application_resource,
-    current_resource,
     is_legacy_scope,
     legacy_resources,
     policy_resource,
@@ -347,7 +346,7 @@ class NativePolicyEngine(PolicyEngine):
         self._delete_policy(role, resource, action)
         if is_legacy_scope(scope):
             # The old name also names the current type, so an allow under it is revoked too.
-            current = current_resource(resource)
+            current, _ = scope_to_resource_action(scope)
             if (role, current, action, _ALLOW) in self._policies_for({role}):
                 self._delete_policy(role, current, action)
 
@@ -687,7 +686,7 @@ class NativePolicyEngine(PolicyEngine):
         await self._adelete_policy(role, resource, action)
         if is_legacy_scope(scope):
             # The old name also names the current type, so an allow under it is revoked too.
-            current = current_resource(resource)
+            current, _ = scope_to_resource_action(scope)
             if (role, current, action, _ALLOW) in await self._apolicies_for({role}):
                 await self._adelete_policy(role, current, action)
 

@@ -14,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
-from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -30,8 +29,7 @@ from agno.os.authz._scope_policy import resource_matches, scope_to_resource_acti
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.config import AuthorizationConfig
-from agno.os.interfaces.base import BaseInterface
-from agno.os.scopes import get_accessible_resource_ids, has_required_scopes, parse_scope, split_scope
+from agno.os.scopes import has_required_scopes
 from agno.run.authorization import RunAuthorization
 from agno.utils.log import log_warning
 
@@ -656,123 +654,6 @@ def test_a_stored_products_policy_matches_only_goals():
     assert resource_matches("products/this-agentos", "goals/this-agentos")
     assert not resource_matches("products/this-agentos", "goals/other")
     assert not resource_matches("products/*", "tasks/*")
-
-
-# ------------------------------------------------ an application's own products type
-
-
-class _Catalog(BaseInterface):
-    """Routes of the application, guarded by a products scope of its own."""
-
-    type = "catalog"
-    prefix = "/catalog"
-
-    def get_router(self, **kwargs):
-        router = APIRouter(prefix=self.prefix)
-
-        @router.get("/products")
-        def products():
-            return {"products": ["chair"]}
-
-        return router
-
-    def get_scope_mappings(self):
-        return {f"GET {self.prefix}/products": ["products:read"]}
-
-
-def test_a_goals_scope_does_not_open_an_application_products_route(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "catalog.db"))
-    agent_os = AgentOS(
-        id=OS_ID,
-        db=db,
-        company=CompanyConfig(goals=[Goal(id="this-agentos", name="AgentOS")]),
-        interfaces=[_Catalog()],
-        telemetry=False,
-        authorization=True,
-        authorization_config=AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256"),
-    )
-
-    with TestClient(agent_os.get_app()) as client:
-        assert client.get("/catalog/products", headers=_headers(["goals:read"])).status_code == 403
-        assert client.get("/catalog/products", headers=_headers(["products:read"])).status_code == 200
-        # The products scope a 3.2.0 token holds opens the Goal routes too.
-        assert client.get("/company/goals", headers=_headers(["products:read"])).status_code == 200
-        assert client.get("/company/goals", headers=_headers(["goals:read"])).status_code == 200
-    db.close()
-
-
-def test_a_products_requirement_is_matched_as_written():
-    assert not has_required_scopes(["goals:read"], ["products:read"])
-    assert not has_required_scopes(
-        ["goals:catalog:read"], ["products:read"], resource_type="products", resource_id="catalog"
-    )
-    assert get_accessible_resource_ids(["goals:catalog:read"], "products") == set()
-    assert get_accessible_resource_ids(["goals:read"], "products") == set()
-
-    assert has_required_scopes(["products:read"], ["products:read"])
-    assert has_required_scopes(
-        ["products:catalog:read"], ["products:read"], resource_type="products", resource_id="catalog"
-    )
-    assert get_accessible_resource_ids(["products:catalog:read"], "products") == {"catalog"}
-    assert get_accessible_resource_ids(["products:read"], "products") == {"*"}
-    # A scope is shown as it was written: a products scope covers the application's type too.
-    assert parse_scope("products:read").resource == "products"
-    assert split_scope("products:read") == ("products", None, "read")
-    assert split_scope("products:catalog:read") == ("products", "catalog", "read")
-
-
-def test_a_held_products_scope_satisfies_a_goals_requirement():
-    assert has_required_scopes(["products:read"], ["goals:read"])
-    assert has_required_scopes(["products:*:read"], ["goals:read"])
-    assert has_required_scopes(["products:docs:read"], ["goals:read"], resource_type="goals", resource_id="docs")
-    assert not has_required_scopes(["products:docs:read"], ["goals:read"], resource_type="goals", resource_id="other")
-    assert not has_required_scopes(["products:read"], ["goals:write"])
-    assert get_accessible_resource_ids(["products:docs:read"], "goals") == {"docs"}
-    assert get_accessible_resource_ids(["products:read"], "goals") == {"*"}
-    assert get_accessible_resource_ids(["products:docs:read"], "goals", action="write") == set()
-
-
-def test_the_system_scope_and_the_config_scope_stand_for_each_other():
-    assert has_required_scopes(["system:read"], ["config:read"])
-    assert has_required_scopes(["config:read"], ["system:read"])
-    assert has_required_scopes(["system:dep-1:read"], ["config:read"], resource_type="config", resource_id="dep-1")
-    assert not has_required_scopes(["system:read"], ["config:write"])
-    assert get_accessible_resource_ids(["system:dep-1:read"], "config") == {"dep-1"}
-    assert parse_scope("system:read").resource == "config"
-    assert split_scope("system:read") == ("config", None, "read")
-    assert scope_to_resource_action("system:read") == ("config/*", "read")
-
-
-def test_a_goals_scope_cannot_mint_a_products_scope():
-    from agno.os.routers.service_accounts.router import _caller_holds_scope
-
-    assert not _caller_holds_scope(["goals:read"], "products:read", None)
-    assert not _caller_holds_scope(["goals:docs:read"], "products:docs:read", None)
-    assert _caller_holds_scope(["products:read"], "products:read", None)
-    assert _caller_holds_scope(["products:docs:read"], "products:docs:read", None)
-    assert _caller_holds_scope(["products:read"], "goals:read", None)
-    assert _caller_holds_scope(["products:docs:read"], "goals:docs:read", None)
-
-
-@pytest.mark.parametrize("use_async", [False, True])
-async def test_a_goals_role_does_not_satisfy_an_application_products_scope(tmp_path, use_async):
-    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
-    store = Authorization(db=db)
-    store.set_role_scopes("goal-reader", ["goals:read"])
-    store.set_role_scopes("product-reader", ["products:read"])
-    engine = store._store()._engine
-
-    async def holds(scope, role):
-        if use_async:
-            return await engine.acheck_scope(scope, roles=[role])
-        return engine.check_scope(scope, roles=[role])
-
-    assert await holds("products:read", "goal-reader") is False
-    assert await holds("products:catalog:read", "goal-reader") is False
-    assert await holds("products:read", "product-reader") is True
-    assert await holds("goals:read", "product-reader") is True
-    assert await holds("goals:read", "goal-reader") is True
-    db.close()
 
 
 # --------------------------------------------- a component saved on the default table

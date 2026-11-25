@@ -10,8 +10,6 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 
 from typing import List, Optional, Tuple
 
-from agno.os.scopes import RENAMED_RESOURCE_TYPES
-
 ADMIN_SCOPE = "agent_os:admin"
 # The namespace of the admin scope. Not a resource type: no other scope may use it.
 ADMIN_NAMESPACE = ADMIN_SCOPE.split(":")[0]
@@ -107,7 +105,7 @@ def resource_action_to_scope(resource: str, action: str) -> str:
 
 # Resource types whose policy rows may carry the old name. A row under the old name covers both the
 # current type and an application's own type of the old name.
-_RENAMED_POLICY_TYPES = RENAMED_RESOURCE_TYPES
+_RENAMED_POLICY_TYPES = {"products": "goals"}
 # Marks a row that covers only an application's own type of a renamed name. A scope's resource type
 # cannot contain ":", so no user-defined type is stored like this. It is written as a four-part scope
 # ("application:products:*:read"), which no other scope is.
@@ -134,12 +132,6 @@ def legacy_resources(resource: str) -> List[str]:
     return [old + separator + rest for old, new in _RENAMED_POLICY_TYPES.items() if new == resource_type]
 
 
-def current_resource(resource: str) -> str:
-    """``resource`` under the current name of its type."""
-    resource_type, separator, rest = resource.partition("/")
-    return _RENAMED_POLICY_TYPES.get(resource_type, resource_type) + separator + rest
-
-
 def application_resource(legacy: str) -> str:
     """The resource that keeps a legacy policy for an application's own type only."""
     return _APPLICATION_PREFIX + legacy
@@ -153,15 +145,18 @@ def is_legacy_scope(scope: str) -> bool:
 def scope_to_policy(scope: str) -> Tuple[str, str]:
     """The ``(resource, action)`` a scope is stored under.
 
-    An application-only scope is accepted: it exists only in stored policies, so
-    :func:`scope_to_resource_action` refuses it.
+    The old name of a renamed type is kept, and an application-only scope is accepted: it exists
+    only in stored policies, so :func:`scope_to_resource_action` refuses it.
     """
     for old in _RENAMED_POLICY_TYPES:
         prefix = f"{_APPLICATION_PREFIX}{old}:"
         if scope.startswith(prefix) and scope.count(":") == 3:
             resource, action = scope_to_resource_action(f"{old}:{scope[len(prefix) :]}")
             return f"{_APPLICATION_PREFIX}{old}/{resource.partition('/')[2]}", action
-    return scope_to_resource_action(scope)
+    resource, action = scope_to_resource_action(scope)
+    if is_legacy_scope(scope):
+        resource = scope.partition(":")[0] + "/" + resource.partition("/")[2]
+    return resource, action
 
 
 def write_order(scope: str, effect: str) -> int:
