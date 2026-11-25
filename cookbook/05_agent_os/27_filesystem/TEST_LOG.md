@@ -69,3 +69,13 @@ Earlier config output in this log records the previous schema.
 **Result:** All partition and upgrade tests pass. Agent runs against a model were not exercised.
 
 ---
+
+### multiple_stores_agent.py (store descriptions)
+
+**Status:** PASS
+
+**Description:** Imported the module on 2026-11-25 and resolved the analyst's tools (no server, no model call). `analyst/drafts` and `team/handbook` each carry a `description`.
+
+**Result:** Every tool of a store starts its description with the namespace and the purpose, for example `fs_2_team_handbook_read_file`: `Filesystem namespace: 'team/handbook'. Purpose: The team handbook. Read the style guide here before writing.` Each store's instructions carry the same two lines first. The drafts store resolved seven tools and the handbook three. An agent run against a model was not exercised: `OPENAI_API_KEY` was not set, so whether the model picks the right store from the descriptions is not measured.
+
+---

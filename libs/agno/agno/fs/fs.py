@@ -145,6 +145,11 @@ class FileSystem:
     different access to one store, create one FileSystem per access level on
     the same backend and namespace.
 
+    ``description`` says what the store is for, in a sentence. The agent reads
+    it in the toolkit's instructions, and an agent holding several stores also
+    reads it on every tool, so it can tell the stores apart by more than their
+    namespace.
+
     Cheap to construct and holds no connections; the backend owns the
     engine/pool and is shared across instances.
     """
@@ -162,6 +167,7 @@ class FileSystem:
         allow_delete: bool = False,
         include_tools: Optional[List[str]] = None,
         instructions: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         if (backend is None) == (db is None):
             raise ValueError("Provide exactly one of backend or db")
@@ -192,6 +198,7 @@ class FileSystem:
         self.include_tools = list(include_tools) if include_tools is not None else None
         # Stored privately: ``instructions()`` is the method that renders the default text.
         self._instructions = instructions
+        self.description = description
 
     def _copy_tool_options(self, target: "FileSystem") -> "FileSystem":
         """Carry the agent tool options onto a derived instance."""
@@ -199,6 +206,7 @@ class FileSystem:
         target.allow_delete = self.allow_delete
         target.include_tools = list(self.include_tools) if self.include_tools is not None else None
         target._instructions = self._instructions
+        target.description = self.description
         return target
 
     @classmethod
@@ -228,6 +236,7 @@ class FileSystem:
         instance.allow_delete = False
         instance.include_tools = None
         instance._instructions = None
+        instance.description = None
         return instance
 
     @property
@@ -329,6 +338,8 @@ class FileSystem:
             config["include_tools"] = list(self.include_tools)
         if self._instructions is not None:
             config["instructions"] = self._instructions
+        if self.description:
+            config["description"] = self.description
         return config
 
     @classmethod
@@ -368,6 +379,7 @@ class FileSystem:
         allow_delete = bool(data.get("allow_delete", False))
         include_tools: Optional[List[str]] = data.get("include_tools")
         instructions: Optional[str] = data.get("instructions")
+        description: Optional[str] = data.get("description")
         if data.get("namespace_is_normalized") is True:
             restored = cls._from_normalized(
                 backend=backend,
@@ -382,6 +394,7 @@ class FileSystem:
             restored.allow_delete = allow_delete
             restored.include_tools = list(include_tools) if include_tools is not None else None
             restored._instructions = instructions
+            restored.description = description
             return restored
         return cls(
             backend=backend,
@@ -393,6 +406,7 @@ class FileSystem:
             allow_delete=allow_delete,
             include_tools=include_tools,
             instructions=instructions,
+            description=description,
         )
 
     # ------------------------------------------------------------------

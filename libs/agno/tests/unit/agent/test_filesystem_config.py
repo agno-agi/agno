@@ -378,6 +378,69 @@ def test_multiple_filesystems_disambiguate_normalized_namespace_names(db):
     assert first.functions.keys().isdisjoint(second.functions)
 
 
+def test_multiple_filesystems_show_each_description_on_tools_and_instructions(db):
+    drafts = FileSystem(db, namespace="drafts", description="Your working drafts. Write and revise here.")
+    handbook = FileSystem(db, namespace="handbook", read_only=True, description="The company handbook.")
+    scratch = FileSystem(db, namespace="scratch")
+    agent = Agent(id="analyst", filesystem=[drafts, handbook, scratch])
+
+    first, second, third = _filesystem_tools(agent)
+
+    for toolkit, namespace, description in (
+        (first, "drafts", "Your working drafts. Write and revise here."),
+        (second, "handbook", "The company handbook."),
+    ):
+        header = f"Filesystem namespace: {namespace!r}. Purpose: {description}"
+        assert toolkit.functions and toolkit.async_functions
+        for function in [*toolkit.functions.values(), *toolkit.async_functions.values()]:
+            assert function.description.splitlines()[0] == header
+        assert toolkit.instructions.splitlines()[:2] == [
+            f"Filesystem namespace: {namespace!r}.",
+            f"Purpose: {description}",
+        ]
+    # A store with no description reads as before.
+    for function in third.functions.values():
+        assert function.description.splitlines()[0] == "Filesystem namespace: 'scratch'."
+    assert "Purpose:" not in third.instructions
+
+
+def test_description_names_tools_by_their_qualified_names(db):
+    drafts = FileSystem(db, namespace="drafts", description="Save every answer here with write_file.")
+    agent = Agent(id="analyst", filesystem=[drafts, FileSystem(db, namespace="handbook", read_only=True)])
+
+    toolkit = _filesystem_tools(agent)[0]
+
+    expected = "Purpose: Save every answer here with fs_1_drafts_write_file."
+    assert expected in toolkit.functions["fs_1_drafts_read_file"].description
+    assert expected in toolkit.instructions
+
+
+def test_single_filesystem_description_leads_the_instructions(db):
+    described = FileSystem(db, namespace="handbook", read_only=True, description="The company handbook.")
+    custom = FileSystem(db, namespace="handbook", instructions="Custom guidance.", description="The company handbook.")
+    plain = FileSystem(db, namespace="handbook", read_only=True)
+
+    toolkit = _filesystem_tools(Agent(id="reader", filesystem=described))[0]
+
+    assert toolkit.instructions == "Purpose: The company handbook.\n" + FileSystem.instructions(read_only=True)
+    # One store keeps the plain tool names and descriptions.
+    assert "read_file" in toolkit.functions
+    assert custom.tools().instructions == "Purpose: The company handbook.\nCustom guidance."
+    assert plain.tools().instructions == FileSystem.instructions(read_only=True)
+
+
+def test_description_survives_round_trip_and_resolve(db):
+    templated = FileSystem(db, namespace="notes/{agent_id}", description="Notes this agent keeps between runs.")
+    agent = Agent(id="analyst", db=db, filesystem=templated)
+
+    restored = Agent.from_dict(agent.to_dict())
+
+    assert isinstance(restored.filesystem, FileSystem)
+    assert restored.filesystem.description == "Notes this agent keeps between runs."
+    assert templated.resolve(agent_id="analyst").description == "Notes this agent keeps between runs."
+    assert "description" not in FileSystem(db, namespace="notes").to_dict()
+
+
 @pytest.mark.parametrize("invalid", [True, False, None, "drafts", []])
 def test_filesystem_lists_reject_non_stores(invalid):
     agent = Agent(filesystem=[invalid])

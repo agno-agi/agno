@@ -133,7 +133,9 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     """Qualify each store's tools without mutating the supplied toolkit.
 
     Position distinguishes duplicate namespace labels. Truncation keeps built-in
-    tool names within model providers' 64-character limit.
+    tool names within model providers' 64-character limit. A store's description
+    follows its namespace on every tool, so the model can pick a store from the
+    tool list alone.
     """
     import re
     from copy import copy
@@ -152,6 +154,10 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     def qualify(text: str) -> str:
         return pattern.sub(lambda match: names[match.group(0)], text)
 
+    header = f"Filesystem namespace: {namespace!r}."
+    if toolkit.fs.description:
+        header = f"{header} Purpose: {qualify(toolkit.fs.description)}"
+
     def rename_functions(functions: Dict[str, Function]) -> Dict[str, Function]:
         result: Dict[str, Function] = {}
         for name, function in functions.items():
@@ -160,7 +166,7 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
             description = function.description or (
                 get_entrypoint_docstring(function.entrypoint) if function.entrypoint else ""
             )
-            renamed_function.description = f"Filesystem namespace: {namespace!r}.\n{qualify(description)}"
+            renamed_function.description = f"{header}\n{qualify(description)}"
             renamed_function.source_toolkit = renamed
             result[renamed_function.name] = renamed_function
         return result

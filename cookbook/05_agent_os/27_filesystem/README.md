@@ -47,7 +47,10 @@ never the `FileSystem`'s own `read()` and `write()`. They are stored with the
 agent config.
 
 An agent with several stores lists them, `filesystem=[drafts, handbook]`, and each
-store's tools get a distinct name (`multiple_stores_agent.py`). To attach the
+store's tools get a distinct name (`multiple_stores_agent.py`). Give each store a
+`description`, `FileSystem(db, namespace="team/handbook", description="The team
+handbook.")`: the agent reads it on every tool of that store and at the top of
+the store's instructions, so it knows what each store is for. To attach the
 toolkit yourself instead, use `tools=[fs.tools(...)]`; `tools()` defaults to the
 FileSystem's own options. The setting and a manually attached toolkit cannot be
 combined on one agent.

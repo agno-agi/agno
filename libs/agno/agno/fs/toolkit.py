@@ -98,6 +98,7 @@ class FileSystemTools(Toolkit):
     ``delete_file``; ``include_tools`` selects explicitly from the whole
     nine-tool surface), or the three read tools when ``read_only=True`` (the surface for a consumer agent that consults another
     agent's namespace by shared name). Holds the matching FileSystem instructions,
+    led by the store's ``description`` when it has one,
     which reach the system prompt only under ``add_instructions=True``; otherwise
     compose ``FileSystem.instructions()`` into the agent's own instructions, and
     the whole system prompt stays the developer's. Tool errors are returned as
@@ -164,6 +165,9 @@ class FileSystemTools(Toolkit):
             raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if instructions is None:
             instructions = FileSystem.instructions(read_only=read_only)
+        if fs.description:
+            # The default text is the same for every store, so the purpose leads.
+            instructions = f"Purpose: {fs.description}\n{instructions}"
 
         if kwargs.get("include_tools") is not None:
             # include_tools is a fully explicit whitelist over the whole
