@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import wraps
 from inspect import isasyncgen, iscoroutinefunction, isgenerator, signature
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, Literal, Optional, overload
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, overload
 
 if TYPE_CHECKING:
     from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
@@ -32,6 +32,35 @@ class RunAuthorization:
     enforce_tools: bool = True
     # A schedule fired this run with the saved authority of the person who created it. Nobody is present.
     scheduled: bool = False
+    # Restored from an authority that was saved with a Routine, a Task or a schedule, not built
+    # from a live request.
+    saved: bool = False
+
+    def _saved_scopes_reach_mini_agent(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Whether this saved authority reaches Mini Agent on scopes that name no component.
+
+        A wildcard scope does not reach a built-in component. An authority saved before that rule
+        carries the scopes its author's token had then, and a token that could run every agent
+        could run Mini Agent. Work saved then keeps running: for Mini Agent, the saved scopes are
+        asked as they were, with no component named. This holds for saved authority only: saving
+        or editing a Routine, or accepting a Task, asks for Mini Agent by name. Mini Agent runs
+        nothing but Routines and Tasks, so no other work is reached this way."""
+        if not self.saved or not getattr(self.provider, "enforces_token_scopes", False):
+            return False
+        from agno.os.scopes import has_required_scopes
+        from agno.registry._reserved import MANAGER_RESOURCES, MINI_AGENT_ID
+
+        if f"{ctx.resource_type}/{ctx.resource_id}" != MANAGER_RESOURCES[MINI_AGENT_ID]:
+            return False
+        return has_required_scopes(list(ctx.scopes or []), scopes, admin_scope=ctx.admin_scope)
+
+    def authorizes_route(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Whether this authority satisfies a route's required scopes, in the context given."""
+        return self.provider.authorize_route(ctx, scopes) or self._saved_scopes_reach_mini_agent(ctx, scopes)
+
+    async def aauthorizes_route(self, ctx: AuthorizationContext, scopes: List[str]) -> bool:
+        """Async twin of :meth:`authorizes_route`."""
+        return await self.provider.aauthorize_route(ctx, scopes) or self._saved_scopes_reach_mini_agent(ctx, scopes)
 
     def _decision(self, resource: str, action: str, resource_id: Optional[str]):
         ctx = replace(self.context, resource_type=resource, resource_id=resource_id, action=action)
@@ -47,13 +76,13 @@ class RunAuthorization:
 
     def require(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
         ctx, scopes = self._decision(resource, action, resource_id)
-        if not self.provider.authorize_route(ctx, scopes):
+        if not self.authorizes_route(ctx, scopes):
             permission = f"{resource}:{resource_id}:{action}" if resource_id else scopes[0]
             raise PermissionError(f"Permission required: {permission}")
 
     async def arequire(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
         ctx, scopes = self._decision(resource, action, resource_id)
-        if not await self.provider.aauthorize_route(ctx, scopes):
+        if not await self.aauthorizes_route(ctx, scopes):
             permission = f"{resource}:{resource_id}:{action}" if resource_id else scopes[0]
             raise PermissionError(f"Permission required: {permission}")
 

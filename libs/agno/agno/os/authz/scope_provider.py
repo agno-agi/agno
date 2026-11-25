@@ -11,10 +11,10 @@ means implementing :class:`agno.os.authz.provider.AuthorizationProvider`
 instead of this class — the rest of the pipeline is unchanged.
 """
 
-from typing import List, Set
+from typing import Any, List, Set
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
-from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
+from agno.os.scopes import accessible_ids_cover, get_accessible_resource_ids, has_required_scopes
 
 
 class ScopeAuthorizationProvider(AuthorizationProvider):
@@ -48,6 +48,12 @@ class ScopeAuthorizationProvider(AuthorizationProvider):
             action=ctx.action,
         )
 
+    def filter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        """Keep the resources the token's scopes cover. A wildcard scope covers every resource of
+        the type but the built-in components, which are kept only when a scope names them."""
+        accessible = self.accessible_resource_ids(ctx)
+        return [r for r in resources if accessible_ids_cover(ctx.resource_type, getattr(r, "id", None), accessible)]
+
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
         """Original middleware route gate: does the token satisfy the scopes the
         route requires, in the context of the resource being accessed.
@@ -72,3 +78,6 @@ class ScopeAuthorizationProvider(AuthorizationProvider):
 
     async def aauthorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
         return self.authorize_route(ctx, required_scopes)
+
+    async def afilter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        return self.filter_accessible(ctx, resources)

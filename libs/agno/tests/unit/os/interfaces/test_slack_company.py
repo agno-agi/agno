@@ -460,8 +460,9 @@ async def test_multi_page_sweep_doubles_each_read_from_the_top(company, monkeypa
 # ---------------------------------------------------------------------------
 def _authorized_company(tmp_path, run_user: str, message_ts: str = THREAD, session_owner: Optional[str] = None):
     auth = Authorization(verification_keys=[SECRET], algorithm="HS256")
-    auth.define_role("asker", ["teams:run", "tasks:read"])
-    auth.define_role("runner", ["teams:run"])
+    # Super Agent is run through its own scope: a type-wide teams:run does not reach it
+    auth.define_role("asker", [f"teams:{ENTITY_ID}:run", "tasks:read"])
+    auth.define_role("runner", [f"teams:{ENTITY_ID}:run"])
     auth.assign("alice", "asker").assign("bob", "asker").assign("carol", "runner")
     auth.assign("slack-bot", "asker").assign("slack-runner", "runner")
     db_file = str(tmp_path / "company.db")

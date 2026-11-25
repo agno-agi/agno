@@ -21,7 +21,7 @@ for a bring-your-own setup — a request is allowed if any of them allows it::
 
 AgentOS composes that list with the internal class below. It's an OR, so order
 only affects which provider is consulted first, not the outcome;
-``accessible_resource_ids`` returns the union (``{"*"}`` wins). This class is an
+``accessible_resource_ids`` returns the union. This class is an
 implementation detail — prefer the list form above.
 """
 
@@ -98,8 +98,7 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
-            if "*" in got:
-                return {"*"}
+            # No early return on "*": another plane may name a built-in component, which "*" leaves out
             ids |= got
         return ids
 
@@ -151,8 +150,7 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
             except Exception as e:
                 _abstained(provider, e)
                 continue
-            if "*" in got:
-                return {"*"}
+            # No early return on "*": another plane may name a built-in component, which "*" leaves out
             ids |= got
         return ids
 

@@ -1,6 +1,10 @@
 # Test Log: 26_authorization
 
-Last updated: 2026-11-24 (added `16_roles_and_default_role.py` for roles as objects, the scope
+Last updated: 2026-11-25 (added `17_built_ins_need_their_own_scope.py`: a wildcard or type-wide
+scope no longer reaches Super Agent, Platform Builder or Mini Agent. Ran 16 and 17 with the
+branch's `.venv`: both exit 0.)
+
+Earlier (2026-11-24): (added `16_roles_and_default_role.py` for roles as objects, the scope
 lists and the default role on the user directory. On this branch the role store and `/authz` are
 on whenever authorization is on, and token scopes count beside roles unless
 `trust_token_scopes=False` is set. Re-ran 01 to 06 and 09 to 15 with the branch's `.venv` and with
@@ -348,6 +352,24 @@ ALLOWED (200), `GET /config` BLOCKED (403). After `POST /authz/subjects/dana@exa
 with `platform`, the same token got `GET /config` ALLOWED (200). A token with `config:read` was
 ALLOWED on its scopes, and another new user with no scopes was BLOCKED as a member. The `support`
 role was created (201) and listed beside `member` (default, 8 scopes) and `platform` (43 scopes).
+
+---
+
+### 17_built_ins_need_their_own_scope.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (in-process TestClient, throwaway SQLite, no model key)
+
+**Description:** An AgentOS that serves Super Agent and a support team, with a `member` role
+(`READ + RUN`), a `platform` role (`READ + RUN + PLATFORM`) and an `admin` role. Reads Super
+Agent and lists the teams as each role, then with tokens that carry `teams:read`,
+`teams:*:read` and `teams:superagent:read`.
+
+**Result:** Exit 0, no traceback. The member read the support team (200), was BLOCKED on Super
+Agent (403) and saw only `support` in the list. The platform user and the admin read Super
+Agent (200), and the platform user saw `support` and `superagent`. The tokens with `teams:read`
+and `teams:*:read` were BLOCKED (403); the token with `teams:superagent:read` was ALLOWED (200).
 
 ---
 

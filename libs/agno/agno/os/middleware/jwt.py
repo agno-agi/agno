@@ -1868,7 +1868,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         resource_id=resource_id,
                         action=_route_action(required),
                     )
-                    if not await authority.provider.aauthorize_route(ctx, required):
+                    if not await authority.aauthorizes_route(ctx, required):
                         raise PermissionError("Scheduled target is not permitted")
             except Exception:
                 return self._create_error_response(

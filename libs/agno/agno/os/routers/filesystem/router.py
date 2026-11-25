@@ -315,8 +315,10 @@ async def _get_global_filesystem_agent_ids(
                 if isinstance((agent_id := getattr(agent, "id", None)), str) and agent_id
             )
 
-    if "*" not in accessible_ids:
-        agent_ids.intersection_update(accessible_ids)
+    if scopes_are_authoritative:
+        from agno.os.scopes import accessible_ids_cover
+
+        agent_ids = {agent_id for agent_id in agent_ids if accessible_ids_cover("agents", agent_id, accessible_ids)}
 
     return sorted(agent_ids)
 

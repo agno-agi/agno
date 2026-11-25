@@ -774,6 +774,7 @@ class _ExecutorAuthorization(RunAuthorization):
             original.context if original else AuthorizationContext(),
             service_account=original.service_account if original else False,
             enforce_tools=True,
+            saved=original.saved if original else False,
         )
 
     def require(self, resource: str, action: str, resource_id: Optional[str] = None) -> None:
