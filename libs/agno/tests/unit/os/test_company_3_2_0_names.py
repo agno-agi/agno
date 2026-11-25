@@ -1012,6 +1012,62 @@ def test_a_mapping_for_a_renamed_route_keeps_its_place():
     assert with_renamed_routes(written) == written
 
 
+def test_a_renamed_mapping_does_not_shadow_one_written_for_the_current_path():
+    from agno.os.scopes import get_required_scopes_for_route, with_renamed_routes
+
+    # Half renamed: the operator wrote some mappings under the current path only.
+    mappings = with_renamed_routes(
+        {
+            "GET /company/products/*": ["goals:read"],
+            "GET /company/goals/*/wiki": ["wiki:read"],
+            "POST /company/goals/*/restore": ["agent_os:admin"],
+            "POST /company/products/*": ["goals:write"],
+            "GET /company/*": ["agent_os:admin"],
+        }
+    )
+
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs/wiki") == ["wiki:read"]
+    assert get_required_scopes_for_route(mappings, "GET", "/company/goals/docs") == ["goals:read"]
+    assert get_required_scopes_for_route(mappings, "POST", "/company/goals/docs/restore") == ["agent_os:admin"]
+    assert get_required_scopes_for_route(mappings, "POST", "/company/goals/docs") == ["goals:write"]
+    # A copy still comes before the broader mappings that followed its old one.
+    assert list(mappings).index("GET /company/goals/*") < list(mappings).index("GET /company/*")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "upsert,remove",
+    [
+        ("goals:read", "products:read"),
+        ("products:read", "goals:read"),
+        ("goals:read", "goals:*:read"),
+        ("agents:read", "agents:*:read"),
+    ],
+)
+async def test_a_patch_that_upserts_and_removes_one_permission_is_refused(tmp_path, upsert, remove, use_async):
+    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
+    # The rows 3.2.0 stored: a deny on every Goal and an allow on one.
+    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="deny")
+    db.upsert_authz_policy(role="reader", resource="goals/docs", action="read", effect="allow")
+    store = Authorization(db=db)
+    engine = store._store()._engine
+    before = db.get_authz_role_policies("reader")
+
+    with pytest.raises(ValueError, match="name the same permission"):
+        await _patch(store, use_async, "reader", upsert=[{"scope": upsert, "effect": "deny"}], remove=[remove])
+
+    assert db.get_authz_role_policies("reader") == before
+    assert engine.check_resource("goals", "docs", "read", roles=["reader"]) is False
+    # The upsert alone moves the deny to the current name.
+    await _patch(store, use_async, "reader", upsert=[{"scope": "goals:read", "effect": "deny"}])
+    assert sorted(db.get_authz_role_policies("reader")) == [
+        ("goals/*", "read", "deny"),
+        ("goals/docs", "read", "allow"),
+    ]
+    assert engine.check_resource("goals", "docs", "read", roles=["reader"]) is False
+    db.close()
+
+
 @pytest.mark.parametrize("route", ["all", "same"])
 def test_a_company_database_with_the_id_of_another_is_migrated(tmp_path, route):
     import sqlite3

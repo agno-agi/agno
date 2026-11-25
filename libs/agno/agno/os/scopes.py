@@ -46,22 +46,37 @@ RENAMED_ROUTE_PREFIXES: Dict[str, str] = {
 }
 
 
+def _under_prefix(path: str, prefix: str) -> bool:
+    """Whether ``path`` starts with ``prefix``, ending at a segment or at a wildcard that continues it."""
+    return path.startswith(prefix) and path[len(prefix) : len(prefix) + 1] in ("", "/", "*", "?", "[", "{")
+
+
 def with_renamed_routes(scope_mappings: Dict[str, List[str]]) -> Dict[str, List[str]]:
     """``scope_mappings`` with each mapping for a renamed route also under the route's current path.
 
-    A mapping the caller wrote for the current path is kept as written. The mappings keep their order,
-    which decides the match when two patterns cover one path.
+    A mapping the caller wrote for the current path is kept as written. The first matching pattern
+    decides, so each copy is placed after its old mapping and after every mapping the caller wrote
+    for the current path with the same method: a copy never shadows the caller's own.
     """
-    renamed: Dict[str, List[str]] = {}
-    for key, scopes in scope_mappings.items():
-        renamed[key] = scopes
+    keys = list(scope_mappings)
+    # Where each copy goes: after the key at that index.
+    copies: Dict[int, List[Tuple[str, List[str]]]] = {}
+    for index, key in enumerate(keys):
         method, _, path = key.partition(" ")
         for old, new in RENAMED_ROUTE_PREFIXES.items():
-            # The prefix ends at a segment or at a wildcard that continues it.
-            if path.startswith(old) and path[len(old) : len(old) + 1] in ("", "/", "*", "?", "[", "{"):
-                current = f"{method} {new}{path[len(old) :]}"
-                if current not in scope_mappings:
-                    renamed[current] = scopes
+            if not _under_prefix(path, old):
+                continue
+            current = f"{method} {new}{path[len(old) :]}"
+            if current in scope_mappings:
+                continue
+            own = [
+                i for i, k in enumerate(keys) if k.startswith(f"{method} ") and _under_prefix(k[len(method) + 1 :], new)
+            ]
+            copies.setdefault(max([index, *own]), []).append((current, scope_mappings[key]))
+    renamed: Dict[str, List[str]] = {}
+    for index, key in enumerate(keys):
+        renamed[key] = scope_mappings[key]
+        renamed.update(copies.get(index, []))
     return renamed
 
 
