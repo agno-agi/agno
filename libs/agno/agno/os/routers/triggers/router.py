@@ -17,6 +17,7 @@ from agno.os.routers.triggers.schema import (
     TriggerUpdate,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.run.authorization import stamp_authorization
 from agno.triggers.manager import TriggerManager
 from agno.utils.log import log_info
 
@@ -270,7 +271,8 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
             source = _source(updates.get("source_id", existing.source_id))
             updates["filters"] = _filters(source, updates.get("filters", existing.filters))
         if {"target_type", "target_id", "input"}.intersection(updates):
-            # What the trigger runs changes, so the caller needs the right to run it, as on create.
+            # What the trigger runs changes, so the caller needs the right to run it, as on create,
+            # and the runs act as the caller from here on. Any other change keeps the saved authority.
             await _require_target(
                 request,
                 existing.name,
@@ -278,16 +280,17 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
                 updates.get("target_id", existing.target_id),
                 "change",
             )
+            updates["payload"] = stamp_authorization(existing.payload)
         if "name" in updates and updates["name"] != existing.name:
             await _require_name_free(manager, updates["name"], existing.user_id)
 
         try:
-            result = await manager.aupdate(trigger_id, user_id=get_scoped_user_id(request), **updates)
+            result = await manager._acall("update_trigger", trigger_id, user_id=get_scoped_user_id(request), **updates)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to update trigger")
-        return result.to_dict()
+        return result
 
     @router.delete("/triggers/{trigger_id}", status_code=204)
     async def delete_trigger(

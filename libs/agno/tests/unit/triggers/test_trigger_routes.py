@@ -192,6 +192,36 @@ async def test_a_caller_without_triggers_write_cannot_create_one(make_os):
     assert (await os.client.delete(f"/triggers/{trigger_id}", headers=bearer(WRITER))).status_code == 204
 
 
+async def test_an_edit_changes_whose_authority_the_trigger_has_only_when_it_changes_what_runs(make_os):
+    os = await make_os(nothing, os_options=checked())
+    trigger = (await os.client.post("/triggers", json=body(), headers=bearer(WRITER, sub="alice"))).json()
+
+    async def saved_principal():
+        (stored,) = (await stored_rows(os))[0]
+        return stored["payload"]["_agno_authorization"]["context"]["principal_id"]
+
+    # Bob may write triggers and may not run the agent. He can describe the trigger; its runs
+    # still act as alice.
+    bob = bearer(["triggers:write"], sub="bob")
+    described = await os.client.patch(f"/triggers/{trigger['id']}", json={"description": "Bob's note"}, headers=bob)
+    assert described.status_code == 200 and described.json()["description"] == "Bob's note"
+    assert await saved_principal() == "alice"
+
+    # Changing the instruction changes what runs: that needs the right to run the target.
+    refused = await os.client.patch(f"/triggers/{trigger['id']}", json={"input": "Bob's instruction."}, headers=bob)
+    assert refused.status_code == 403
+    assert await saved_principal() == "alice"
+
+    # Carol has that right. The trigger runs her instruction, as her.
+    carol = bearer(WRITER, sub="carol")
+    changed = await os.client.patch(f"/triggers/{trigger['id']}", json={"input": "Carol's instruction."}, headers=carol)
+    assert changed.status_code == 200 and changed.json()["payload"] is None
+    assert await saved_principal() == "carol"
+    await os.deliver(issue_payload())
+    await os.run_events()
+    assert os.model.inputs[0].startswith("Carol's instruction.")
+
+
 async def test_with_user_isolation_a_caller_sees_and_changes_only_their_own(make_os):
     os = await make_os(nothing, os_options=checked(user_isolation=True))
     alice, bob = bearer(WRITER, sub="alice"), bearer(WRITER, sub="bob")
@@ -435,3 +465,32 @@ async def test_events_are_listed_by_trigger_state_and_conversation(make_os):
     assert {event["trigger_id"] for event in ignored} == {trigger["id"], None}
     one = (await os.client.get("/triggers/events?event_key=agno-agi/agno%237&status=success")).json()["data"]
     assert len(one) == 1 and one[0]["run_id"]
+
+
+# ------------------------------------------------------------------- several apps on one database
+
+
+async def test_another_agentos_on_the_database_neither_sees_nor_changes_these_triggers(make_os):
+    first = await make_os(nothing, os_options={"id": "first-os"})
+    second = await make_os(nothing, os_options={"id": "second-os"})
+    trigger = (await first.client.post("/triggers", json=body())).json()
+    assert trigger["os_id"] == "first-os"
+
+    assert (await second.client.get("/triggers")).json()["data"] == []
+    for method, path in (
+        ("GET", f"/triggers/{trigger['id']}"),
+        ("PATCH", f"/triggers/{trigger['id']}"),
+        ("DELETE", f"/triggers/{trigger['id']}"),
+        ("POST", f"/triggers/{trigger['id']}/disable"),
+    ):
+        answer = await second.client.request(method, path, json={"input": "Theirs."} if method == "PATCH" else None)
+        assert answer.status_code == 404, (method, path)
+
+    # Each has its own trigger of that name's source, and a delivery to one starts only its own.
+    theirs = (await second.client.post("/triggers", json=body(name="second-triage"))).json()
+    assert theirs["os_id"] == "second-os"
+    assert [item["id"] for item in (await first.client.get("/triggers")).json()["data"]] == [trigger["id"]]
+    await first.deliver(issue_payload())
+    await first.run_events()
+    (row,) = await first.events()
+    assert row["trigger_id"] == trigger["id"] and row["status"] == EVENT_SUCCESS
