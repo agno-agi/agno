@@ -551,11 +551,13 @@ class AuditStatus(FeatureStatus):
 class FeaturesReport(BaseModel):
     """Which optional features run on this AgentOS, so a client can show or hide their
     pages without probing each route. Reported as EFFECTIVE behavior: a feature that was
-    requested but could not start is reported off. Readable by any caller that can read
-    /config. Every field is optional so a client parses responses from servers that omit it."""
+    requested but could not start is reported off. `tracing`, `scheduler` and `mcp` go to
+    every caller that can read /config; `user_directory` and `audit` go to administrators
+    only, since the pages they gate are admin-only. Every field is optional so a client
+    parses responses from servers that omit it."""
 
-    user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory")
-    audit: Optional[AuditStatus] = Field(None, description="Audit trails")
+    user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
+    audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
     tracing: Optional[FeatureStatus] = Field(None, description="Runs are traced and the spans stored by this AgentOS")
     scheduler: Optional[FeatureStatus] = Field(None, description="Scheduled runs are polled and executed")
     mcp: Optional[FeatureStatus] = Field(

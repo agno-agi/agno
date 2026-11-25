@@ -54,10 +54,11 @@ admin `alice` and as the member `bob`, and `GET /authz/audit` as `alice`.
 **Result:** `alice` received the full `authorization` block (`enabled` true,
 `mode` `jwt`, `managed_roles` true, `default_role` `member`,
 `token_scopes_trusted` false, `audience_verified` true). `bob` received only
-`enabled`, `mode` and `user_isolation`. Both received the same `features` block:
-user directory on with `auto_provision` and `fail_closed` true, audit on with
-both trails readable, tracing, scheduler and MCP off. `GET /authz/audit`
-returned 200, matching `changes_readable`.
+`enabled`, `mode` and `user_isolation`. `alice` received the full `features`
+block: user directory on with `auto_provision` and `fail_closed` true, audit on
+with both trails readable, tracing, scheduler and MCP off. `bob` received only
+tracing, scheduler and MCP. `GET /authz/audit` returned 200, matching
+`changes_readable`.
 
 ---
 
