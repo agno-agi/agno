@@ -459,16 +459,54 @@ def test_a_role_in_code_still_fails_startup_when_its_database_cannot_be_read(tmp
             pass
 
 
-def test_a_default_role_needs_a_synchronous_database(tmp_path):
+def test_roles_in_code_and_a_default_role_apply_at_startup_on_an_async_database(tmp_path):
     from agno.db.sqlite import AsyncSqliteDb
 
-    # The default is applied while AgentOS is built, which cannot await an async database
-    with pytest.raises(ValueError, match="needs a synchronous database"):
-        _os(
-            AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
-            _verified(),
-            user_directory=UserDirectory(default_role="member"),
-        )
+    member, platform = _roles()
+    agent_os = _os(
+        AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
+        _verified(roles=[member, platform], trust_token_scopes=True),
+        user_directory=UserDirectory(default_role=member),
+    )
+    with TestClient(agent_os.get_app()) as client:
+        roles = {r["slug"]: r for r in client.get("/authz/roles", headers=_admin()).json()["data"]}
+        assert roles["member"]["is_default"] is True
+        assert {s["raw"] for s in roles["platform"]["scopes"]} == set(READ + RUN + PLATFORM)
+        # A new user's first request makes them a member: they can use the agents, not the config
+        assert client.get("/agents/research", headers=_auth("dana")).status_code == 200
+        assert client.get("/config", headers=_auth("dana")).status_code == 403
+
+
+def test_a_default_role_that_is_not_defined_stops_startup_on_an_async_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    agent_os = _os(
+        AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
+        _verified(),
+        user_directory=UserDirectory(default_role="ghost"),
+    )
+    with pytest.raises(ValueError, match="is not a defined role"):
+        with TestClient(agent_os.get_app()):
+            pass
+
+
+def test_two_default_roles_fail_while_agentos_is_built_on_an_async_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    member, platform = _roles()
+    authz = _verified(roles=[member]).define_role("platform", platform.scopes, default=True)
+    with pytest.raises(ValueError, match="Two default roles are set"):
+        _os(AsyncSqliteDb(db_file=str(tmp_path / "os.db")), authz, user_directory=UserDirectory(default_role=member))
+
+
+def test_a_role_defined_after_agentos_is_built_needs_a_synchronous_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    member, _ = _roles()
+    authz = _verified(roles=[member])
+    _os(AsyncSqliteDb(db_file=str(tmp_path / "os.db")), authz)
+    with pytest.raises(ValueError, match="need a synchronous database"):
+        authz.define_role("support", READ)
 
 
 def test_a_role_in_code_still_needs_a_database_that_can_hold_it():

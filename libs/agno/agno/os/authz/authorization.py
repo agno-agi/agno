@@ -72,22 +72,22 @@ _NEEDS_DB = (
     "AgentOS(db=...) so it can adopt the OS database."
 )
 
-# define_role()/seed() write at construction time, which is synchronous; an async database can only
-# be driven from an event loop, and driving it from a throwaway loop here would bind its connection
-# pool to the wrong loop. So setup needs a sync db; async is for request-time enforcement.
+# seed()/assign() write at construction time, which is synchronous; an async database can only be
+# driven from an event loop, and driving it from a throwaway loop here would bind its connection
+# pool to the wrong loop. Roles defined in code and UserDirectory(default_role=) wait for app startup.
 _ASYNC_SETUP_MSG = (
-    "Authorization.define_role()/seed() write roles at setup time and need a synchronous database, but "
-    "the bound database is async ({db_type}). Give AgentOS a sync db for setup, or configure roles "
-    "yourself through the async runtime API (Authorization.aset_role_scopes / aset_role) once bound. "
-    "An object with no define_role()/seed()/assign() calls works against an async db."
+    "Authorization.seed()/assign(), and define_role() once AgentOS is built, write at setup time and "
+    "need a synchronous database, but the bound database is async ({db_type}). Roles defined before "
+    "AgentOS(...) and UserDirectory(default_role=) are applied when the app starts. For the rest, give "
+    "AgentOS a sync db, or use the async runtime API (Authorization.aset_role_scopes / aset_role)."
 )
 
-# UserDirectory(default_role=) is applied while AgentOS is built, which is synchronous.
-_ASYNC_DEFAULT_ROLE_MSG = (
-    "UserDirectory(default_role={role!r}) is applied at setup time and needs a synchronous database, "
-    "but the bound database is async ({db_type}). Flag the default through the roles API instead "
-    "(PATCH /authz/roles/{role} with is_default, or Authorization.aset_role_meta)."
-)
+
+def _unknown_default_role(role: str) -> str:
+    return (
+        f"UserDirectory(default_role={role!r}) is not a defined role. Define it with "
+        f"Authorization(roles=[Role({role!r}, scopes=[...])]), or create it through the /authz API first."
+    )
 
 
 class Authorization:
@@ -195,6 +195,8 @@ class Authorization:
         self._roles_defined = engine is not None or roles_claim is not None
         # The role define_role(..., default=True) last flagged, to compare with UserDirectory(default_role=)
         self._default_declared: Optional[str] = None
+        # UserDirectory(default_role=) waiting for app startup, on an async database
+        self._pending_default: Optional[str] = None
         # The store is on only because the database can hold roles: nothing in code declared one
         self._store_is_implicit = False
         self._wired = False  # set once AgentOS has wired the object; roles cannot be declared after
@@ -251,7 +253,7 @@ class Authorization:
         self._declare_roles()
         if default:
             self._default_declared = slug
-        if self._bound:
+        if self._bound and not self._defers_role_defs():
             self._apply_role_def(slug, scopes, default, name, description)
         else:
             self._role_defs.append((slug, scopes, default, name, description))
@@ -375,9 +377,10 @@ class Authorization:
         return self
 
     def _flush(self) -> None:
-        for slug, scopes, default, name, description in self._role_defs:
-            self._apply_role_def(slug, scopes, default, name, description)
-        self._role_defs.clear()
+        if not self._defers_role_defs():
+            for slug, scopes, default, name, description in self._role_defs:
+                self._apply_role_def(slug, scopes, default, name, description)
+            self._role_defs.clear()
         for admin, admin_role in self._seed_calls:
             self._apply_seed(admin, admin_role)
         self._seed_calls.clear()
@@ -909,15 +912,39 @@ class Authorization:
                 f"UserDirectory(default_role={role!r}). A new user gets one role; set the default in one place."
             )
         if self._db_is_async:
-            raise ValueError(_ASYNC_DEFAULT_ROLE_MSG.format(role=role, db_type=type(self._db).__name__))
+            self._pending_default = role
+            return
         store = self._store()
         if store.get_role(role) is None:
-            raise ValueError(
-                f"UserDirectory(default_role={role!r}) is not a defined role. Define it with "
-                f"Authorization(roles=[Role({role!r}, scopes=[...])]), or create it through the /authz API first."
-            )
+            raise ValueError(_unknown_default_role(role))
         if store.default_role() != role:  # no write, and no audit event, when unchanged
             store.set_role_meta(role, is_default=True)
+
+    def _defers_role_defs(self) -> bool:
+        """Whether role definitions wait for app startup: an async database, before AgentOS is built."""
+        return self._db_is_async and not self._wired
+
+    async def _aapply_pending_setup(self) -> None:
+        """Apply what an async database could not take while AgentOS was built: the roles defined
+        in code, then ``UserDirectory(default_role=)``. Called at app startup, on the event loop."""
+        if not self._role_defs and self._pending_default is None:
+            return
+        store = self._ensure_role_store()
+        while self._role_defs:
+            slug, scopes, default, name, description = self._role_defs.pop(0)
+            # Same bootstrap rule as the sync path: a role that has scopes keeps them
+            if await store.aget_role_scopes(slug):
+                if default and await store.adefault_role() != slug:
+                    await store.aset_role_meta(slug, is_default=True)
+                continue
+            await store.aset_role_scopes(slug, scopes, name=name, description=description, is_default=default)
+        role, self._pending_default = self._pending_default, None
+        if role is None:
+            return
+        if await store.aget_role(role) is None:
+            raise ValueError(_unknown_default_role(role))
+        if await store.adefault_role() != role:
+            await store.aset_role_meta(role, is_default=True)
 
     def _wire(self, os_db: Optional[Any]) -> "Authorization":
         """What AgentOS calls: bind (lending the OS db) and mark the object wired, after which roles

@@ -239,22 +239,23 @@ def test_seed_admin_warning_survives_define_after_seed_order(tmp_path):
 
 
 def test_object_setup_rejects_async_db(tmp_path):
-    """define_role/seed write synchronously; against an async db they raise a clear object-level error
-    instead of a confusing 'use the async variant' failure deep in the engine."""
+    """seed writes synchronously; against an async db it raises a clear object-level error instead of
+    a confusing 'use the async variant' failure deep in the engine. define_role waits for startup."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
     authz = Authorization(db=AsyncSqliteDb(db_file=str(tmp_path / "a.db")))
+    authz.define_role("admin", ["agent_os:admin"])
     with pytest.raises(ValueError, match="synchronous database"):
-        authz.define_role("viewer", ["agents:*:read"])
+        authz.seed(admin="alice")
 
 
 def test_object_async_os_db_setup_raises_at_agentos(tmp_path):
-    """Borrowing an async OS db: the buffered define_role surfaces the same clear error when AgentOS
-    binds, not a deep engine error."""
+    """Borrowing an async OS db: a buffered seed surfaces the same clear error when AgentOS binds, not
+    a deep engine error."""
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
     authz = Authorization()  # borrow the OS db
-    authz.define_role("viewer", ["agents:*:read"])  # buffered until bind
+    authz.define_role("admin", ["agent_os:admin"]).seed(admin="alice")  # buffered until bind
     with pytest.raises(ValueError, match="synchronous database"):
         AgentOS(id=OS_ID, db=AsyncSqliteDb(db_file=str(tmp_path / "os.db")), agents=_agents(), authorization=authz)
 
