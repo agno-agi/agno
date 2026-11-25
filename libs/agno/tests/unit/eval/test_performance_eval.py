@@ -1,5 +1,7 @@
 """Unit tests for PerformanceEval and PerformanceResult"""
 
+import pytest
+
 from agno.db.in_memory import InMemoryDb
 from agno.db.sqlite import SqliteDb
 from agno.eval.performance import PerformanceEval, PerformanceResult
@@ -107,3 +109,42 @@ def test_rerun_stores_a_row_and_a_file_per_run(tmp_path):
     assert {run.run_id for run in db.get_eval_runs()} == {first.run_id, second.run_id}
     assert (tmp_path / f"{first.run_id}.json").exists()
     assert (tmp_path / f"{second.run_id}.json").exists()
+
+
+@pytest.mark.parametrize("measure_runtime,measure_memory", [(True, False), (False, True), (True, True), (False, False)])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_persisted_samples_with_optional_measurements(tmp_path, measure_runtime, measure_memory, asynchronous):
+    """Disabled measurements must not discard the samples of the enabled measurement."""
+    db = SqliteDb(db_file=str(tmp_path / "samples.db"))
+
+    def sample():
+        return bytearray(1024)
+
+    async def async_sample():
+        return sample()
+
+    evaluation = PerformanceEval(
+        func=async_sample if asynchronous else sample,
+        db=db,
+        telemetry=False,
+        warmup_runs=0,
+        num_iterations=2,
+        show_spinner=False,
+        measure_runtime=measure_runtime,
+        measure_memory=measure_memory,
+    )
+    try:
+        result = await evaluation.arun() if asynchronous else evaluation.run()
+        record = db.get_eval_run(result.run_id)
+        assert record is not None
+        expected_count = 2 if measure_runtime or measure_memory else 0
+        assert len(record.eval_data["runs"]) == expected_count
+        assert record.eval_data["runs"] == [
+            {
+                "runtime": result.run_times[index] if measure_runtime else None,
+                "memory": result.memory_usages[index] if measure_memory else None,
+            }
+            for index in range(expected_count)
+        ]
+    finally:
+        db.db_engine.dispose()
