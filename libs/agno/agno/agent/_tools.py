@@ -567,7 +567,7 @@ def parse_tools(
                 if strict and _func.strict is None:
                     _func.strict = True
                 if agent.tool_hooks is not None:
-                    _func.tool_hooks = agent.tool_hooks
+                    _func.tool_hooks = [*agent.tool_hooks, *(_func.tool_hooks or [])]
                 _functions.append(_func)
                 log_debug(f"Added tool {name} from {tool.name}")
 
@@ -605,7 +605,7 @@ def parse_tools(
             if strict and tool.strict is None:
                 tool.strict = True
             if agent.tool_hooks is not None:
-                tool.tool_hooks = agent.tool_hooks
+                tool.tool_hooks = [*agent.tool_hooks, *(tool.tool_hooks or [])]
             _functions.append(tool)
             log_debug(f"Added tool {tool.name}")
 
@@ -656,7 +656,7 @@ def parse_tools(
                 if strict:
                     _func.strict = True
                 if agent.tool_hooks is not None:
-                    _func.tool_hooks = agent.tool_hooks
+                    _func.tool_hooks = [*agent.tool_hooks, *(_func.tool_hooks or [])]
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
