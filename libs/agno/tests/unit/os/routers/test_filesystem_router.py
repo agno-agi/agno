@@ -1823,6 +1823,34 @@ def test_an_engine_whose_database_is_not_known_is_its_own_place():
         assert _database_place(unknown) == ("engine", id(unknown))
 
 
+@pytest.mark.parametrize("pgdatabase", [None, "postgres"])
+def test_a_connection_that_names_no_database_is_not_merged_by_its_user(pgdatabase, client_factory, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.fs.db import DbFileSystem
+
+    monkeypatch.delenv("PGDATABASE", raising=False)
+    if pgdatabase is not None:
+        monkeypatch.setenv("PGDATABASE", pgdatabase)
+    urls = ("postgresql+psycopg://ai:ai@localhost:5432", "postgresql+psycopg://ai:ai@localhost:5432/ai")
+    stores = [FileSystem(DbFileSystem(db_engine=create_engine(url)), namespace="notes") for url in urls]
+    client = client_factory(filesystem=stores, authorization=False)
+
+    ids = [entry["id"] for entry in client.get("/config").json()["filesystem"]["namespaces"]]
+    assert len(set(ids)) == 2
+
+
+@pytest.mark.parametrize("variable", ["PGSERVICE", "PGHOSTADDR"])
+def test_an_environment_that_redirects_connections_leaves_the_place_unknown(variable, monkeypatch):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    monkeypatch.setenv(variable, "elsewhere")
+    engine = create_engine("postgresql+psycopg://ai:ai@localhost:5432/ai")
+    assert _database_place(engine) == ("engine", id(engine))
+
+
 def test_a_sqlite_name_is_a_uri_only_when_opened_as_one(tmp_path, monkeypatch):
     from sqlalchemy import create_engine
 

@@ -47,8 +47,11 @@ def _postgres_place(params: Dict[str, Any]) -> Optional[tuple]:
     """The server and database a PostgreSQL connection opens, or None when the driver chooses them."""
     if any(params.get(name) for name in ("service", "conninfo", "dsn")):
         return None
+    # libpq applies these to a connection that names its own host.
+    if os.getenv("PGSERVICE") or os.getenv("PGHOSTADDR"):
+        return None
     host = params.get("hostaddr") or params.get("host")
-    database = params.get("dbname") or params.get("database") or params.get("user")
+    database = params.get("dbname") or params.get("database")
     # libpq reads a dbname that is itself a connection string.
     if not host or not database or "=" in str(database) or "://" in str(database):
         return None
