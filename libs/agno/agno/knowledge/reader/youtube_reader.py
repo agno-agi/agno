@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Optional
+from urllib.parse import parse_qs, urlparse
 
 from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -14,6 +15,34 @@ except ImportError:
     raise ImportError(
         "`youtube_transcript_api` not installed. Please install it via `pip install youtube_transcript_api`."
     )
+
+# Path prefixes that carry the video id as the segment right after them.
+_ID_PATH_PREFIXES = ("shorts", "embed", "live", "v")
+
+
+def _is_host(host: str, domain: str) -> bool:
+    """Whether ``host`` is ``domain`` or one of its subdomains."""
+    return host == domain or host.endswith(f".{domain}")
+
+
+def extract_video_id(url: str) -> str:
+    """The video id of a YouTube URL: ``watch?v=``, ``youtu.be``, ``/shorts/``, ``/embed/``,
+    ``/live/`` and ``/v/``. Anything else falls back to the historical ``v=`` split, so a
+    bare id still works."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if _is_host(host, "youtu.be"):
+        # youtu.be/watch?v=<id> carries the id in the query, not the path.
+        if segments and segments[0] != "watch":
+            return segments[0]
+    elif _is_host(host, "youtube.com") or _is_host(host, "youtube-nocookie.com"):
+        if len(segments) > 1 and segments[0] in _ID_PATH_PREFIXES:
+            return segments[1]
+    video_ids = parse_qs(parsed.query).get("v")
+    if video_ids and video_ids[0]:
+        return video_ids[0]
+    return url.split("v=")[-1].split("&")[0]
 
 
 class YouTubeReader(Reader):
@@ -44,7 +73,7 @@ class YouTubeReader(Reader):
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         try:
             # Extract video ID from URL
-            video_id = url.split("v=")[-1].split("&")[0]
+            video_id = extract_video_id(url)
             log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript

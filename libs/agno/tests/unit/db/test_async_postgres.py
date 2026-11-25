@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -175,3 +176,44 @@ async def test_delete_runs_raises_on_a_backend_failure(async_postgres_db):
 
     with pytest.raises(OSError, match="server closed"):
         await async_postgres_db.delete_runs(["run-1", "run-2"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost_race_probe", [False, True])
+async def test_cancelled_table_creation_can_be_retried(async_postgres_db, lost_race_probe):
+    """Cancellation during creation, or during the lost-race probe, must unregister the table."""
+    async_postgres_db.create_schema = False
+    started = asyncio.Event()
+    blocked = False
+
+    class DuplicateTable(Exception):
+        sqlstate = "42P07"
+
+    probes = 0
+
+    async def table_exists(table_name):
+        nonlocal probes, blocked
+        probes += 1
+        if not blocked and probes == (2 if lost_race_probe else 1):
+            blocked = True
+            started.set()
+            await asyncio.Event().wait()
+        return False
+
+    run_sync = AsyncMock(side_effect=[DuplicateTable(), None] if lost_race_probe else None)
+    conn = Mock(run_sync=run_sync)
+    begin_ctx = Mock(__aenter__=AsyncMock(return_value=conn), __aexit__=AsyncMock(return_value=None))
+    async_postgres_db.db_engine.begin = Mock(return_value=begin_ctx)
+    async_postgres_db.table_exists = table_exists
+    async_postgres_db.upsert_schema_version = AsyncMock()
+
+    task = asyncio.create_task(async_postgres_db._create_table("retry_table", "knowledge"))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not any(t.name == "retry_table" for t in async_postgres_db.metadata.tables.values())
+    run_sync.side_effect = None
+    table = await async_postgres_db._create_table("retry_table", "knowledge")
+    assert table.name == "retry_table"
