@@ -1,6 +1,6 @@
 """Unit tests for OpenCVTools class."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 import pytest
@@ -53,6 +53,23 @@ def mock_cv2():
         mock_cv2.circle.return_value = None
 
         yield mock_cv2
+
+
+@pytest.fixture
+def mock_video_tempfile(tmp_path):
+    """Create a real temporary video path and mock NamedTemporaryFile."""
+    temp_path = tmp_path / "capture.mp4"
+
+    def create_temp_file(*args, **kwargs):
+        temp_path.touch()
+        temp_file = Mock()
+        temp_file.name = str(temp_path)
+        context = MagicMock()
+        context.__enter__.return_value = temp_file
+        return context
+
+    with patch("tempfile.NamedTemporaryFile", side_effect=create_temp_file) as mock_tempfile:
+        yield temp_path, mock_tempfile
 
 
 @pytest.fixture
@@ -430,7 +447,11 @@ class TestVideoCapture:
         """Test video capture when frame reading fails."""
         mock_cv2.VideoCapture.return_value.read.return_value = (False, None)
 
-        with patch("tempfile.NamedTemporaryFile"), patch("agno.tools.opencv.getattr") as mock_getattr:
+        with (
+            patch("tempfile.NamedTemporaryFile"),
+            patch("os.unlink"),
+            patch("agno.tools.opencv.getattr") as mock_getattr,
+        ):
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
@@ -474,6 +495,61 @@ class TestVideoCapture:
         assert "Error capturing video: Test exception" in result.content
         assert result.videos is None
 
+    def test_capture_video_all_codecs_fail_cleans_tempfile(
+        self, opencv_tools_no_preview, mock_agent, mock_cv2, mock_video_tempfile
+    ):
+        """Test that codec initialization failures release the writer and remove the temporary file."""
+        temp_path, _ = mock_video_tempfile
+        mock_cv2.VideoWriter.return_value.isOpened.return_value = False
+
+        result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Failed to initialize video writer with any codec" in result.content
+        assert not temp_path.exists()
+        assert mock_cv2.VideoWriter.return_value.release.call_count == 3
+
+    def test_capture_video_frame_read_fails_cleans_tempfile(
+        self, opencv_tools_no_preview, mock_agent, mock_cv2, mock_video_tempfile
+    ):
+        """Test that a failed frame read releases the writer and removes the temporary file."""
+        temp_path, _ = mock_video_tempfile
+        mock_cv2.VideoCapture.return_value.read.return_value = (False, None)
+        writer = mock_cv2.VideoWriter.return_value
+
+        result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Failed to capture video frame" in result.content
+        writer.release.assert_called_once()
+        assert not temp_path.exists()
+
+    def test_capture_video_empty_output_cleans_tempfile(
+        self, opencv_tools_no_preview, mock_agent, mock_cv2, mock_video_tempfile
+    ):
+        """Test that an empty output file is removed after the writer is released."""
+        temp_path, _ = mock_video_tempfile
+        writer = mock_cv2.VideoWriter.return_value
+
+        with patch("agno.tools.opencv.time.time", side_effect=[0, 1]):
+            result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Video file was not created or is empty" in result.content
+        writer.release.assert_called_once()
+        assert not temp_path.exists()
+
+    def test_capture_video_exception_cleans_tempfile(
+        self, opencv_tools_no_preview, mock_agent, mock_cv2, mock_video_tempfile
+    ):
+        """Test that an exception during recording still releases the writer and removes the file."""
+        temp_path, _ = mock_video_tempfile
+        writer = mock_cv2.VideoWriter.return_value
+        writer.write.side_effect = RuntimeError("write failed")
+
+        result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
+
+        assert "Error capturing video: write failed" in result.content
+        writer.release.assert_called_once()
+        assert not temp_path.exists()
+
 
 class TestResourceCleanup:
     """Test proper resource cleanup in all scenarios."""
@@ -505,7 +581,7 @@ class TestResourceCleanup:
             patch("tempfile.NamedTemporaryFile") as mock_tempfile,
             patch("os.path.exists", return_value=True),
             patch("os.path.getsize", return_value=1000),
-            patch("os.unlink"),
+            patch("os.unlink") as mock_unlink,
             patch("builtins.open", create=True) as mock_open,
             patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
@@ -526,6 +602,7 @@ class TestResourceCleanup:
             opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
         mock_cap.release.assert_called_once()
+        mock_unlink.assert_called_once_with("/tmp/test_video.mp4")
         mock_cv2.destroyAllWindows.assert_called_once()
 
     def test_video_capture_cleanup_on_exception(self, opencv_tools_no_preview, mock_agent, mock_cv2):

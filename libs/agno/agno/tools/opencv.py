@@ -1,3 +1,5 @@
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, List
@@ -176,6 +178,9 @@ class OpenCVTools(Toolkit):
                 log_error(error_msg)
                 return ToolResult(content=error_msg)
 
+            temp_filepath = None
+            out = None
+
             try:
                 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -194,13 +199,9 @@ class OpenCVTools(Toolkit):
                     ("XVID", "Xvid"),  # Another fallback
                 ]
 
-                import os
-                import tempfile
-
                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
                     temp_filepath = temp_file.name
 
-                out = None
                 successful_codec = None
 
                 for codec_fourcc, codec_name in codecs_to_try:
@@ -272,8 +273,9 @@ class OpenCVTools(Toolkit):
                     if time.time() - start_time >= duration:
                         break
 
-                # Release video writer
+                # Release the writer before reading the completed video.
                 out.release()
+                out = None
 
                 # Verify the file was created and has content
                 temp_path = Path(temp_filepath)
@@ -285,9 +287,6 @@ class OpenCVTools(Toolkit):
                 # Read the video file and encode to base64
                 with open(temp_filepath, "rb") as video_file:
                     video_bytes = video_file.read()
-
-                # Clean up temporary file
-                os.unlink(temp_filepath)
 
                 media_id = str(uuid4())
 
@@ -310,10 +309,20 @@ class OpenCVTools(Toolkit):
                 )
 
             finally:
-                if "cap" in locals():
-                    cap.release()
-                cv2.destroyAllWindows()
-                log_debug("Video capture resources released")
+                try:
+                    if out is not None:
+                        out.release()
+                finally:
+                    try:
+                        if temp_filepath is not None:
+                            try:
+                                os.unlink(temp_filepath)
+                            except FileNotFoundError:
+                                pass
+                    finally:
+                        cap.release()
+                        cv2.destroyAllWindows()
+                        log_debug("Video capture resources released")
 
         except Exception as e:
             error_msg = f"Error capturing video: {str(e)}"
