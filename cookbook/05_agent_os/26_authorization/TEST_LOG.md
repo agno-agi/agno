@@ -353,10 +353,6 @@ with `platform`, the same token got `GET /config` ALLOWED (200). A token with `c
 ALLOWED on its scopes, and another new user with no scopes was BLOCKED as a member. The `support`
 role was created (201) and listed beside `member` (default, 8 scopes) and `platform` (43 scopes).
 
-Re-run 2026-11-24 after the file set `trust_token_scopes=True` (its administrator is one by token
-scopes): exit 0, the same ALLOWED and BLOCKED lines, and no startup warning about
-`trust_token_scopes` being unset.
-
 ---
 
 ### 17_built_ins_need_their_own_scope.py

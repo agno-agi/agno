@@ -509,45 +509,6 @@ def test_a_role_defined_after_agentos_is_built_needs_a_synchronous_database(tmp_
         authz.define_role("support", READ)
 
 
-@pytest.fixture
-def authz_warnings(monkeypatch):
-    """Warnings from the Authorization module. Patched at the call site, since agno's log helpers
-    write to whichever agno logger is current and a handler on one of them misses the rest."""
-    import agno.os.authz.authorization as authorization_module
-
-    messages = []
-    monkeypatch.setattr(authorization_module, "log_warning", messages.append)
-    return messages
-
-
-def _token_scope_warnings(messages):
-    return [message for message in messages if "trust_token_scopes unset" in message]
-
-
-def test_roles_in_code_with_trust_token_scopes_unset_warn_at_startup(tmp_path, authz_warnings):
-    member, _ = _roles()
-    _os(_db(tmp_path), _verified(roles=[member]))
-    assert len(_token_scope_warnings(authz_warnings)) == 1
-
-
-@pytest.mark.parametrize(
-    "authorization",
-    [
-        pytest.param(lambda m: _verified(roles=[m], trust_token_scopes=True), id="trust-true"),
-        pytest.param(lambda m: _verified(roles=[m], trust_token_scopes=False), id="trust-false"),
-        pytest.param(lambda m: _verified(), id="no-role-in-code"),
-        pytest.param(lambda m: True, id="bare-switch"),
-    ],
-)
-def test_no_token_scope_warning_when_the_choice_is_explicit_or_no_role_is_in_code(
-    tmp_path, authz_warnings, monkeypatch, authorization
-):
-    monkeypatch.setenv("JWT_VERIFICATION_KEY", SECRET)
-    member, _ = _roles()
-    _os(_db(tmp_path), authorization(member))
-    assert _token_scope_warnings(authz_warnings) == []
-
-
 def test_a_role_in_code_still_needs_a_database_that_can_hold_it():
     member, _ = _roles()
     with pytest.raises(RuntimeError, match="does not support authorization storage"):

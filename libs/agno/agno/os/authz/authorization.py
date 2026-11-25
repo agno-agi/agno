@@ -82,14 +82,6 @@ _ASYNC_SETUP_MSG = (
     "AgentOS a sync db, or use the async runtime API (Authorization.aset_role_scopes / aset_role)."
 )
 
-_TOKEN_SCOPES_UNSET_MSG = (
-    "Authorization defines roles and leaves trust_token_scopes unset, so token scopes count beside "
-    "the role store: a request passes when the token's scopes allow it, even where a stored role "
-    "denies it, and a token carrying agent_os:admin administers this OS. Pass trust_token_scopes=False "
-    "for the role store to decide alone, or trust_token_scopes=True to keep token scopes and silence "
-    "this warning (True also stops the store refusing a change that leaves no stored admin)."
-)
-
 
 def _unknown_default_role(role: str) -> str:
     return (
@@ -959,16 +951,6 @@ class Authorization:
         cannot be newly declared (see :meth:`_declare_roles`)."""
         self._bind(os_db)
         self._wired = True
-        # Token scopes count beside declared roles by default, which a deployment that relied on
-        # the role store deciding alone would not notice on upgrade
-        if (
-            self._roles_defined
-            and not self._store_is_implicit
-            and self._provider_override is None
-            and self._trust_token_scopes
-            and not self._admins_on_tokens
-        ):
-            log_warning(_TOKEN_SCOPES_UNSET_MSG)
         return self
 
     def _store(self, *, declare: bool = False) -> "RoleStore":
