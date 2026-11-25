@@ -1,5 +1,7 @@
 """What a source of events gives the trigger runtime, and the message a run receives."""
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol
 
@@ -81,6 +83,10 @@ class TriggerSource(Protocol):
         """The event object rebuilt from what was stored."""
         ...
 
+    def trim(self, stored: Dict[str, Any]) -> Dict[str, Any]:
+        """A stored event reduced to what says which event it was, for one that started nothing."""
+        ...
+
     def describe(self, event: Any) -> List[EventField]:
         """The event as a run reads it."""
         ...
@@ -98,12 +104,20 @@ class TriggerSource(Protocol):
         ...
 
 
+# The "<" of anything that reads as an event tag, opening or closing, in any case and with any
+# spacing. The full-width and small forms of "<" are included: they read the same.
+_EVENT_TAG = re.compile(r"[<\uff1c\ufe64](?=\s*/?\s*event\b)", re.IGNORECASE)
+
+
 def _text(value: Any) -> str:
     text = "" if value is None else str(value)
+    # Characters that do not show are dropped. They could hide a tag from the check below, or
+    # change the order the text is read in.
+    text = "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf"))
     if len(text) > MAX_FIELD_CHARS:
         text = f"{text[:MAX_FIELD_CHARS]}\n[cut at {MAX_FIELD_CHARS} characters]"
-    # Text from outside cannot close the event block early.
-    return text.replace("</event", "<\\/event")
+    # Text from outside can neither close the event block early nor open another one.
+    return _EVENT_TAG.sub("&lt;", text)
 
 
 def render_input(instruction: str, source_type: str, kind: str, fields: List[EventField]) -> str:

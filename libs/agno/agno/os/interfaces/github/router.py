@@ -74,6 +74,27 @@ async def _run(handler: EventHandler, event: GitHubEvent) -> Optional[Dict[str, 
     return result
 
 
+# GitHub caps a webhook payload at 25 MB. Anything larger did not come from GitHub.
+MAX_BODY_BYTES = 25 * 1024 * 1024
+
+
+async def _read_body(request: Request) -> bytes:
+    """The request body, refused once it is larger than GitHub sends."""
+    too_large = HTTPException(status_code=413, detail="The delivery is larger than GitHub sends")
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise too_large
+    chunks = []
+    size = 0
+    # Counted as it arrives: a body can come with no length declared.
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise too_large
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def attach_routes(
     router: APIRouter,
     handler: Optional[EventHandler],
@@ -99,10 +120,11 @@ def attach_routes(
         description="Receive GitHub webhook deliveries for the watched repositories.",
     )
     async def receive(request: Request):
-        body = await request.body()
+        # Checked before the body is read: a request with no signature is not worth reading.
         signature = request.headers.get("X-Hub-Signature-256")
         if not signature:
             raise HTTPException(status_code=400, detail="Missing X-Hub-Signature-256 header")
+        body = await _read_body(request)
         if not verify_signature(secret, body, signature):
             raise HTTPException(status_code=403, detail="Invalid signature")
         name = request.headers.get("X-GitHub-Event")

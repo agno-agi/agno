@@ -137,8 +137,10 @@ class GitHub(BaseInterface):
             allow: Who may start a run. "members", the default, is people GitHub shows as an owner,
                 member or collaborator of the repository: the issue's author for a new issue, the
                 commenter for a comment. "anyone" lets every sender through. A labeled event with
-                ``labels`` is let through on the label, because applying a label takes triage access;
-                use a label that no issue template applies.
+                ``labels`` is let through on the label when somebody other than the issue's author
+                added it, because labeling another person's issue takes triage access. A label on
+                the sender's own issue, such as one an issue template applies, is not a gate: the
+                sender is then checked like any other.
         """
         if self.handler is not None:
             raise ValueError("This GitHub interface has a handler; triggers need one without: GitHub(repositories=...)")
@@ -178,8 +180,24 @@ class GitHub(BaseInterface):
             )
         reason = None
         if event.repository not in self.repositories:
-            reason = f"repository {event.repository} is not watched"
-        elif event.sender_type == "Bot" and not self.handle_bot_events:
+            # A repository nobody chose to watch leaves only what says which delivery it was.
+            unwatched = {
+                "delivery_id": delivery_id,
+                "name": event.name,
+                "action": event.action,
+                "repository": event.repository,
+            }
+            return Delivery(
+                source_id=self.id,
+                delivery_id=delivery_id,
+                kind=event.kind,
+                key=event.key,
+                event=event,
+                stored=unwatched,
+                trimmed=unwatched,
+                ignore_reason=f"repository {event.repository} is not watched",
+            )
+        if event.sender_type == "Bot" and not self.handle_bot_events:
             # Bots include this integration's own GitHub App, so what an agent posts starts no run.
             reason = f"sent by {event.sender}"
         return Delivery(
@@ -189,7 +207,7 @@ class GitHub(BaseInterface):
             key=event.key,
             event=event,
             stored=event.to_dict(),
-            trimmed=event.to_dict(payload=False),
+            trimmed=event.trimmed(),
             ignore_reason=reason,
         )
 
@@ -205,6 +223,9 @@ class GitHub(BaseInterface):
 
     def load(self, stored: Dict[str, Any]) -> GitHubEvent:
         return GitHubEvent.from_dict(stored)
+
+    def trim(self, stored: Dict[str, Any]) -> Dict[str, Any]:
+        return GitHubEvent.from_dict(stored).trimmed()
 
     def describe(self, event: GitHubEvent) -> List[EventField]:
         """The event as a run reads it."""

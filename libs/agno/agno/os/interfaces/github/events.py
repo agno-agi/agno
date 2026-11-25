@@ -64,6 +64,21 @@ class GitHubEvent:
             data["payload"] = self.payload
         return data
 
+    def trimmed(self) -> Dict[str, Any]:
+        """The event as stored when nothing runs for it.
+
+        It says which event it was and who sent it. What the sender wrote is left out: an event
+        that starts nothing is kept to explain why, not to keep the text of whoever sent it.
+        """
+
+        def without_body(value: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+            return {key: item for key, item in value.items() if key != "body"} if value else value
+
+        data = self.to_dict(payload=False)
+        for name in ("issue", "comment", "pull_request"):
+            data[name] = without_body(data[name])
+        return data
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "GitHubEvent":
         return cls(
@@ -180,10 +195,11 @@ def start_refusal(
 
     On a public repository anyone can open an issue or comment, so by default only people GitHub
     shows as working on the repository start a run. A labeled event with a label filter is let
-    through on the label alone: applying a label takes triage access. Use a label no issue
-    template applies, because a template applies its labels for whoever opens the issue.
+    through on the label when somebody other than the author added it: labeling another person's
+    issue takes triage access. A label on the sender's own issue proves nothing, because an issue
+    template applies its labels for whoever opens the issue, so the sender is checked as usual.
     """
-    wanted = [label.lower() for label in labels or []]
+    wanted = [labels.lower()] if isinstance(labels, str) else [label.lower() for label in labels or []]
     labeled = event.action == "labeled"
     if wanted:
         if labeled:
@@ -192,7 +208,10 @@ def start_refusal(
                 return f"the label added, {added or 'none'}, is not one of {wanted}", False
         elif not set(wanted) & set(label_names(event)):
             return f"none of the labels {wanted} is on #{event.number}", False
-    if allow == ALLOW_ANYONE or (labeled and wanted):
+    if allow == ALLOW_ANYONE:
+        return None, False
+    author = (event.issue or event.pull_request or {}).get("author")
+    if labeled and wanted and event.sender and event.sender != author:
         return None, False
     association = sender_association(event)
     if association in TRUSTED_ASSOCIATIONS:

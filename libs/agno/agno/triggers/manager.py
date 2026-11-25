@@ -20,9 +20,10 @@ TARGET_TYPES = ("agent", "team", "workflow")
 _PROVENANCE_KEYS = {"managed_by", "os_id", "created_by_run_id", "created_by_session_id"}
 # What a writer that updates a trigger in place may restate about it.
 _RESTATED_PROVENANCE = ("managed_by", "os_id")
-# Changing one of these changes what a trigger runs or as whom, so the caller's right to run the
-# target is checked again and their authority is saved again.
-_AUTHORITY_FIELDS = {"payload", "target_type", "target_id"}
+# Changing one of these changes what a trigger runs, as whom, or what may start it, so the caller's
+# right to run the target is checked again and their authority is saved again. The authority of
+# whoever created the trigger was given for what it did then.
+_AUTHORITY_FIELDS = {"payload", "target_type", "target_id", "input", "source_id", "events", "continue_on", "filters"}
 
 
 def _validated(

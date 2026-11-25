@@ -125,6 +125,20 @@ class TriggerExecutor(ScheduleExecutor):
 
     # --- Following a run ---
 
+    def _said(self, error: Any) -> str:
+        """What an error said, fit to be stored on an event or logged.
+
+        The first line only: a database error carries its statement and parameters on the lines
+        after it. And never this executor's token, which an HTTP library quotes when it refuses
+        a header.
+        """
+        lines = str(error).strip().splitlines()
+        text = lines[0] if lines else type(error).__name__
+        token = self.internal_service_token
+        if token:
+            text = text.replace(token, "[internal token]").replace(token.strip(), "[internal token]")
+        return text[:500]
+
     def _own_headers(self) -> Dict[str, str]:
         """Headers for reading a run and asking it to stop.
 
@@ -142,7 +156,7 @@ class TriggerExecutor(ScheduleExecutor):
         try:
             response = await client.request("GET", url, headers=self._own_headers(), params={"session_id": session_id})
         except Exception as exc:
-            log_debug(f"Run at {url} could not be read: {exc}")
+            log_debug(f"Run at {url} could not be read: {self._said(exc)}")
             return None, None
         if response.status_code != 200:
             return response.status_code, None
@@ -172,7 +186,7 @@ class TriggerExecutor(ScheduleExecutor):
                 "POST", f"{url}/cancel", headers=self._own_headers(), params={"session_id": session_id}
             )
         except Exception as exc:
-            log_debug(f"Run at {url} could not be asked to stop: {exc}")
+            log_debug(f"Run at {url} could not be asked to stop: {self._said(exc)}")
 
     async def _stop_run(self, url: str, session_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Ask a run to stop and watch for it. The run as it ended, or None when it was not seen to end."""
@@ -286,8 +300,8 @@ class TriggerExecutor(ScheduleExecutor):
             raise
         except Exception as exc:
             # Whatever went wrong here, the run was accepted: nothing is submitted in its place.
-            log_error(f"Run {run_id} could not be followed: {exc}")
-            return self._not_run_again(run_id, session_id, f"Run {run_id} could not be followed: {exc}")
+            log_error(f"Run {run_id} could not be followed: {self._said(exc)}")
+            return self._not_run_again(run_id, session_id, f"Run {run_id} could not be followed: {self._said(exc)}")
 
     async def _recorded_run(self, endpoint: str, row: Dict[str, Any], timeout_seconds: int) -> Optional[Dict[str, Any]]:
         """What the run an earlier claim started means for this event.
@@ -368,17 +382,17 @@ class TriggerExecutor(ScheduleExecutor):
             try:
                 return await source.asender_refusal(event)
             except SenderCheckFailed as exc:
-                raise SenderCheckFailed(f"the sender's access could not be checked: {exc}") from exc
+                raise SenderCheckFailed(f"the sender's access could not be checked: {self._said(exc)}") from exc
             except Exception as exc:
                 error = exc
-                log_debug(f"Trigger event {event_id}: the sender's access could not be checked: {exc}")
+                log_debug(f"Trigger event {event_id}: the sender's access could not be checked: {self._said(exc)}")
 
         since = await self._waiting_since(db, row, CHECK_SENDER_SINCE_KEY)
         if time.time() - since >= self.sender_check_seconds:
             raise SenderCheckFailed(
-                f"the sender's access could not be checked for {self.sender_check_seconds}s: {error}"
+                f"the sender's access could not be checked for {self.sender_check_seconds}s: {self._said(error)}"
             )
-        raise Deferred(f"the sender's access could not be checked: {error}")
+        raise Deferred(f"the sender's access could not be checked: {self._said(error)}")
 
     async def execute_event(self, row: Dict[str, Any], db: Any, runtime: Any) -> Dict[str, Any]:
         """Handle one claimed event and return its row as recorded.
@@ -409,17 +423,18 @@ class TriggerExecutor(ScheduleExecutor):
             # What raised here would raise again. Left as it is, the event would be taken up each
             # time its claim went stale and fail the same way, with every later event for its key
             # waiting behind it. So it ends, with what was raised.
-            log_error(f"Trigger event {event_id} could not be handled: {type(exc).__name__}: {exc}")
+            said = f"{type(exc).__name__}: {self._said(exc)}"
+            log_error(f"Trigger event {event_id} could not be handled: {said}")
             ended = {
                 "status": EVENT_FAILED,
                 "completed_at": int(time.time()),
-                "error": f"the event could not be handled: {type(exc).__name__}: {exc}",
+                "error": f"the event could not be handled: {said}",
             }
             try:
                 await acall_db(db, "update_trigger_event", event_id, held_by=claim, **ended)
             except Exception as update_exc:
                 # Storage is not answering either. The claim goes stale and the event is tried again.
-                log_error(f"Trigger event {event_id}: its failure was not recorded: {update_exc}")
+                log_error(f"Trigger event {event_id}: its failure was not recorded: {self._said(update_exc)}")
             return {**row, **ended}
         except asyncio.CancelledError:
             await self._give_up(db, row, progress)
@@ -451,7 +466,7 @@ class TriggerExecutor(ScheduleExecutor):
         try:
             await acall_db(db, "update_trigger_event", event_id, held_by=claim, **fields)
         except Exception as exc:
-            log_debug(f"Trigger event {event_id} could not be released on shutdown: {exc}")
+            log_debug(f"Trigger event {event_id} could not be released on shutdown: {self._said(exc)}")
             if unrecorded is not None:
                 # Nothing names the run, so the next worker would start one beside it.
                 await self._request_stop(unrecorded[2], unrecorded[1])
@@ -554,7 +569,7 @@ class TriggerExecutor(ScheduleExecutor):
                 if not started:
                     key = row.get("event_key") or "this event"
                     reason = f"{row['kind']} continues a conversation, and {trigger['name']} started none for {key}"
-                    return await finish(EVENT_IGNORED, reason=reason)
+                    return await finish(EVENT_IGNORED, reason=reason, event=source.trim(stored))
 
             if stored.get(CHECK_SENDER_KEY):
                 try:
@@ -563,7 +578,8 @@ class TriggerExecutor(ScheduleExecutor):
                     # Nobody was refused: the question could not be answered. That is a failure.
                     return await finish(EVENT_FAILED, error=str(exc))
                 if refusal:
-                    return await finish(EVENT_IGNORED, reason=refusal)
+                    # The text was kept for as long as the event might run. It will not.
+                    return await finish(EVENT_IGNORED, reason=refusal, event=source.trim(stored))
 
             instruction = trigger["input"]
             if declared is not None and declared.prepare is not None:
@@ -571,8 +587,10 @@ class TriggerExecutor(ScheduleExecutor):
                 try:
                     outcome = await _run_step(declared.prepare, event)
                 except Exception as exc:
-                    log_error(f"Trigger '{trigger['name']}': prepare {step} raised for event {event_id}: {exc}")
-                    return await finish(EVENT_FAILED, error=f"prepare {step} raised: {exc}")
+                    log_error(
+                        f"Trigger '{trigger['name']}': prepare {step} raised for event {event_id}: {self._said(exc)}"
+                    )
+                    return await finish(EVENT_FAILED, error=f"prepare {step} raised: {self._said(exc)}")
                 if outcome is False:
                     return await finish(EVENT_SKIPPED, reason=f"prepare {step} returned False")
                 if isinstance(outcome, str):
@@ -626,7 +644,9 @@ class TriggerExecutor(ScheduleExecutor):
                             event=marked,
                         )
                     except Exception as exc:
-                        log_error(f"Trigger event {event_id}: run {run_id} could not be recorded on it: {exc}")
+                        log_error(
+                            f"Trigger event {event_id}: run {run_id} could not be recorded on it: {self._said(exc)}"
+                        )
                         await asyncio.sleep(self.read_backoff * (tried + 1))
                         continue
                     progress.pop("unrecorded", None)
@@ -654,16 +674,18 @@ class TriggerExecutor(ScheduleExecutor):
                     raise
                 except _NEVER_REACHED as exc:
                     # No connection was made, so the app started nothing: this attempt may be retried.
-                    log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} failed: {exc}")
-                    result = {"status": EVENT_FAILED, "error": str(exc)}
+                    said = self._said(exc)
+                    log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} failed: {said}")
+                    result = {"status": EVENT_FAILED, "error": said}
                 except Exception as exc:
                     # The request went out and no answer came back. The app may have accepted the
                     # run, and nothing here can tell: sending it again could start a second one.
-                    log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} got no answer: {exc}")
+                    said = f"{type(exc).__name__}: {self._said(exc)}"
+                    log_error(f"Trigger '{trigger['name']}': event {event_id} attempt {attempt} got no answer: {said}")
                     result = {
                         "status": EVENT_FAILED,
-                        "error": f"the run request got no answer and may have been accepted "
-                        f"({type(exc).__name__}: {exc}); the event was not run again",
+                        "error": f"the run request got no answer and may have been accepted ({said}); "
+                        "the event was not run again",
                         "resubmit": False,
                     }
                 finally:
@@ -702,6 +724,8 @@ class TriggerExecutor(ScheduleExecutor):
                 await _run_step(declared.on_complete, event, run)
             except Exception as exc:
                 # The run already ended as it did; the failed step is recorded beside its status.
-                log_error(f"Trigger '{trigger['name']}': on_complete {step} raised for event {event_id}: {exc}")
-                recorded["reason"] = f"on_complete {step} raised: {exc}"
+                log_error(
+                    f"Trigger '{trigger['name']}': on_complete {step} raised for event {event_id}: {self._said(exc)}"
+                )
+                recorded["reason"] = f"on_complete {step} raised: {self._said(exc)}"
         return await finish(result["status"], **recorded)
