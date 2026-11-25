@@ -15,14 +15,19 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import GoalCreate, GoalResponse, GoalUpdate
+from agno.os.routers.company.schema import MIGRATION_REQUIRED_RESPONSE, GoalCreate, GoalResponse, GoalUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
 
 
 def get_goals_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
     """Build Goal routes using native async storage or off-thread sync calls."""
-    router = APIRouter(prefix="/company", tags=["Goals"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Goals"],
+        dependencies=[Depends(get_scoped_user_id)],
+    )
     auth_dependency = get_authentication_dependency(settings)
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db is not None else None
 

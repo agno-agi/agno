@@ -12,6 +12,7 @@ from agno.fs.errors import InvalidPathError, QuotaExceededError, VersionConflict
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
     DecisionCreate,
     DecisionResponse,
     WikiPageResponse,
@@ -24,7 +25,12 @@ from agno.os.settings import AgnoAPISettings
 
 def get_playbook_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
     """Mount the existing wiki and learning domains under Company."""
-    router = APIRouter(prefix="/company", tags=["Company playbook"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Company playbook"],
+        dependencies=[Depends(get_scoped_user_id)],
+    )
     auth = get_authentication_dependency(settings)
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db else None
 

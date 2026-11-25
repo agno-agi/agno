@@ -38,6 +38,17 @@ deploy the new version. AgentOS migrates its databases as it starts: it renames
 the stored tables and columns in place and keeps every id. A deployment written
 for 3.2.0 then starts with no edit.
 
+Stop every process that runs 3.2 first: they fail against a migrated database.
+Processes on the new version can start together; one migrates and the others
+wait. The migration cannot be reversed, and `down()` does not undo it, so back
+up the database if you may need to go back.
+
+If a 3.2 process starts after the migration, it creates its old tables again
+(`agno_company_products` and `agno_company_products_details`). The new version
+does not use them and logs a warning when it starts. Your Goals are not
+changed, but anything the 3.2 process wrote to those tables is not shown. Stop
+the process, copy any row you need, then drop the two tables.
+
 Migrate by hand only in these cases:
 
 - `auto_provision_dbs=False`. AgentOS then does not migrate at the start.

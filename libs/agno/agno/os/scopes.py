@@ -52,12 +52,16 @@ def with_renamed_routes(scope_mappings: Dict[str, List[str]]) -> Dict[str, List[
     A mapping the caller wrote for the current path is kept as written. The mappings keep their order,
     which decides the match when two patterns cover one path.
     """
-    renamed = dict(scope_mappings)
+    renamed: Dict[str, List[str]] = {}
     for key, scopes in scope_mappings.items():
+        renamed[key] = scopes
         method, _, path = key.partition(" ")
         for old, new in RENAMED_ROUTE_PREFIXES.items():
-            if path == old or path.startswith(old + "/"):
-                renamed.setdefault(f"{method} {new}{path[len(old) :]}", scopes)
+            # The prefix ends at a segment or at a wildcard that continues it.
+            if path.startswith(old) and path[len(old) : len(old) + 1] in ("", "/", "*", "?", "[", "{"):
+                current = f"{method} {new}{path[len(old) :]}"
+                if current not in scope_mappings:
+                    renamed[current] = scopes
     return renamed
 
 

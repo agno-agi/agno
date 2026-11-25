@@ -227,6 +227,22 @@ class CompanyTools(Toolkit):
     model. Like HTTP, service accounts remain scoped even with isolation off.
     """
 
+    # The names in agno 3.2, when a Goal was a Product.
+    renamed_tools = {
+        "add_product_source": "add_goal_source",
+        "create_company_product": "create_company_goal",
+        "create_product_routine": "create_goal_routine",
+        "get_company_product": "get_company_goal",
+        "intake_product_source": "intake_goal_source",
+        "list_company_products": "list_company_goals",
+        "list_product_sources": "list_goal_sources",
+        "read_product_source": "read_goal_source",
+        "refresh_company_product": "refresh_company_goal",
+        "summarize_company_product": "summarize_company_goal",
+        "update_product_status": "update_goal_status",
+    }
+    renamed_arguments = {"product_id": "goal_id", "purpose": "objective"}
+
     def __init__(
         self,
         db: Any,
@@ -283,8 +299,8 @@ class CompanyTools(Toolkit):
             tools=[getattr(self, name) for name in names],
             async_tools=[(getattr(self, "a" + name), name) for name in names],
             requires_confirmation_tools=["confirm_company_details"],
-            include_tools=include_tools,
-            exclude_tools=exclude_tools,
+            include_tools=self.current_tool_names(include_tools),
+            exclude_tools=self.current_tool_names(exclude_tools),
         )
 
     def _scoped_user(self, run_context):
