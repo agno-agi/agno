@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
@@ -11,36 +12,58 @@ if TYPE_CHECKING:
 
 
 def _gemini_fallback(reasoning_model: Model) -> bool:
-    """Substring + thinking-parameter check, used only when the models.get lookup fails."""
+    """Substring + thinking-parameter check for Gemini thinking support."""
+    if getattr(reasoning_model, "thinking_budget", None) == 0:
+        return False
+    if getattr(reasoning_model, "include_thoughts", None) is False:
+        return False
+    if str(getattr(reasoning_model, "thinking_level", "") or "").lower() in ("none", "disable"):
+        return False
+
     # - Gemini 2.5+ models support thinking
-    # - Gemini 3+ models support thinking (including DeepThink variants)
+    # - Gemini 3+ models support thinking (including DeepThink and latest aliases)
     model_id = reasoning_model.id.lower()
-    has_thinking_support = (
-        "2.5" in model_id or "3.0" in model_id or "3.5" in model_id or "deepthink" in model_id or "gemini-3" in model_id
+    has_thinking_support = bool(
+        re.search(
+            r"(?:^|/|[a-z]{2,}\.)gemini-(?:2\.5|[3-9]|\d{2,}|(?:flash|flash-lite|pro)-latest)|2\.5|3\.0|3\.5|deepthink|gemini-3",
+            model_id,
+        )
     )
 
     # Also check if thinking parameters are set
     # Note: thinking_budget=0 explicitly disables thinking mode per Google's API docs
     has_thinking_budget = (
-        hasattr(reasoning_model, "thinking_budget")
-        and reasoning_model.thinking_budget is not None
-        and reasoning_model.thinking_budget > 0
+        bool(getattr(reasoning_model, "thinking_budget", None)) and getattr(reasoning_model, "thinking_budget", 0) > 0
     )
-    has_include_thoughts = hasattr(reasoning_model, "include_thoughts") and reasoning_model.include_thoughts is not None
+    has_thinking_level = bool(getattr(reasoning_model, "thinking_level", None))
+    has_include_thoughts = bool(getattr(reasoning_model, "include_thoughts", None))
 
-    return has_thinking_support or has_thinking_budget or has_include_thoughts
+    return has_thinking_support or has_thinking_budget or has_thinking_level or has_include_thoughts
 
 
 def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     """Check if the model is a Gemini model with thinking support.
 
-    Uses the Gemini API (models.get -> thinking) to detect thinking support, and falls back to a
-    version-substring + thinking-parameter check only if the API call fails.
+    Checks local model family heuristics and explicit thinking configuration first, and queries
+    the Gemini API (models.get -> thinking) only when local heuristics cannot determine support.
     """
     if reasoning_model.__class__.__name__ != "Gemini":
         return False
 
+    if getattr(reasoning_model, "thinking_budget", None) == 0:
+        return False
+    if getattr(reasoning_model, "include_thoughts", None) is False:
+        return False
+    if str(getattr(reasoning_model, "thinking_level", "") or "").lower() in ("none", "disable"):
+        return False
+
+    if _gemini_fallback(reasoning_model):
+        return True
+
     model_id = reasoning_model.id
+    if re.search(r"(?:^|/|[a-z]{2,}\.)gemini-(?:1(?:\.\d+)?|2\.0)(?:-|$)", model_id.lower()):
+        return False
+
     try:
         client = reasoning_model.get_client()  # type: ignore[attr-defined]
         name = model_id if model_id.startswith("models/") else f"models/{model_id}"
@@ -51,7 +74,7 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     except Exception as e:
         log_warning(f"Could not determine Gemini thinking capability via API, falling back to model id: {str(e)}")
 
-    return _gemini_fallback(reasoning_model)
+    return False
 
 
 def get_gemini_reasoning(
