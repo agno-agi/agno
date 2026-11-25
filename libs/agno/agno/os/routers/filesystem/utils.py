@@ -24,9 +24,11 @@ def _connect_arguments(engine: Any) -> Optional[Tuple[tuple, Dict[str, Any]]]:
     creator = getattr(engine.pool, "_creator", None)
     names = getattr(getattr(creator, "__code__", None), "co_freevars", ())
     held = {name: cell.cell_contents for name, cell in zip(names, getattr(creator, "__closure__", None) or ())}
-    if held.get("dialect") is not dialect or "cargs_tup" not in held or "cparams" not in held:
+    # SQLAlchemy before 2.0.48 holds the positional arguments as cargs.
+    positional = held.get("cargs_tup", held.get("cargs"))
+    if held.get("dialect") is not dialect or positional is None or "cparams" not in held:
         return None
-    return tuple(held["cargs_tup"]), dict(held["cparams"])
+    return tuple(positional), dict(held["cparams"])
 
 
 def _sqlite_place(filename: Any, is_uri: bool) -> Optional[tuple]:
@@ -81,19 +83,20 @@ def _filesystem_backend_key(filesystem: "FileSystem") -> tuple:
     """Identify a shared backend within the current process.
 
     A table in a database is one backend however it is reached: through a
-    database object, through an engine, or through two of either.
+    database object, through an engine, or through two of either. A database
+    object whose connection arguments cannot be read is matched by its id.
     """
     backend = filesystem.backend
     engine = getattr(backend, "db_engine", None)
     table_name = getattr(backend, "table_name", None)
-    if engine is not None and table_name is not None:
+    db = getattr(backend, "db", None)
+    if engine is not None and table_name is not None and (db is None or _connect_arguments(engine) is not None):
         db_schema = getattr(backend, "db_schema", None)
         place = _database_place(engine)
         if db_schema is None and place[0] == "postgresql":
             # The search_path chooses the table, and a connection can set it outside the URL.
             place = (_ENGINE_PLACE, id(engine))
         return ("db", place, db_schema, table_name)
-    db = getattr(backend, "db", None)
     if db is not None:
         return (
             "db",

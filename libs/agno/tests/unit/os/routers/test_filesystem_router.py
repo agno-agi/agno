@@ -2284,3 +2284,58 @@ def test_a_team_namespace_held_by_an_agent_is_listed_as_written_and_cannot_be_op
     by_agent = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
     assert by_agent.status_code == 400 and "team_id" in by_agent.json()["detail"]
     assert client.get("/filesystem/files", headers=_headers("alice")).json()["entries"] == []
+
+
+# --- A database whose connection arguments cannot be read ---
+
+
+def test_connection_arguments_are_read_as_an_older_sqlalchemy_holds_them(tmp_path):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    path = tmp_path / "one.db"
+    current, older = create_engine(f"sqlite:///{path}"), create_engine(f"sqlite:///{path}")
+    dialect = older.dialect
+    cargs, cparams = dialect.create_connect_args(older.url)
+
+    # SQLAlchemy before 2.0.48 holds the positional arguments of its creator under this name.
+    def connect(connection_record=None):
+        return dialect.connect(*cargs, **cparams)
+
+    older.pool._creator = connect
+
+    assert _database_place(older) == _database_place(current) == ("sqlite", str(path.resolve()))
+
+
+def test_a_database_whose_connection_arguments_cannot_be_read_is_matched_by_its_id(tmp_path, client_factory):
+    import sqlite3
+
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _filesystem_backend_key
+
+    path = str(tmp_path / "files.db")
+
+    def database(db_id: str, db_file: str = path) -> SqliteDb:
+        # A creator of the caller's own holds no arguments to read.
+        engine = create_engine("sqlite://", creator=lambda: sqlite3.connect(db_file, check_same_thread=False))
+        return SqliteDb(id=db_id, db_engine=engine)
+
+    declared, held = (FileSystem(database("files-db"), namespace="notes") for _ in range(2))
+    other = FileSystem(database("other-db", str(tmp_path / "other.db")), namespace="notes")
+    assert _filesystem_backend_key(declared) == _filesystem_backend_key(held) != _filesystem_backend_key(other)
+
+    client = client_factory(
+        Agent(id="writer", db=declared.backend.db, filesystem=held), filesystem=declared, authorization=False
+    )
+    declared.write("a.md", "one store\n")
+
+    # Two database objects with one id are one store, as they are when the arguments can be read.
+    entries = client.get("/config").json()["filesystem"]["namespaces"]
+    assert [(entry["id"], [agent["id"] for agent in entry["agents"]]) for entry in entries] == [("notes", ["writer"])]
+    listed = client.get("/filesystem/entries", params={"namespace": "notes"})
+    assert listed.status_code == 200
+    assert (listed.json()["agent_ids"], [row["path"] for row in listed.json()["entries"]]) == (["writer"], ["a.md"])
+    for filesystem in (declared, held, other):
+        filesystem.backend.db_engine.dispose()
