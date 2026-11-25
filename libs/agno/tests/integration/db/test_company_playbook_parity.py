@@ -46,18 +46,18 @@ async def db(request, tmp_path):
 async def test_playbook_persistence_scope_and_decisions(db):
     cls = AsyncCompanyManager if isinstance(db, AsyncBaseDb) else CompanyManager
     m = cls(db)
-    product = await call(m.create, name="SDK", purpose="Build well", user_id="alice")
-    pid = product["id"]
+    goal = await call(m.create, name="SDK", objective="Build well", user_id="alice")
+    pid = goal["id"]
     provider = await call(m.get_wiki, pid)
     from agno.context.wiki.provider import WikiContextProvider
 
     assert isinstance(provider, WikiContextProvider)
     assert (await call(m.list_wiki, pid))[1] == 2
     original = await call(m.read_wiki, pid, "status.md")
-    # Wiki pages are shared, so a member who did not create the Product may write them.
+    # Wiki pages are shared, so a member who did not create the Goal may write them.
     await call(
         m.write_wiki,
-        product_id=pid,
+        goal_id=pid,
         path="status.md",
         content="reviewed",
         expected_version=original.metadata.version,
@@ -66,7 +66,7 @@ async def test_playbook_persistence_scope_and_decisions(db):
     with pytest.raises(VersionConflictError):
         await call(
             m.write_wiki,
-            product_id=pid,
+            goal_id=pid,
             path="status.md",
             content="stale",
             expected_version=original.metadata.version,
@@ -125,8 +125,8 @@ async def test_two_writers_cannot_overwrite_one_version(db):
 @pytest.mark.asyncio
 async def test_proposal_edit_rechecks_status_in_storage(db):
     m = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
-    product = await call(m.create, name="SDK", user_id="alice")
-    project = await call(m.create_project, product_id=product["id"], name="Release", user_id="alice")
+    goal = await call(m.create, name="SDK", user_id="alice")
+    project = await call(m.create_project, goal_id=goal["id"], name="Release", user_id="alice")
     await call(m.transition_project, project_id=project["id"], target="active", reason="accepted", user_id="alice")
     assert (
         await call(m.update_project, project["id"], name="stale proposal", user_id="alice", expected_status="proposed")

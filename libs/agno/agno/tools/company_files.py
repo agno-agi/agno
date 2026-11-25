@@ -1,4 +1,4 @@
-"""Tools for the company file tree: wiki/, products/<product-id>/, tasks/<task-id>/ and notes/.
+"""Tools for the company file tree: wiki/, goals/<goal-id>/, tasks/<task-id>/ and notes/.
 
 What a call may write follows the run it is in, read from the run's authority and never from an
 argument. The names keep these tools apart from the source file tools (list_files, read_file,
@@ -31,40 +31,38 @@ def _require_write(location: _Location, run_context: Any) -> None:
     authority = _authority(run_context)
     if location.agreed:
         raise PermissionError(
-            "wiki/ and a Product's brief.md hold agreed direction, and only a person changes them. "
+            "wiki/ and a Goal's brief.md hold agreed direction, and only a person changes them. "
             "In a person's chat, save_company_page asks for their confirmation."
         )
     if isinstance(authority, _RoutineAuthorization):
         raise PermissionError(
-            "A Routine run writes no file here. Report on its Product with update_product_status, which writes status.md."
+            "A Routine run writes no file here. Report on its Goal with update_goal_status, which writes status.md."
         )
     elif isinstance(authority, _ExecutorAuthorization):
-        own_product = (
-            location.area == "products"
-            and authority.product_id is not None
-            and location.record_id == authority.product_id
+        own_goal = (
+            location.area == "goals" and authority.goal_id is not None and location.record_id == authority.goal_id
         )
         own_task = (
             location.area == "tasks" and authority.task_id is not None and location.record_id == authority.task_id
         )
-        if not (own_product or own_task):
-            raise PermissionError("A Task run writes only under its own Product and in its own Task folder.")
+        if not (own_goal or own_task):
+            raise PermissionError("A Task run writes only under its own Goal and in its own Task folder.")
 
 
 class CompanyFileTools(Toolkit):
     """Read the company file tree, and write where the run is allowed to.
 
-    - A person's chat writes notes/, a Task's folder and a Product's pages other than brief.md.
-    - A Task run writes under its own Product, other than brief.md, and in its own Task folder.
-    - A Routine run writes nothing through these tools. It reports on its Product with
-      update_product_status, the one tool that writes status.md in a Routine run.
-    - wiki/ and a Product's brief.md change through save_company_page. Only a person's chat may call it,
+    - A person's chat writes notes/, a Task's folder and a Goal's pages other than brief.md.
+    - A Task run writes under its own Goal, other than brief.md, and in its own Task folder.
+    - A Routine run writes nothing through these tools. It reports on its Goal with
+      update_goal_status, the one tool that writes status.md in a Routine run.
+    - wiki/ and a Goal's brief.md change through save_company_page. Only a person's chat may call it,
       and the run pauses until the person confirms the page and the change.
 
-    Reads ask for wiki:read. A write asks for wiki:write under products/ and wiki/, and for tasks:write
+    Reads ask for wiki:read. A write asks for wiki:write under goals/ and wiki/, and for tasks:write
     under tasks/, which whoever started a Task already holds. notes/ asks for no Company permission.
 
-    wiki/, products/ and tasks/ are stored in the Company database. notes/ is stored in the AgentOS
+    wiki/, goals/ and tasks/ are stored in the Company database. notes/ is stored in the AgentOS
     database. No folder is isolated by user: notes/ is shared by everyone who talks to Super Agent,
     including when user isolation is on.
 
@@ -124,12 +122,12 @@ class CompanyFileTools(Toolkit):
     ) -> str:
         """List a folder of the company file tree. These are company files, not source code.
 
-        The tree: wiki/ (agreed direction), products/<product-id>/ (a Product's brief.md, status.md and
+        The tree: wiki/ (agreed direction), goals/<goal-id>/ (a Goal's brief.md, status.md and
         what agents found), tasks/<task-id>/ (what a Task was given and produced), notes/ (Super Agent's
-        notes, shared with everyone who uses this AgentOS). Listing products/ shows each Product's ID and name.
+        notes, shared with everyone who uses this AgentOS). Listing goals/ shows each Goal's ID and name.
 
         Args:
-            folder: A folder such as wiki, products, products/<product-id>, tasks/<task-id> or notes.
+            folder: A folder such as wiki, goals, goals/<goal-id>, tasks/<task-id> or notes.
                 Null lists the top folders.
             page: Page of a long listing. Use the next_page a listing returned; null is the first page.
         """
@@ -158,7 +156,7 @@ class CompanyFileTools(Toolkit):
         A file that does not exist is returned with exists false and version 0.
 
         Args:
-            path: The file, such as wiki/priorities.md, products/<product-id>/status.md,
+            path: The file, such as wiki/priorities.md, goals/<goal-id>/status.md,
                 tasks/<task-id>/report.md or notes/ideas.md.
             offset: Character to start from, for a file longer than one read. Use the next_offset
                 a read returned; null starts at the beginning.
@@ -184,13 +182,13 @@ class CompanyFileTools(Toolkit):
         """Search the text of the company file tree, ignoring case. These are company files, not source code.
 
         Returns up to ten matching files with the line of each first match, and more: true when others
-        exist; narrow the folder or the query to see them. A search of the whole tree, of products or of
-        tasks opens the 50 newest Products and Tasks, and its note says so when it left some out: name a
+        exist; narrow the folder or the query to see them. A search of the whole tree, of goals or of
+        tasks opens the 50 newest Goals and Tasks, and its note says so when it left some out: name a
         folder to search another. Read a file before relying on it.
 
         Args:
             query: Text to find.
-            folder: Folder to search, such as wiki, products/<product-id>, tasks/<task-id> or notes.
+            folder: Folder to search, such as wiki, goals/<goal-id>, tasks/<task-id> or notes.
                 Null searches the whole tree.
         """
         files = self._files(_agno_run_context)
@@ -219,20 +217,20 @@ class CompanyFileTools(Toolkit):
     ) -> str:
         """Create or replace a file in the company file tree with its complete new content.
 
-        Writes notes/, a Task's folder, and a Product's pages other than brief.md. wiki/ and a
-        Product's brief.md are refused: a person confirms those through save_company_page. A Task run
-        writes only under its own Product and in its own Task folder. A Task's folder asks for
-        tasks:write and a Product's pages for wiki:write.
+        Writes notes/, a Task's folder, and a Goal's pages other than brief.md. wiki/ and a
+        Goal's brief.md are refused: a person confirms those through save_company_page. A Task run
+        writes only under its own Goal and in its own Task folder. A Task's folder asks for
+        tasks:write and a Goal's pages for wiki:write.
 
         Every file, notes/ included, is shared with everyone who uses this AgentOS. Never write what a
         person marked private or for you only.
 
         Args:
             path: The file, such as notes/ideas.md, tasks/<task-id>/report.md or
-                products/<product-id>/research.md. Pages under products/ end in .md.
+                goals/<goal-id>/research.md. Pages under goals/ end in .md.
             content: The complete new content of the file.
             expected_version: The version you read, so another edit is not lost; 0 creates a new file.
-                Required under products/. Null in notes/ and tasks/ replaces the file as it is.
+                Required under goals/. Null in notes/ and tasks/ replaces the file as it is.
         """
         files = self._files(_agno_run_context)
         location = _locate(path)
@@ -264,8 +262,7 @@ class CompanyFileTools(Toolkit):
         _require_human_creation(run_context, "save company pages")
         if not _locate(path).agreed:
             raise ValueError(
-                "save_company_page changes wiki/ pages and a Product's brief.md. "
-                "Use write_company_file for other files."
+                "save_company_page changes wiki/ pages and a Goal's brief.md. Use write_company_file for other files."
             )
 
     @requires_permission()
@@ -277,7 +274,7 @@ class CompanyFileTools(Toolkit):
         old_text: _OptionalString = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
-        """Change a wiki/ page or a Product's brief.md. The run pauses for the person to confirm the page
+        """Change a wiki/ page or a Goal's brief.md. The run pauses for the person to confirm the page
         and the change.
 
         Call this only when the person asked, in this conversation, to save or change a page. A fact or
@@ -287,7 +284,7 @@ class CompanyFileTools(Toolkit):
         not saved.
 
         Args:
-            path: wiki/<page>.md or products/<product-id>/brief.md.
+            path: wiki/<page>.md or goals/<goal-id>/brief.md.
             expected_version: The page's version as the person saw it; 0 creates a new page.
             new_text: The text to add. With old_text it replaces that text; without it, it is added at
                 the end of the page, or becomes the new page.

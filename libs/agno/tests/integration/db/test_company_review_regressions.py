@@ -205,9 +205,10 @@ async def test_managed_role_revocation_withdraws_ready_task(system, tmp_path, is
     _, db, worker, _, components = system
     auth_db = SqliteDb(db_file=str(tmp_path / "revocation.db"))
     secret = "ready-revocation-tests-secret-at-least-32-bytes"
-    scopes = [
-        f"{resource}:{action}" for resource in ("products", "projects", "tasks") for action in ("read", "write")
-    ] + ["agents:writer:run", "wiki:read"]
+    scopes = [f"{resource}:{action}" for resource in ("goals", "projects", "tasks") for action in ("read", "write")] + [
+        "agents:writer:run",
+        "wiki:read",
+    ]
     authz = Authorization(db=auth_db, verification_keys=[secret], algorithm="HS256")
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("runner", scopes)

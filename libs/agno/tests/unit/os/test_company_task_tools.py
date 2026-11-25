@@ -24,7 +24,7 @@ from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
 
 SECRET = "company-task-tools-tests-secret-at-least-32-bytes"
-SCOPES = ["products:read", "products:write", "projects:write", "tasks:read", "tasks:write", "wiki:read"]
+SCOPES = ["goals:read", "goals:write", "projects:write", "tasks:read", "tasks:write", "wiki:read"]
 RUN_SCOPES = [*SCOPES, "agents:writer:run"]
 
 
@@ -66,9 +66,9 @@ def system(request, tmp_path):
 
 
 def task(client, accept=True):
-    product = client.post("/company/products", json={"name": "SDK"}, headers=headers()).json()
+    goal = client.post("/company/goals", json={"name": "SDK"}, headers=headers()).json()
     project = client.post(
-        "/company/projects", json={"product_id": product["id"], "name": "Release"}, headers=headers()
+        "/company/projects", json={"goal_id": goal["id"], "name": "Release"}, headers=headers()
     ).json()
     client.post(
         f"/company/projects/{project['id']}/transitions",
@@ -77,7 +77,7 @@ def task(client, accept=True):
     )
     created = client.post(
         "/company/tasks",
-        json={"product_id": product["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
+        json={"goal_id": goal["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
         headers=headers(),
     ).json()
     if not accept:

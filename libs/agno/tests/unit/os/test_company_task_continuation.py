@@ -27,8 +27,8 @@ from agno.run.authorization import RunAuthorization
 
 SECRET = "company-continuation-tests-secret-at-least-32-bytes"
 SCOPES = [
-    "products:read",
-    "products:write",
+    "goals:read",
+    "goals:write",
     "projects:write",
     "tasks:read",
     "tasks:write",
@@ -161,9 +161,9 @@ def system(tmp_path):
 
 
 def reviewed_task(client, db, queue):
-    product = client.post("/company/products", json={"name": "SDK"}, headers=headers()).json()
+    goal = client.post("/company/goals", json={"name": "SDK"}, headers=headers()).json()
     project = client.post(
-        "/company/projects", json={"product_id": product["id"], "name": "Release"}, headers=headers()
+        "/company/projects", json={"goal_id": goal["id"], "name": "Release"}, headers=headers()
     ).json()
     client.post(
         f"/company/projects/{project['id']}/transitions",
@@ -172,7 +172,7 @@ def reviewed_task(client, db, queue):
     )
     task = client.post(
         "/company/tasks",
-        json={"product_id": product["id"], "project_id": project["id"], "title": "Investigate", "brief": "Find why"},
+        json={"goal_id": goal["id"], "project_id": project["id"], "title": "Investigate", "brief": "Find why"},
         headers=headers(),
     ).json()
     client.post(

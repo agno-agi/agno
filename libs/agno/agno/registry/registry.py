@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cached_property
@@ -329,6 +330,13 @@ class Registry:
             and "input_schema" not in func_dict
         )
 
+    def _renamed_tool(self, toolkit_name: str, name: str) -> Optional[str]:
+        """The current name of a tool saved under an earlier one, from the toolkit that renamed it."""
+        for tool in self.tools:
+            if isinstance(tool, Toolkit) and tool.name == toolkit_name and name in tool.renamed_tools:
+                return tool.renamed_tools[name]
+        return None
+
     def rehydrate_functions(
         self, func_dicts: List[Dict[str, Any]], strict: bool = False
     ) -> List[Union[Function, Dict[str, Any]]]:
@@ -419,6 +427,20 @@ class Registry:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
             source, source_owner = lookup((func.owning_toolkit, func.name))
+            if source is None:
+                current_name = self._renamed_tool(func.owning_toolkit, func.name)
+                if current_name is not None:
+                    source, source_owner = lookup((func.owning_toolkit, current_name))
+                    if source is not None:
+                        func.name = current_name
+            if isinstance(source, Function) and source_owner is not None:
+                properties = (func.parameters or {}).get("properties") or {}
+                if func.name != func_dict.get("name") or any(
+                    old in properties for old in source_owner.renamed_arguments
+                ):
+                    # The saved definition names arguments the tool no longer takes.
+                    func.description = source.description
+                    func.parameters = deepcopy(source.parameters)
             resolved_as_recorded = source is not None
         # A strict load keeps a qualified reference bound to its own toolkit:
         # a same-named function from another toolkit is a different tool.

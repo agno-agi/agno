@@ -33,7 +33,7 @@ from agno.db.schemas.tasks import TASK_STATUS_MEANING, task_next_attempt, task_r
 from agno.os.auth import get_authentication_dependency
 from agno.os.job_queue import ticket_status_to_api, validate_seam_input
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskRunCreate
+from agno.os.routers.company.schema import MIGRATION_REQUIRED_RESPONSE, TaskRunCreate, refuse_product_id
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
@@ -505,7 +505,12 @@ class _TaskStarter:
 
 
 def get_company_runs_router(os: Any) -> APIRouter:
-    router = APIRouter(prefix="/company", tags=["Company execution"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Company execution"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
+    )
     auth = get_authentication_dependency(os.settings)
     starter = _TaskStarter(os)
     db, manager = starter.db, starter.manager
@@ -742,12 +747,12 @@ def get_company_runs_router(os: Any) -> APIRouter:
         return response
 
     @router.get("/attention")
-    async def attention(request: Request, product_id: Optional[str] = None, _: bool = Depends(auth)):
+    async def attention(request: Request, goal_id: Optional[str] = None, _: bool = Depends(auth)):
         get_scoped_user_id(request)
         if manager is None:
             raise HTTPException(503, "Company requires a database")
         try:
-            return await _call(manager, "attention", product_id)
+            return await _call(manager, "attention", goal_id)
         except NotImplementedError:
             raise HTTPException(503, "Company tasks are not supported by the configured database")
 

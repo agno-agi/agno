@@ -95,10 +95,10 @@ app = agent_os.get_app()
 # A Task a person has already accepted
 # ---------------------------------------------------------------------------
 def create_accepted_task(client: Any) -> Dict[str, Any]:
-    product = client.post("/company/products", json={"name": "Billing"}).json()
+    goal = client.post("/company/goals", json={"name": "Billing"}).json()
     project = client.post(
         "/company/projects",
-        json={"product_id": product["id"], "name": "Export failures"},
+        json={"goal_id": goal["id"], "name": "Export failures"},
     ).json()
     client.post(
         f"/company/projects/{project['id']}/transitions",
@@ -107,7 +107,7 @@ def create_accepted_task(client: Any) -> Dict[str, Any]:
     task = client.post(
         "/company/tasks",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "project_id": project["id"],
             "title": "Investigate the nightly export failure",
             "brief": "Find why the nightly billing export to S3 fails with access denied.",
