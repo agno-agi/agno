@@ -17,6 +17,7 @@ from agno.db.migrations.manager import MigrationManager
 from agno.db.migrations.versions import v3_3_0
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
+from agno.utils.log import log_error
 from tests.unit.db import test_v3_3_0_company_goals_migration as migration_tests
 from tests.unit.db.test_v3_3_0_company_goals_migration import (
     ARCHIVED_GOAL,
@@ -43,7 +44,11 @@ MIGRATED = (
 
 @pytest.fixture
 def logged():
-    """Every record agno logs at INFO or above while the test runs."""
+    """Every record agno logs at INFO or above while the test runs.
+
+    agno logs through one of three loggers, and an earlier test in the same process can leave
+    any of them active. All three are listened to, and the capture is checked before the test.
+    """
     records: List[logging.LogRecord] = []
 
     class _Collect(logging.Handler):
@@ -51,13 +56,19 @@ def logged():
             records.append(record)
 
     handler = _Collect(level=logging.INFO)
-    logger = logging.getLogger("agno")
-    level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    loggers = [logging.getLogger(name) for name in ("agno", "agno-team", "agno-workflow")]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    # An empty list below then means nothing was logged, not that nothing was heard.
+    log_error("capture check")
+    assert [record.getMessage() for record in records] == ["capture check"]
+    records.clear()
     yield records
-    logger.removeHandler(handler)
-    logger.setLevel(level)
+    for logger, level in zip(loggers, levels):
+        logger.removeHandler(handler)
+        logger.setLevel(level)
 
 
 def _errors(records: List[logging.LogRecord]) -> List[str]:
