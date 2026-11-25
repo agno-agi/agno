@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.company.execution import _call
-from agno.company.filesystem import company_folder
+from agno.company.filesystem import arequire_company_notes_moved, company_folder, require_company_notes_moved
 from agno.db.base import AsyncBaseDb
 from agno.fs import FileSystem
 from agno.fs._paths import normalize_directory, normalize_path
@@ -170,12 +170,16 @@ class CompanyFiles:
             return self._sync_manager().get_wiki(location.record_id).backend.filesystem
         if isinstance(self.db if location.area == "tasks" else self.notes_db, AsyncBaseDb):
             raise TypeError("Use the async company file methods with an asynchronous database")
+        if location.area == "notes":
+            require_company_notes_moved(self.notes_db)
         return self._own_store(location)
 
     async def _afilesystem(self, location: _Location) -> FileSystem:
         self._require_area(location)
         if location.area in ("wiki", "goals"):
             return (await _call(self._manager(), "get_wiki", location.record_id)).backend.filesystem
+        if location.area == "notes":
+            await arequire_company_notes_moved(self.notes_db)
         return self._own_store(location)
 
     @staticmethod

@@ -137,6 +137,15 @@ def databases(request, tmp_path, postgres_server):
         value.close()
 
 
+def in_store(db):
+    """The namespace of the Company file system, written as the file table takes it.
+
+    The Company file system itself refuses every use while files wait to be moved, so a test that
+    needs a file there before the migration writes it this way.
+    """
+    return FileSystem(db, namespace="company", user_scoped=False)
+
+
 def rows(reader) -> dict:
     """Every row of the file table: (namespace, path) -> (content, version, created_at, updated_at, size)."""
     from sqlalchemy import inspect, select
@@ -171,7 +180,7 @@ def old_layout(reader) -> dict:
     project = manager.create_project(goal_id=goal["id"], name="Plan")
     task = manager.create_task(goal_id=goal["id"], title="Write", project_id=project["id"])
     # Creating the records wrote nothing a file migration should find in the way.
-    store = company_filesystem(reader)
+    store = in_store(reader)
     for meta in store.list():
         store.delete(meta.path)
 
@@ -272,10 +281,12 @@ def test_a_default_page_from_an_early_start_gives_way_to_the_page_that_moves_in(
     db, reader = databases.new()
     ids = old_layout(reader)
     before = rows(reader)
-    # 3.3.0 was started before the migration ran: reading the wiki created its default pages.
-    manager = CompanyManager(reader)
-    assert manager.read_wiki(None, "brief.md").content == _defaults(None)["brief.md"]
-    assert manager.read_wiki(ids["goal"], "status.md").metadata.version == 1
+    # The default pages are in the store already, as a wiki that was read while it held nothing creates
+    # them. An instance still on 3.2.0 can write its pages after that.
+    goal = CompanyManager(reader).get(ids["goal"])
+    for folder, record in (("wiki", None), (f"goals/{ids['goal']}", goal)):
+        for path, content in _defaults(record).items():
+            in_store(reader).write(f"{folder}/{path}", content)
     seeded = rows(reader)
     assert seeded[("company", "wiki/brief.md")][1] == 1
     assert ("company", f"goals/{ids['goal']}/brief.md") in seeded
@@ -296,8 +307,8 @@ def test_a_different_file_already_at_the_new_path_stops_the_move(databases):
     db, reader = databases.new()
     ids = old_layout(reader)
     # Written after an early start, and not a default page: neither file may be lost.
-    company_filesystem(reader).write("notes/ideas.md", "Written on 3.3.0")
-    company_filesystem(reader).write(f"tasks/{ids['task']}/report.md", "The report")
+    in_store(reader).write("notes/ideas.md", "Written on 3.3.0")
+    in_store(reader).write(f"tasks/{ids['task']}/report.md", "The report")
     before = rows(reader)
 
     with pytest.raises(CompanyFilesMigrationError, match="notes/ideas.md"):
@@ -306,7 +317,7 @@ def test_a_different_file_already_at_the_new_path_stops_the_move(databases):
     assert rows(reader) == before
 
     # With one of the two out of the way, the next run moves everything.
-    company_filesystem(reader).delete("notes/ideas.md")
+    in_store(reader).delete("notes/ideas.md")
     assert databases.run(move_company_files, amove_company_files, db) is True
     after = rows(reader)
     assert after[("company", "notes/ideas.md")] == before[("company/notes", "ideas.md")]
@@ -457,10 +468,10 @@ def test_notes_in_another_database_arrive_in_the_company_database_and_leave_the_
 def test_a_note_move_stopped_after_the_copy_is_finished_by_the_next_call(databases):
     os_db, os_reader = databases.new()
     company_db, company_reader = databases.new()
-    company_filesystem(os_reader).write("notes/ideas.md", "A note")
-    company_filesystem(os_reader).write("notes/more.md", "More")
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    in_store(os_reader).write("notes/more.md", "More")
     # One note was copied and the call stopped before the source was cleared.
-    company_filesystem(company_reader).write("notes/ideas.md", "A note")
+    in_store(company_reader).write("notes/ideas.md", "A note")
     source_before = rows(os_reader)
 
     assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 2
@@ -474,9 +485,9 @@ def test_a_note_move_stopped_after_the_copy_is_finished_by_the_next_call(databas
 def test_a_different_note_in_the_company_database_stops_the_note_move(databases):
     os_db, os_reader = databases.new()
     company_db, company_reader = databases.new()
-    company_filesystem(os_reader).write("notes/ideas.md", "From the AgentOS database")
-    company_filesystem(os_reader).write("notes/more.md", "More")
-    company_filesystem(company_reader).write("notes/ideas.md", "Written on 3.3.0")
+    in_store(os_reader).write("notes/ideas.md", "From the AgentOS database")
+    in_store(os_reader).write("notes/more.md", "More")
+    in_store(company_reader).write("notes/ideas.md", "Written on 3.3.0")
     before = rows(os_reader), rows(company_reader)
 
     with pytest.raises(CompanyFilesMigrationError, match="notes/ideas.md"):
@@ -487,7 +498,7 @@ def test_a_different_note_in_the_company_database_stops_the_note_move(databases)
 
 def test_moving_notes_between_two_handles_on_one_database_removes_nothing(databases):
     db, reader = databases.new()
-    company_filesystem(reader).write("notes/ideas.md", "A note")
+    in_store(reader).write("notes/ideas.md", "A note")
     before = rows(reader)
     same = reader if not databases.is_async else db
 
@@ -537,8 +548,8 @@ def test_moving_notes_again_changes_nothing_whatever_state_the_databases_are_in(
     assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 0
     assert rows(os_reader) == {} and rows(company_reader) == {}
 
-    company_filesystem(os_reader).write("notes/ideas.md", "A note")
-    company_filesystem(os_reader).write("agents/keep.md", "Not a note")
+    in_store(os_reader).write("notes/ideas.md", "A note")
+    in_store(os_reader).write("agents/keep.md", "Not a note")
     assert databases.run(company_notes_to_move, acompany_notes_to_move, os_db, company_db) is True
     assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 1
     settled = rows(os_reader), rows(company_reader)
@@ -547,7 +558,7 @@ def test_moving_notes_again_changes_nothing_whatever_state_the_databases_are_in(
         assert (rows(os_reader), rows(company_reader)) == settled
     assert databases.run(company_notes_to_move, acompany_notes_to_move, os_db, company_db) is False
     # A note written in the Company database after the move is not a note to move, from either side.
-    company_filesystem(company_reader).write("notes/later.md", "Later")
+    in_store(company_reader).write("notes/later.md", "Later")
     assert databases.run(move_company_notes, amove_company_notes, os_db, company_db) == 0
     assert databases.run(company_notes_to_move, acompany_notes_to_move, company_db, company_db) is False
     assert ("company", "notes/later.md") in rows(company_reader)
@@ -556,7 +567,7 @@ def test_moving_notes_again_changes_nothing_whatever_state_the_databases_are_in(
 def test_the_async_note_move_takes_a_synchronous_database_on_either_side(tmp_path):
     os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
     reader, company_reader = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
-    company_filesystem(reader).write("notes/ideas.md", "A note")
+    in_store(reader).write("notes/ideas.md", "A note")
 
     async def run() -> int:
         company = AsyncSqliteDb(db_file=company_file)

@@ -54,12 +54,13 @@ migration with ``CompanyFilesMigrationError``. The summary delivery state of a G
 ``company/products/<id>/summary-state``, is not a file of the tree and does not move.
 
 A Company table is stamped with the current version when it is created, so MigrationManager does not
-trust that stamp while ``company_files_pending`` finds a file to move. Until the files have moved, an
-AgentOS with Company does not start: files left in the namespaces from before would look empty.
+trust that stamp while ``company_files_pending`` finds a file to move. Until the files have moved, the
+Company file system refuses every use with ``MigrationRequiredError``: files left in the namespaces
+from before would look like an empty store. AgentOS starts, so the migration can be run through it.
 
 Notes were stored in the AgentOS database. A deployment with a separate Company database calls
-``move_company_notes`` once to move them into the Company database. Until it has, AgentOS does not
-start: notes left in the AgentOS database would look empty.
+``move_company_notes`` once to move them into the Company database. Until it has, notes/ is refused
+with ``MigrationRequiredError``: notes left in the AgentOS database would look empty.
 """
 
 from dataclasses import dataclass
@@ -856,11 +857,14 @@ def _move_company_files(sess: Any, db: Any) -> bool:
     return True
 
 
-def _files_pending(sess: Any, db: Any) -> bool:
+def _files_wait(conn: Any, db: Any) -> bool:
     """Whether the file table holds a namespace that ``_move_company_files`` moves. One statement on the table."""
-    conn = sess.connection()
     files = _file_table(db, conn, any_schema=True)
     return files is not None and bool(_old_namespaces(conn, files))
+
+
+def _files_pending(sess: Any, db: Any) -> bool:
+    return _files_wait(sess.connection(), db)
 
 
 def company_files_pending(db: BaseDb) -> bool:

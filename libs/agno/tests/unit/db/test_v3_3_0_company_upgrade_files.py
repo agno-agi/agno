@@ -26,6 +26,15 @@ from tests.unit.db.test_v3_3_0_company_goals_migration import (  # noqa: F401
 )
 
 
+def in_store(db):
+    """The namespace of the Company file system, written as the file table takes it.
+
+    The Company file system itself refuses every use while files wait to be moved, so a test that
+    needs a file there before the migration writes it this way.
+    """
+    return FileSystem(db, namespace="company", user_scoped=False)
+
+
 def _rows(db: Any) -> Dict[Tuple[str, str], Tuple[Any, ...]]:
     """Every row of the file table: (namespace, path) -> (content, version, created_at, updated_at, size)."""
     backend = FileSystem(db, namespace="company", user_scoped=False).backend
@@ -150,7 +159,7 @@ async def test_a_file_that_cannot_move_stops_the_migration_and_the_next_run_fini
     reader = database.sync_db()
     _write_files_3_2_0(reader)
     # A different note is already stored at the path the 3.2.0 note moves to.
-    company_filesystem(reader).write("notes/ideas.md", "Written on 3.3.0\n")
+    in_store(reader).write("notes/ideas.md", "Written on 3.3.0\n")
     files_before, tables_before = _rows(reader), database.describe()
 
     try:
@@ -166,7 +175,7 @@ async def test_a_file_that_cannot_move_stops_the_migration_and_the_next_run_fini
         assert database.describe() == tables_before
 
     # With the newer note out of the way, the next run renames what is left and moves every file.
-    company_filesystem(reader).delete("notes/ideas.md")
+    in_store(reader).delete("notes/ideas.md")
     await MigrationManager(database.db()).up()
     after = _rows(reader)
     assert after[("company", "notes/ideas.md")] == files_before[("company/notes", "ideas.md")]
@@ -214,7 +223,7 @@ async def test_stamped_tables_do_not_hide_files_left_by_a_run_that_stopped(datab
     for name in COMPANY_TABLE_TYPES:
         await _call(database.db().upsert_schema_version, f"agno_company_{name}", "3.3.0")
     # A different note is already stored at the path the 3.2.0 note moves to.
-    company_filesystem(reader).write("notes/ideas.md", "Written on 3.3.0\n")
+    in_store(reader).write("notes/ideas.md", "Written on 3.3.0\n")
     files_before = _rows(reader)
 
     with pytest.raises(CompanyFilesMigrationError, match="notes/ideas.md"):
@@ -227,7 +236,7 @@ async def test_stamped_tables_do_not_hide_files_left_by_a_run_that_stopped(datab
     assert {database.versions()[f"agno_company_{name}"] for name in COMPANY_TABLE_TYPES[1:]} == {"3.3.0"}
 
     # With the newer note out of the way, a plain run moves every file, whatever the stamps say.
-    company_filesystem(reader).delete("notes/ideas.md")
+    in_store(reader).delete("notes/ideas.md")
     await MigrationManager(database.db()).up()
 
     after = _rows(reader)

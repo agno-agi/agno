@@ -7,13 +7,19 @@
 
 The store is the namespace ``company`` of the Company database. It is shared: it belongs to the
 company and is not partitioned by user. One size limit covers the whole store.
+
+A version of Agno before 3.3.0 kept each folder in a namespace of its own, and notes in the AgentOS
+database. Until the 3.3.0 migration has moved them the store refuses every use, with the error that
+names the migration: files left where they were would look like an empty store.
 """
 
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import lru_cache
 from typing import Any, Iterator, List, Optional, Sequence, Set
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
+from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem
 from agno.fs._paths import normalize_path
 from agno.fs.base import BaseFS, partition_kwargs
@@ -32,17 +38,132 @@ def set_company_filesystem_bytes(db: Any, max_bytes: int) -> None:
     _limits[db] = max_bytes
 
 
+# Databases whose file table holds no Company file that waits to be moved. Files do not move back.
+_moved: "WeakSet[Any]" = WeakSet()
+
+
+def _files_wait_error(table_name: str) -> MigrationRequiredError:
+    return MigrationRequiredError(
+        table_name=table_name,
+        message=(
+            f"Table {table_name} holds Company files where a version of Agno before 3.3.0 stored them, and the "
+            "Company file system does not serve them from there. Apply the pending migrations with "
+            "`asyncio.run(MigrationManager(db).up())` (import it from `agno.db.migrations.manager`; await the "
+            "call directly in async code), or via the AgentOS endpoint `POST /databases/all/migrate`. Each file "
+            "keeps its content, version and timestamps."
+        ),
+    )
+
+
+def _require_files_moved(backend: Any) -> None:
+    """Refuse to use the store while the migration still has a Company file to move."""
+    db = backend.db
+    if db in _moved:
+        return
+    from agno.db.migrations.versions.v3_3_0 import _files_wait
+
+    with backend._connection() as conn:
+        waiting = _files_wait(conn, db)
+    if waiting:
+        raise _files_wait_error(backend.table.fullname)
+    _moved.add(db)
+
+
+@lru_cache(maxsize=None)
+def _store_backend(base: Any) -> Any:
+    """The file table backend as the Company file system uses it."""
+
+    class CompanyStore(base):  # type: ignore[misc, valid-type]
+        """Every operation first makes sure the table is there. Here it also makes sure no file waits."""
+
+        def _ensure_table(self) -> None:
+            super()._ensure_table()
+            _require_files_moved(self)
+
+    return CompanyStore
+
+
 def company_filesystem(db: Any) -> FileSystem:
     """The Company file system in a database: the whole tree, one store."""
+    if not hasattr(db, "db_engine"):
+        raise NotImplementedError("Company files require a supported FileSystem database")
+    from agno.db.base import AsyncBaseDb
+    from agno.fs.db import AsyncDbFileSystem, DbFileSystem
+
     try:
+        if isinstance(db, AsyncBaseDb):
+            backend = _store_backend(AsyncDbFileSystem)(db)
+        else:
+            backend = _store_backend(DbFileSystem)(db=db)
         return FileSystem(
-            db,
+            backend=backend,
             namespace=COMPANY_NAMESPACE,
             user_scoped=False,
             max_namespace_bytes=_limits.get(db, COMPANY_FILESYSTEM_BYTES),
         )
     except (TypeError, ValueError) as exc:
         raise NotImplementedError("Company files require a supported FileSystem database") from exc
+
+
+# Notes left in the AgentOS database
+
+# The AgentOS database of a Company database that is kept apart from it: where notes were before 3.3.0.
+_notes_sources: "WeakKeyDictionary[Any, Any]" = WeakKeyDictionary()
+# Company databases whose AgentOS database holds no note to move, and those known to hold one.
+_notes_moved: "WeakSet[Any]" = WeakSet()
+_notes_wait: "WeakSet[Any]" = WeakSet()
+
+
+def set_company_notes_source(company_db: Any, source_db: Any) -> None:
+    """Name the AgentOS database of a Company database kept apart from it."""
+    _notes_sources[company_db] = source_db
+
+
+def _notes_wait_error() -> MigrationRequiredError:
+    return MigrationRequiredError(
+        table_name="company/notes",
+        message=(
+            "Notes are stored in the AgentOS database, and from 3.3.0 they belong in the Company database. "
+            "Move them once with `move_company_notes(agent_os_db, company_db)` (import it from "
+            "`agno.db.migrations.versions.v3_3_0`; use `await amove_company_notes(...)` when either database "
+            "is asynchronous). Each note keeps its content, version and timestamps."
+        ),
+    )
+
+
+def require_company_notes_moved(company_db: Any) -> None:
+    """Refuse notes/ while the AgentOS database still holds notes that belong in the Company database."""
+    source = _notes_sources.get(company_db)
+    if source is None or company_db in _notes_moved:
+        return
+    from agno.db.base import AsyncBaseDb
+
+    if isinstance(source, AsyncBaseDb) or isinstance(company_db, AsyncBaseDb):
+        # An asynchronous database cannot be asked from here: what the last asynchronous use found stands.
+        if company_db in _notes_wait:
+            raise _notes_wait_error()
+        return
+    from agno.db.migrations.versions.v3_3_0 import company_notes_to_move
+
+    _settle_notes(company_db, company_notes_to_move(source, company_db))
+
+
+async def arequire_company_notes_moved(company_db: Any) -> None:
+    """Async variant of ``require_company_notes_moved``. Either database may be synchronous."""
+    source = _notes_sources.get(company_db)
+    if source is None or company_db in _notes_moved:
+        return
+    from agno.db.migrations.versions.v3_3_0 import acompany_notes_to_move
+
+    _settle_notes(company_db, await acompany_notes_to_move(source, company_db))
+
+
+def _settle_notes(company_db: Any, waiting: bool) -> None:
+    if waiting:
+        _notes_wait.add(company_db)
+        raise _notes_wait_error()
+    _notes_wait.discard(company_db)
+    _notes_moved.add(company_db)
 
 
 def company_folder(db: Any, folder: str) -> FileSystem:

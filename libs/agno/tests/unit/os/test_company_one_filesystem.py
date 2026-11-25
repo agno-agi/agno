@@ -17,6 +17,7 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.fs import FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.tools.company_files import CompanyFileTools
 from tests.unit.os.test_company_file_tree import call, pages, person, records, routine_run, task_run, tree
 from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
 
@@ -138,16 +139,117 @@ def test_a_database_with_no_company_setting_uses_the_default_limit(tmp_path):
         db.close()
 
 
-# ------------------------------------------------------------------ notes left in the AgentOS database
+# ------------------------------------------------------------------ files and notes that wait to be moved
+
+MIGRATION_ERROR = "migration_required_error"
+
+
+def _refused(response) -> str:
+    """The message of a response that says a migration is pending."""
+    assert response.status_code == 500, response.text
+    assert response.json()["error_id"] == MIGRATION_ERROR, response.text
+    return response.json()["detail"]
+
+
+def _with_files_from_3_2_0(reader) -> dict:
+    """Company records as this version stores them, and their files where 3.2.0 kept them."""
+    from tests.unit.db.test_v3_3_0_company_files_migration import old_layout
+
+    return old_layout(reader)
+
+
+@pytest.mark.parametrize("two_databases", [False, True])
+@pytest.mark.parametrize("use_async", [False, True])
+def test_agentos_starts_with_files_waiting_and_company_refuses_them_until_they_move(tmp_path, two_databases, use_async):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import MigrationRequiredError
+
+    company_file = str(tmp_path / "company.db")
+    reader = SqliteDb(db_file=company_file)
+    ids = _with_files_from_3_2_0(reader)
+    company_db = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
+    if two_databases:
+        os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
+        agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
+    else:
+        os_db = company_db
+        agent_os = AgentOS(db=company_db, company=CompanyConfig(), telemetry=False)
+    urls = {
+        "/company/wiki/brief.md": "# Company\n\nWe ship weekly.\n",
+        f"/company/goals/{ids['goal']}/wiki/research/notes.md": "three",
+        f"/company/tasks/{ids['task']}/files/report.md": "The report",
+        "/company/notes/ideas.md": "A better note",
+    }
+
+    # AgentOS starts. The Company file system serves no file while files wait where 3.2.0 kept them.
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+        for url in urls:
+            message = _refused(client.get(url))
+            assert "MigrationManager(db).up()" in message and "POST /databases/all/migrate" in message
+        assert _refused(client.get("/company/wiki")) and _refused(client.get("/company/notes"))
+        # A tool is refused with the same error, and nothing is written beside the files that wait.
+        files = CompanyFileTools(company_db, notes_db=company_db)
+        for name, arguments in (
+            ("read_company_file", {"path": "wiki/brief.md"}),
+            ("list_company_files", {"folder": "notes"}),
+            ("write_company_file", {"path": "notes/new.md", "content": "Written before the move"}),
+        ):
+            with pytest.raises(MigrationRequiredError, match="databases/all/migrate"):
+                call(files, name, None, use_async, **arguments)
+        # Records are not files: they are served.
+        assert client.get(f"/company/goals/{ids['goal']}").status_code == 200
+
+        # The route the error names moves the files, and the same AgentOS serves them without a restart.
+        migrated = client.post("/databases/all/migrate")
+        assert migrated.status_code == 200, migrated.text
+        for url, content in urls.items():
+            served = client.get(url)
+            assert served.status_code == 200, (url, served.text)
+            assert served.json()["content"] == content
+        assert call(files, "read_company_file", None, use_async, path="wiki/brief.md")["version"] == 2
+    for db in {reader, os_db, company_db}:
+        if not isinstance(db, AsyncSqliteDb):
+            db.close()
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_super_agent_without_company_does_not_read_or_write_notes_past_the_ones_that_wait(tmp_path, use_async):
+    from agno.db.migrations.manager import MigrationManager
+    from agno.exceptions import MigrationRequiredError
+
+    db_file = str(tmp_path / "agentos.db")
+    reader = SqliteDb(db_file=db_file)
+    # An AgentOS without Company on 3.2.0: Super Agent's notes, where that version kept them.
+    FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note from 3.2.0")
+    # Super Agent needs a synchronous AgentOS database. Its tools are called both ways.
+    db = SqliteDb(db_file=db_file)
+    agent_os = AgentOS(db=db, manager=OSManager(model=ScriptedModel()), telemetry=False)
+    files = tree(agent_os)
+
+    # The notes are not served as an empty folder, and no note is written beside them.
+    for name, arguments in (
+        ("list_company_files", {"folder": "notes"}),
+        ("read_company_file", {"path": "notes/ideas.md"}),
+        ("write_company_file", {"path": "notes/ideas.md", "content": "Written on this version"}),
+    ):
+        with pytest.raises(MigrationRequiredError, match=r"MigrationManager\(db\)\.up\(\)"):
+            call(files, name, None, use_async, **arguments)
+
+    # The migration then moves the note: nothing was written in its way.
+    asyncio.run(MigrationManager(db).up())
+    assert call(files, "read_company_file", None, use_async, path="notes/ideas.md")["content"] == "A note from 3.2.0"
+    reader.close()
 
 
 @pytest.mark.parametrize("where", ["company/notes", "company"])
 @pytest.mark.parametrize("os_async", [False, True])
-def test_agentos_does_not_start_while_notes_are_left_in_the_agentos_database(tmp_path, where, os_async):
+def test_agentos_starts_with_notes_left_in_its_database_and_notes_are_refused_until_they_move(
+    tmp_path, where, os_async
+):
     from fastapi.testclient import TestClient
 
     from agno.db.migrations.versions.v3_3_0 import move_company_notes
-    from agno.exceptions import MigrationRequiredError
 
     os_file, company_file = str(tmp_path / "os.db"), str(tmp_path / "company.db")
     os_reader, company_db = SqliteDb(db_file=os_file), SqliteDb(db_file=company_file)
@@ -155,37 +257,77 @@ def test_agentos_does_not_start_while_notes_are_left_in_the_agentos_database(tmp
     if where == "company/notes":
         FileSystem(os_reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
     else:
-        company_filesystem(os_reader).write("notes/ideas.md", "A note")
+        FileSystem(os_reader, namespace="company", user_scoped=False).write("notes/ideas.md", "A note")
+    company_filesystem(company_db).write("wiki/people.md", "Ada")
+    os_db = AsyncSqliteDb(db_file=os_file) if os_async else SqliteDb(db_file=os_file)
+    agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
 
-    def start() -> AgentOS:
-        os_db = AsyncSqliteDb(db_file=os_file) if os_async else SqliteDb(db_file=os_file)
-        return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
-
-    with pytest.raises(MigrationRequiredError, match="move_company_notes") as refused:
-        with TestClient(start().get_app()):
-            pass
-    assert refused.value.error_id == "migration_required_error"
-    assert "amove_company_notes" in str(refused.value) and "agno.db.migrations.versions.v3_3_0" in str(refused.value)
-
-    # The call the error names is the whole remedy.
-    assert move_company_notes(os_reader, company_db) == 1
-    with TestClient(start().get_app()) as client:
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+        # Only notes/ waits: the rest of the Company file system is served.
+        assert client.get("/company/wiki/people.md").json()["content"] == "Ada"
+        for url in ("/company/notes", "/company/notes/ideas.md"):
+            message = _refused(client.get(url))
+            assert "move_company_notes" in message and "agno.db.migrations.versions.v3_3_0" in message
+            assert "amove_company_notes" in message
+        # The call the error names is the whole remedy, and the same AgentOS then serves the note.
+        assert move_company_notes(os_reader, company_db) == 1
         served = client.get("/company/notes/ideas.md")
         assert served.status_code == 200 and served.json()["content"] == "A note"
     os_reader.close()
     company_db.close()
+    if not os_async:
+        os_db.close()
 
 
-def test_agentos_starts_when_no_note_is_left_behind(tmp_path):
+def test_notes_left_behind_are_refused_through_the_synchronous_tree_too(tmp_path):
+    from agno.company.filesystem import set_company_notes_source
+    from agno.db.migrations.versions.v3_3_0 import move_company_notes
+    from agno.exceptions import MigrationRequiredError
+
+    os_db, company_db = SqliteDb(db_file=str(tmp_path / "os.db")), SqliteDb(db_file=str(tmp_path / "company.db"))
+    FileSystem(os_db, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    set_company_notes_source(company_db, os_db)
+    files = CompanyFiles(company_db, notes_db=company_db)
+    for use in (lambda: files.read("notes/ideas.md"), lambda: files.write("notes/new.md", "Not written")):
+        with pytest.raises(MigrationRequiredError, match="move_company_notes"):
+            use()
+    assert stored(company_db) == {}
+    assert move_company_notes(os_db, company_db) == 1
+    assert files.read("notes/ideas.md")["content"] == "A note"
+
+    # A synchronous use cannot ask an asynchronous AgentOS database. What the last asynchronous use found stands.
+    later_file = str(tmp_path / "later.db")
+    FileSystem(SqliteDb(db_file=later_file), namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    later_os, later_company = AsyncSqliteDb(db_file=later_file), SqliteDb(db_file=str(tmp_path / "later-company.db"))
+    set_company_notes_source(later_company, later_os)
+    later = CompanyFiles(later_company, notes_db=later_company)
+    assert later.list("notes")["files"] == []
+
+    async def use_async() -> None:
+        try:
+            await later.alist("notes")
+        finally:
+            await later_os.db_engine.dispose()
+
+    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
+        asyncio.run(use_async())
+    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
+        later.list("notes")
+    for db in (os_db, company_db, later_company):
+        db.close()
+
+
+def test_agentos_serves_notes_when_none_is_left_behind(tmp_path):
     from fastapi.testclient import TestClient
 
     os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
     company_db = SqliteDb(db_file=str(tmp_path / "company.db"))
     # Other files in the AgentOS database are not notes, and notes in the Company database are in place.
     FileSystem(os_db, namespace="default", user_scoped=False).write("keep.md", "An agent's file")
-    company_filesystem(os_db).write("agents/keep.md", "Not under notes/")
+    plain = FileSystem(os_db, namespace="company", user_scoped=False)
+    plain.write("agents/keep.md", "Not under notes/")
     # A folder whose name differs from notes/ only by case is another folder.
-    company_filesystem(os_db).write("Notes/shout.md", "Not the notes folder")
+    plain.write("Notes/shout.md", "Not the notes folder")
     company_filesystem(company_db).write("notes/ideas.md", "A note")
     with TestClient(AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False).get_app()) as client:
         assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
@@ -196,82 +338,10 @@ def test_agentos_starts_when_no_note_is_left_behind(tmp_path):
     with TestClient(AgentOS(db=single, company=CompanyConfig(), telemetry=False).get_app()) as client:
         assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
     twin = SqliteDb(db_file=str(tmp_path / "single.db"))
-    with TestClient(AgentOS(db=single, company=CompanyConfig(db=twin), telemetry=False).get_app()):
-        pass
-    # Without Company nothing is checked, whatever the file table holds.
-    FileSystem(single, namespace="company/notes", user_scoped=False).write("old.md", "Not migrated yet")
-    with TestClient(AgentOS(db=single, agents=[], telemetry=False).get_app()):
-        pass
+    with TestClient(AgentOS(db=single, company=CompanyConfig(db=twin), telemetry=False).get_app()) as client:
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
     for db in (os_db, company_db, single, twin):
         db.close()
-
-
-# ------------------------------------------------------------------ files left in the namespaces from before
-
-
-@pytest.mark.parametrize(
-    "namespace, path, moved_to, served",
-    [
-        ("company/wiki", "handbook.md", "wiki/handbook.md", "/company/wiki/handbook.md"),
-        ("company/products/launch/wiki", "status.md", "goals/launch/status.md", None),
-        ("company/tasks/task-1", "report.md", "tasks/task-1/report.md", None),
-        ("company/notes", "ideas.md", "notes/ideas.md", "/company/notes/ideas.md"),
-    ],
-)
-@pytest.mark.parametrize("two_databases", [False, True])
-@pytest.mark.parametrize("use_async", [False, True])
-def test_agentos_does_not_start_while_company_files_wait_to_be_moved(
-    tmp_path, namespace, path, moved_to, served, two_databases, use_async
-):
-    from fastapi.testclient import TestClient
-
-    from agno.db.migrations.manager import MigrationManager
-    from agno.exceptions import MigrationRequiredError
-    from tests.unit.db.test_v3_3_0_company_files_migration import rows
-
-    company_file = str(tmp_path / "company.db")
-    reader = SqliteDb(db_file=company_file)
-    # A file written before 3.3.0, in the namespace that version kept it in.
-    FileSystem(reader, namespace=namespace, user_scoped=False).write(path, "Written on 3.2.0")
-    opened = [reader]
-
-    def start() -> AgentOS:
-        company_db = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
-        opened.append(company_db)
-        if not two_databases:
-            return AgentOS(db=company_db, company=CompanyConfig(), telemetry=False)
-        os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
-        opened.append(os_db)
-        return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
-
-    for _ in range(2):
-        # Refused every time: a refused start leaves nothing that lets the next one through.
-        with pytest.raises(MigrationRequiredError, match=r"MigrationManager\(db\)\.up\(\)") as refused:
-            with TestClient(start().get_app()):
-                pass
-        assert refused.value.error_id == "migration_required_error"
-        assert refused.value.table_name == "agno_fs" and "Company database" in str(refused.value)
-    assert [(key, row[0]) for key, row in rows(reader).items()] == [((namespace, path), "Written on 3.2.0")]
-
-    # The call the error names is the whole remedy, also after a refused start created the Company tables.
-    migrating = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
-    opened.append(migrating)
-
-    async def migrate() -> None:
-        await MigrationManager(migrating).up()
-        if use_async:
-            await migrating.db_engine.dispose()
-
-    asyncio.run(migrate())
-    with TestClient(start().get_app()) as client:
-        if served is not None:
-            response = client.get(served)
-            assert response.status_code == 200 and response.json()["content"] == "Written on 3.2.0"
-    after = rows(reader)
-    assert after[("company", moved_to)][0] == "Written on 3.2.0" and {key[0] for key in after} == {"company"}
-    for db in opened:
-        if not isinstance(db, AsyncSqliteDb):
-            db.close()
 
 
 def _statements(db, seen: list, label: str) -> None:
@@ -282,8 +352,10 @@ def _statements(db, seen: list, label: str) -> None:
         seen.append((label, " ".join(statement.split())))
 
 
-def test_the_startup_check_reads_the_file_table_once_and_logs_nothing(tmp_path):
+def test_the_check_for_waiting_files_runs_at_first_use_and_stops_once_nothing_waits(tmp_path):
     import logging
+
+    from fastapi.testclient import TestClient
 
     seen: list = []
     logged: list = []
@@ -292,55 +364,39 @@ def test_the_startup_check_reads_the_file_table_once_and_logs_nothing(tmp_path):
         def emit(self, record: logging.LogRecord) -> None:
             logged.append(record.getMessage())
 
-    def check(agent_os: AgentOS) -> list:
-        seen.clear()
-        asyncio.run(agent_os._acheck_company_files())
-        return list(seen)
+    def looked_for_waiting_files(statements: list) -> list:
+        return [label for label, statement in statements if statement.startswith("SELECT DISTINCT agno_fs.namespace")]
 
-    def on_file_table(statements: list) -> list:
-        return [(label, statement) for label, statement in statements if "FROM agno_fs" in statement]
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    plain = FileSystem(db, namespace="company", user_scoped=False)
+    plain.write("wiki/brief.md", "# Company")
+    FileSystem(db, namespace="default", user_scoped=False).write("keep.md", "An agent's file")
+    _statements(db, seen, "db")
+    agent_os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
 
     handler = Collect(level=logging.DEBUG)
     logger = logging.getLogger("agno")
     level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
     try:
-        one = SqliteDb(db_file=str(tmp_path / "one.db"))
-        os_db, company_db = SqliteDb(db_file=str(tmp_path / "os.db")), SqliteDb(db_file=str(tmp_path / "company.db"))
-        for db in (one, os_db, company_db):
-            company_filesystem(db).write("wiki/brief.md", "# Company")
-            company_filesystem(db).write("agents/keep.md", "Not a note")
-            FileSystem(db, namespace="default", user_scoped=False).write("keep.md", "An agent's file")
-        _statements(one, seen, "one")
-        _statements(os_db, seen, "os")
-        _statements(company_db, seen, "company")
-        without = AgentOS(db=one, agents=[], telemetry=False)
-        shared = AgentOS(db=one, company=CompanyConfig(), telemetry=False)
-        separate = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
-        logged.clear()
-
-        # Without Company nothing is read.
-        assert check(without) == []
-        # With Company in the AgentOS database: one statement on the file table, after the lookup that it exists.
-        statements = check(shared)
-        assert len(on_file_table(statements)) == 1 and len(statements) == 2
-        # With a Company database of its own: one statement on the file table of each.
-        statements = check(separate)
-        assert [label for label, _ in on_file_table(statements)] == ["company", "os"] and len(statements) == 4
-        assert logged == []
-
-        # A database with no file table is asked only whether it holds one.
-        empty = SqliteDb(db_file=str(tmp_path / "empty.db"))
-        _statements(empty, seen, "empty")
-        statements = check(AgentOS(db=empty, company=CompanyConfig(), telemetry=False))
-        assert on_file_table(statements) == [] and all("table_info" in statement for _, statement in statements)
-        assert logged == []
+        with TestClient(agent_os.get_app()) as client:
+            # Starting AgentOS does not look at the file table for files that wait.
+            assert looked_for_waiting_files(seen) == []
+            seen.clear()
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+            # The first use looks once. After that nothing waits, and no later use looks again.
+            assert client.get("/company/wiki/brief.md").json()["content"] == "# Company"
+            assert looked_for_waiting_files(seen) == ["db"]
+            assert [message for message in logged if "wait" in message or "moved" in message] == []
+            seen.clear()
+            assert client.get("/company/wiki/brief.md").status_code == 200
+            assert client.get("/company/notes").status_code == 200
+            assert company_filesystem(db).read("wiki/brief.md") == "# Company"
+            assert looked_for_waiting_files(seen) == []
     finally:
         logger.removeHandler(handler)
         logger.setLevel(level)
-    for db in (one, os_db, company_db, empty):
-        db.close()
+    db.close()
 
 
 # ------------------------------------------------------------------ what a Task run may write

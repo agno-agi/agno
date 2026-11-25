@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from agno.company.files import LIST_ENTRIES, READ_CHARS, CompanyFiles
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.fs import FileSystem
 from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.os import AgentOS, CompanyConfig
 from agno.os.config import AuthorizationConfig
@@ -496,8 +497,8 @@ def test_notes_come_from_the_company_database(tmp_path, os_async, company_async)
         task_id = new_task(client)
         files.write(f"tasks/{task_id}/report.md", "In the Company database.\n")
         files.write("notes/ideas.md", "In the Company database too.\n")
-        # A note in the AgentOS database is not the shared notes while Company has a database.
-        CompanyFiles(notes_db=primary_writer).write("notes/stray.md", "Not served.\n")
+        # Another file of the AgentOS database is not a note.
+        FileSystem(primary_writer, namespace="default", user_scoped=False).write("stray.md", "Not served.\n")
         assert [row["path"] for row in client.get("/company/notes").json()["data"]] == ["ideas.md"]
         assert client.get("/company/notes/ideas.md").json()["content"] == "In the Company database too.\n"
         assert client.get("/company/notes/stray.md").status_code == 404
