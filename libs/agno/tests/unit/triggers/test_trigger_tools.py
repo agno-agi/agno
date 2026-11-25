@@ -382,3 +382,89 @@ async def test_a_trigger_does_not_gain_a_right_its_creator_lacks(with_super_agen
     assert row["status"] == EVENT_SUCCESS, row
     expected = "allowed target ran" if allowed else "Permission required: agents:allowed:run"
     assert expected in row["output"]["content"]
+
+
+# ------------------------------------------------------------------------- found in review
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_turning_on_and_replaying_need_the_right_to_run_the_target(make_os, use_async):
+    os = await make_os(nothing)
+    tools = toolkit(os)
+    created = await use(tools, "create_trigger", use_async, **new_trigger())
+    await os.deliver(issue_payload())
+    await os.run_events()
+    (event,) = await os.events()
+    await use(tools, "disable_trigger", use_async, created["id"])
+
+    async def as_caller(scopes, tool, *args):
+        with authorization_scope(lambda: caller(scopes)):
+            if use_async:
+                return json.loads(await getattr(tools, "a" + tool)(*args))
+            return json.loads(getattr(tools, tool)(*args))
+
+    # Whoever may write triggers and may not run the agent can neither turn the trigger on nor
+    # run one of its events again: both run the target.
+    refused = await as_caller(["triggers:write"], "enable_trigger", created["id"])
+    assert "agents:engineer:run" in refused["error"]
+    assert (await TriggerManager(os.db).aget(created["id"])).enabled is False
+    allowed = await as_caller(["triggers:write", "agents:engineer:run"], "enable_trigger", created["id"])
+    assert allowed["status"] == "enabled"
+
+    refused = await as_caller(["triggers:write"], "replay_trigger_event", created["id"], event["id"])
+    assert "agents:engineer:run" in refused["error"]
+    assert len(await os.events()) == 1
+    allowed = await as_caller(
+        ["triggers:write", "agents:engineer:run"], "replay_trigger_event", created["id"], event["id"]
+    )
+    assert allowed["status"] == "pending"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("target_id", ["platform%2Dbuilder", "x/../platform-builder", "platform-builder/"])
+async def test_an_internal_member_is_refused_however_its_id_is_written(make_os, use_async, target_id):
+    os = await make_os(nothing)
+    tools = toolkit(os)
+
+    refused = await use(tools, "create_trigger", use_async, **new_trigger(target_id=target_id))
+
+    assert refused.get("error_type") in ("target_internal", "invalid_target"), refused
+    assert (await call(os.db, "get_triggers"))[1] == 0
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_the_tools_take_what_the_api_takes(make_os, use_async):
+    os = await make_os(nothing)
+    tools = toolkit(os)
+
+    async def refused(**overrides):
+        answer = await use(tools, "create_trigger", use_async, **new_trigger(**overrides))
+        assert "error" in answer, answer
+        return answer["error"]
+
+    assert "name" in await refused(name="   ")
+    assert "255" in await refused(name="n" * 256)
+    assert "input" in await refused(input="  ")
+    assert "target_id" in await refused(target_id="")
+    assert "1024" in await refused(description="d" * 1025)
+    assert "continue_on" in await refused(continue_on=["issue_comment.created", " "])
+    assert "events" in await refused(events=["issues.opened", 7])
+    assert (await call(os.db, "get_triggers"))[1] == 0
+
+    # What is stored is trimmed, as over the API.
+    created = await use(tools, "create_trigger", use_async, **new_trigger(name="  spaced  ", input="  Do it.  "))
+    assert created["name"] == "spaced" and created["input"] == "Do it."
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+async def test_a_tool_stores_a_trigger_for_its_own_agentos_only(make_os, use_async):
+    first = await make_os(nothing, os_options={"id": "first-os"})
+    second = await make_os(nothing, os_options={"id": "second-os"})
+    theirs = await use(toolkit(first), "create_trigger", use_async, **new_trigger(input="The first app's."))
+
+    mine = await use(toolkit(second), "create_trigger", use_async, **new_trigger(input="The second app's."))
+
+    # The same name on another AgentOS is another trigger. Nothing of the first app's was changed.
+    assert mine["status"] == "created" and mine["id"] != theirs["id"]
+    kept = await TriggerManager(first.db).aget(theirs["id"])
+    assert kept.os_id == "first-os" and kept.input == "The first app's."

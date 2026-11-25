@@ -2449,12 +2449,12 @@ class BaseDb(ABC):
         page: int = 1,
         user_id: Optional[str] = None,
         started_run: Optional[bool] = None,
-        source_ids: Optional[List[str]] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List trigger events, newest first.
 
         With ``started_run``, only the events that started a run, or only the ones that did not.
-        With ``source_ids``, only the events of those sources.
+        With ``os_id``, only the events that AgentOS received, and the ones stored without one.
 
         Returns:
             Tuple of (events, total_count)
@@ -4728,12 +4728,12 @@ class AsyncBaseDb(ABC):
         page: int = 1,
         user_id: Optional[str] = None,
         started_run: Optional[bool] = None,
-        source_ids: Optional[List[str]] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List trigger events, newest first.
 
         With ``started_run``, only the events that started a run, or only the ones that did not.
-        With ``source_ids``, only the events of those sources.
+        With ``os_id``, only the events that AgentOS received, and the ones stored without one.
 
         Returns:
             Tuple of (events, total_count)

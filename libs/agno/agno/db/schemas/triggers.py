@@ -200,6 +200,8 @@ class TriggerEvent:
     requirements: Optional[List[Dict[str, Any]]] = None
     # Denormalised from the trigger's owner, so event reads scope by owner without a join.
     user_id: Optional[str] = None
+    # The AgentOS that received the delivery. None for an event stored without one.
+    os_id: Optional[str] = None
     created_at: Optional[int] = None
 
     def __post_init__(self) -> None:

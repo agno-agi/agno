@@ -3,6 +3,7 @@
 import time
 
 import jwt
+import pytest
 from sqlalchemy import inspect
 
 from agno.db.base import ComponentType
@@ -494,3 +495,153 @@ async def test_another_agentos_on_the_database_neither_sees_nor_changes_these_tr
     await first.run_events()
     (row,) = await first.events()
     assert row["trigger_id"] == trigger["id"] and row["status"] == EVENT_SUCCESS
+
+
+async def test_the_events_listing_holds_only_what_this_agentos_received(make_os):
+    first = await make_os(nothing, os_options={"id": "first-os"})
+    second = await make_os(nothing, os_options={"id": "second-os"})
+    # Both have a source called "github".
+    assert first.github.id == second.github.id == "github"
+    trigger = (await first.client.post("/triggers", json=body())).json()
+    await first.deliver(issue_payload())
+    await first.deliver(issue_payload(), event="push", delivery="d-2")
+    await first.run_events()
+    await second.deliver(issue_payload(number=8), delivery="d-3")
+
+    mine = (await first.client.get("/triggers/events")).json()["data"]
+    theirs = (await second.client.get("/triggers/events")).json()["data"]
+
+    # One that ran and one that matched no trigger are the first app's. The second has its own one.
+    assert sorted(event["delivery_id"] for event in mine) == ["d-1", "d-2"]
+    assert [event["delivery_id"] for event in theirs] == ["d-3"]
+    # Naming another app's trigger finds nothing either.
+    by_trigger = await second.client.get(f"/triggers/events?trigger_id={trigger['id']}")
+    assert by_trigger.json()["data"] == []
+
+
+# ------------------------------------------------------- an edit of what starts a trigger's runs
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"filters": {"allow": "anyone"}},
+        {"events": ["issue_comment.created"]},
+        {"continue_on": ["issue_comment.created"]},
+        {"source_id": "github"},
+    ],
+)
+async def test_changing_what_starts_a_trigger_needs_the_right_to_run_it_and_saves_the_editors_authority(
+    make_os, change
+):
+    os = await make_os(nothing, os_options=checked())
+    trigger = (await os.client.post("/triggers", json=body(), headers=bearer(WRITER, sub="alice"))).json()
+
+    async def saved_principal():
+        (stored,) = (await stored_rows(os))[0]
+        return stored["payload"]["_agno_authorization"]["context"]["principal_id"]
+
+    # Bob may write triggers and may not run the agent. Widening who or what starts alice's
+    # trigger would run her target, with her authority, on events he chooses.
+    bob = bearer(["triggers:write"], sub="bob")
+    refused = await os.client.patch(f"/triggers/{trigger['id']}", json=change, headers=bob)
+    assert refused.status_code == 403, refused.text
+    (stored,) = (await stored_rows(os))[0]
+    assert stored["filters"] == {"allow": "members"} and stored["events"] == ["issues.opened"]
+    assert await saved_principal() == "alice"
+
+    # Carol may run the agent. The change is hers, and so is the authority from here on.
+    carol = bearer(WRITER, sub="carol")
+    changed = await os.client.patch(f"/triggers/{trigger['id']}", json=change, headers=carol)
+    assert changed.status_code == 200, changed.text
+    assert await saved_principal() == "carol"
+
+
+async def test_two_renames_to_one_name_answer_a_conflict(make_os):
+    os = await make_os(nothing)
+    one = (await os.client.post("/triggers", json=body(name="one"))).json()
+    await os.client.post("/triggers", json=body(name="two"))
+
+    # The name check passes for both at once, and the unique index decides.
+    read = os.db.get_trigger_by_name
+    os.db.get_trigger_by_name = lambda name, user_id=None, os_id=None: (
+        None if name == "two" else read(name, user_id=user_id, os_id=os_id)
+    )
+    renamed = await os.client.patch(f"/triggers/{one['id']}", json={"name": "two"})
+
+    assert renamed.status_code == 409 and "already exists" in renamed.json()["detail"]
+
+
+# ----------------------------------------------------------------------- replay and the code's name
+
+
+async def test_replay_keeps_the_question_about_a_sender_who_was_never_asked_about(make_os):
+    import httpx
+
+    class Credentials:
+        api_url = "https://api.github.test"
+
+        async def atoken(self, installation_id=None):
+            return "token"
+
+        async def ainstallation_id(self, repository):
+            return 1
+
+    os = await make_os(nothing, credentials=Credentials())
+    asked = []
+
+    def answer(request):
+        asked.append(request)
+        return httpx.Response(200, json={"permission": "read"})
+
+    os.github._http_transport = httpx.MockTransport(answer)
+    trigger = (await os.client.post("/triggers", json=body())).json()
+
+    # An outsider's event is stored to be checked when it is claimed. The trigger is turned off
+    # first, so the event is skipped and GitHub is never asked.
+    await os.deliver(issue_payload(association="NONE", sender="mallory"))
+    await os.client.post(f"/triggers/{trigger['id']}/disable")
+    await os.run_events()
+    (skipped,) = await os.events()
+    assert skipped["status"] == "skipped" and asked == []
+    await os.client.post(f"/triggers/{trigger['id']}/enable")
+
+    replayed = await os.client.post(f"/triggers/{trigger['id']}/events/{skipped['id']}/replay")
+    assert replayed.status_code == 202
+    await os.run_events()
+
+    # The replay is asked about: nobody ever let this sender through.
+    _, again = await os.events()
+    assert len(asked) == 1
+    assert again["status"] == EVENT_IGNORED and "mallory has read access" in again["reason"]
+    assert os.model.inputs == []
+
+
+async def test_a_replay_of_a_stored_triggers_event_stands_aside_once_code_declares_the_name(make_os):
+    before = await make_os(nothing)
+    # Stored under an owner, so it keeps its own row when code declares the name.
+    theirs = await TriggerManager(before.db).acreate(
+        name="triage-issues",
+        source_id="github",
+        events=["issues.opened"],
+        target_type="agent",
+        target_id="engineer",
+        input="The stored instruction.",
+        user_id="alice",
+        provenance={"os_id": before.agent_os._trigger_os_id},
+    )
+    await before.deliver(issue_payload())
+    await before.run_events()
+    (ran,) = await before.events()
+    assert ran["status"] == EVENT_SUCCESS and before.model.inputs[0].startswith("The stored instruction.")
+
+    # A later version of the code declares a trigger of that name, and the old event is replayed.
+    os = await make_os(in_code)
+    replayed = await os.client.post(f"/triggers/{theirs.id}/events/{ran['id']}/replay")
+    assert replayed.status_code == 202
+    await os.run_events()
+
+    again = (await os.events(trigger_id=theirs.id))[-1]
+    assert again["status"] == EVENT_IGNORED
+    assert again["reason"] == "trigger 'triage-issues' is declared in code, and that one is used"
+    assert os.model.inputs == []

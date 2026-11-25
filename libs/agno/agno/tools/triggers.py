@@ -20,11 +20,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.schemas.scheduler import build_run_endpoint
 from agno.db.schemas.triggers import CODE_MANAGED, StoredTrigger, TriggerEvent
-from agno.registry._reserved import RESERVED_MEMBER_IDS
 from agno.run import RunContext
-from agno.run.authorization import requires_permission
+from agno.run.authorization import arequire_schedule_target, require_schedule_target, requires_permission
 from agno.tools.scheduler import (
     CodeDefinedProbe,
+    _manager_member_refusal,
     aarchived_endpoint_refusal,
     adraft_endpoint_refusal,
     archived_endpoint_refusal,
@@ -192,14 +192,33 @@ class TriggerTools(Toolkit):
 
     def _fields(
         self,
+        name: str,
         source_id: str,
         events: List[str],
         target_type: str,
         target_id: str,
+        input: str,
         continue_on: Optional[List[str]],
         filters: Optional[str],
+        description: Optional[str],
     ) -> Tuple[Optional[str], Dict[str, Any]]:
-        """Check what a new trigger names without reading the database. An error, or the checked fields."""
+        """Check what a new trigger names without reading the database. An error, or the checked fields.
+
+        The same limits as the API: names and ids are trimmed and bounded, and every event kind is
+        a non-empty string.
+        """
+        for label, value, limit in (("name", name, 255), ("target_id", target_id, 255), ("input", input, None)):
+            if not isinstance(value, str) or not value.strip():
+                return _error(f"{label} must not be blank"), {}
+            if limit is not None and len(value.strip()) > limit:
+                return _error(f"{label} is at most {limit} characters"), {}
+        if description is not None and len(description) > 1024:
+            return _error("description is at most 1024 characters"), {}
+        for label, kinds in (("events", events), ("continue_on", continue_on or [])):
+            if not all(isinstance(kind, str) and kind.strip() for kind in kinds):
+                return _error(f"{label} holds event kinds, e.g. issues.opened"), {}
+        if not events:
+            return _error("events holds at least one event kind, e.g. issues.opened"), {}
         sources = self._declared_sources()
         source = sources.get(source_id)
         if source is None:
@@ -212,11 +231,9 @@ class TriggerTools(Toolkit):
                 ),
                 {},
             )
-        if not events or not all(isinstance(kind, str) and kind.strip() for kind in events):
-            return _error("events holds at least one event kind, e.g. issues.opened"), {}
         if target_type not in TARGET_TYPES:
             return _error(f"target_type must be one of {list(TARGET_TYPES)}, got '{target_type}'"), {}
-        internal = self._internal(target_id)
+        internal = self._internal(target_type, target_id.strip())
         if internal:
             return internal, {}
         try:
@@ -230,8 +247,11 @@ class TriggerTools(Toolkit):
         except ValueError as exc:
             return _error(str(exc), "invalid_filters"), {}
         return None, {
+            "name": name.strip(),
+            "target_id": target_id.strip(),
+            "input": input.strip(),
             "events": [kind.strip() for kind in events],
-            "continue_on": [kind.strip() for kind in continue_on or [] if kind.strip()],
+            "continue_on": [kind.strip() for kind in continue_on or []],
             "filters": stored_filters,
         }
 
@@ -262,8 +282,10 @@ class TriggerTools(Toolkit):
         return None
 
     @staticmethod
-    def _internal(target_id: str) -> Optional[str]:
-        if target_id in RESERVED_MEMBER_IDS:
+    def _internal(target_type: str, target_id: str) -> Optional[str]:
+        # Checked on the path the server will resolve, as the API does: an id written with an
+        # escape or a dot segment is the id it comes to.
+        if _manager_member_refusal(build_run_endpoint(target_type, target_id)) is not None:
             return _error(
                 "Manager specialists are internal. Give the trigger Super Agent as its target instead.",
                 "target_internal",
@@ -271,7 +293,7 @@ class TriggerTools(Toolkit):
         return None
 
     def _check_target(self, change: str, name: str, target_type: str, target_id: str, owner: Optional[str]) -> Any:
-        internal = self._internal(target_id)
+        internal = self._internal(target_type, target_id)
         if internal:
             return internal
         # Scoped to the acting owner: an unscoped probe would disclose that another owner's component exists.
@@ -287,7 +309,7 @@ class TriggerTools(Toolkit):
     async def _acheck_target(
         self, change: str, name: str, target_type: str, target_id: str, owner: Optional[str]
     ) -> Any:
-        internal = self._internal(target_id)
+        internal = self._internal(target_type, target_id)
         if internal:
             return internal
         endpoint = build_run_endpoint(target_type, target_id)
@@ -371,24 +393,25 @@ class TriggerTools(Toolkit):
         Returns:
             str: JSON string with the created trigger details.
         """
-        refusal, fields = self._fields(source_id, events, target_type, target_id, continue_on, filters)
+        refusal, fields = self._fields(
+            name, source_id, events, target_type, target_id, input, continue_on, filters, description
+        )
         if refusal:
             return refusal
+        name, target_id = fields["name"], fields["target_id"]
         owner = self._owner(run_context)
         try:
-            declared = self.manager.get_by_name(name, user_id=None)
-            if self._taken(declared) and declared is not None and declared.managed_by == CODE_MANAGED:
+            # Names are unique within one AgentOS, so the name is looked up among this one's triggers.
+            declared = self.manager.get_by_name(name, user_id=None, os_id=self.os_id)
+            if declared is not None and declared.managed_by == CODE_MANAGED:
                 return self._declared_in_code(name)
             refusal = self._check_target("create", name, target_type, target_id, owner)
             if refusal:
                 return refusal
-            existed = self.manager.get_by_name(name, user_id=owner) is not None
+            existed = self.manager.get_by_name(name, user_id=owner, os_id=self.os_id) is not None
             trigger = self.manager.create(
-                name=name,
                 source_id=source_id,
                 target_type=target_type,
-                target_id=target_id,
-                input=input,
                 description=description,
                 if_exists="update",
                 user_id=owner,
@@ -461,6 +484,8 @@ class TriggerTools(Toolkit):
             refusal = self._check_target("enable", existing.name, existing.target_type, existing.target_id, owner)
             if refusal:
                 return refusal
+            # Turning it on puts its target back in reach of events, so it needs what creating it needs.
+            require_schedule_target(build_run_endpoint(existing.target_type, existing.target_id))
             trigger = self.manager.enable(trigger_id, user_id=owner)
             if trigger is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
@@ -555,9 +580,11 @@ class TriggerTools(Toolkit):
             existing = self.manager.get(trigger_id, user_id=owner)
             if not self._taken(existing) or existing is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
-            internal = self._internal(existing.target_id)
+            internal = self._internal(existing.target_type, existing.target_id)
             if internal:
                 return internal
+            # A replay runs the target, so it needs the caller's own right to run it.
+            require_schedule_target(build_run_endpoint(existing.target_type, existing.target_id))
             row = self.manager._call("get_trigger_event", event_id, user_id=owner)
             if row is None or row["trigger_id"] != trigger_id:
                 return json.dumps({"error": f"Trigger event not found: {event_id}"})
@@ -617,24 +644,25 @@ class TriggerTools(Toolkit):
         Returns:
             str: JSON string with the created trigger details.
         """
-        refusal, fields = self._fields(source_id, events, target_type, target_id, continue_on, filters)
+        refusal, fields = self._fields(
+            name, source_id, events, target_type, target_id, input, continue_on, filters, description
+        )
         if refusal:
             return refusal
+        name, target_id = fields["name"], fields["target_id"]
         owner = self._owner(run_context)
         try:
-            declared = await self.manager.aget_by_name(name, user_id=None)
-            if self._taken(declared) and declared is not None and declared.managed_by == CODE_MANAGED:
+            # Names are unique within one AgentOS, so the name is looked up among this one's triggers.
+            declared = await self.manager.aget_by_name(name, user_id=None, os_id=self.os_id)
+            if declared is not None and declared.managed_by == CODE_MANAGED:
                 return self._declared_in_code(name)
             refusal = await self._acheck_target("create", name, target_type, target_id, owner)
             if refusal:
                 return refusal
-            existed = await self.manager.aget_by_name(name, user_id=owner) is not None
+            existed = await self.manager.aget_by_name(name, user_id=owner, os_id=self.os_id) is not None
             trigger = await self.manager.acreate(
-                name=name,
                 source_id=source_id,
                 target_type=target_type,
-                target_id=target_id,
-                input=input,
                 description=description,
                 if_exists="update",
                 user_id=owner,
@@ -709,6 +737,8 @@ class TriggerTools(Toolkit):
             )
             if refusal:
                 return refusal
+            # Turning it on puts its target back in reach of events, so it needs what creating it needs.
+            await arequire_schedule_target(build_run_endpoint(existing.target_type, existing.target_id))
             trigger = await self.manager.aenable(trigger_id, user_id=owner)
             if trigger is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
@@ -807,9 +837,11 @@ class TriggerTools(Toolkit):
             existing = await self.manager.aget(trigger_id, user_id=owner)
             if not self._taken(existing) or existing is None:
                 return json.dumps({"error": f"Trigger not found: {trigger_id}"})
-            internal = self._internal(existing.target_id)
+            internal = self._internal(existing.target_type, existing.target_id)
             if internal:
                 return internal
+            # A replay runs the target, so it needs the caller's own right to run it.
+            await arequire_schedule_target(build_run_endpoint(existing.target_type, existing.target_id))
             row = await self.manager._acall("get_trigger_event", event_id, user_id=owner)
             if row is None or row["trigger_id"] != trigger_id:
                 return json.dumps({"error": f"Trigger event not found: {event_id}"})

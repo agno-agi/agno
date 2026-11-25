@@ -21,7 +21,7 @@ from agno.run.authorization import (
     require_schedule_target,
     stamp_authorization,
 )
-from agno.triggers.source import CHECK_SENDER_KEY
+from agno.triggers.source import CHECK_SENDER_KEY, CHECK_SENDER_SINCE_KEY, RUN_ENDPOINT_KEY, RUN_UNREAD_SINCE_KEY
 from agno.utils.log import log_debug
 
 TARGET_TYPES = ("agent", "team", "workflow")
@@ -100,6 +100,18 @@ def _fields(
     }
 
 
+def _replayed_event(row: Dict[str, Any]) -> Dict[str, Any]:
+    """The stored event a replay starts from, without the marks the first handling left on it."""
+    stored = dict(row.get("event") or {})
+    for mark in (CHECK_SENDER_SINCE_KEY, RUN_UNREAD_SINCE_KEY, RUN_ENDPOINT_KEY):
+        stored.pop(mark, None)
+    if row.get("run_id"):
+        # The event started a run, so its sender was let through then. One that never ran, such
+        # as an event skipped because its trigger was off, was never asked about: it still is.
+        stored.pop(CHECK_SENDER_KEY, None)
+    return stored
+
+
 def _replayed(row: Dict[str, Any], trigger: Optional[StoredTrigger]) -> Dict[str, Any]:
     """A new event that runs a stored one again. Raises ValueError when the stored one cannot be replayed."""
     event_id = row["id"]
@@ -119,10 +131,10 @@ def _replayed(row: Dict[str, Any], trigger: Optional[StoredTrigger]) -> Dict[str
         trigger_id=row["trigger_id"],
         kind=row["kind"],
         event_key=row.get("event_key"),
-        # The sender was let through when the event first arrived; a replay is somebody's own decision.
-        event={key: value for key, value in (row.get("event") or {}).items() if key != CHECK_SENDER_KEY},
+        event=_replayed_event(row),
         session_id=row.get("session_id"),
         user_id=row.get("user_id"),
+        os_id=row.get("os_id"),
     ).to_dict()
 
 

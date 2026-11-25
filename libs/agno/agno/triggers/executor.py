@@ -537,6 +537,14 @@ class TriggerExecutor(ScheduleExecutor):
             blocked = (EVENT_SKIPPED, "reason", "the trigger is disabled")
         elif source is None:
             blocked = (EVENT_FAILED, "error", f"source {row['source_id']} is not declared on this AgentOS")
+        elif trigger.get("managed_by") != CODE_MANAGED and trigger["name"] in runtime.declared:
+            # Code declared a trigger of this name after the event was stored, or the event is a
+            # replay: the stored trigger stands aside for the declared one here as it does on arrival.
+            blocked = (
+                EVENT_IGNORED,
+                "reason",
+                f"trigger '{trigger['name']}' is declared in code, and that one is used",
+            )
 
         starts = result is None or retried(result)
         if starts and blocked is not None:

@@ -718,6 +718,9 @@ TRIGGER_EVENTS_TABLE_SCHEMA = {
     "requirements": {"type": JSON, "nullable": True},
     # Denormalised from the trigger's owner so event reads scope by owner without a JOIN.
     "user_id": {"type": String, "nullable": True, "index": True},
+    # The AgentOS that received the delivery. Several apps can share a database, and each lists
+    # its own events, including the ones that matched no trigger.
+    "os_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "__composite_indexes__": [
         # Serves the claim: is another event for this trigger and key unfinished.

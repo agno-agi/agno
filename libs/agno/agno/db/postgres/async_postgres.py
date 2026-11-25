@@ -6166,7 +6166,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         page: int = 1,
         user_id: Optional[str] = None,
         started_run: Optional[bool] = None,
-        source_ids: Optional[List[str]] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         return await self._trigger_storage(
             triggers_sql.get_trigger_events,
@@ -6180,7 +6180,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             page=page,
             user_id=user_id,
             started_run=started_run,
-            source_ids=source_ids,
+            os_id=os_id,
             missing=([], 0),
         )
 

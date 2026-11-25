@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.scheduler import build_run_endpoint
 from agno.db.schemas.triggers import CODE_MANAGED, StoredTrigger
+from agno.db.utils import is_unique_violation
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.routers.triggers.schema import (
@@ -20,6 +21,9 @@ from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.run.authorization import stamp_authorization
 from agno.triggers.manager import TriggerManager
 from agno.utils.log import log_info
+
+# The fields that decide what a trigger runs and what may start it.
+_CHANGES_RUNS = frozenset({"target_type", "target_id", "input", "source_id", "events", "continue_on", "filters"})
 
 
 def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
@@ -94,10 +98,11 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
             )
 
     async def _require_name_free(manager: TriggerManager, name: str, owner: Optional[str]) -> None:
-        declared = await manager.aget_by_name(name, user_id=None)
-        if declared is not None and declared.managed_by == CODE_MANAGED and declared.os_id in (None, _os_id()):
+        # Names are unique within one AgentOS, so the name is looked up among this one's triggers.
+        declared = await manager.aget_by_name(name, user_id=None, os_id=_os_id())
+        if declared is not None and declared.managed_by == CODE_MANAGED:
             raise HTTPException(status_code=409, detail=f"Trigger '{name}' is declared in code; choose another name")
-        if await manager.aget_by_name(name, user_id=owner) is not None:
+        if await manager.aget_by_name(name, user_id=owner, os_id=_os_id()) is not None:
             raise HTTPException(status_code=409, detail=f"Trigger with name '{name}' already exists")
 
     async def _require_target(request: Request, name: str, target_type: str, target_id: str, change: str) -> None:
@@ -144,8 +149,8 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
             "get_trigger_events",
             trigger_id=trigger_id,
             source_id=source_id,
-            # Only what this AgentOS's sources received: another app on the database has its own.
-            source_ids=sorted(_sources()),
+            # Only what this AgentOS received: another app on the database has its own events.
+            os_id=_os_id(),
             statuses=status or None,
             event_key=event_key,
             limit=limit,
@@ -270,9 +275,11 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
         if "source_id" in updates or "filters" in updates:
             source = _source(updates.get("source_id", existing.source_id))
             updates["filters"] = _filters(source, updates.get("filters", existing.filters))
-        if {"target_type", "target_id", "input"}.intersection(updates):
-            # What the trigger runs changes, so the caller needs the right to run it, as on create,
-            # and the runs act as the caller from here on. Any other change keeps the saved authority.
+        if _CHANGES_RUNS.intersection(updates):
+            # What the trigger runs changes, or what may start it. Either way the caller needs the
+            # right to run the target, as on create, and the runs act as the caller from here on:
+            # the authority saved with the trigger was given for what it did before. A new name, a
+            # description or a timing keeps the saved authority.
             await _require_target(
                 request,
                 existing.name,
@@ -288,6 +295,11 @@ def get_trigger_router(os_db: Any, settings: Any, agent_os: Any) -> APIRouter:
             result = await manager._acall("update_trigger", trigger_id, user_id=get_scoped_user_id(request), **updates)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:
+            # The name check above races under concurrent renames; the unique index decides.
+            if "name" in updates and is_unique_violation(exc):
+                raise HTTPException(status_code=409, detail=f"Trigger with name '{updates['name']}' already exists")
+            raise
         if result is None:
             raise HTTPException(status_code=500, detail="Failed to update trigger")
         return result

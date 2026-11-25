@@ -316,6 +316,7 @@ class TriggerRuntime:
             event=stored,
             session_id=session_id_for(trigger_id, delivery.key) if runs and delivery.key else None,
             user_id=trigger.get("user_id") if trigger is not None else None,
+            os_id=self.os_id,
         ).to_dict()
 
     async def areceive(self, source: Any, delivery: Delivery) -> Dict[str, Any]:
