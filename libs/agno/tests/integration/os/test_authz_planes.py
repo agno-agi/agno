@@ -71,9 +71,10 @@ def test_accessible_ids_union_with_wildcard_winning():
     ctx = AuthorizationContext(principal_id="u", scopes=["agents:a2:read"], resource_type="agents", action="read")
     assert comp.accessible_resource_ids(ctx) == {"a1", "a2"}
 
-    # a global/wildcard scope on the token -> {"*"} wins
+    # a global/wildcard scope on the token -> "*", beside the id the store names: "*" leaves the
+    # built-in components out, so an id named by another plane is kept
     ctx_all = AuthorizationContext(principal_id="u", scopes=["agents:read"], resource_type="agents", action="read")
-    assert comp.accessible_resource_ids(ctx_all) == {"*"}
+    assert comp.accessible_resource_ids(ctx_all) == {"*", "a1"}
 
 
 def _token(sub, scopes):
