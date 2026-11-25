@@ -90,7 +90,7 @@ def invoke_callable_factory(
 
     result = factory(**kwargs)
 
-    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
+    if inspect.isawaitable(result):
         # Cleanup the coroutine to prevent warnings
         if asyncio.iscoroutine(result):
             result.close()
@@ -124,7 +124,7 @@ async def ainvoke_callable_factory(
 
     result = factory(**kwargs)
 
-    if asyncio.iscoroutine(result):
+    if inspect.isawaitable(result):
         result = await result
 
     return result
@@ -158,8 +158,9 @@ def _compute_cache_key(
             kwargs["team"] = entity
 
         result = custom_key_fn(**kwargs)
-        if asyncio.iscoroutine(result):
-            result.close()
+        if inspect.isawaitable(result):
+            if asyncio.iscoroutine(result):
+                result.close()
             raise RuntimeError(
                 f"Cache key function {custom_key_fn!r} returned an awaitable in sync mode. "
                 "Use arun() or aprint_response() instead."
@@ -194,7 +195,7 @@ async def _acompute_cache_key(
             kwargs["team"] = entity
 
         result = custom_key_fn(**kwargs)
-        if asyncio.iscoroutine(result):
+        if inspect.isawaitable(result):
             result = await result
         return result
 
