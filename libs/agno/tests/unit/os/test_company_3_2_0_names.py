@@ -989,3 +989,41 @@ async def test_a_deny_written_while_a_products_scope_is_revoked_is_kept(tmp_path
 
     assert engine.get_role_scopes("editor") == [("goals:write", "deny")]
     db.close()
+
+
+# --------------------------------------------- a component saved on the default table
+
+
+@pytest.mark.parametrize("cls", [SqliteDb, AsyncSqliteDb])
+def test_a_component_saved_by_3_2_0_on_the_default_table_stays_on_it(tmp_path, cls):
+    from agno.db.utils import resolve_db_from_config
+
+    # The registered db names its Goals table. The component was saved on the default one.
+    registered = cls(db_file=str(tmp_path / "registered.db"), id="os-db", goals_table="my_goals")
+
+    class _Registry:
+        def get_db(self, db_id):
+            return registered
+
+    saved = registered.to_dict()
+    saved["products_table"] = "agno_company_products"
+    del saved["goals_table"]
+
+    resolved = resolve_db_from_config(saved, registry=_Registry())
+
+    assert resolved.goals_table_name == "agno_company_goals"
+    assert resolved.company_table_name == "agno_company_goals_details"
+    assert resolved.db_engine is registered.db_engine
+    assert registered.goals_table_name == "my_goals"
+
+
+def test_the_component_api_keeps_a_3_2_0_component_on_the_default_table(tmp_path):
+    from agno.os.routers.components.components import _resolve_db_in_config
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"), id="os-db", goals_table="my_goals")
+    config = _resolve_db_in_config({"db": {"id": "os-db", "products_table": "agno_company_products"}}, db)
+
+    assert config["db"]["goals_table"] == "agno_company_goals"
+    assert "products_table" not in config["db"]
+    # A component that names no Goals table takes the one the OS db uses.
+    assert _resolve_db_in_config({"db": {"id": "os-db"}}, db)["db"]["goals_table"] == "my_goals"

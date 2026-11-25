@@ -108,10 +108,16 @@ def goals_table_from_dict(data: Dict[str, Any]) -> Optional[str]:
 
 
 def with_current_goals_table(data: Dict[str, Any]) -> Dict[str, Any]:
-    """A serialized db with its Goals table named under "goals_table", not the agno 3.2.0 key."""
+    """A serialized db with its Goals table named under "goals_table", not the agno 3.2.0 key.
+
+    The 3.2.0 default name becomes the current default name. It is kept as a name, so a db merged
+    with this one stays on the default table when the other names its own.
+    """
     if "products_table" not in data:
         return data
     goals_table = goals_table_from_dict(data)
+    if goals_table is None and data.get("products_table") == LEGACY_GOALS_TABLE_NAME:
+        goals_table = DEFAULT_GOALS_TABLE_NAME
     current = {key: value for key, value in data.items() if key not in ("goals_table", "products_table")}
     if goals_table is not None:
         current["goals_table"] = goals_table
