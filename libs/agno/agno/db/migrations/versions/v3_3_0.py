@@ -75,9 +75,9 @@ Company file system refuses every use with ``MigrationRequiredError``: files lef
 from before would look like an empty store. AgentOS starts, so the migration can be run through it.
 
 Notes were stored in the AgentOS database. For a deployment with a separate Company database,
-AgentOS moves them into the Company database as it starts, after it has migrated both, with
-``move_company_notes``. Where it could not, notes/ is refused with ``MigrationRequiredError`` until
-that call has run: notes left in the AgentOS database would look empty.
+``move_company_notes`` moves them into the Company database. The migrate endpoints of AgentOS call
+it once both databases are migrated. Until it has run, notes/ is refused with
+``MigrationRequiredError``: notes left in the AgentOS database would look empty.
 """
 
 import asyncio
@@ -710,7 +710,7 @@ def _limit_lock_wait(sess: Any) -> None:
 
     A rename waits for every session that has read the table in an open transaction, and every
     later query on the table waits behind the rename. Without a limit, one session left open keeps
-    the migration, and an AgentOS that migrates as it starts, waiting for as long as it stays open.
+    the migration waiting for as long as it stays open.
     """
     if sess.bind.dialect.name == "postgresql":
         sess.execute(text(f"SET LOCAL lock_timeout = '{int(LOCK_TIMEOUT_SECONDS)}s'"))

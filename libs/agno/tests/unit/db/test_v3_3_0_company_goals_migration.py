@@ -33,7 +33,6 @@ from agno.company.scheduler import CompanyScheduleExecutor
 from agno.company.summary import _summary_state_filesystem
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
-from agno.db.migrations.startup import migrate_at_startup
 from agno.db.migrations.versions import v3_3_0
 from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.schemas.scheduler import COMPANY_AUTOMATION_SCHEDULE_ID, Schedule
@@ -1146,10 +1145,8 @@ async def test_tables_3_2_creates_again_do_not_replace_the_stored_ones(database,
     before = {name: table for name, table in database.describe().items() if name.startswith("agno_company_goals")}
     await _recreate_3_2_0_tables(database)
 
-    outcome = await migrate_at_startup(database.db())
     await MigrationManager(database.db()).up(force=force)
 
-    assert outcome.status == "current"
     described = database.describe()
     assert {name: table for name, table in described.items() if name.startswith("agno_company_goals")} == before
     # Nothing 3.2 wrote is dropped either.
