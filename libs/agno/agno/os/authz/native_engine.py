@@ -482,10 +482,7 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect == _DENY:
                 continue
-            covered = policy_resource(resource, resource_type)
-            if covered is None:
-                continue
-            resource = covered
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):
@@ -516,10 +513,7 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect != _DENY:
                 continue
-            covered = policy_resource(resource, resource_type)
-            if covered is None:
-                continue
-            resource = covered
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             # A collection/global deny (``agents/*``, the bare type, or the admin
@@ -794,10 +788,7 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, policy_action, effect in rows:
             if effect == _DENY:
                 continue
-            covered = policy_resource(resource, resource_type)
-            if covered is None:
-                continue
-            resource = covered
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):
@@ -825,10 +816,7 @@ class NativePolicyEngine(PolicyEngine):
         for _role, resource, policy_action, effect in rows:
             if effect != _DENY:
                 continue
-            covered = policy_resource(resource, resource_type)
-            if covered is None:
-                continue
-            resource = covered
+            resource = policy_resource(resource, resource_type)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):

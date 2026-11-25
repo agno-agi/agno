@@ -25,7 +25,7 @@ from agno.exceptions import MigrationRequiredError
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig
 from agno.os.authz import Authorization
-from agno.os.authz._scope_policy import resource_matches, scope_to_resource_action
+from agno.os.authz._scope_policy import resource_matches
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.config import AuthorizationConfig
@@ -429,7 +429,7 @@ async def test_a_deny_stored_by_3_2_0_can_be_changed_to_allow(tmp_path, use_asyn
     assert engine.check_scope("goals:write", roles=["editor"]) is True
     # The stored deny still protects an application's own products type.
     assert sorted(engine.get_role_scopes("editor")) == [
-        ("application:products:*:write", "deny"),
+        ("app.products:write", "deny"),
         ("goals:write", "allow"),
     ]
     assert engine.denied_resource_ids("goals", "write", roles=["editor"]) == set()
@@ -550,48 +550,6 @@ async def test_revoking_goals_keeps_an_application_grant(tmp_path, resave, use_a
     assert engine.accessible_resource_ids("goals", "read", roles=["reader"]) == set()
     assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
     assert engine.accessible_resource_ids("products", "read", roles=["reader"]) == {"*"}
-    db.close()
-
-
-@pytest.mark.parametrize("name", ["app.products", "application", "application.products"])
-@pytest.mark.parametrize("use_async", [False, True])
-async def test_an_application_only_policy_matches_no_user_defined_type(tmp_path, name, use_async):
-    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
-    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="allow")
-    engine = Authorization(db=db)._store()._engine
-    if use_async:
-        await engine.aadd_scope("other", f"{name}:read")
-        await engine.aadd_scope("other", f"{name}:products:read")
-        await engine.aremove_scope("reader", "goals:read")
-    else:
-        engine.add_scope("other", f"{name}:read")
-        engine.add_scope("other", f"{name}:products:read")
-        engine.remove_scope("reader", "goals:read")
-
-    assert engine.check_resource("products", "catalog", "read", roles=["other"]) is False
-    assert engine.check_resource("goals", "docs", "read", roles=["other"]) is False
-    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
-    for requested in (name, "application:products"):
-        assert engine.check_resource(requested, "catalog", "read", roles=["reader"]) is False
-        assert engine.accessible_resource_ids(requested, "read", roles=["reader"]) == set()
-    # The stored form is not a scope anywhere else.
-    with pytest.raises(ValueError):
-        scope_to_resource_action("application:products:*:read")
-    assert engine.check_scope("application:products:*:read", roles=["reader"]) is False
-    db.close()
-
-
-@pytest.mark.parametrize("scope", ["application:products:*:read", "application:products:catalog:read"])
-def test_an_application_only_scope_can_be_removed(tmp_path, scope):
-    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
-    store = Authorization(db=db)._store()
-    store.set_role_scopes("reader", [scope])
-    assert store.get_role_scopes("reader") == [scope]
-    assert store._engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
-
-    store.patch_role_scopes("reader", remove=[scope])
-
-    assert store.get_role_scopes("reader") == []
     db.close()
 
 

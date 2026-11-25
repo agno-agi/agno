@@ -8,7 +8,7 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 ``agent_os:admin`` maps to the all-resources/all-actions wildcard ``("*", "*")``.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 ADMIN_SCOPE = "agent_os:admin"
 # The namespace of the admin scope. Not a resource type: no other scope may use it.
@@ -96,8 +96,6 @@ def resource_action_to_scope(resource: str, action: str) -> str:
         # the admin super-scope: render the explicit three-part form, which the parser now
         # refuses on save, so the row gets cleaned up instead of promoted.
         return f"{rtype}:{rid}:{action}"
-    if rtype.startswith(_APPLICATION_PREFIX):
-        return f"{rtype}:{rid}:{action}"
     if resource.endswith("/*"):
         return f"{resource[:-2]}:{action}"
     return f"{rtype}:{rid}:{action}"
@@ -106,23 +104,17 @@ def resource_action_to_scope(resource: str, action: str) -> str:
 # Resource types whose policy rows may carry the old name. A row under the old name covers both the
 # current type and an application's own type of the old name.
 _RENAMED_POLICY_TYPES = {"products": "goals"}
-# Marks a row that covers only an application's own type of a renamed name. A scope's resource type
-# cannot contain ":", so no user-defined type is stored like this. It is written as a four-part scope
-# ("application:products:*:read"), which no other scope is.
-_APPLICATION_PREFIX = "application:"
+# Marks a row that covers only an application's own type of a renamed name.
+_APPLICATION_PREFIX = "app."
 
 
-def policy_resource(resource: str, requested_type: str) -> Optional[str]:
-    """A stored policy's resource, under ``requested_type`` when the policy covers that type by another name.
-
-    None when the policy covers only an application's own type and that is not the one requested.
-    """
+def policy_resource(resource: str, requested_type: str) -> str:
+    """A stored policy's resource, under ``requested_type`` when the policy covers that type by another name."""
     resource_type, separator, rest = resource.partition("/")
     if _RENAMED_POLICY_TYPES.get(resource_type) == requested_type:
         return requested_type + separator + rest
-    if resource_type.startswith(_APPLICATION_PREFIX):
-        covered = resource_type[len(_APPLICATION_PREFIX) :]
-        return requested_type + separator + rest if covered == requested_type else None
+    if requested_type in _RENAMED_POLICY_TYPES and resource_type == _APPLICATION_PREFIX + requested_type:
+        return requested_type + separator + rest
     return resource
 
 
@@ -143,16 +135,7 @@ def is_legacy_scope(scope: str) -> bool:
 
 
 def scope_to_policy(scope: str) -> Tuple[str, str]:
-    """The ``(resource, action)`` a scope is stored under.
-
-    The old name of a renamed type is kept, and an application-only scope is accepted: it exists
-    only in stored policies, so :func:`scope_to_resource_action` refuses it.
-    """
-    for old in _RENAMED_POLICY_TYPES:
-        prefix = f"{_APPLICATION_PREFIX}{old}:"
-        if scope.startswith(prefix) and scope.count(":") == 3:
-            resource, action = scope_to_resource_action(f"{old}:{scope[len(prefix) :]}")
-            return f"{_APPLICATION_PREFIX}{old}/{resource.partition('/')[2]}", action
+    """The ``(resource, action)`` a scope is stored under: the old name of a renamed type is kept."""
     resource, action = scope_to_resource_action(scope)
     if is_legacy_scope(scope):
         resource = scope.partition(":")[0] + "/" + resource.partition("/")[2]
@@ -182,10 +165,7 @@ def resource_matches(pattern: str, request: str) -> bool:
     """
     if pattern == "*":
         return True
-    covered = policy_resource(pattern, request.partition("/")[0])
-    if covered is None:
-        return False
-    pattern = covered
+    pattern = policy_resource(pattern, request.partition("/")[0])
     if pattern == request:
         return True
     if pattern.endswith("/*"):

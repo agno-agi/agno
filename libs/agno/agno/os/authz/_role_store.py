@@ -95,10 +95,10 @@ def _check_removable(role: str, scope: str) -> None:
     """Validate a PATCH ``remove`` entry, and when the parser refuses it say how to clean the row:
     a legacy entry that the parser no longer accepts (an ``agent_os/*`` row reads back as
     ``agent_os:*:admin``) cannot be named here, but PUT of the role's scopes without it drops it."""
-    from agno.os.authz._scope_policy import scope_to_policy
+    from agno.os.authz._scope_policy import scope_to_resource_action
 
     try:
-        scope_to_policy(scope)
+        scope_to_resource_action(scope)
     except ValueError as exc:
         raise ValueError(
             f"{exc} A stored entry that the parser no longer accepts cannot be removed by name; replace "
