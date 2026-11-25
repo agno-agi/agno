@@ -446,7 +446,7 @@ def test_the_list_sees_the_agents_the_browse_routes_see(tmp_path):
         files_db.close()
 
 
-def test_an_id_from_config_can_name_two_stores_that_the_list_tells_apart(tmp_path):
+def test_an_id_from_config_names_the_same_store_on_the_routes(tmp_path):
     main = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
     archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
     code_store, factory_store = FileSystem(main, namespace="notes"), FileSystem(archive, namespace="notes")
@@ -465,25 +465,20 @@ def test_an_id_from_config_can_name_two_stores_that_the_list_tells_apart(tmp_pat
             # /config describes the agent declared in code alone, so its store is named by the namespace.
             config = client.get("/config").json()["filesystem"]["namespaces"]
             assert [entry["id"] for entry in config] == ["notes"]
-            # The routes also see the factory agent's store. There the namespace names two stores.
-            by_config_id = client.get("/filesystem/entries", params={"filesystem_id": "notes"})
-            assert by_config_id.status_code == 409
-            assert "/filesystem/namespaces" in by_config_id.json()["detail"]
-
-            # The list gives each store the id the routes take.
+            # The routes also see the factory agent's store, which takes a longer id.
             listed = client.get("/filesystem/namespaces").json()["namespaces"]
-            assert [(entry["id"], entry["agents"]) for entry in listed] == [
-                ("notes:archive-db", [{"id": "factory-agent"}]),
-                ("notes:main-db", [{"id": "code-agent"}]),
+            assert sorted((entry["id"], entry["agents"][0]["id"]) for entry in listed) == [
+                ("notes", "code-agent"),
+                ("notes:archive-db", "factory-agent"),
             ]
             for filesystem_id, content in (
-                ("notes:main-db", "the code agent's"),
+                ("notes", "the code agent's"),
                 ("notes:archive-db", "the factory agent's"),
             ):
                 read = client.get("/filesystem/content", params={"filesystem_id": filesystem_id, "path": "state.md"})
                 assert read.status_code == 200 and read.json()["content"] == content
             # A store has the same id when the list or a listing of files is narrowed to one agent.
-            for agent_id, filesystem_id in (("code-agent", "notes:main-db"), ("factory-agent", "notes:archive-db")):
+            for agent_id, filesystem_id in (("code-agent", "notes"), ("factory-agent", "notes:archive-db")):
                 of_agent = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
                 assert [(entry["id"], entry["agents"]) for entry in of_agent] == [(filesystem_id, [{"id": agent_id}])]
                 rows = client.get("/filesystem/files", params={"agent_id": agent_id}).json()["entries"]
@@ -551,7 +546,8 @@ def test_every_id_the_list_gives_opens_on_every_route(tmp_path):
         with TestClient(agent_os.get_app()) as client:
             listed = client.get("/filesystem/namespaces").json()["namespaces"]
             ids = [entry["id"] for entry in listed]
-            assert sorted(ids) == ["company", "handbook", "held", "notes:archive-db", "notes:main-db"]
+            # The store of the agent declared in code is named as /config names it.
+            assert sorted(ids) == ["company", "handbook", "held", "notes", "notes:archive-db"]
             assert [entry["id"] for entry in listed if entry["company"]] == ["company"]
 
             for filesystem_id in ids:
@@ -727,7 +723,14 @@ def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(dec
 
     plain = FileSystem(SqliteDb(id="plain", db_engine=stores["b"].backend.db_engine), namespace="plain")
     agents = [AgentFactory(id="a", db=stores["a"].backend.db, factory=build), Agent(id="p", filesystem=plain)]
-    held = [] if declared else [Agent(id=name, filesystem=stores[name]) for name in ("b", "c")]
+
+    def holder(name: str) -> AgentFactory:
+        return AgentFactory(
+            id=name, db=stores[name].backend.db, factory=lambda ctx: Agent(id=name, filesystem=stores[name])
+        )
+
+    # Without a declaration the stores are held by agents built for a request, which /config does not describe.
+    held = [] if declared else [holder(name) for name in ("b", "c")]
     agent_os = AgentOS(
         agents=[*agents, *held], filesystem=[stores["b"], stores["c"]] if declared else None, telemetry=False
     )
@@ -755,9 +758,9 @@ def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(dec
         # The first number depends on every agent as the others do: agent "a" takes it once it loads.
         assert listed() == {first: (False, None), second: (False, None), "plain": (None, 0)}
         assert (opens(first)[0], opens(second)[0]) == (500, 500)
-        # An agent named does not make a numbered id certain. The agent alone still opens its store.
-        assert [available for available, _ in listed(agent_id="b").values()] == [False]
-        assert opens(first, agent_id="b")[0] == 500
+        # A request that names an agent loads that agent alone, so its store is named among that agent's own.
+        assert listed(agent_id="b") == {"notes": (None, 1)}
+        assert opens("notes", agent_id="b") == (200, ["b.md"])
         alone = client.get("/filesystem/entries", params={"agent_id": "b"})
         assert alone.status_code == 200 and [entry["path"] for entry in alone.json()["entries"]] == ["b.md"]
 

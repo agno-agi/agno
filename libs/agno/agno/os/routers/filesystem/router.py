@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.fs import FileSystem, InvalidPathError
 from agno.fs._paths import normalize_directory, normalize_path, path_sort_key
 from agno.os.auth import (
+    afilter_resources_by_access,
     build_insufficient_permissions_detail,
     check_resource_access,
     get_accessible_resources,
@@ -37,8 +38,8 @@ from agno.os.routers.filesystem.utils import (
     _can_share_every_name,
     _filesystem_backend_key,
     _filesystem_id_forms,
-    _filesystem_ids,
     _filesystem_key,
+    _listed_filesystem_ids,
     _match_filesystem_id,
 )
 from agno.os.schema import (
@@ -56,6 +57,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import resolve_agent
+from agno.registry._reserved import _listed
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
@@ -255,15 +257,15 @@ async def _get_sources(
     agent_id: Optional[str],
     declared: list[_DeclaredFileSystem],
 ) -> tuple[dict[tuple, _Source], Optional[dict[tuple, FileSystem]], Optional[HTTPException]]:
-    """Every filesystem the caller may read, keyed by backend and namespace, and those ``agent_id`` holds.
+    """Every filesystem the request may read, keyed by backend and namespace, and those ``agent_id`` holds.
 
     The search covers the filesystems the AgentOS holds itself, then those of
-    every agent the caller may read; an agent that cannot be browsed is left
-    out. It covers them with an agent named too, so a filesystem has one id
-    whether or not a request names an agent. The named agent's errors are
-    raised, and its filesystems are returned as it holds them, in its own order.
-    Another agent that fails to load is left out and the first failure is
-    returned, for the caller to raise when nothing else answers.
+    the named agent, or of every agent the caller may read when none is named;
+    an agent that cannot be browsed is left out. A named agent is the only one
+    loaded. Its errors are raised, and its filesystems are returned as it holds
+    them, in its own order. With none named, an agent that fails to load is left
+    out and the first failure is returned, for the caller to raise when nothing
+    else answers.
     """
     failure: Optional[HTTPException] = None
     sources: dict[tuple, _Source] = {
@@ -271,27 +273,21 @@ async def _get_sources(
         for entry in declared
         if entry.filesystem is not None
     }
-    held: Optional[dict[tuple, FileSystem]] = None
-    named: list[tuple[FileSystem, bool]] = []
-    if agent_id is not None:
-        # The caller's access to the named agent is checked before the agent is loaded.
-        await _get_global_filesystem_agent_ids(os, request, agent_id)
-        named = await _get_agent_filesystem_access(os, agent_id, request)
-        held = {_filesystem_key(filesystem): filesystem for filesystem, _ in named}
-
-    agent_ids = await _get_global_filesystem_agent_ids(os, request, None, required=not declared and agent_id is None)
-    for candidate_id in sorted({*agent_ids, *([agent_id] if agent_id is not None else [])}):
-        if candidate_id == agent_id and held is not None:
-            agent_filesystems = named
-        else:
-            try:
-                agent_filesystems = await _get_agent_filesystem_access(os, candidate_id, request)
-            except HTTPException as e:
-                if e.status_code not in (400, 404, 501):
-                    failure = failure or e
-                continue
+    held: Optional[dict[tuple, FileSystem]] = None if agent_id is None else {}
+    # The caller's access to a named agent is checked before the agent is loaded.
+    for candidate_id in await _get_global_filesystem_agent_ids(os, request, agent_id, required=not declared):
+        try:
+            agent_filesystems = await _get_agent_filesystem_access(os, candidate_id, request)
+        except HTTPException as e:
+            if agent_id is not None:
+                raise
+            if e.status_code not in (400, 404, 501):
+                failure = failure or e
+            continue
         for filesystem, read_only in agent_filesystems:
             key = _filesystem_key(filesystem)
+            if held is not None:
+                held[key] = filesystem
             source = sources.get(key)
             if source is None:
                 source = sources[key] = _Source(filesystem, [], _filesystem_id_forms(filesystem), set())
@@ -301,20 +297,26 @@ async def _get_sources(
     return sources, held, failure
 
 
-def _numbered_ids(
-    ids: dict[tuple, str], sources: dict[tuple, _Source], declared: list[_DeclaredFileSystem]
-) -> set[str]:
+async def _source_ids(os: "AgentOS", request: Request, sources: dict[tuple, _Source]) -> dict[tuple, str]:
+    """The id of each filesystem a request may read, from the function /config takes its ids from."""
+    # The agents /config describes to the caller, so that its ids are the ids here.
+    agents = _listed(os.agents)
+    if getattr(request.state, "authorization_enabled", False):
+        agents = await afilter_resources_by_access(request, agents, "agents")
+    others = [(key, source.forms) for key, source in sources.items()]
+    return _listed_filesystem_ids(os, _caller_user_id(request), agents, others)
+
+
+def _numbered_ids(ids: dict[tuple, str], sources: dict[tuple, _Source], settled: set[tuple]) -> set[str]:
     """The ids given by number among stores that share every name, the first of them included.
 
-    They depend on every agent that holds such a store. The ids of the filesystems
-    the AgentOS holds itself do not.
+    They depend on every agent that holds such a store. The ``settled`` ids, those /config lists, do not.
     """
-    own = {entry.key for entry in declared}
     counts = Counter(form for source in sources.values() for form in source.forms)
     return {
         ids[key]
         for key, source in sources.items()
-        if key not in own
+        if key not in settled
         and (
             ids[key] not in source.forms
             or counts[ids[key]] > 1
@@ -337,16 +339,17 @@ async def _select_filesystems(
     without loading an agent; any other is found among the filesystems of the
     agents the caller may read. ``namespace`` keeps the filesystems resolving to
     it, and ``agent_id`` keeps those that agent holds, read as the agent holds
-    them. Ids are given over every filesystem the caller may read before either
+    them. Ids come from the function /config takes them from, before either
     narrows the result, so ``filesystem_id`` and ``agent_id`` together select a
     filesystem only when they name the same one.
     """
     access = await get_company_access(request)
     declared = _get_declared_filesystems(os, request, access)
-    declared_forms = [(entry.key, entry.forms) for entry in declared]
+    user_id = _caller_user_id(request)
 
     if filesystem_id is not None and agent_id is None:
-        declared_ids = _filesystem_ids(declared_forms)
+        # The ids of declared filesystems depend on the declarations alone.
+        declared_ids = _listed_filesystem_ids(os, user_id, ())
         named = [
             declared[index]
             for index in _match_filesystem_id(
@@ -365,7 +368,7 @@ async def _select_filesystems(
             return [(declared_ids[named[0].key], source)], declared
 
     sources, held, failure = await _get_sources(os, request, agent_id, declared)
-    ids = _filesystem_ids(declared_forms, [(key, source.forms) for key, source in sources.items()])
+    ids = await _source_ids(os, request, sources)
     keys = list(sources)
     if filesystem_id is not None:
         positions = _match_filesystem_id(filesystem_id, [(ids[key], sources[key].forms) for key in keys])
@@ -382,16 +385,17 @@ async def _select_filesystems(
     if not selected and agent_id is None and any(entry.denied and entry.forms[0] == namespace for entry in declared):
         raise denied(access)
     if failure is not None:
-        # A failing agent does not hide what the others hold. With an agent named, its failure is not the request's.
+        # A failing agent does not hide what the others hold.
         # A numbered id depends on every agent, so it is not opened until they all load.
-        unsettled = _numbered_ids(ids, sources, declared) if filesystem_id is not None else set()
+        settled = set(await _source_ids(os, request, {}))
+        unsettled = _numbered_ids(ids, sources, settled) if filesystem_id is not None else set()
         # Nor is a name that a store which is not loaded can have as well.
         shared = {
             ids[key]
             for key, source in sources.items()
             if filesystem_id not in (None, ids[key])
             and filesystem_id == source.forms[-1]
-            and key not in {entry.key for entry in declared}
+            and key not in settled
             and _can_share_every_name(key)
         }
         if any(selected_id in unsettled | shared for selected_id, _ in selected) or (not selected and agent_id is None):
@@ -741,9 +745,7 @@ def get_filesystem_router(
         held = _get_declared_filesystems(os, request, await get_company_access(request))
         # An agent that cannot be loaded is left out of the list: the other filesystems are still listed.
         sources, held_by_agent, failure = await _get_sources(os, request, agent_id, held)
-        ids = _filesystem_ids(
-            [(entry.key, entry.forms) for entry in held], [(key, source.forms) for key, source in sources.items()]
-        )
+        ids = await _source_ids(os, request, sources)
 
         def describe(key: tuple, filesystem: FileSystem, declared: bool, company: bool) -> FileSystemNamespace:
             summary = _extract_filesystem(filesystem)
@@ -761,7 +763,7 @@ def get_filesystem_router(
             }
         for key, source in sources.items():
             if held_by_agent is not None and key not in held_by_agent:
-                # Read only to give every filesystem the id it has without an agent named.
+                # One the AgentOS holds itself that the named agent does not.
                 continue
             listed = entries.get(key)
             if listed is None:
@@ -771,7 +773,9 @@ def get_filesystem_router(
                 for holder in sorted(source.agent_ids)
             ]
         entries = {key: entry for key, entry in entries.items() if namespace is None or entry.namespace == namespace}
-        unsettled = _numbered_ids(ids, sources, held) if failure is not None else set()
+        unsettled = (
+            _numbered_ids(ids, sources, set(await _source_ids(os, request, {}))) if failure is not None else set()
+        )
         for entry in entries.values():
             if entry.id in unsettled:
                 # The id may name another filesystem once every agent loads, so the other routes refuse it.

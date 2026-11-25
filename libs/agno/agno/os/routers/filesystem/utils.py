@@ -2,11 +2,12 @@ import os
 from collections import Counter
 from hashlib import sha1
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
+    from agno.os.app import AgentOS
 
 # Never part of a namespace, so an id that carries a backend cannot be read as another namespace.
 _ID_SEPARATOR = ":"
@@ -24,9 +25,11 @@ def _connect_arguments(engine: Any) -> Optional[Tuple[tuple, Dict[str, Any]]]:
     creator = getattr(engine.pool, "_creator", None)
     names = getattr(getattr(creator, "__code__", None), "co_freevars", ())
     held = {name: cell.cell_contents for name, cell in zip(names, getattr(creator, "__closure__", None) or ())}
-    if held.get("dialect") is not dialect or "cargs_tup" not in held or "cparams" not in held:
+    # SQLAlchemy before 2.0.48 holds the positional arguments as cargs.
+    positional = held.get("cargs_tup", held.get("cargs"))
+    if held.get("dialect") is not dialect or positional is None or "cparams" not in held:
         return None
-    return tuple(held["cargs_tup"]), dict(held["cparams"])
+    return tuple(positional), dict(held["cparams"])
 
 
 def _sqlite_place(filename: Any, is_uri: bool) -> Optional[tuple]:
@@ -81,19 +84,20 @@ def _filesystem_backend_key(filesystem: "FileSystem") -> tuple:
     """Identify a shared backend within the current process.
 
     A table in a database is one backend however it is reached: through a
-    database object, through an engine, or through two of either.
+    database object, through an engine, or through two of either. A database
+    object whose connection arguments cannot be read is matched by its id.
     """
     backend = filesystem.backend
     engine = getattr(backend, "db_engine", None)
     table_name = getattr(backend, "table_name", None)
-    if engine is not None and table_name is not None:
+    db = getattr(backend, "db", None)
+    if engine is not None and table_name is not None and (db is None or _connect_arguments(engine) is not None):
         db_schema = getattr(backend, "db_schema", None)
         place = _database_place(engine)
         if db_schema is None and place[0] == "postgresql":
             # The search_path chooses the table, and a connection can set it outside the URL.
             place = (_ENGINE_PLACE, id(engine))
         return ("db", place, db_schema, table_name)
-    db = getattr(backend, "db", None)
     if db is not None:
         return (
             "db",
@@ -177,20 +181,76 @@ def _assign_filesystem_ids(
 
 
 def _filesystem_ids(
-    declared: Sequence[Tuple[tuple, Tuple[str, ...]]], held: Sequence[Tuple[tuple, Tuple[str, ...]]] = ()
+    *groups: Iterable[Tuple[tuple, Tuple[str, ...]]], others: Iterable[Tuple[tuple, Tuple[str, ...]]] = ()
 ) -> Dict[tuple, str]:
     """An id for each store, keyed as given: its namespace, with the backend added when two would share it.
 
-    ``declared`` and ``held`` are ``(key, forms)`` pairs. The ids of declared
-    stores depend on the declarations alone, so they stay the same whatever
-    agents come and go. A store only agents hold takes the shortest form no
-    declared store can be named by.
+    Each group is ``(key, forms)`` pairs, and the first pair given for a store
+    names it. The ids of a group depend on that group and the groups before it
+    alone: a store takes the shortest form that can name no store of an earlier
+    group. So the ids of declared stores stay the same whatever agents come and go.
+    ``others`` are named last. Any of them may not be loaded, so the first of
+    those sharing every name is numbered too.
     """
-    declared_forms: Dict[tuple, Tuple[str, ...]] = dict(declared)
-    held_forms = {key: forms for key, forms in held if key not in declared_forms}
-    ids = _assign_filesystem_ids(declared_forms)
-    ids.update(_assign_filesystem_ids(held_forms, declared_forms.values(), list(ids.values()), unnumbered_first=False))
+    ids: Dict[tuple, str] = {}
+    earlier: List[Tuple[str, ...]] = []
+    for group, unnumbered_first in [*((group, True) for group in groups), (others, False)]:
+        forms_by_key: Dict[tuple, Tuple[str, ...]] = {}
+        for key, forms in group:
+            if key not in ids:
+                forms_by_key.setdefault(key, forms)
+        ids.update(
+            _assign_filesystem_ids(forms_by_key, earlier, list(ids.values()), unnumbered_first=unnumbered_first)
+        )
+        earlier.extend(forms_by_key.values())
     return ids
+
+
+def _listed_filesystem_ids(
+    os: "AgentOS",
+    user_id: Optional[str],
+    agents: Iterable[Any],
+    others: Iterable[Tuple[tuple, Tuple[str, ...]]] = (),
+) -> Dict[tuple, str]:
+    """The id of each store a caller is shown, for /config and for the /filesystem routes alike.
+
+    The stores /config lists are named first: the Company filesystem and those
+    declared on the AgentOS, then those the ``agents`` declared in code hold, in the order of their ids,
+    each with its namespace resolved for the caller. ``others`` are the
+    ``(key, forms)`` of stores only the routes see, held by agents built for a
+    request or stored. They are named last, so an id /config lists names the
+    same store on the routes whatever those agents hold.
+    """
+    from agno.agent import Agent
+    from agno.fs import InvalidPathError
+    from agno.fs._reserved import is_reserved
+
+    declared: List[Tuple[tuple, Tuple[str, ...]]] = []
+    held: List[Tuple[tuple, Tuple[str, ...]]] = []
+
+    def name(group: List[Tuple[tuple, Tuple[str, ...]]], filesystem: "FileSystem", agent_id: Optional[str]) -> None:
+        try:
+            view = filesystem.resolve(user_id=user_id, agent_id=agent_id)
+        except InvalidPathError:
+            # The caller's identity cannot be part of the namespace: there is no store of theirs to name.
+            return
+        if agent_id is not None and not filesystem.user_scoped and is_reserved(view.backend, view.namespace):
+            # The agent is refused this namespace, so it holds nothing there.
+            return
+        namespace = view.namespace
+        group.append((_filesystem_key(filesystem, namespace), _filesystem_id_forms(filesystem, namespace)))
+
+    company = os._company_filesystem()
+    # The Company filesystem is first, as /config describes it.
+    for filesystem in [*([company] if company is not None else []), *os._served_filesystems()]:
+        # Only an agent holding the store fills {agent_id} or {team_id}.
+        if all(placeholder == "user_id" for placeholder in filesystem._placeholders):
+            name(declared, filesystem, None)
+    roster = [agent for agent in agents if isinstance(agent, Agent) and agent.id]
+    for agent in sorted(roster, key=lambda agent: str(agent.id)):
+        for filesystem, _ in agent.filesystems:
+            name(held, filesystem, agent.id)
+    return _filesystem_ids(declared, held, others=others)
 
 
 def _can_share_every_name(key: tuple) -> bool:

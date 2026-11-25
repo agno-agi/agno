@@ -3481,18 +3481,15 @@ class AgentOS:
     ) -> "FileSystemConfig":
         from agno.fs import InvalidPathError
         from agno.fs._reserved import is_reserved
-        from agno.os.routers.filesystem.utils import _filesystem_id_forms, _filesystem_ids, _filesystem_key
+        from agno.os.routers.filesystem.utils import _filesystem_key, _listed_filesystem_ids
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
         namespaces: Dict[tuple, FileSystemNamespace] = {}
-        declared: List[tuple] = []
-        held: List[tuple] = []
 
         def describe(filesystem: Any, agent: Optional[Agent] = None, company: bool = False) -> FileSystemNamespace:
             """The entry of one store: every filesystem on one backend and namespace joins it."""
             summary = _extract_filesystem(filesystem, agent, user_id=user_id)
             key = _filesystem_key(filesystem, summary.namespace)
-            (held if agent is not None else declared).append((key, _filesystem_id_forms(filesystem, summary.namespace)))
             namespace_config = namespaces.get(key)
             if namespace_config is None:
                 namespace_config = namespaces[key] = FileSystemNamespace(
@@ -3544,7 +3541,8 @@ class AgentOS:
                     # A writable attachment takes precedence over a read-only one on the same store.
                     linked_agent.access = "full"
 
-        ids = _filesystem_ids(declared, held)
+        # The /filesystem routes take their ids from the same function.
+        ids = _listed_filesystem_ids(self, user_id, roster)
         for key, namespace_config in namespaces.items():
             namespace_config.id = ids[key]
             namespace_config.agents.sort(key=lambda agent: agent.id)

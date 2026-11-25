@@ -2076,45 +2076,10 @@ def test_a_request_that_names_an_agent_reads_the_store_as_that_agent_holds_it(db
 
     # Read by its id alone, the declared store loads no agent.
     assert listed(filesystem_id="handbook") == ("handbook", [], 20_000_000)
-    # With an agent named it is the same store under the same id, with the limit of that agent.
-    assert listed(agent_id="writer") == ("handbook", ["abe", "writer"], 5_000_000)
-    assert listed(agent_id="writer", filesystem_id="handbook") == ("handbook", ["abe", "writer"], 5_000_000)
-    assert listed(agent_id="abe") == ("handbook", ["abe", "writer"], 20_000_000)
-
-
-def test_another_agent_that_cannot_be_built_does_not_fail_a_request_that_names_an_agent(
-    db, client_factory, monkeypatch
-):
-    from agno.os.routers.filesystem import router as filesystem_router
-
-    own = FileSystem(db, namespace="own")
-    own.write("mine.md", "mine\n")
-    client = client_factory(_failing_factory(db), Agent(id="writer", db=db, filesystem=own), db=db)
-    resolved: list[str] = []
-    resolve_agent = filesystem_router.resolve_agent
-
-    async def spy(agent_id, *args, **kwargs):
-        resolved.append(agent_id)
-        return await resolve_agent(agent_id, *args, **kwargs)
-
-    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
-
-    # A listing of every agent's files leaves the broken agent out.
-    every = client.get("/filesystem/files", headers=_headers("alice"))
-    assert every.status_code == 200 and [row["path"] for row in every.json()["entries"]] == ["mine.md"]
-    # A request for one agent reads the others only to settle the ids.
-    rows = client.get("/filesystem/files", params={"agent_id": "writer"}, headers=_headers("alice"))
-    assert rows.status_code == 200
-    assert [(row["filesystem_id"], row["path"]) for row in rows.json()["entries"]] == [("own", "mine.md")]
-    resolved.clear()
-    listed = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
-    assert listed.status_code == 200 and listed.json()["filesystem_id"] == "own"
-    # Each agent is loaded once, the named one included.
-    assert sorted(resolved) == ["broken", "writer"]
-    # The named agent's own failure is the request's.
-    assert (
-        client.get("/filesystem/entries", params={"agent_id": "broken"}, headers=_headers("alice")).status_code == 500
-    )
+    # With an agent named it is the same store under the same id, with the limit of that agent, the only one loaded.
+    assert listed(agent_id="writer") == ("handbook", ["writer"], 5_000_000)
+    assert listed(agent_id="writer", filesystem_id="handbook") == ("handbook", ["writer"], 5_000_000)
+    assert listed(agent_id="abe") == ("handbook", ["abe"], 20_000_000)
 
 
 def test_a_shared_declaration_and_a_user_scoped_view_of_one_store_are_one_entry(db, client_factory):
@@ -2288,3 +2253,184 @@ def test_a_team_namespace_held_by_an_agent_is_listed_as_written_and_cannot_be_op
     by_agent = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
     assert by_agent.status_code == 400 and "team_id" in by_agent.json()["detail"]
     assert client.get("/filesystem/files", headers=_headers("alice")).json()["entries"] == []
+
+
+# --- /config and the routes give a filesystem one id ---
+
+
+def _opened_by_config_id(client) -> dict:
+    """For each id /config lists: the status of the listing it opens, the id that answers, and the files."""
+    headers = _headers("alice", ["config:read", "agents:read", "filesystem:read"])
+    opened = {}
+    for entry in _config_entries(client, headers):
+        listed = client.get("/filesystem/entries", params={"filesystem_id": entry["id"]}, headers=headers)
+        body = listed.json()
+        opened[entry["id"]] = (
+            listed.status_code,
+            body.get("filesystem_id"),
+            [row["path"] for row in body.get("entries", [])],
+        )
+    return opened
+
+
+@pytest.mark.parametrize("held_by", ["factory", "stored"])
+def test_an_id_config_lists_opens_that_filesystem_when_an_agent_only_the_routes_see_shares_its_namespace(
+    db, archive_db, held_by, client_factory
+):
+    in_code = FileSystem(db, namespace="notes")
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    in_code.write("a.md", "in code\n")
+    elsewhere.write("b.md", "elsewhere\n")
+    if held_by == "factory":
+        other = AgentFactory(id="other", db=db, factory=lambda ctx: Agent(id="other", db=db, filesystem=elsewhere))
+        client = client_factory(Agent(id="in-code", db=db, filesystem=in_code), other)
+    else:
+        Agent(id="other", db=db, filesystem=elsewhere).save()
+        client = client_factory(
+            Agent(id="in-code", db=db, filesystem=in_code), db=db, registry=Registry(dbs=[archive_db])
+        )
+
+    # /config lists the agents declared in code, and the id it gives is the one the routes open.
+    assert _opened_by_config_id(client) == {"notes": (200, "notes", ["a.md"])}
+    # The store only the routes see takes an id that names it alone.
+    rows = client.get("/filesystem/files", headers=_headers("alice")).json()["entries"]
+    assert [(row["filesystem_id"], row["path"], row["agent_ids"]) for row in rows] == [
+        ("notes", "a.md", ["in-code"]),
+        ("notes:archive-db", "b.md", ["other"]),
+    ]
+    by_agent = client.get("/filesystem/entries", params={"agent_id": "other"}, headers=_headers("alice"))
+    assert (by_agent.status_code, by_agent.json()["filesystem_id"]) == (200, "notes:archive-db")
+
+
+@pytest.mark.parametrize("reached_by", ["declarations", "agents"])
+def test_one_table_reached_through_two_database_ids_has_the_id_config_lists(
+    tmp_path, archive_db, reached_by, client_factory
+):
+    one, two = (SqliteDb(id=name, db_file=str(tmp_path / "shared.db")) for name in ("one", "two"))
+    first, second = FileSystem(one, namespace="notes"), FileSystem(two, namespace="notes")
+    # Another store shares the namespace, so an id names its database.
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    if reached_by == "declarations":
+        client = client_factory(filesystem=[first, second, elsewhere])
+        other_id = "notes:archive-db"
+    else:
+        client = client_factory(
+            Agent(id="a", db=one, filesystem=first), Agent(id="b", db=one, filesystem=second), filesystem=elsewhere
+        )
+        other_id = "notes"
+    first.write("a.md", "one table\n")
+
+    # The first to reach the table names it, in /config and on the routes.
+    assert _opened_by_config_id(client) == {
+        "notes:one": (200, "notes:one", ["a.md"]),
+        other_id: (200, other_id, []),
+    }
+    for database in (one, two):
+        database.db_engine.dispose()
+
+
+# --- A request that names an agent loads that agent alone ---
+
+
+def test_a_request_that_names_an_agent_loads_only_that_agent(db, client_factory, monkeypatch):
+    from agno.agent import agent as agent_module
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    own = FileSystem(db, namespace="own")
+    own.write("style.md", "mine needle\n")
+    client = client_factory(
+        _failing_factory(db),
+        Agent(id="reader", db=db, filesystem=FileSystem(db, namespace="own")),
+        Agent(id="writer", db=db, filesystem=own),
+        db=db,
+    )
+    resolved: list[str] = []
+    stored_queries: list[dict] = []
+    resolve_agent = filesystem_router.resolve_agent
+    get_agents = agent_module.get_agents
+
+    async def spy(agent_id, *args, **kwargs):
+        resolved.append(agent_id)
+        return await resolve_agent(agent_id, *args, **kwargs)
+
+    def query(**kwargs):
+        stored_queries.append(kwargs)
+        return get_agents(**kwargs)
+
+    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
+    monkeypatch.setattr(agent_module, "get_agents", query)
+
+    # A listing of every agent's files reads the stored agents and builds the others: the broken one is left out.
+    every = client.get("/filesystem/files", headers=_headers("alice"))
+    assert every.status_code == 200 and [row["path"] for row in every.json()["entries"]] == ["style.md"]
+    assert "broken" in resolved and len(stored_queries) == 1
+
+    # A request for one agent builds no other agent and does not read the stored ones.
+    for route, params in (("/filesystem/files", {}), *ONE_FILESYSTEM_ROUTES):
+        for named in ({"agent_id": "writer"}, {"agent_id": "writer", "filesystem_id": "own"}):
+            resolved.clear()
+            stored_queries.clear()
+            response = client.get(route, params={**params, **named}, headers=_headers("alice"))
+            assert response.status_code == 200, (route, named)
+            assert (resolved, stored_queries) == (["writer"], []), (route, named)
+            body = response.json()["entries"][0] if route == "/filesystem/files" else response.json()
+            assert (body["filesystem_id"], body["agent_ids"]) == ("own", ["writer"]), (route, named)
+    # The named agent's own failure is the request's.
+    assert (
+        client.get("/filesystem/entries", params={"agent_id": "broken"}, headers=_headers("alice")).status_code == 500
+    )
+
+
+# --- A database whose connection arguments cannot be read ---
+
+
+def test_connection_arguments_are_read_as_an_older_sqlalchemy_holds_them(tmp_path):
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _database_place
+
+    path = tmp_path / "one.db"
+    current, older = create_engine(f"sqlite:///{path}"), create_engine(f"sqlite:///{path}")
+    dialect = older.dialect
+    cargs, cparams = dialect.create_connect_args(older.url)
+
+    # SQLAlchemy before 2.0.48 holds the positional arguments of its creator under this name.
+    def connect(connection_record=None):
+        return dialect.connect(*cargs, **cparams)
+
+    older.pool._creator = connect
+
+    assert _database_place(older) == _database_place(current) == ("sqlite", str(path.resolve()))
+
+
+def test_a_database_whose_connection_arguments_cannot_be_read_is_matched_by_its_id(tmp_path, client_factory):
+    import sqlite3
+
+    from sqlalchemy import create_engine
+
+    from agno.os.routers.filesystem.utils import _filesystem_backend_key
+
+    path = str(tmp_path / "files.db")
+
+    def database(db_id: str, db_file: str = path) -> SqliteDb:
+        # A creator of the caller's own holds no arguments to read.
+        engine = create_engine("sqlite://", creator=lambda: sqlite3.connect(db_file, check_same_thread=False))
+        return SqliteDb(id=db_id, db_engine=engine)
+
+    declared, held = (FileSystem(database("files-db"), namespace="notes") for _ in range(2))
+    other = FileSystem(database("other-db", str(tmp_path / "other.db")), namespace="notes")
+    assert _filesystem_backend_key(declared) == _filesystem_backend_key(held) != _filesystem_backend_key(other)
+
+    client = client_factory(
+        Agent(id="writer", db=declared.backend.db, filesystem=held), filesystem=declared, authorization=False
+    )
+    declared.write("a.md", "one store\n")
+
+    # Two database objects with one id are one store, as they are when the arguments can be read.
+    entries = client.get("/config").json()["filesystem"]["namespaces"]
+    assert [(entry["id"], [agent["id"] for agent in entry["agents"]]) for entry in entries] == [("notes", ["writer"])]
+    listed = client.get("/filesystem/entries", params={"namespace": "notes"})
+    assert listed.status_code == 200
+    assert (listed.json()["agent_ids"], [row["path"] for row in listed.json()["entries"]]) == (["writer"], ["a.md"])
+    for filesystem in (declared, held, other):
+        filesystem.backend.db_engine.dispose()
