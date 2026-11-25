@@ -3480,6 +3480,7 @@ class AgentOS:
         self, user_id: Optional[str] = None, agents: Optional[List[Any]] = None
     ) -> "FileSystemConfig":
         from agno.fs import InvalidPathError
+        from agno.fs._reserved import is_reserved
         from agno.os.routers.filesystem.utils import _filesystem_id_forms, _filesystem_ids, _filesystem_key
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
@@ -3498,9 +3499,16 @@ class AgentOS:
                     **summary.model_dump(), id=summary.namespace, declared=agent is None and not company, agents=[]
                 )
             namespace_config.company = namespace_config.company or company
+            namespace_config.declared = namespace_config.declared or (agent is None and not company)
             return namespace_config
 
-        # Declared filesystems come first and stand without an agent; an agent
+        # The Company filesystem is listed when Company is on. It needs no agent, and it is first
+        # so a declaration of the same store does not describe it.
+        company_store = self._company_filesystem()
+        if company_store is not None:
+            describe(company_store, company=True)
+
+        # Declared filesystems stand without an agent too; an agent
         # holding the same store is linked to the same entry below.
         for filesystem in self._served_filesystems():
             if any(name != "user_id" for name in filesystem._placeholders):
@@ -3512,11 +3520,6 @@ class AgentOS:
                 # The caller's identity cannot be part of a namespace: the store is not theirs to browse.
                 continue
 
-        # The Company filesystem is listed when Company is on. It needs no agent either.
-        company_store = self._company_filesystem()
-        if company_store is not None:
-            describe(company_store, company=True)
-
         # ``agents`` is the caller's roster when /config filters by access; the
         # filesystem section must not describe agents the caller cannot see.
         roster = [
@@ -3527,6 +3530,10 @@ class AgentOS:
         # The first agent by id describes a store that several agents hold, as on the /filesystem routes.
         for entry in sorted(roster, key=lambda agent: str(agent.id)):
             for filesystem, read_only in entry.filesystems:
+                view = filesystem.resolve(user_id=user_id, agent_id=entry.id)
+                if not filesystem.user_scoped and is_reserved(view.backend, view.namespace):
+                    # The agent is refused this namespace, so it holds nothing there.
+                    continue
                 namespace_config = describe(filesystem, entry)
                 linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
                 if linked_agent is None:

@@ -310,8 +310,8 @@ the AgentOS database.
 
 **On the File System page.** With Company on, the Company file system is one entry
 of the page: namespace `company`, with `wiki/`, `goals/`, `tasks/` and `notes/` under
-it. `GET /filesystem/namespaces` lists it, and `filesystem:read` is enough to browse
-it there. The Company routes above keep their own scopes.
+it. `GET /filesystem/namespaces` lists it. Browsing it there needs `filesystem:read` and the
+scopes the Company routes ask for: `wiki:read`, and `tasks:read` too for `tasks/`.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note

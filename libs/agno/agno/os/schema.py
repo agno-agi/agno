@@ -240,6 +240,13 @@ class FileSystemNamespace(FileSystemSummary):
     )
     declared: bool = Field(False, description="Whether the filesystem is declared on the AgentOS")
     company: bool = Field(False, description="Whether this is the Company filesystem")
+    file_count: Optional[int] = Field(
+        None, description="Files the caller can read, at any depth. Set by /filesystem/namespaces; omitted when unknown"
+    )
+    folder_count: Optional[int] = Field(
+        None, description="Distinct folders of those files, at any depth. Omitted when file_count is"
+    )
+    total_bytes: Optional[int] = Field(None, description="Size of those files. Omitted when file_count is")
     agents: List[FileSystemAgent] = Field(
         ...,
         description="Agents using this filesystem namespace and their access; empty when no agent holds it",

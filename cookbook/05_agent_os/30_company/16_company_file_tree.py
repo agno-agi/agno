@@ -158,7 +158,7 @@ if __name__ == "__main__":
 
         # The File System page shows the same tree as one file system: namespace
         # company, with the four folders under it. With authorization on,
-        # filesystem:read is enough there.
+        # filesystem:read and wiki:read read it, and tasks/ needs tasks:read too.
         listed = client.get("/filesystem/namespaces").json()["namespaces"]
         company = next(entry for entry in listed if entry["company"])
         print(

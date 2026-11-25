@@ -211,8 +211,13 @@ the routes, which see another `notes` store, need `notes:main-db`. The routes
 answer 409 to an id that names two stores.
 
 With Company on, the Company filesystem is one entry: namespace `company`, with
-`wiki/`, `goals/<goal-id>/`, `tasks/<task-id>/` and `notes/` under it. `filesystem:read`
-is enough to browse it here. The Company routes keep their own scopes.
+`wiki/`, `goals/<goal-id>/`, `tasks/<task-id>/` and `notes/` under it. With authorization
+enabled it needs `wiki:read` beside `filesystem:read`, and `tasks/` needs `tasks:read` too,
+as on the Company routes. Without `wiki:read` it is not listed.
+
+Every entry of `GET /filesystem/namespaces` carries `file_count`, `folder_count` and
+`total_bytes`. They cover every file the caller can read, at any depth: `notes/2026/b.md`
+is one file in two folders. They are left out when the filesystem cannot be read.
 
 A path's length is limited when a file is written: 512 characters, 16 names, 128
 characters a name. A file that is stored is listed and read whatever the length of
