@@ -2394,8 +2394,11 @@ class BaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List triggers, newest first.
+
+        With ``os_id``, the triggers that AgentOS takes: its own, and the ones tied to no AgentOS.
 
         Returns:
             Tuple of (triggers, total_count)
@@ -2456,13 +2459,18 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    def claim_trigger_event(self, worker_id: str, stale_after_seconds: int = 120) -> Optional[Dict[str, Any]]:
+    def claim_trigger_event(
+        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest event that may run now.
 
         An event may run when it is pending, or when its claim has not been renewed for
         ``stale_after_seconds``. It waits while another event for the same trigger and key is
         unfinished, so one conversation has one run at a time, in the order events arrived.
         ``worker_id`` names this one claim; pass it to renew and to guarded updates.
+
+        With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
+        triggers, and the ones tied to no AgentOS.
         """
         raise NotImplementedError
 
@@ -4646,8 +4654,11 @@ class AsyncBaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List triggers, newest first.
+
+        With ``os_id``, the triggers that AgentOS takes: its own, and the ones tied to no AgentOS.
 
         Returns:
             Tuple of (triggers, total_count)
@@ -4710,13 +4721,18 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
-    async def claim_trigger_event(self, worker_id: str, stale_after_seconds: int = 120) -> Optional[Dict[str, Any]]:
+    async def claim_trigger_event(
+        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest event that may run now.
 
         An event may run when it is pending, or when its claim has not been renewed for
         ``stale_after_seconds``. It waits while another event for the same trigger and key is
         unfinished, so one conversation has one run at a time, in the order events arrived.
         ``worker_id`` names this one claim; pass it to renew and to guarded updates.
+
+        With ``os_id``, only an event whose trigger that AgentOS takes is claimed: its own
+        triggers, and the ones tied to no AgentOS.
         """
         raise NotImplementedError
 

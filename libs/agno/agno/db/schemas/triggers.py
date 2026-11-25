@@ -47,6 +47,10 @@ CODE_MANAGED = "code"
 # disabled_reason of a trigger or schedule that code declared and no longer declares.
 NOT_DECLARED_REASON = "not_declared"
 
+# os_id of the triggers declared by an AgentOS that was given neither an id nor a name. Such an
+# AgentOS gets a new random id every time it starts, so that id cannot say which rows are its own.
+UNNAMED_OS_ID = "__unnamed__"
+
 # The columns update_trigger may write. The id, the owner and the creating run never change.
 TRIGGER_MUTABLE_COLUMNS = frozenset(
     {
@@ -67,6 +71,7 @@ TRIGGER_MUTABLE_COLUMNS = frozenset(
         "enabled",
         "disabled_reason",
         "managed_by",
+        "os_id",
         "updated_by_run_id",
         "updated_by_session_id",
     }
@@ -127,6 +132,9 @@ class StoredTrigger:
     user_id: Optional[str] = None
     # "code" for a trigger declared in code, None for one created as data.
     managed_by: Optional[str] = None
+    # The AgentOS the trigger belongs to: only that one matches deliveries against it and runs its
+    # events. None for a trigger that is not tied to one AgentOS; any AgentOS with its source takes it.
+    os_id: Optional[str] = None
     created_by_run_id: Optional[str] = None
     created_by_session_id: Optional[str] = None
     updated_by_run_id: Optional[str] = None

@@ -36,8 +36,15 @@ class TriggerPoller:
         stale_after_seconds: int = DEFAULT_STALE_AFTER_SECONDS,
         stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
         cleanup_interval: int = 3600,
+        os_id: Optional[str] = None,
     ) -> None:
+        """
+        Args:
+            os_id: The AgentOS this poller works for. It claims only events whose trigger that AgentOS
+                takes. None claims any event.
+        """
         self.db = db
+        self.os_id = os_id
         self.executor = executor
         self.runtime = runtime
         self.poll_interval = poll_interval
@@ -114,7 +121,7 @@ class TriggerPoller:
         while len(self._in_flight) < self.max_concurrent:
             # Each claim has its own name, so a claim that expired cannot write over the one that replaced it.
             claim = f"{self.worker_id}:{uuid4().hex[:12]}"
-            row = await acall_db(self.db, "claim_trigger_event", claim, self.stale_after_seconds)
+            row = await acall_db(self.db, "claim_trigger_event", claim, self.stale_after_seconds, os_id=self.os_id)
             if row is None:
                 break
             task = asyncio.create_task(self._execute_safe(row))

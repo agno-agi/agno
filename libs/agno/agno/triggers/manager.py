@@ -17,7 +17,9 @@ from agno.run.authorization import (
 from agno.utils.log import log_debug
 
 TARGET_TYPES = ("agent", "team", "workflow")
-_PROVENANCE_KEYS = {"managed_by", "created_by_run_id", "created_by_session_id"}
+_PROVENANCE_KEYS = {"managed_by", "os_id", "created_by_run_id", "created_by_session_id"}
+# What a writer that updates a trigger in place may restate about it.
+_RESTATED_PROVENANCE = ("managed_by", "os_id")
 # Changing one of these changes what a trigger runs or as whom, so the caller's right to run the
 # target is checked again and their authority is saved again.
 _AUTHORITY_FIELDS = {"payload", "target_type", "target_id"}
@@ -203,6 +205,9 @@ class TriggerManager:
                 overwrites it with the supplied values.
             user_id: Owner of the trigger; names are unique per owner. ``None`` leaves it unowned,
                 and its runs act as the system.
+            provenance: Who wrote the row. ``managed_by`` is "code" for a trigger declared in code.
+                ``os_id`` is the AgentOS the trigger belongs to: only that one matches deliveries
+                against it and runs its events. With no ``os_id``, any AgentOS that has the source does.
             enabled_on_create: Enabled state written with the insert. An existing trigger keeps its
                 stored state, including under ``if_exists="update"``; use enable/disable to change it.
         """
@@ -244,8 +249,7 @@ class TriggerManager:
             return existing
         if if_exists == "raise":
             raise ValueError(f"Trigger with name '{name}' already exists")
-        if provenance and provenance.get("managed_by"):
-            fields["managed_by"] = provenance["managed_by"]
+        fields.update({key: provenance[key] for key in _RESTATED_PROVENANCE if provenance and provenance.get(key)})
         updated = self._to_trigger(self._call("update_trigger", existing.id, user_id=user_id, **fields))
         return updated or existing
 
@@ -393,8 +397,7 @@ class TriggerManager:
             return existing
         if if_exists == "raise":
             raise ValueError(f"Trigger with name '{name}' already exists")
-        if provenance and provenance.get("managed_by"):
-            fields["managed_by"] = provenance["managed_by"]
+        fields.update({key: provenance[key] for key in _RESTATED_PROVENANCE if provenance and provenance.get(key)})
         updated = self._to_trigger(await self._acall("update_trigger", existing.id, user_id=user_id, **fields))
         return updated or existing
 

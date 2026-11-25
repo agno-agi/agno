@@ -303,6 +303,10 @@ class Harness:
         assert response.status_code == 200, response.text
         return response.json()
 
+    async def start(self) -> None:
+        """What a start of this AgentOS does to stored triggers, before its poller runs."""
+        await adeclare_triggers(self.db, self.agent_os.triggers, os_id=self.agent_os._trigger_os_id)
+
     def fail_reads(self, times: int, status_code: int = 503) -> FailingReads:
         """Make the executor's next reads of a run's status fail."""
         transport = FailingReads(self.app, times, status_code)
@@ -376,10 +380,10 @@ async def make_os(database):
         # Short waits, so a test of a failed read or of a run that does not stop takes no real time.
         executor.read_backoff = 0.01
         executor.stop_grace_seconds = 0.2
-        if declare_now:
-            await adeclare_triggers(db, agent_os.triggers)
         harness = Harness(agent_os=agent_os, app=app, db=db, github=github, model=model, client=client)
         built.append(harness)
+        if declare_now:
+            await harness.start()
         return harness
 
     yield build

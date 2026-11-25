@@ -764,6 +764,8 @@ TRIGGERS_TABLE_SCHEMA = {
     "user_id": {"type": String, "nullable": True, "index": True},
     # "code" for a trigger declared in code, plus the runs that wrote the row.
     "managed_by": {"type": String, "nullable": True, "index": True},
+    # The AgentOS the trigger belongs to. NULL for one that is not tied to an AgentOS.
+    "os_id": {"type": String, "nullable": True, "index": True},
     "created_by_run_id": {"type": String, "nullable": True},
     "created_by_session_id": {"type": String, "nullable": True},
     "updated_by_run_id": {"type": String, "nullable": True},

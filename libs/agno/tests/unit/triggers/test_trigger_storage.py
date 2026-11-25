@@ -283,3 +283,54 @@ def test_a_database_without_trigger_storage_says_so():
     for name in ("claim_trigger_event", "create_trigger_event", "get_triggers"):
         assert getattr(BaseDb, name) is getattr(Other, name)
         assert getattr(AsyncBaseDb, name) is not None
+
+
+# ------------------------------------------------------------------- several apps on one database
+
+
+async def test_a_trigger_keeps_the_agentos_it_belongs_to(db):
+    await call(db, "create_trigger", trigger_row("mine", os_id="first-os"))
+    await call(db, "create_trigger", trigger_row("theirs", os_id="second-os"))
+    await call(db, "create_trigger", trigger_row("anyones"))
+
+    assert (await call(db, "get_trigger", "trg-mine"))["os_id"] == "first-os"
+    assert (await call(db, "get_trigger", "trg-anyones"))["os_id"] is None
+
+    # An AgentOS takes its own triggers and the ones tied to no AgentOS.
+    rows, total = await call(db, "get_triggers", os_id="first-os")
+    assert total == 2 and {row["name"] for row in rows} == {"mine", "anyones"}
+    rows, total = await call(db, "get_triggers")
+    assert total == 3
+
+    # A row with no AgentOS can be given one.
+    await call(db, "update_trigger", "trg-anyones", os_id="second-os")
+    rows, total = await call(db, "get_triggers", os_id="first-os")
+    assert {row["name"] for row in rows} == {"mine"}
+
+
+async def test_a_claim_takes_only_events_whose_trigger_the_agentos_takes(db):
+    await call(db, "create_trigger", trigger_row("mine", os_id="first-os"))
+    await call(db, "create_trigger", trigger_row("theirs", os_id="second-os"))
+    await call(db, "create_trigger", trigger_row("anyones"))
+    theirs = event_row("d-1", trigger_id="trg-theirs", key=None)
+    mine = event_row("d-2", trigger_id="trg-mine", key=None)
+    anyones = event_row("d-3", trigger_id="trg-anyones", key=None)
+    for row in (theirs, mine, anyones):
+        assert await call(db, "create_trigger_event", row)
+
+    # The oldest event belongs to another AgentOS: it is passed over, however long it waits.
+    first = await call(db, "claim_trigger_event", "first:1", 120, os_id="first-os")
+    second = await call(db, "claim_trigger_event", "first:2", 120, os_id="first-os")
+    assert [first["id"], second["id"]] == [mine["id"], anyones["id"]]
+    assert await call(db, "claim_trigger_event", "first:3", 120, os_id="first-os") is None
+
+    # The AgentOS it belongs to takes it, as a second replica of that AgentOS would.
+    assert (await call(db, "claim_trigger_event", "second:1", 120, os_id="second-os"))["id"] == theirs["id"]
+
+
+async def test_a_claim_for_an_agentos_before_any_trigger_is_stored_takes_nothing(db):
+    assert await call(db, "create_trigger_event", event_row("d-1", key=None))
+
+    assert await call(db, "claim_trigger_event", "first:1", 120, os_id="first-os") is None
+    # With no AgentOS named, any event is taken.
+    assert await call(db, "claim_trigger_event", "anyone:1", 120) is not None

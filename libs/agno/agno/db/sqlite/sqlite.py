@@ -8629,6 +8629,7 @@ class SqliteDb(BaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        os_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         return self._trigger_storage(
             triggers_sql.get_triggers,
@@ -8639,6 +8640,7 @@ class SqliteDb(BaseDb):
             limit=limit,
             page=page,
             user_id=user_id,
+            os_id=os_id,
             missing=([], 0),
         )
 
@@ -8702,9 +8704,20 @@ class SqliteDb(BaseDb):
             triggers_sql.update_trigger_event, ("trigger_events",), event_id, held_by=held_by, **kwargs
         )
 
-    def claim_trigger_event(self, worker_id: str, stale_after_seconds: int = 120) -> Optional[Dict[str, Any]]:
+    def claim_trigger_event(
+        self, worker_id: str, stale_after_seconds: int = 120, os_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        if os_id is None:
+            return self._trigger_storage(
+                triggers_sql.claim_trigger_event, ("trigger_events",), worker_id, stale_after_seconds
+            )
+        # An event that may run has a trigger, so no triggers table means nothing to claim.
         return self._trigger_storage(
-            triggers_sql.claim_trigger_event, ("trigger_events",), worker_id, stale_after_seconds
+            triggers_sql.claim_trigger_event_of,
+            ("trigger_events", "triggers"),
+            worker_id,
+            stale_after_seconds,
+            os_id,
         )
 
     def renew_trigger_event_claim(self, event_id: str, worker_id: str) -> bool:

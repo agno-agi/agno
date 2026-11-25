@@ -22,6 +22,11 @@ def _row(result: Any) -> Optional[Dict[str, Any]]:
     return dict(result._mapping) if result is not None else None
 
 
+def _taken_by(triggers: Any, os_id: str) -> Any:
+    """The triggers one AgentOS takes: its own, and the ones tied to no AgentOS."""
+    return or_(triggers.c.os_id == os_id, triggers.c.os_id.is_(None))
+
+
 # --- Triggers ---
 
 
@@ -48,6 +53,7 @@ def get_triggers(
     limit: int = 100,
     page: int = 1,
     user_id: Optional[str] = None,
+    os_id: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     conditions = []
     if source_id is not None:
@@ -56,6 +62,8 @@ def get_triggers(
         conditions.append(triggers.c.enabled == enabled)
     if managed_by is not None:
         conditions.append(triggers.c.managed_by == managed_by)
+    if os_id is not None:
+        conditions.append(_taken_by(triggers, os_id))
     if user_id is not None:
         conditions.append(triggers.c.user_id == user_id)
     total = sess.execute(select(func.count()).select_from(triggers).where(*conditions)).scalar() or 0
@@ -166,13 +174,23 @@ def update_trigger_event(
     return get_trigger_event(sess, events, event_id)
 
 
-def claim_trigger_event(sess: Any, events: Any, worker_id: str, stale_after_seconds: int) -> Optional[Dict[str, Any]]:
+def claim_trigger_event(
+    sess: Any,
+    events: Any,
+    worker_id: str,
+    stale_after_seconds: int,
+    triggers: Any = None,
+    os_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Claim the oldest event that may run now, in one statement.
 
     An event may run when it is pending, or when the worker that held it stopped renewing its claim.
     It waits while an earlier event for the same trigger and key is unfinished, or while another one
     for that key is running, so one conversation has one run at a time, in the order events arrived.
     Events with no key never wait for each other.
+
+    With ``os_id``, only an event whose trigger that AgentOS takes is claimed: several AgentOS apps
+    on one database each run their own events, and replicas of one app share its events.
     """
     now = int(time.time())
     stale_before = now - stale_after_seconds
@@ -191,6 +209,9 @@ def claim_trigger_event(sess: Any, events: Any, worker_id: str, stale_after_seco
         )
         .exists()
     )
+    own = []
+    if os_id is not None and triggers is not None:
+        own.append(candidate.c.trigger_id.in_(select(triggers.c.id).where(_taken_by(triggers, os_id))))
     oldest = (
         select(candidate.c.id)
         .where(
@@ -199,6 +220,7 @@ def claim_trigger_event(sess: Any, events: Any, worker_id: str, stale_after_seco
                 and_(candidate.c.status == EVENT_RUNNING, candidate.c.claimed_at <= stale_before),
             ),
             ~same_conversation_busy,
+            *own,
         )
         .order_by(candidate.c.id.asc())
         .limit(1)
@@ -213,6 +235,13 @@ def claim_trigger_event(sess: Any, events: Any, worker_id: str, stale_after_seco
         .returning(*events.c)
     )
     return _row(sess.execute(stmt).fetchone())
+
+
+def claim_trigger_event_of(
+    sess: Any, events: Any, triggers: Any, worker_id: str, stale_after_seconds: int, os_id: str
+) -> Optional[Dict[str, Any]]:
+    """Claim as ``claim_trigger_event`` does, among the events whose trigger one AgentOS takes."""
+    return claim_trigger_event(sess, events, worker_id, stale_after_seconds, triggers=triggers, os_id=os_id)
 
 
 def renew_trigger_event_claim(sess: Any, events: Any, event_id: str, worker_id: str) -> bool:

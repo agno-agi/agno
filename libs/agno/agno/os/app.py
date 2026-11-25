@@ -238,11 +238,11 @@ async def trigger_lifespan(app: FastAPI, agent_os: "AgentOS"):
         app.state.trigger_runtime = runtime
         await runtime.astart(with_schedules=with_schedules)
     elif agent_os.triggers:
-        await adeclare_triggers(agent_os.db, agent_os.triggers)
+        await adeclare_triggers(agent_os.db, agent_os.triggers, os_id=agent_os._trigger_os_id)
     else:
         # Nothing is declared now, but an earlier version of this code may have declared triggers.
         try:
-            await adeclare_triggers(agent_os.db, [], with_schedules=with_schedules)
+            await adeclare_triggers(agent_os.db, [], with_schedules=with_schedules, os_id=agent_os._trigger_os_id)
         except Exception as exc:
             log_debug(f"Could not check for triggers that are no longer declared: {exc}")
 
@@ -589,6 +589,11 @@ class AgentOS:
         self.id = id
         if not self.id:
             self.id = generate_id(self.name) if self.name else str(uuid4())
+        # Triggers are stored for the AgentOS that declares them. A random id changes on every
+        # start, so an AgentOS given neither an id nor a name stores them under a fixed one.
+        from agno.db.schemas.triggers import UNNAMED_OS_ID
+
+        self._trigger_os_id: str = self.id if (id or self.name) else UNNAMED_OS_ID
 
         self.version = version
         self.description = description
@@ -1514,6 +1519,7 @@ class AgentOS:
                 base_url=self._scheduler_base_url or "http://127.0.0.1:7777",
                 internal_service_token=self._internal_service_token,
                 poll_interval=self._scheduler_poll_interval,
+                os_id=self._trigger_os_id,
             )
             for source in self._trigger_sources():
                 source.triggers = runtime
