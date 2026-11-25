@@ -482,6 +482,14 @@ class FileSystem:
             team_id=team_id if team_id is not None else getattr(team, "id", None),
         )
         resolved._require_resolved()
+        if (run_context is not None or agent is not None or team is not None) and not resolved._partition():
+            from agno.fs._reserved import is_reserved
+
+            if is_reserved(resolved.backend, resolved.namespace):
+                raise InvalidPathError(
+                    f"the namespace {resolved.namespace!r} of this database belongs to the Company file system. "
+                    "Give this filesystem another namespace."
+                )
         return resolved
 
     # ------------------------------------------------------------------

@@ -130,6 +130,7 @@ def get_database_router(
             except Exception as e:
                 failed_dbs[db_id] = str(e)
 
+        await os._finish_company_migration()
         await _start_company()
         version_msg = f"version {target_version}" if target_version else "latest version"
         migrated_count = len(local_dbs) - len(failed_dbs)
@@ -184,6 +185,7 @@ def get_database_router(
 
         try:
             await _migrate_single_db(db, target_version)
+            await os._finish_company_migration()
             await _start_company()
 
             version_msg = f"version {target_version}" if target_version else "latest version"

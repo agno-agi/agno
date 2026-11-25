@@ -15,10 +15,11 @@ notes/ is one folder for everyone who talks to Super Agent.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from agno.company.execution import _call
 from agno.company.filesystem import (
+    CompanyFilesUnsettledError,
     arequire_company_notes_moved,
     company_folder,
     folder_name,
@@ -252,7 +253,12 @@ class CompanyFiles:
 
     @staticmethod
     def _found(
-        query: str, location: _Location, matches: List[Dict[str, Any]], limit: int, totals: Dict[str, int]
+        query: str,
+        location: _Location,
+        matches: List[Dict[str, Any]],
+        limit: int,
+        totals: Dict[str, int],
+        unsettled: Sequence[str] = (),
     ) -> Dict[str, Any]:
         result: Dict[str, Any] = {"query": query, "folder": location.tree_path, "matches": matches[:limit]}
         if len(matches) > limit:
@@ -263,6 +269,9 @@ class CompanyFiles:
                 f"Searched the newest {' and '.join(left_out)}. To search another, name its folder: "
                 "goals/<goal-id> or tasks/<task-id>."
             )
+        if unsettled:
+            # Their files are left where 3.2.0 kept them, so nothing was searched in them.
+            result["not_searched"] = list(unsettled)
         return result
 
     @staticmethod
@@ -336,13 +345,20 @@ class CompanyFiles:
         goal_ids = self._newest("goals", location, totals)
         task_ids = self._newest("tasks", location, totals)
         matches: List[Dict[str, Any]] = []
+        unsettled: List[str] = []
         for target in self._search_targets(location, goal_ids, task_ids):
             # One match past the limit shows that more exist.
             if len(matches) > limit:
                 break
-            found = self._filesystem(target).search(query, target.store_path, limit + 1 - len(matches))
+            try:
+                found = self._filesystem(target).search(query, target.store_path, limit + 1 - len(matches))
+            except CompanyFilesUnsettledError:
+                if location.record_id is not None:
+                    raise
+                unsettled.append(target.folder)
+                continue
             matches.extend(self._matches(target, found))
-        return self._found(query, location, matches, limit, totals)
+        return self._found(query, location, matches, limit, totals, unsettled)
 
     def write(self, path: str, content: str, expected_version: Optional[int] = None) -> Dict[str, Any]:
         """Create or replace a file. ``expected_version`` is the version read; 0 creates only."""
@@ -440,13 +456,20 @@ class CompanyFiles:
         goal_ids = await self._anewest("goals", location, totals)
         task_ids = await self._anewest("tasks", location, totals)
         matches: List[Dict[str, Any]] = []
+        unsettled: List[str] = []
         for target in self._search_targets(location, goal_ids, task_ids):
             if len(matches) > limit:
                 break
-            store = await self._afilesystem(target)
-            found = await store.asearch(query, target.store_path, limit + 1 - len(matches))
+            try:
+                store = await self._afilesystem(target)
+                found = await store.asearch(query, target.store_path, limit + 1 - len(matches))
+            except CompanyFilesUnsettledError:
+                if location.record_id is not None:
+                    raise
+                unsettled.append(target.folder)
+                continue
             matches.extend(self._matches(target, found))
-        return self._found(query, location, matches, limit, totals)
+        return self._found(query, location, matches, limit, totals, unsettled)
 
     async def awrite(self, path: str, content: str, expected_version: Optional[int] = None) -> Dict[str, Any]:
         """Create or replace a file. ``expected_version`` is the version read; 0 creates only."""

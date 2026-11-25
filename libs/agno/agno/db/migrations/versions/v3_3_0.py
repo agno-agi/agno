@@ -967,6 +967,24 @@ def _report_left(entries: List[Dict[str, Any]]) -> None:
     )
 
 
+def _report_foreign(conn: Any, files: Any) -> None:
+    """Name the files already in the Company namespace that are not in the tree: another filesystem wrote them."""
+    rows = conn.execute(
+        select(files.c.path).where(files.c.namespace == COMPANY_NAMESPACE, files.c.user_id == _SHARED)
+    ).all()
+    areas = ("wiki", "goals", "tasks", "notes")
+    foreign = sorted(row[0] for row in rows if "/" not in row[0] or row[0].split("/", 1)[0] not in areas)
+    if not foreign:
+        return
+    named = ", ".join(foreign[:_REPORTED_PATHS])
+    more = f" and {len(foreign) - _REPORTED_PATHS} more" if len(foreign) > _REPORTED_PATHS else ""
+    log_warning(
+        f"The namespace {COMPANY_NAMESPACE!r} now belongs to the Company file system, and another filesystem stored "
+        f"files there: {named}{more}. They are left in place. Agents can no longer open that namespace: move the "
+        "files to a namespace of their own."
+    )
+
+
 def _report_size(conn: Any, files: Any, db: Any) -> None:
     """Say so when the store holds more than it may. Before 3.3.0 each folder had a limit of its own."""
     from sqlalchemy import func
@@ -1002,6 +1020,7 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
         return False
     plan = _plan(sess, db, namespaces, owners)
     if plan.folders:
+        _report_foreign(conn, backend.table)
         moved = _move(conn, backend.table, plan.folders, plan.defaults)
         log_info(f"Moved {moved} Company files into the Company file system")
         _report_size(conn, backend.table, db)
@@ -1012,14 +1031,30 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
     return bool(plan.folders)
 
 
-def _files_wait(conn: Any, db: Any) -> bool:
-    """Whether the file table holds a namespace that ``_move_company_files`` moves.
+def _files_state(conn: Any, db: Any) -> Tuple[bool, Dict[str, str]]:
+    """Whether a namespace waits to be moved, and the folders whose files stay because several records could own them.
 
-    One statement on the file table when nothing is named as Company named its namespaces.
+    Each such folder comes with the namespace that holds its files. One statement on the file table
+    when nothing is named as Company named its namespaces.
     """
+    from agno.company.filesystem import folder_name
+
     backend = _file_backend(db, conn)
     namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
-    return bool(namespaces) and bool(_plan(_OnConnection(conn), db, namespaces).folders)
+    if not namespaces:
+        return False, {}
+    plan = _plan(_OnConnection(conn), db, namespaces)
+    unsettled = {
+        f"{'goals' if _is_goal_namespace(namespace) else 'tasks'}/{folder_name(owner)}": namespace
+        for namespace, owners in plan.left.items()
+        for owner in owners
+    }
+    return bool(plan.folders), unsettled
+
+
+def _files_wait(conn: Any, db: Any) -> bool:
+    """Whether the file table holds a namespace that ``_move_company_files`` moves."""
+    return _files_state(conn, db)[0]
 
 
 def _files_left(sess: Any, db: Any) -> List[Dict[str, Any]]:

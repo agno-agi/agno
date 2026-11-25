@@ -3,8 +3,9 @@
 Only the newest migration is applied here. An older migration can copy or rewrite a large amount of
 data, so a database that is behind an older version is left as it is for the operator to migrate.
 
-The check that decides this is one read of the schema versions table. A database that is already
-current, or that holds no table yet, is not touched and nothing is logged.
+The check that decides this reads the schema versions table, then looks for Company files that still
+wait to be moved: a process of an older version can write one after the tables are stamped. A database
+that is already current, or that holds no table yet, is not touched and nothing is logged.
 
 One process migrates at a time. The others wait, then find nothing left to do.
 """
@@ -21,6 +22,7 @@ from packaging import version as packaging_version
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.manager import TABLE_TYPE_TO_ATTR, MigrationManager
+from agno.db.migrations.versions.v3_3_0 import acompany_files_pending
 from agno.db.utils import legacy_company_table
 
 try:
@@ -107,9 +109,12 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
             behind.append(f"{name} is at version {stamped}")
         elif stamped < latest:
             pending = True
+    if not pending:
+        # The stamps say nothing of a file that an older version wrote after they were set.
+        pending = await acompany_files_pending(db)
     if pending:
         # A table from before versions were stamped is behind too. Looked for only now, so a
-        # database with nothing to migrate costs the one read above.
+        # database with nothing to migrate costs the reads above.
         # A migration that stopped after the goals table was renamed leaves it under its new name
         # with the stamp still under the old one. That table is pending, not behind.
         stopped = getattr(db, "goals_table_name", None) if legacy_company_table(db, "goals") in stamps else None
@@ -117,6 +122,14 @@ async def _pending(db: Union[BaseDb, AsyncBaseDb]) -> Tuple[bool, List[str]]:
             if name in names and name != stopped and await _call(db.table_exists, name):  # type: ignore[union-attr]
                 behind.append(f"{name} has no version")
     return pending, behind
+
+
+async def migration_pending(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Whether the newest migration, or an older one, is still to be applied to ``db``."""
+    if not _is_db_type(db, _SQL_DB_TYPES):
+        return False
+    pending, behind = await _pending(db)
+    return pending or bool(behind)
 
 
 def _sqlite_lock_path(db: Any) -> Optional[str]:
