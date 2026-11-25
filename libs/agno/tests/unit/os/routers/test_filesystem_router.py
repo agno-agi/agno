@@ -2073,44 +2073,10 @@ def test_a_request_that_names_an_agent_reads_the_store_as_that_agent_holds_it(db
 
     # Read by its id alone, the declared store loads no agent.
     assert listed(filesystem_id="handbook") == ("handbook", [], 20_000_000)
-    # With an agent named it is the same store under the same id, with the limit of that agent.
-    assert listed(agent_id="writer") == ("handbook", ["abe", "writer"], 5_000_000)
-    assert listed(agent_id="writer", filesystem_id="handbook") == ("handbook", ["abe", "writer"], 5_000_000)
-    assert listed(agent_id="abe") == ("handbook", ["abe", "writer"], 20_000_000)
-
-
-def test_another_agent_that_cannot_be_built_does_not_fail_a_request_that_names_an_agent(
-    db, client_factory, monkeypatch
-):
-    from agno.os.routers.filesystem import router as filesystem_router
-
-    own = FileSystem(db, namespace="own")
-    own.write("mine.md", "mine\n")
-    client = client_factory(_failing_factory(db), Agent(id="writer", db=db, filesystem=own), db=db)
-    resolved: list[str] = []
-    resolve_agent = filesystem_router.resolve_agent
-
-    async def spy(agent_id, *args, **kwargs):
-        resolved.append(agent_id)
-        return await resolve_agent(agent_id, *args, **kwargs)
-
-    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
-
-    # A listing of every agent's files reads the broken agent and fails.
-    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
-    # A request for one agent reads the others only to settle the ids.
-    rows = client.get("/filesystem/files", params={"agent_id": "writer"}, headers=_headers("alice"))
-    assert rows.status_code == 200
-    assert [(row["filesystem_id"], row["path"]) for row in rows.json()["entries"]] == [("own", "mine.md")]
-    resolved.clear()
-    listed = client.get("/filesystem/entries", params={"agent_id": "writer"}, headers=_headers("alice"))
-    assert listed.status_code == 200 and listed.json()["filesystem_id"] == "own"
-    # Each agent is loaded once, the named one included.
-    assert sorted(resolved) == ["broken", "writer"]
-    # The named agent's own failure is the request's.
-    assert (
-        client.get("/filesystem/entries", params={"agent_id": "broken"}, headers=_headers("alice")).status_code == 500
-    )
+    # With an agent named it is the same store under the same id, with the limit of that agent, the only one loaded.
+    assert listed(agent_id="writer") == ("handbook", ["writer"], 5_000_000)
+    assert listed(agent_id="writer", filesystem_id="handbook") == ("handbook", ["writer"], 5_000_000)
+    assert listed(agent_id="abe") == ("handbook", ["abe"], 20_000_000)
 
 
 def test_a_shared_declaration_and_a_user_scoped_view_of_one_store_are_one_entry(db, client_factory):
@@ -2358,6 +2324,57 @@ def test_one_table_reached_through_two_database_ids_has_the_id_config_lists(
     }
     for database in (one, two):
         database.db_engine.dispose()
+
+
+# --- A request that names an agent loads that agent alone ---
+
+
+def test_a_request_that_names_an_agent_loads_only_that_agent(db, client_factory, monkeypatch):
+    from agno.agent import agent as agent_module
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    own = FileSystem(db, namespace="own")
+    own.write("style.md", "mine needle\n")
+    client = client_factory(
+        _failing_factory(db),
+        Agent(id="reader", db=db, filesystem=FileSystem(db, namespace="own")),
+        Agent(id="writer", db=db, filesystem=own),
+        db=db,
+    )
+    resolved: list[str] = []
+    stored_queries: list[dict] = []
+    resolve_agent = filesystem_router.resolve_agent
+    get_agents = agent_module.get_agents
+
+    async def spy(agent_id, *args, **kwargs):
+        resolved.append(agent_id)
+        return await resolve_agent(agent_id, *args, **kwargs)
+
+    def query(**kwargs):
+        stored_queries.append(kwargs)
+        return get_agents(**kwargs)
+
+    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
+    monkeypatch.setattr(agent_module, "get_agents", query)
+
+    # A listing of every agent's files reads the stored agents and builds the others: the broken one fails it.
+    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
+    assert "broken" in resolved and len(stored_queries) == 1
+
+    # A request for one agent builds no other agent and does not read the stored ones.
+    for route, params in (("/filesystem/files", {}), *ONE_FILESYSTEM_ROUTES):
+        for named in ({"agent_id": "writer"}, {"agent_id": "writer", "filesystem_id": "own"}):
+            resolved.clear()
+            stored_queries.clear()
+            response = client.get(route, params={**params, **named}, headers=_headers("alice"))
+            assert response.status_code == 200, (route, named)
+            assert (resolved, stored_queries) == (["writer"], []), (route, named)
+            body = response.json()["entries"][0] if route == "/filesystem/files" else response.json()
+            assert (body["filesystem_id"], body["agent_ids"]) == ("own", ["writer"]), (route, named)
+    # The named agent's own failure is the request's.
+    assert (
+        client.get("/filesystem/entries", params={"agent_id": "broken"}, headers=_headers("alice")).status_code == 500
+    )
 
 
 # --- A database whose connection arguments cannot be read ---

@@ -213,45 +213,37 @@ async def _get_sources(
     *,
     skip_failed: bool = False,
 ) -> tuple[dict[tuple, _Source], Optional[dict[tuple, FileSystem]], Optional[HTTPException]]:
-    """Every filesystem the caller may read, keyed by backend and namespace, and those ``agent_id`` holds.
+    """Every filesystem the request may read, keyed by backend and namespace, and those ``agent_id`` holds.
 
-    The search covers the declared filesystems, then those of every agent the
-    caller may read; an agent that cannot be browsed is left out. It covers them
-    with an agent named too, so a filesystem has one id whether or not a request
-    names an agent. The named agent's errors are raised, and its filesystems are
-    returned as it holds them, in its own order. With ``skip_failed``, the first
-    failure of an agent is returned instead of raised.
+    The search covers the declared filesystems, then those of the named agent,
+    or of every agent the caller may read when none is named; an agent that
+    cannot be browsed is left out. A named agent is the only one loaded. Its
+    errors are raised, and its filesystems are returned as it holds them, in
+    its own order. With ``skip_failed``, the first failure of an agent is
+    returned instead of raised.
     """
     failure: Optional[HTTPException] = None
     sources: dict[tuple, _Source] = {
         entry.key: _Source(entry.filesystem, [], entry.forms) for entry in declared if entry.filesystem is not None
     }
-    held: Optional[dict[tuple, FileSystem]] = None
-    if agent_id is not None:
-        # The caller's access to the named agent is checked before the agent is loaded.
-        await _get_global_filesystem_agent_ids(os, request, agent_id)
-        held = {
-            _filesystem_key(filesystem): filesystem
-            for filesystem in await _get_agent_filesystems(os, agent_id, request)
-        }
-
-    agent_ids = await _get_global_filesystem_agent_ids(os, request, None, required=not declared and agent_id is None)
-    for candidate_id in sorted({*agent_ids, *([agent_id] if agent_id is not None else [])}):
-        if candidate_id == agent_id and held is not None:
-            agent_filesystems = list(held.values())
-        else:
-            try:
-                agent_filesystems = await _get_agent_filesystems(os, candidate_id, request)
-            except HTTPException as e:
-                # With an agent named, another agent only settles the ids: its failure is not the request's.
-                if agent_id is not None or e.status_code in (400, 404, 501):
-                    continue
-                if not skip_failed:
-                    raise
-                failure = failure or e
+    held: Optional[dict[tuple, FileSystem]] = None if agent_id is None else {}
+    # The caller's access to a named agent is checked before the agent is loaded.
+    for candidate_id in await _get_global_filesystem_agent_ids(os, request, agent_id, required=not declared):
+        try:
+            agent_filesystems = await _get_agent_filesystems(os, candidate_id, request)
+        except HTTPException as e:
+            if agent_id is not None:
+                raise
+            if e.status_code in (400, 404, 501):
                 continue
+            if not skip_failed:
+                raise
+            failure = failure or e
+            continue
         for filesystem in agent_filesystems:
             key = _filesystem_key(filesystem)
+            if held is not None:
+                held[key] = filesystem
             source = sources.get(key)
             if source is None:
                 source = sources[key] = _Source(filesystem, [], _filesystem_id_forms(filesystem))
