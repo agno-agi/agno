@@ -19,6 +19,7 @@ async def _require_endpoint_permission(
         build_insufficient_permissions_detail,
         caller_scopes_are_authoritative,
         planes_beside_token_scopes,
+        scopes_left_for_the_provider,
     )
 
     path = posixpath.normpath(unquote(urlsplit(endpoint).path))
@@ -83,7 +84,7 @@ async def _require_endpoint_permission(
 
     ctx = AuthorizationContext(
         principal_id=getattr(request.state, "user_id", None),
-        scopes=list(caller_scopes),
+        scopes=scopes_left_for_the_provider(request, caller_scopes),
         claims=getattr(request.state, "claims", None) or {},
         resource_type=resource_type,
         resource_id=resource_id,

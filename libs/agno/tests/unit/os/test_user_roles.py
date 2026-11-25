@@ -386,6 +386,35 @@ def test_a_role_in_code_needs_the_database_at_startup(tmp_path):
         _os(_UnreachableDb(db_file=str(tmp_path / "down.db")), _verified(roles=[member]))
 
 
+class _UnreadableAtStartup(SqliteDb):
+    """A database that holds the roles while AgentOS is built and cannot be read when it starts."""
+
+    def get_authz_policies_for_resources(self, *args, **kwargs):
+        raise ConnectionError("database is unreachable")
+
+
+def test_a_role_in_code_still_fails_startup_when_its_database_cannot_be_read(tmp_path):
+    # Only an OS with no role in code starts without its role tables: with roles declared, the
+    # startup check on stored policies must be able to read them
+    member, _ = _roles()
+    app = _os(_UnreadableAtStartup(db_file=str(tmp_path / "os.db")), _verified(roles=[member])).get_app()
+    with pytest.raises(ConnectionError):
+        with TestClient(app):
+            pass
+
+
+def test_a_default_role_needs_a_synchronous_database(tmp_path):
+    from agno.db.sqlite import AsyncSqliteDb
+
+    # The default is applied while AgentOS is built, which cannot await an async database
+    with pytest.raises(ValueError, match="needs a synchronous database"):
+        _os(
+            AsyncSqliteDb(db_file=str(tmp_path / "os.db")),
+            _verified(),
+            user_directory=UserDirectory(default_role="member"),
+        )
+
+
 def test_a_role_in_code_still_needs_a_database_that_can_hold_it():
     member, _ = _roles()
     with pytest.raises(RuntimeError, match="does not support authorization storage"):
@@ -592,6 +621,106 @@ def test_an_approver_by_role_is_an_approval_admin(tmp_path):
     assert _caller_is_approval_admin(caller("op", ["approvals:write"]), ["approvals:write"]) is True  # by token
     # A service account is measured by its own scopes alone
     assert _caller_is_approval_admin(caller("sa:bot", ["agents:read"]), ["agents:read"]) is False
+
+
+@pytest.mark.asyncio
+async def test_a_scope_the_gates_refuse_is_not_granted_by_asking_the_provider(tmp_path):
+    from fastapi import HTTPException
+
+    from agno.os.auth import _acaller_is_approval_admin, _caller_is_approval_admin
+    from agno.os.routers.job_queue.router import _require_queue_admin
+
+    # "*:*" opens no route and is not the admin scope. The gates measure a token's scopes by their
+    # own rule first, so the scopes must not be handed back to the provider, whose scope plane
+    # matches more loosely
+    _, client = _gated(tmp_path)
+    junk = ["service_accounts:write", "*:*"]
+    assert client.get("/authz/roles", headers=_auth("mallory", junk)).status_code == 403
+    with pytest.raises(HTTPException) as refused:
+        await _require_queue_admin(_caller(client, "mallory", junk))
+    assert refused.value.status_code == 403
+    assert _caller_is_approval_admin(_caller(client, "mallory", junk), junk) is False
+    assert await _acaller_is_approval_admin(_caller(client, "mallory", junk), junk) is False
+    minted = client.post(
+        "/service-accounts",
+        json={
+            "name": "root-bot",
+            "scopes": [{"scope": "agent_os:admin", "effect": "allow"}],
+            "allow_privileged_scopes": True,
+        },
+        headers=_auth("mallory", junk),
+    )
+    assert minted.status_code == 403, minted.text
+
+
+@pytest.mark.asyncio
+async def test_the_gates_ask_a_role_store_on_an_async_database(tmp_path, agno_logs):
+    from httpx import ASGITransport, AsyncClient
+
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.os.auth import _acaller_is_approval_admin, run_continuation_blocked_reason
+    from agno.os.routers.job_queue.router import _require_queue_admin
+
+    # The gates run in async code, so a role store on an async database must be awaited: called
+    # synchronously it cannot answer, and a person who holds the access by role is refused
+    authz = _verified()
+    app = _os(AsyncSqliteDb(db_file=str(tmp_path / "os.db")), authz).get_app()
+    await authz.aset_role_scopes("admin", ["agent_os:admin"])
+    await authz.aset_role_scopes("runner", READ + RUN + ["service_accounts:write", "approvals:write"])
+    await authz.aset_role("root", "admin")
+    await authz.aset_role("alice", "runner")
+    client = SimpleNamespace(app=app)
+
+    await _require_queue_admin(_caller(client, "root", []))
+    assert await _acaller_is_approval_admin(_caller(client, "alice", []), []) is True
+
+    # The continue gate: a run waiting on an admin approval is continued only by an approval admin
+    async def pending(**kwargs):
+        return [{"id": "approval-1"}], 1
+
+    waiting = SimpleNamespace(get_approvals=pending)
+    for user_id, blocked in (("alice", False), ("root", False), ("nobody", True)):
+        reason = await run_continuation_blocked_reason(
+            waiting, "run-1", authorization_enabled=True, user_scopes=[], request=_caller(client, user_id, [])
+        )
+        assert (reason is not None) is blocked, user_id
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        minted = await http.post(
+            "/service-accounts",
+            json={"name": "reader", "scopes": [{"scope": "agents:read", "effect": "allow"}]},
+            headers=_auth("alice"),
+        )
+    assert minted.status_code == 201, minted.text
+    assert not [message for _, message in agno_logs if "treating as abstain" in message]
+
+
+class _AllowsEverything(AuthorizationProvider):
+    """A custom plane that says yes to every caller it is asked about."""
+
+    def check(self, ctx):
+        return True
+
+    def accessible_resource_ids(self, ctx):
+        return {"*"}
+
+
+def test_a_service_account_is_measured_by_its_own_scopes_alone(tmp_path):
+    from agno.os.auth import _caller_is_approval_admin, planes_beside_token_scopes
+
+    # Two planes: token scopes, and a custom one that allows everything
+    planes = [ScopeAuthorizationProvider(), _AllowsEverything()]
+    client = TestClient(_os(_db(tmp_path), _verified(authorization_provider=planes)).get_app())
+    person = _caller(client, "alice", [])
+    service_account = _caller(client, "sa:bot", ["agents:read"])
+    assert planes_beside_token_scopes(person) is True
+    assert _caller_is_approval_admin(person, []) is True
+    # The other plane is not asked about a service account, and a role cannot be given to one
+    assert planes_beside_token_scopes(service_account) is False
+    assert _caller_is_approval_admin(service_account, ["agents:read"]) is False
+    (tmp_path / "roles").mkdir()
+    authz, _ = _gated(tmp_path / "roles")
+    with pytest.raises(ValueError, match="reserved server principal"):
+        authz.assign("sa:bot", "admin")
 
 
 # ----------------------------------------------------------------- the template setup, end to end
