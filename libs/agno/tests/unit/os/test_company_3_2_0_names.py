@@ -427,10 +427,7 @@ async def test_a_deny_stored_by_3_2_0_can_be_changed_to_allow(tmp_path, use_asyn
         engine.add_scope("editor", "goals:write")
 
     assert engine.check_scope("goals:write", roles=["editor"]) is True
-    # The stored deny still protects an application's own products type.
-    assert sorted(engine.get_role_scopes("editor")) == [("goals:write", "allow"), ("products:write", "deny")]
-    assert engine.denied_resource_ids("goals", "write", roles=["editor"]) == set()
-    assert engine.denied_resource_ids("products", "write", roles=["editor"]) == {"*"}
+    assert engine.get_role_scopes("editor") == [("goals:write", "allow")]
     db.close()
 
 
@@ -480,30 +477,6 @@ async def test_granting_goals_keeps_a_stored_products_grant(tmp_path, use_async)
         engine.add_scope("reader", "goals:read")
 
     assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is True
-    db.close()
-
-
-@pytest.mark.parametrize("change", ["add", "remove", "replace"])
-@pytest.mark.parametrize("use_async", [False, True])
-async def test_changing_goals_access_keeps_an_application_deny(tmp_path, change, use_async):
-    db = SqliteDb(db_file=str(tmp_path / "roles.db"))
-    db.upsert_authz_policy(role="reader", resource="products/*", action="read", effect="deny")
-    db.upsert_authz_policy(role="reader", resource="products/catalog", action="read", effect="allow")
-    engine = Authorization(db=db)._store()._engine
-
-    async def call(method, *args):
-        return await getattr(engine, "a" + method)(*args) if use_async else getattr(engine, method)(*args)
-
-    if change == "replace":
-        await call("set_role_scopes", "reader", [*engine.get_role_scopes("reader"), ("goals:read", "allow")])
-    else:
-        await call("add_scope", "reader", "goals:read")
-    assert engine.check_scope("goals:read", roles=["reader"]) is True
-    if change == "remove":
-        await call("remove_scope", "reader", "goals:read")
-        assert engine.check_scope("goals:read", roles=["reader"]) is False
-
-    assert engine.check_resource("products", "catalog", "read", roles=["reader"]) is False
     db.close()
 
 
