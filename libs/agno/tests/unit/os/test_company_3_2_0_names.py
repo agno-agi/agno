@@ -6,6 +6,7 @@ none logs a warning.
 """
 
 import asyncio
+import json
 import logging
 import sys
 import types
@@ -30,7 +31,10 @@ from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.config import AuthorizationConfig
 from agno.os.scopes import get_accessible_resource_ids, has_required_scopes, parse_scope, split_scope
+from agno.registry import Registry
 from agno.run.authorization import RunAuthorization
+from agno.tools.company import CompanyTools
+from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_warning
 
 # app/company.py of the agentos-render template at its agno==3.2.0 pin, copied as it is.
@@ -1029,3 +1033,72 @@ def test_a_company_database_with_the_id_of_another_is_migrated(tmp_path, route):
         listed = client.get("/company/goals")
 
     assert [goal["id"] for goal in listed.json()["data"]] == ["docs"]
+
+
+def _saved_3_2_0_tool(name, arguments, **fields):
+    return {
+        "name": name,
+        "description": "Read a Product.",
+        "parameters": {
+            "type": "object",
+            "properties": {argument: {"type": "string"} for argument in arguments},
+            "required": list(arguments),
+        },
+        "requires_confirmation": False,
+        "external_execution": False,
+        "toolkit": "company",
+        **fields,
+    }
+
+
+@pytest.mark.parametrize("old, new", sorted(CompanyTools.renamed_tools.items()))
+def test_tool_filters_accept_the_3_2_0_names(tmp_path, old, new):
+    db = SqliteDb(db_file=str(tmp_path / "tools.db"))
+
+    assert list(CompanyTools(db, include_tools=[old]).functions) == [new]
+    assert new not in CompanyTools(db, exclude_tools=[old]).functions
+    assert old not in CompanyTools(db).functions
+    with pytest.raises(ValueError, match="not_a_tool"):
+        CompanyTools(db, include_tools=["not_a_tool"])
+    db.close()
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_component_saved_by_3_2_0_loads_its_company_tools(tmp_path, strict):
+    db = SqliteDb(db_file=str(tmp_path / "tools.db"))
+    toolkit = CompanyTools(db)
+    saved = [
+        _saved_3_2_0_tool("get_company_product", ["product_id"], requires_confirmation=True),
+        # Not renamed, but it took product_id.
+        _saved_3_2_0_tool("list_company_tasks", ["product_id", "status"]),
+        _saved_3_2_0_tool("edit_company_task", ["task_id", "title"]),
+    ]
+
+    get, tasks, edit = Registry(tools=[toolkit]).rehydrate_functions(saved, strict=strict)
+
+    assert get.name == "get_company_goal" and get.requires_confirmation is True
+    assert tasks.name == "list_company_tasks"
+    for func in (get, tasks):
+        assert func.entrypoint == toolkit.functions[func.name].entrypoint
+        assert "product_id" not in json.dumps(func.parameters) and func.description != "Read a Product."
+        func.process_entrypoint()
+        assert "goal_id" in func.parameters["properties"]
+    # A tool that did not change keeps its saved definition.
+    assert edit.description == "Read a Product." and list(edit.parameters["properties"]) == ["task_id", "title"]
+    db.close()
+
+
+def test_the_3_2_0_tool_names_are_read_for_the_company_toolkit_only(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "tools.db"))
+
+    def get_company_product(product_id: str) -> str:
+        return product_id
+
+    own = Toolkit(name="shop", tools=[get_company_product])
+    saved = _saved_3_2_0_tool("get_company_product", ["product_id"], toolkit="shop")
+
+    func = Registry(tools=[CompanyTools(db), own]).rehydrate_function(saved)
+
+    assert func.name == "get_company_product" and func.entrypoint == own.functions["get_company_product"].entrypoint
+    assert "product_id" in func.parameters["properties"]
+    db.close()
