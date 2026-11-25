@@ -96,6 +96,6 @@ Earlier config output in this log records the previous schema.
 
 **Description:** Requested on 2026-11-25 through a FastAPI test client on the cookbook's `app`, not on a served port. No model call. The same stores and agents as above.
 
-**Result:** `/config` listed the same four entries. `agent_id=editor` opened `drafts`, and `agent_id=editor&filesystem_id=shared` opened `shared` with `agent_ids` `editor` and `writer`. `agent_id=editor&filesystem_id=handbook` returned 404: the editor does not hold the handbook. `/filesystem/files?agent_id=editor` listed the editor's two files under the ids `drafts` and `shared`, the ids the unfiltered listing gives them.
+**Result:** `/config` listed the same four entries. `agent_id=editor` opened `drafts`, and `agent_id=editor&filesystem_id=shared` opened `shared` with `agent_ids` `editor`, the agent the request names. `agent_id=editor&filesystem_id=handbook` returned 404: the editor does not hold the handbook. `/filesystem/files?agent_id=editor` listed the editor's two files under the ids `drafts` and `shared`, the ids the unfiltered listing gives them.
 
 ---

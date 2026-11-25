@@ -2434,3 +2434,81 @@ def test_a_database_whose_connection_arguments_cannot_be_read_is_matched_by_its_
     assert (listed.json()["agent_ids"], [row["path"] for row in listed.json()["entries"]]) == (["writer"], ["a.md"])
     for filesystem in (declared, held, other):
         filesystem.backend.db_engine.dispose()
+
+
+# --- An agent whose filesystems cannot be read ---
+
+
+def test_an_agent_whose_file_tools_cannot_be_built_fails_only_the_requests_that_read_it(db, client_factory):
+    own = FileSystem(db, namespace="own")
+    own.write("style.md", "mine needle\n")
+    # The tools are built when the agent's filesystems are read, so the AgentOS starts.
+    unbuildable = FileSystem(db, namespace="unbuildable", include_tools=["no_such_tool"])
+    agents = (Agent(id="broken", db=db, filesystem=unbuildable), Agent(id="writer", db=db, filesystem=own))
+
+    client = client_factory(*agents, db=db)
+    # A request for another agent does not read it.
+    for route, params in (("/filesystem/files", {}), *ONE_FILESYSTEM_ROUTES):
+        response = client.get(route, params={**params, "agent_id": "writer"}, headers=_headers("alice"))
+        assert response.status_code == 200, route
+        body = response.json()["entries"][0] if route == "/filesystem/files" else response.json()
+        assert (body["filesystem_id"], body["agent_ids"]) == ("own", ["writer"]), route
+    # A request that names it reports its failure. A listing of every agent's files leaves it out.
+    named = client.get("/filesystem/files", params={"agent_id": "broken"}, headers=_headers("alice"))
+    assert named.status_code == 503
+    every = client.get("/filesystem/files", headers=_headers("alice"))
+    assert every.status_code == 200
+    assert [(row["filesystem_id"], row["agent_ids"]) for row in every.json()["entries"]] == [("own", ["writer"])]
+
+    # Beside a declared filesystem, the listing leaves the agent out instead of failing.
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain words\n")
+    client = client_factory(*agents, db=db, filesystem=handbook)
+    rows = client.get("/filesystem/files", headers=_headers("alice"))
+    assert rows.status_code == 200
+    assert [(row["filesystem_id"], row["agent_ids"]) for row in rows.json()["entries"]] == [
+        ("handbook", []),
+        ("own", ["writer"]),
+    ]
+
+
+# --- An id names one store, whatever agent is named with it ---
+
+
+def test_the_id_of_a_store_the_named_agent_does_not_hold_opens_no_other_store(db, archive_db, client_factory):
+    in_code = FileSystem(db, namespace="notes")
+    elsewhere = FileSystem(archive_db, namespace="notes")
+    in_code.write("style.md", "in code needle\n")
+    elsewhere.write("style.md", "elsewhere needle\n")
+    other = AgentFactory(id="other", db=db, factory=lambda ctx: Agent(id="other", db=db, filesystem=elsewhere))
+    client = client_factory(Agent(id="in-code", db=db, filesystem=in_code), other)
+
+    def content(**params) -> tuple:
+        response = client.get("/filesystem/content", params={"path": "style.md", **params}, headers=_headers("alice"))
+        return response.status_code, response.json().get("filesystem_id"), response.json().get("content")
+
+    # /config gives the bare namespace to the store of the agent declared in code.
+    assert content(filesystem_id="notes") == (200, "notes", "in code needle\n")
+    assert content(filesystem_id="notes", agent_id="in-code") == (200, "notes", "in code needle\n")
+    # The other agent holds the same namespace on another database. The id does not name its store.
+    for route, params in ONE_FILESYSTEM_ROUTES:
+        named = client.get(
+            route, params={**params, "filesystem_id": "notes", "agent_id": "other"}, headers=_headers("alice")
+        )
+        assert named.status_code == 404, route
+        assert "needle" not in named.text
+    rows = client.get(
+        "/filesystem/files", params={"filesystem_id": "notes", "agent_id": "other"}, headers=_headers("alice")
+    )
+    assert rows.status_code == 200 and rows.json()["entries"] == []
+    # Its own id opens it, and so does a longer form of it, which is no store's id.
+    assert content(filesystem_id="notes:archive-db", agent_id="other") == (
+        200,
+        "notes:archive-db",
+        "elsewhere needle\n",
+    )
+    assert content(filesystem_id="notes:archive-db:agno_fs", agent_id="other") == (
+        200,
+        "notes:archive-db",
+        "elsewhere needle\n",
+    )
