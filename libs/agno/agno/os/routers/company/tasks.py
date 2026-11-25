@@ -9,7 +9,14 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+    refuse_product_id,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -20,7 +27,9 @@ def get_tasks_router(
     db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, registry: Any = None
 ) -> APIRouter:
     """Build Task routes using native async storage or off-thread sync calls."""
-    router = APIRouter(prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)]
+    )
     auth_dependency = get_authentication_dependency(settings)
     manager = (
         AsyncCompanyManager(db, registry=registry)

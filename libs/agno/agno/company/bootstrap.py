@@ -202,6 +202,16 @@ def rehydrate_goal(
     )
 
 
+async def arehydrate_product(db: Any, product: Goal, *args: Any, **kwargs: Any):
+    """The agno 3.2 name of arehydrate_goal."""
+    return await arehydrate_goal(db, product, *args, **kwargs)
+
+
+def rehydrate_product(db: Any, product: Goal, *args: Any, **kwargs: Any):
+    """The agno 3.2 name of rehydrate_goal."""
+    return rehydrate_goal(db, product, *args, **kwargs)
+
+
 async def _start_company(agent_os: Any) -> bool:
     """Apply CompanyConfig and the Goals declared in code. False when a database must be migrated first.
 

@@ -5,6 +5,7 @@ deployment wrote in code, in config.yaml, in a token or in a stored role. Each k
 none logs a warning.
 """
 
+import asyncio
 import logging
 import sys
 import types
@@ -761,3 +762,137 @@ def test_replace_with_products_derives_a_config_that_has_goals():
     # replace passes the copied goals with the new products, as a caller that gives both does. The
     # constructor cannot tell the two apart, so it uses products for both.
     assert CompanyConfig(goals=[first], products=[second]).goals == [second]
+
+
+# ------------------------------------- an operator's own middleware, mapped for the 3.2.0 paths
+
+
+# What an operator wrote for agno 3.2.0 to guard the Company Product routes with a JWTMiddleware of their own.
+MAPPINGS_FOR_3_2_0 = {
+    "GET /company/products": ["products:read"],
+    "GET /company/products/*": ["products:read"],
+    "POST /company/products": ["products:write"],
+    "PATCH /company/products/*": ["products:write"],
+    "DELETE /company/products/*": ["products:delete"],
+}
+
+
+def _own_middleware_client(tmp_path, mappings):
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "own.db"))
+    agent_os = AgentOS(
+        id=OS_ID, db=db, company=CompanyConfig(goals=[Goal(id="this-agentos", name="AgentOS")]), telemetry=False
+    )
+    app = agent_os.get_app()
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[SECRET],
+        algorithm="HS256",
+        authorization=True,
+        scope_mappings=mappings,
+    )
+    return db, TestClient(app)
+
+
+def test_scope_mappings_written_for_the_3_2_0_paths_guard_the_goals_routes(tmp_path):
+    db, starting = _own_middleware_client(tmp_path, MAPPINGS_FOR_3_2_0)
+    with starting as client:
+        # A caller with no Company scope is refused, as on 3.2.0.
+        other = _headers(["agents:read"])
+        assert client.get("/company/goals", headers=other).status_code == 403
+        assert client.get("/company/goals/this-agentos", headers=other).status_code == 403
+        assert client.post("/company/goals", json={"name": "Docs"}, headers=other).status_code == 403
+        assert client.patch("/company/goals/this-agentos", json={"name": "X"}, headers=other).status_code == 403
+        assert client.delete("/company/goals/this-agentos", headers=other).status_code == 403
+        # Each action needs its own scope.
+        assert client.delete("/company/goals/this-agentos", headers=_headers(["products:read"])).status_code == 403
+        # A caller with the scope the operator mapped is let in, under either name.
+        for name in ("products", "goals"):
+            assert client.get("/company/goals", headers=_headers([f"{name}:read"])).status_code == 200
+            assert client.get("/company/goals/this-agentos", headers=_headers([f"{name}:read"])).status_code == 200
+    db.close()
+
+
+def test_a_mapping_for_the_current_path_is_used_as_written(tmp_path):
+    mappings = {**MAPPINGS_FOR_3_2_0, "GET /company/goals": ["tasks:read"]}
+    db, starting = _own_middleware_client(tmp_path, mappings)
+    with starting as client:
+        assert client.get("/company/goals", headers=_headers(["tasks:read"])).status_code == 200
+        assert client.get("/company/goals", headers=_headers(["goals:read"])).status_code == 403
+        # The paths the operator did not map again take the 3.2.0 mapping.
+        assert client.get("/company/goals/this-agentos", headers=_headers(["goals:read"])).status_code == 200
+        assert client.get("/company/goals/this-agentos", headers=_headers(["tasks:read"])).status_code == 403
+    db.close()
+
+
+# ------------------------------------------------------- a client written for agno 3.2.0
+
+
+@pytest.fixture
+def company_client(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "client.db"))
+    agent_os = AgentOS(
+        db=db,
+        company=CompanyConfig(goals=[Goal(id="docs", name="Docs", objective="Keep the docs accurate.")]),
+        telemetry=False,
+    )
+    with TestClient(agent_os.get_app()) as client:
+        other = client.post("/company/goals", json={"name": "Website"}).json()["id"]
+        for goal_id in ("docs", other):
+            created = client.post("/company/projects", json={"goal_id": goal_id, "name": "Project of " + goal_id[:4]})
+            assert created.status_code in (200, 201), created.text
+        yield client
+    db.close()
+
+
+@pytest.mark.parametrize(
+    "path", ["/company/projects", "/company/tasks", "/company/sources", "/company/routines", "/company/attention"]
+)
+def test_the_3_2_0_filter_is_refused_and_not_ignored(company_client, path):
+    # Ignored, product_id=docs would answer with the records of every Goal.
+    refused = company_client.get(path, params={"product_id": "docs"})
+    assert refused.status_code == 422, refused.text
+    assert "goal_id" in refused.text
+    assert company_client.get(path, params={"goal_id": "docs", "product_id": "docs"}).status_code == 422
+    assert company_client.get(path, params={"goal_id": "docs"}).status_code == 200
+    assert company_client.get(path).status_code == 200
+
+
+def test_the_goal_filter_narrows_the_list(company_client):
+    listed = company_client.get("/company/projects", params={"goal_id": "docs"}).json()
+    assert listed["meta"]["total_count"] == 1
+    assert company_client.get("/company/projects").json()["meta"]["total_count"] == 2
+
+
+def test_purpose_in_a_goal_body_is_refused_and_not_dropped(company_client):
+    patched = company_client.patch("/company/goals/docs", json={"purpose": "New aim"})
+    assert patched.status_code == 422, patched.text
+    assert "objective" in patched.text
+    assert company_client.get("/company/goals/docs").json()["objective"] == "Keep the docs accurate."
+    created = company_client.post("/company/goals", json={"name": "Blog", "purpose": "Write"})
+    assert created.status_code == 422, created.text
+    assert company_client.patch("/company/goals/docs", json={"objective": "New aim"}).json()["objective"] == "New aim"
+
+
+@pytest.mark.parametrize("by_keyword", [False, True])
+async def test_rehydrate_product_declares_a_goal(tmp_path, by_keyword):
+    from agno.company.bootstrap import arehydrate_product, rehydrate_product
+
+    declared = Goal(id="docs", name="Docs", objective="Keep the docs accurate.")
+    # The sync name, the way the 3.2 weekly review cookbook calls it.
+    sync_db = SqliteDb(db_file=str(tmp_path / "sync.db"))
+    if by_keyword:
+        row = await asyncio.to_thread(rehydrate_product, sync_db, product=declared, trusted=True)
+    else:
+        row = await asyncio.to_thread(rehydrate_product, sync_db, declared, trusted=True)
+    assert row["id"] == "docs" and sync_db.get_goal("docs")["objective"] == "Keep the docs accurate."
+    sync_db.close()
+
+    async_db = AsyncSqliteDb(db_file=str(tmp_path / "async.db"))
+    if by_keyword:
+        row = await arehydrate_product(async_db, product=declared, trusted=True)
+    else:
+        row = await arehydrate_product(async_db, declared, trusted=True)
+    assert row["id"] == "docs" and (await async_db.get_goal("docs"))["name"] == "Docs"
+    await async_db.close()

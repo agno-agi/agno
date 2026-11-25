@@ -2,15 +2,37 @@
 
 from typing import Any, Dict, List, Literal, Optional
 
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agno.registry._reserved import MINI_AGENT_ID
+
+
+def refuse_product_id(request: Request) -> None:
+    """Refuse ``product_id``, the filter a client written for agno 3.2 sends.
+
+    It is not an alias of ``goal_id``. Ignored, it would answer with the records of every Goal.
+    """
+    if "product_id" in request.query_params:
+        raise HTTPException(status_code=422, detail="product_id is not a filter of this route. Use goal_id.")
+
+
+def _refuse_purpose(data: Any) -> Any:
+    """Refuse ``purpose``, the field a client written for agno 3.2 sends. Dropped, the objective would stay as it is."""
+    if isinstance(data, dict) and "purpose" in data:
+        raise ValueError("purpose is not a field of a Goal. Use objective.")
+    return data
 
 
 class GoalCreate(BaseModel):
     name: str = Field(..., min_length=1)
     objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod
@@ -24,6 +46,11 @@ class GoalUpdate(BaseModel):
     name: Optional[str] = None
     objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod

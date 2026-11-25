@@ -38,6 +38,29 @@ LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
 }
 
 
+# Route paths that were renamed, by their old prefix. A scope mapping written for the old path
+# also guards the route under its current path. Without it the route has no mapping, and a
+# route with no mapping is open to any authenticated caller.
+RENAMED_ROUTE_PREFIXES: Dict[str, str] = {
+    "/company/products": "/company/goals",
+}
+
+
+def with_renamed_routes(scope_mappings: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """``scope_mappings`` with each mapping for a renamed route also under the route's current path.
+
+    A mapping the caller wrote for the current path is kept as written. The mappings keep their order,
+    which decides the match when two patterns cover one path.
+    """
+    renamed = dict(scope_mappings)
+    for key, scopes in scope_mappings.items():
+        method, _, path = key.partition(" ")
+        for old, new in RENAMED_ROUTE_PREFIXES.items():
+            if path == old or path.startswith(old + "/"):
+                renamed.setdefault(f"{method} {new}{path[len(old) :]}", scopes)
+    return renamed
+
+
 class AgentOSScope(str, Enum):
     """
     Enum of all available AgentOS permission scopes.

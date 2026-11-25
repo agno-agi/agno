@@ -18,6 +18,7 @@ from agno.db.base import AsyncBaseDb
 from agno.db.utils import get_sort_value
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import caller_is_admin, get_scoped_user_id, resolve_run_user_id
+from agno.os.routers.company.schema import refuse_product_id
 from agno.os.routers.schedules.router import get_schedule_router
 from agno.os.routers.schedules.schema import ScheduleCreate, ScheduleResponse, ScheduleRunResponse, ScheduleUpdate
 from agno.os.schema import PaginatedResponse, PaginationInfo
@@ -100,7 +101,11 @@ class Setup(Goal):
 
 
 def get_heartbeat_router(agent_os: Any) -> APIRouter:
-    router = APIRouter(prefix="/company", tags=["Company heartbeat"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        tags=["Company heartbeat"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
+    )
     db = agent_os._company_db
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
     auth = get_authentication_dependency(agent_os.settings)
