@@ -1071,6 +1071,24 @@ async def test_creating_one_company_table_does_not_settle_the_other(database, cr
         await MigrationManager(database.db()).up()
 
 
+@pytest.mark.parametrize("name", ["record", "agno_company_goals_rename"])
+async def test_the_stamp_of_a_configured_table_is_not_a_rename_record(database, name):
+    _write_3_2_0(database)
+    await _start_before_migrating(database)
+    database._patch.undo()
+    if name == "record":
+        # The stamp alone: no database creates a table with this name.
+        name = v3_3_0._rename_record("agno_company_products", "agno_company_goals")
+    else:
+        await _call(database.db(memory_table=name)._get_table, "memories", create_table_if_not_found=True)
+    await _call(database.db().upsert_schema_version, name, "3.3.0")
+
+    with pytest.raises(MigrationRequiredError):
+        await _call(database.db().get_goals)
+    with pytest.raises(v3_3_0.CompanyGoalsMigrationError):
+        await MigrationManager(database.db()).up()
+
+
 async def test_tables_3_2_creates_beside_those_of_a_new_database_are_not_used(database):
     """A database that never needed the migration records that too."""
     await _call(database.db()._get_table, "goals", create_table_if_not_found=True)

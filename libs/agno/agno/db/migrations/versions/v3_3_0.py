@@ -223,17 +223,24 @@ def _has_rows(sql: _Sql, name: str) -> bool:
     return sql._first(f"SELECT 1 FROM {sql.ref(name)}") is not None
 
 
-def _rename_record(current: str) -> str:
-    """The row of the versions table that records the rename of one table. It is not the name of a table."""
-    return f"{current}_rename"
+# The value of a rename record. A table's stamp is always a version, so no stamp is read as a record.
+RENAMED = "renamed"
 
 
-def _rename_recorded(sql: _Sql, tables: _CompanyTables, current: str) -> bool:
+def _rename_record(legacy: str, current: str) -> str:
+    """The row of the versions table that records the rename of one table.
+
+    No table has this name: SQLite reserves the prefix, and it is longer than PostgreSQL allows.
+    """
+    return f"sqlite_agno_migration_record:{current}:renamed_from:{legacy}"
+
+
+def _rename_recorded(sql: _Sql, tables: _CompanyTables, legacy: str, current: str) -> bool:
     """Whether the database records that a Company table carries its current name."""
     if not sql.table_exists(tables.versions):
         return False
-    statement = f"SELECT 1 FROM {sql.ref(tables.versions)} WHERE table_name = :name"
-    return sql._first(statement, name=_rename_record(current)) is not None
+    statement = f"SELECT 1 FROM {sql.ref(tables.versions)} WHERE table_name = :name AND version = :renamed"
+    return sql._first(statement, name=_rename_record(legacy, current), renamed=RENAMED) is not None
 
 
 def _record_rename(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], current: str) -> bool:
@@ -243,14 +250,14 @@ def _record_rename(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], cur
     """
     if legacy is None or not sql.table_exists(tables.versions) or not sql.table_exists(current):
         return False
-    if _rename_recorded(sql, tables, current):
+    if _rename_recorded(sql, tables, legacy, current):
         return False
     sql.sess.execute(
         text(
             f"INSERT INTO {sql.ref(tables.versions)} (table_name, version, created_at) "
-            "VALUES (:name, '3.3.0', :now) ON CONFLICT (table_name) DO NOTHING"
+            "VALUES (:name, :renamed, :now) ON CONFLICT (table_name) DO NOTHING"
         ),
-        {"name": _rename_record(current), "now": datetime.now().isoformat()},
+        {"name": _rename_record(legacy, current), "renamed": RENAMED, "now": datetime.now().isoformat()},
     )
     return True
 
@@ -265,7 +272,7 @@ def _is_pending(sql: _Sql, tables: _CompanyTables, legacy: Optional[str], curren
         return False
     if not sql.table_exists(current):
         return True
-    return _has_rows(sql, legacy) and not _rename_recorded(sql, tables, current)
+    return _has_rows(sql, legacy) and not _rename_recorded(sql, tables, legacy, current)
 
 
 def _refuse_two_tables(sql: _Sql, tables: _CompanyTables) -> None:
