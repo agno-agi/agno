@@ -4982,6 +4982,7 @@ class Workflow:
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=input,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             workflow_id=self.id,
@@ -5185,6 +5186,7 @@ class Workflow:
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=input,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             workflow_id=self.id,
@@ -6893,6 +6895,7 @@ class Workflow:
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            additional_data=run_response.additional_data,
             images=run_response.images,
             videos=run_response.videos,
             audio=run_response.audio,
@@ -8931,6 +8934,7 @@ class Workflow:
         # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            additional_data=run_response.additional_data,
             images=run_response.images,
             videos=run_response.videos,
             audio=run_response.audio,
@@ -10734,6 +10738,7 @@ class Workflow:
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=input,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             workflow_id=self.id,
@@ -11015,6 +11020,7 @@ class Workflow:
         workflow_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=input,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             workflow_id=self.id,
