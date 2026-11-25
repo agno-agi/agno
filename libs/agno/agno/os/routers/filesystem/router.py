@@ -34,6 +34,7 @@ from agno.os.routers.filesystem.schema import (
     FileSystemUsage,
 )
 from agno.os.routers.filesystem.utils import (
+    _can_share_every_name,
     _filesystem_backend_key,
     _filesystem_id_forms,
     _filesystem_ids,
@@ -378,7 +379,16 @@ async def _select_filesystems(
         # A failing agent does not hide what the others hold. With an agent named, its failure is not the request's.
         # A numbered id depends on every agent, so it is not opened until they all load.
         unsettled = _numbered_ids(ids, sources, declared) if filesystem_id is not None else set()
-        if any(selected_id in unsettled for selected_id, _ in selected) or (not selected and agent_id is None):
+        # Nor is a name that a store which is not loaded can have as well.
+        shared = {
+            ids[key]
+            for key, source in sources.items()
+            if filesystem_id not in (None, ids[key])
+            and filesystem_id == source.forms[-1]
+            and key not in {entry.key for entry in declared}
+            and _can_share_every_name(key)
+        }
+        if any(selected_id in unsettled | shared for selected_id, _ in selected) or (not selected and agent_id is None):
             raise failure
     if filesystem_id is not None and len(selected) > 1:
         raise HTTPException(status_code=409, detail=_AMBIGUOUS_ID_DETAIL)

@@ -219,8 +219,9 @@ Every entry of `GET /filesystem/namespaces` carries `file_count`, `folder_count`
 `total_bytes`. They cover every file the caller can read, at any depth: `notes/2026/b.md`
 is one file in two folders. They are left out when the filesystem cannot be read.
 
-Stores that share every name are numbered, and a number depends on every agent. While an
-agent cannot be loaded, such an entry carries `available: false` and its id is refused.
+Stores that share every name are numbered, as `notes:main:agno_fs:1` and `:2`, and a number
+depends on every agent. While an agent cannot be loaded, such an entry carries
+`available: false` and its id is refused.
 
 A path's length is limited when a file is written: 512 characters, 16 names, 128
 characters a name. A file that is stored is listed and read whatever the length of

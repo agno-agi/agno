@@ -147,11 +147,15 @@ def _assign_filesystem_ids(
     forms_by_key: Dict[tuple, Tuple[str, ...]],
     reserved_forms: Iterable[Tuple[str, ...]] = (),
     reserved_ids: Iterable[str] = (),
+    *,
+    unnumbered_first: bool = True,
 ) -> Dict[tuple, str]:
     """Give each store its shortest form that names no other store, in ``forms_by_key`` or reserved.
 
     Stores whose backends have the same names share every form. They are numbered
-    in order, skipping any number that would name another store.
+    in order, skipping any number that would name another store. Without ``unnumbered_first``
+    the first of them has a number too: the form alone is one the others answer to, so it would
+    open another store when the first is not there.
     """
     reserved = {form for forms in reserved_forms for form in forms} | set(reserved_ids)
     counts = Counter(form for forms in forms_by_key.values() for form in forms)
@@ -160,8 +164,11 @@ def _assign_filesystem_ids(
     for key, forms in forms_by_key.items():
         chosen = next((form for form in forms if counts[form] == 1 and form not in reserved), None)
         if chosen is None:
+            # A form another store takes as its own is not given, with or without a number.
             chosen, position = forms[-1], 1
-            while chosen in taken or (position > 1 and chosen in counts):
+            if not unnumbered_first:
+                position = 1 if chosen in reserved else 0
+            while chosen in taken or (chosen in counts and not (unnumbered_first and position == 1)):
                 position += 1
                 chosen = f"{forms[-1]}{_ID_SEPARATOR}{position}"
         taken.add(chosen)
@@ -182,8 +189,16 @@ def _filesystem_ids(
     declared_forms: Dict[tuple, Tuple[str, ...]] = dict(declared)
     held_forms = {key: forms for key, forms in held if key not in declared_forms}
     ids = _assign_filesystem_ids(declared_forms)
-    ids.update(_assign_filesystem_ids(held_forms, declared_forms.values(), list(ids.values())))
+    ids.update(_assign_filesystem_ids(held_forms, declared_forms.values(), list(ids.values()), unnumbered_first=False))
     return ids
+
+
+def _can_share_every_name(key: tuple) -> bool:
+    """Whether another store can have every name of this one, because where its files are is not known."""
+    backend = key[0]
+    if backend[0] == "backend":
+        return True
+    return backend[0] == "db" and not (isinstance(backend[1], tuple) and backend[1][0] != _ENGINE_PLACE)
 
 
 def _match_filesystem_id(filesystem_id: str, candidates: List[Tuple[str, Tuple[str, ...]]]) -> List[int]:

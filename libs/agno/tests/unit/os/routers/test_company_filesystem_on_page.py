@@ -741,7 +741,11 @@ def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(dec
             response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id, **params})
             return response.status_code, [entry["path"] for entry in response.json().get("entries", [])]
 
-        first, second = "notes:main:agno_fs", "notes:main:agno_fs:2"
+        first, second = (
+            ("notes:main:agno_fs", "notes:main:agno_fs:2")
+            if declared
+            else ("notes:main:agno_fs:1", "notes:main:agno_fs:2")
+        )
         assert opens("plain") == (200, [])
         if declared:
             # The ids of declared stores depend on the declarations alone.
@@ -761,6 +765,68 @@ def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(dec
         third = "notes:main:agno_fs:3"
         assert listed() == {first: (None, 1), second: (None, 1), third: (None, 1), "plain": (None, 0)}
         assert [opens(i) for i in (first, second, third)] == [(200, ["a.md"]), (200, ["b.md"]), (200, ["c.md"])]
+
+
+@pytest.mark.parametrize("names", [("a", "b"), ("a", "b", "c")])
+def test_an_id_never_opens_another_store_when_agents_stop_loading(names):
+    from itertools import combinations
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    down: set = set()
+
+    def factory(name: str, filesystem: FileSystem) -> AgentFactory:
+        def build(ctx):
+            if name in down:
+                raise RuntimeError("this agent cannot be built")
+            return Agent(id=name, filesystem=filesystem)
+
+        return AgentFactory(id=name, db=filesystem.backend.db, factory=build)
+
+    def store(name: str, db_id: str = "main", table_name: str = "files") -> FileSystem:
+        from agno.fs.db import DbFileSystem
+
+        engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        backend = DbFileSystem(db=SqliteDb(id=db_id, db_engine=engine), table_name=table_name)
+        filesystem = FileSystem(backend, namespace="notes")
+        filesystem.write(f"{name}.md", name)
+        return filesystem
+
+    stores = {name: store(name) for name in names}
+    # Stores whose own names are what a number or a longer name of the others could be.
+    stores["x"] = store("x", table_name="files:1")
+    stores["y"] = store("y", db_id="main:files", table_name="t")
+    agent_os = AgentOS(agents=[factory(name, filesystem) for name, filesystem in stores.items()], telemetry=False)
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+
+        def opens(filesystem_id: str, **params) -> tuple:
+            response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id, **params})
+            return response.status_code, [entry["path"] for entry in response.json().get("entries", [])]
+
+        saved = {}
+        for entry in client.get("/filesystem/namespaces").json()["namespaces"]:
+            status, paths = opens(entry["id"])
+            assert status == 200
+            saved[entry["id"]] = paths
+        assert sorted(saved.values()) == [[f"{name}.md"] for name in sorted(stores)]
+        # A name several stores answer to names none of them, whichever of them load.
+        assert opens("notes:main:files")[0] == 409
+
+        for size in range(1, len(stores)):
+            for failing in combinations(stores, size):
+                down.clear()
+                down.update(failing)
+                for filesystem_id, paths in saved.items():
+                    status, found = opens(filesystem_id)
+                    assert status != 200 or found == paths, (failing, filesystem_id)
+                # It may become the own name of the one store that is not numbered, and never opens a numbered one.
+                status, found = opens("notes:main:files")
+                assert status != 200 or found == ["y.md"], failing
+                # What the list advertises as available opens.
+                for entry in client.get("/filesystem/namespaces").json()["namespaces"]:
+                    expected = 500 if entry.get("available") is False else 200
+                    assert opens(entry["id"])[0] == expected, (failing, entry["id"])
 
 
 def test_the_list_gives_two_stores_with_one_namespace_two_ids(tmp_path):
