@@ -161,22 +161,51 @@ class _Sql:
             text(f"ALTER TABLE {self.ref(table_name)} RENAME COLUMN {self.quote(old)} TO {self.quote(new)}")
         )
 
-    def rename_index(self, table_name: str, old: str, new: str) -> None:
-        """Give an index the name a new database uses. SQLite cannot rename one, so it is rebuilt.
+    def rename_index(self, old: str, new: str) -> bool:
+        """Give an index the name a new database uses. Returns whether it has that name now.
+
+        SQLite cannot rename an index, so it is created again from the statement SQLite stored for
+        it, with only the name changed. That keeps UNIQUE, the WHERE clause, the column order and
+        the collation of an index the user added. An index whose stored statement cannot be read
+        that way keeps its name and its definition.
 
         SQLite creates the new index before dropping the old one, so a run that stops between the
         two leaves the old name for the next run to find.
         """
         if self.postgres:
             self.sess.execute(text(f"ALTER INDEX {self.ref(old)} RENAME TO {self.quote(new)}"))
-            return
-        info = self.sess.execute(text(f"PRAGMA index_info({self.quote(old)})")).fetchall()
-        indexed = ", ".join(self.quote(row[2]) for row in sorted(info, key=lambda row: row[0]))
-        self.sess.execute(text(f"CREATE INDEX IF NOT EXISTS {self.quote(new)} ON {self.quote(table_name)} ({indexed})"))
+            return True
+        stored = self._first("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = :name", name=old)
+        create = _sqlite_index_under_name(stored[0] if stored else None, old, self.quote(new))
+        if create is None:
+            return False
+        self.sess.execute(text(create))
         self.sess.execute(text(f"DROP INDEX {self.quote(old)}"))
+        return True
 
     def drop_index(self, name: str) -> None:
         self.sess.execute(text(f"DROP INDEX {self.ref(name)}"))
+
+
+def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -> Optional[str]:
+    """The statement that creates a stored SQLite index again under another name, if it is not there yet.
+
+    SQLite stores an index as ``CREATE INDEX`` or ``CREATE UNIQUE INDEX``, then the name as it was
+    written, then the rest of the statement. None when the name is not found in that place.
+    """
+    for head in ("CREATE UNIQUE INDEX ", "CREATE INDEX "):
+        if stored is None or not stored.startswith(head):
+            continue
+        rest = stored[len(head) :]
+        for written in (f'"{old}"', f"`{old}`", f"[{old}]", f"'{old}'", old):
+            if not rest.startswith(written):
+                continue
+            after = rest[len(written) :]
+            if written == old and after[:1] not in ("", " ", "\t", "\n", "\r", "("):
+                # The bare name is only the start of a longer name.
+                continue
+            return f"{head}IF NOT EXISTS {quoted_new}{after}"
+    return None
 
 
 def _goal_rows(sql: _Sql, table_name: str, objective: str) -> Dict[str, Any]:
@@ -265,11 +294,9 @@ def _rename_table(sql: _Sql, legacy: Optional[str], current: str, drop_current: 
     # A renamed table keeps the index names of its old name.
     for index in sql.indexes(current):
         if index.startswith(f"idx_{legacy}_"):
-            sql.rename_index(current, index, f"idx_{current}_" + index[len(f"idx_{legacy}_") :])
-            changed = True
+            changed = sql.rename_index(index, f"idx_{current}_" + index[len(f"idx_{legacy}_") :]) or changed
         elif sql.postgres and index == f"{legacy}_pkey":
-            sql.rename_index(current, index, f"{current}_pkey")
-            changed = True
+            changed = sql.rename_index(index, f"{current}_pkey") or changed
     return changed
 
 
@@ -288,9 +315,9 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
     if new in columns and old_index in indexes:
         if new_index in indexes:
             sql.drop_index(old_index)
+            changed = True
         else:
-            sql.rename_index(table_name, old_index, new_index)
-        changed = True
+            changed = sql.rename_index(old_index, new_index) or changed
     return changed
 
 

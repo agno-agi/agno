@@ -18,6 +18,7 @@ import httpx
 import pytest
 from sqlalchemy import BigInteger, String, Text, create_engine, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import JSON
 
 import agno.db.postgres.schemas as postgres_schemas
@@ -786,6 +787,59 @@ async def test_a_migrated_database_has_the_indexes_of_a_new_one(databases):
         assert after[name]["unique"] == fresh[name]["unique"], name
         assert after[name]["primary_key"] == fresh[name]["primary_key"], name
         assert sorted(after[name]["columns"]) == sorted(fresh[name]["columns"]), name
+
+
+def _index_sql(database: _Database, table_name: str) -> Dict[str, str]:
+    """The statement that defines each index of a table, by index name."""
+    engine = create_engine(database.url)
+    try:
+        with engine.connect() as conn:
+            if database.postgres:
+                rows = conn.execute(
+                    text("SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = :schema AND tablename = :name"),
+                    {"schema": database.schema, "name": table_name},
+                )
+            else:
+                rows = conn.execute(
+                    text("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = :name"),
+                    {"name": table_name},
+                )
+            return {row[0]: row[1] or "" for row in rows}
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("quoted", [False, True], ids=["bare-name", "quoted-name"])
+async def test_an_index_the_user_added_keeps_its_definition(database, quoted):
+    _write_3_2_0(database)
+    products = database._ref("agno_company_products")
+    framework_like = '"idx_agno_company_products_active_name"' if quoted else "idx_agno_company_products_active_name"
+    # One active Goal for each name. The first index is named the way the framework names its own.
+    database.execute(f"CREATE UNIQUE INDEX {framework_like} ON {products} (name) WHERE deleted_at IS NULL")
+    database.execute(f"CREATE UNIQUE INDEX active_product_names ON {products} (name, user_id) WHERE deleted_at IS NULL")
+    database.execute(f"CREATE INDEX idx_agno_company_products_newest ON {products} (created_at DESC)")
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    indexes = _index_sql(database, "agno_company_goals")
+    assert "idx_agno_company_products_active_name" not in indexes
+    assert "idx_agno_company_products_newest" not in indexes
+    for name in ("idx_agno_company_goals_active_name", "active_product_names"):
+        assert "UNIQUE" in indexes[name].upper(), indexes[name]
+        assert "deleted_at IS NULL" in indexes[name].replace('"', ""), indexes[name]
+    assert "DESC" in indexes["idx_agno_company_goals_newest"].upper()
+    goals = database._ref("agno_company_goals")
+    insert = f"INSERT INTO {goals} (id, name, created_at, deleted_at) VALUES (:id, 'AgentOS', {NOW}, :deleted_at)"
+    # An archived Goal may share the name. A second active Goal may not.
+    database.execute(insert, id="archived-copy", deleted_at=NOW)
+    with pytest.raises(IntegrityError):
+        database.execute(insert, id="active-copy", deleted_at=None)
+
+    # A second run finds nothing left to rename.
+    described = database.describe(rows=False)
+    await MigrationManager(database.db()).up()
+    assert database.describe(rows=False) == described
 
 
 async def test_a_second_run_changes_nothing(database):
