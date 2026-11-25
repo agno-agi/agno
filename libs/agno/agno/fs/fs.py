@@ -148,7 +148,8 @@ class FileSystem:
     ``description`` says what the store is for, in a sentence. The agent reads
     it in the toolkit's instructions, and an agent holding several stores also
     reads it on every tool, so it can tell the stores apart by more than their
-    namespace.
+    namespace. ``Agent(filesystem=...)`` adds those instructions to the prompt;
+    with a manually attached toolkit, compose ``toolkit.instructions`` yourself.
 
     Cheap to construct and holds no connections; the backend owns the
     engine/pool and is shared across instances.
@@ -919,6 +920,11 @@ class FileSystem:
         whole attach: the tools arrive with no instructions of their own, and the
         system prompt stays the developer's to order and edit. Pass
         ``add_instructions=True`` to have the toolkit carry them instead.
+
+        ``fs.instructions()`` is the usage text alone. On a store with a
+        ``description``, compose the toolkit's own text, which leads with it:
+        ``toolkit = fs.tools()`` then
+        ``Agent(tools=[toolkit], instructions=[..., toolkit.instructions])``.
 
         The default surface is the notes seven: ``read_file``, ``write_file``,
         ``append_file``, ``replace_lines``, ``list_files``, ``search_content``,

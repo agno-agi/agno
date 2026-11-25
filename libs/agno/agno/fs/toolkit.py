@@ -100,8 +100,9 @@ class FileSystemTools(Toolkit):
     agent's namespace by shared name). Holds the matching FileSystem instructions,
     led by the store's ``description`` when it has one,
     which reach the system prompt only under ``add_instructions=True``; otherwise
-    compose ``FileSystem.instructions()`` into the agent's own instructions, and
-    the whole system prompt stays the developer's. Tool errors are returned as
+    compose this toolkit's ``instructions`` attribute into the agent's own
+    instructions, and the whole system prompt stays the developer's
+    (``FileSystem.instructions()`` is the usage text alone, with no description). Tool errors are returned as
     ``"Error: ..."`` strings, never raised. Writes are last-writer-wins by
     design, and there is no confirmation surface, because this is the agent's own
     private, quota-capped store (pass ``requires_confirmation_tools`` to opt in).

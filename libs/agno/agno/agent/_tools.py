@@ -135,7 +135,8 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     Position distinguishes duplicate namespace labels. Truncation keeps built-in
     tool names within model providers' 64-character limit. A store's description
     follows its namespace on every tool, so the model can pick a store from the
-    tool list alone.
+    tool list alone. A tool name inside a file path, such as ``manuals/read_file.md``,
+    is part of the path and stays as written.
     """
     import re
     from copy import copy
@@ -149,7 +150,7 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     renamed.name = prefix
     renamed.id = prefix
     names = {name: f"{prefix}_{name}" for name in toolkit.FULL_TOOLS}
-    pattern = re.compile(r"\b(" + "|".join(names) + r")\b")
+    pattern = re.compile(r"(?<![\w./-])(" + "|".join(names) + r")(?![\w/-]|\.\w)")
 
     def qualify(text: str) -> str:
         return pattern.sub(lambda match: names[match.group(0)], text)

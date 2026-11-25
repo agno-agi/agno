@@ -415,6 +415,29 @@ def test_description_names_tools_by_their_qualified_names(db):
     assert expected in toolkit.instructions
 
 
+def test_file_paths_that_contain_a_tool_name_stay_as_written(db):
+    guide = FileSystem(
+        db,
+        namespace="guide",
+        read_only=True,
+        description="See manuals/read_file.md and read_file.txt. Open them with read_file.",
+    )
+    notes = FileSystem(
+        db,
+        namespace="notes",
+        instructions="Start from list_files/index.md, then call `list_files`.",
+    )
+    agent = Agent(id="analyst", filesystem=[guide, notes])
+
+    first, second = _filesystem_tools(agent)
+
+    purpose = "Purpose: See manuals/read_file.md and read_file.txt. Open them with fs_1_guide_read_file."
+    for function in [*first.functions.values(), *first.async_functions.values()]:
+        assert function.description.splitlines()[0] == f"Filesystem namespace: 'guide'. {purpose}"
+    assert first.instructions.splitlines()[1] == purpose
+    assert second.instructions.splitlines()[1] == "Start from list_files/index.md, then call `fs_2_notes_list_files`."
+
+
 def test_single_filesystem_description_leads_the_instructions(db):
     described = FileSystem(db, namespace="handbook", read_only=True, description="The company handbook.")
     custom = FileSystem(db, namespace="handbook", instructions="Custom guidance.", description="The company handbook.")
