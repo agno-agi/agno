@@ -206,6 +206,7 @@ class LiteLLM(Model):
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -231,7 +232,7 @@ class LiteLLM(Model):
             base_params["extra_query"] = self.extra_query
         if tools:
             base_params["tools"] = tools
-            base_params["tool_choice"] = "auto"
+            base_params["tool_choice"] = tool_choice or "auto"
 
         # Forward the output schema only for providers that support it; LiteLLM adapts it per provider
         if self.supports_native_structured_outputs or self.supports_json_schema_outputs:
@@ -266,7 +267,9 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
+        completion_kwargs = self.get_request_params(
+            tools=tools, response_format=response_format, tool_choice=tool_choice
+        )
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -289,7 +292,9 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
+        completion_kwargs = self.get_request_params(
+            tools=tools, response_format=response_format, tool_choice=tool_choice
+        )
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
@@ -312,7 +317,9 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
+        completion_kwargs = self.get_request_params(
+            tools=tools, response_format=response_format, tool_choice=tool_choice
+        )
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -335,7 +342,9 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
+        completion_kwargs = self.get_request_params(
+            tools=tools, response_format=response_format, tool_choice=tool_choice
+        )
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
