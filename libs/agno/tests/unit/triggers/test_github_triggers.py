@@ -206,19 +206,12 @@ async def test_a_worker_stopped_mid_run_hands_the_event_back(make_os):
     assert row["status"] == EVENT_RUNNING
     first_run = row["run_id"]
 
-    # The process shuts down while the run is going.
+    # The process shuts down while the run is going. The event is handed back at once, with the
+    # run it started still named on it, so the worker that takes it next knows what to look at.
     await os.runtime.poller.stop()
     (row,) = await os.events()
     assert row["status"] == EVENT_PENDING and row["claimed_by"] is None
     assert row["run_id"] == first_run
-
-    # After the restart the event runs again, in the same session.
-    os.runtime.executor._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=os.app), timeout=30)
-    model.gate.set()
-    await os.run_events()
-    (row,) = await os.events()
-    assert row["status"] == EVENT_SUCCESS
-    assert row["run_id"] != first_run
     assert row["session_id"] == session_id_for(row["trigger_id"], "agno-agi/agno#7")
 
 

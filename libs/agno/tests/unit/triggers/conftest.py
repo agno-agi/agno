@@ -228,6 +228,23 @@ async def age_claim(db: Any, event_id: str, seconds: int) -> None:
             sess.execute(statement, {"seconds": seconds, "id": event_id})
 
 
+class FailingReads(httpx.AsyncBaseTransport):
+    """The executor's way to the app, with the first reads of a run's status answered by a failure."""
+
+    def __init__(self, app: Any, times: int, status_code: int = 503):
+        self.inner = httpx.ASGITransport(app=app)
+        self.left = times
+        self.status_code = status_code
+        self.requests: List[httpx.Request] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.method == "GET" and "/runs/" in request.url.path and self.left > 0:
+            self.left -= 1
+            return httpx.Response(self.status_code, json={"detail": "unavailable"})
+        return await self.inner.handle_async_request(request)
+
+
 @dataclass
 class Harness:
     """One AgentOS with a GitHub source, driven in process: deliveries in, events run on demand."""
@@ -285,6 +302,17 @@ class Harness:
         )
         assert response.status_code == 200, response.text
         return response.json()
+
+    def fail_reads(self, times: int, status_code: int = 503) -> FailingReads:
+        """Make the executor's next reads of a run's status fail."""
+        transport = FailingReads(self.app, times, status_code)
+        self.runtime.executor._client = httpx.AsyncClient(transport=transport, timeout=30)
+        return transport
+
+    async def lose_claim(self, event_id: str) -> None:
+        """Hold an event as if its worker stopped after the run ended and before it recorded the result."""
+        await call(self.db, "update_trigger_event", event_id, status="running", output=None, completed_at=None)
+        await age_claim(self.db, event_id, 121)
 
     async def close(self) -> None:
         await self.runtime.executor.close()
@@ -345,6 +373,9 @@ async def make_os(database):
         # The executor reaches the run endpoints of this same app, in process.
         executor._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), timeout=30)
         executor.poll_interval = 0.02
+        # Short waits, so a test of a failed read or of a run that does not stop takes no real time.
+        executor.read_backoff = 0.01
+        executor.stop_grace_seconds = 0.2
         if declare_now:
             await adeclare_triggers(db, agent_os.triggers)
         harness = Harness(agent_os=agent_os, app=app, db=db, github=github, model=model, client=client)

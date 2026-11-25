@@ -189,3 +189,28 @@ async def test_a_trigger_a_caller_created_runs_with_the_authority_it_saved(make_
     assert refused["status_code"] == 403
     assert refused["run_id"] is None
     assert len(os.model.inputs) == 1
+
+
+async def test_a_creator_who_may_run_but_not_read_the_target_gets_a_completed_event(make_os):
+    os = await make_os(lambda github, agent: [], os_options=checked())
+
+    alice = caller(["agents:engineer:run"])
+    with authorization_scope(lambda: alice):
+        await TriggerManager(os.db).acreate(
+            name="alice-triage",
+            source_id=os.github.id,
+            events=["issues.opened"],
+            target_type="agent",
+            target_id="engineer",
+            input=INSTRUCTION,
+        )
+
+    assert (await os.deliver(issue_payload())).status_code == 202
+    await os.run_events()
+
+    # The run is started with alice's authority. Its status is read with the executor's own token,
+    # so the right to run is all alice needs.
+    (row,) = await os.events()
+    assert row["status"] == EVENT_SUCCESS, row
+    assert row["output"]["content"] == "done"
+    assert len(os.model.inputs) == 1
