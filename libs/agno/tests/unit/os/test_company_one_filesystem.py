@@ -321,7 +321,10 @@ def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(
             errors.append(record.getMessage())
 
     handler = Collect(level=logging.ERROR)
-    logging.getLogger("agno").addHandler(handler)
+    # agno logs through one of three loggers, and an earlier test can leave any of them active.
+    loggers = [logging.getLogger(name) for name in ("agno", "agno-team", "agno-workflow")]
+    for logger in loggers:
+        logger.addHandler(handler)
     try:
         # AgentOS starts either way. Only notes/ waits: the rest of the Company file system is served.
         with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
@@ -342,7 +345,8 @@ def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(
             served = client.get("/company/notes/ideas.md")
             assert served.status_code == 200 and served.json()["content"] == "A note"
     finally:
-        logging.getLogger("agno").removeHandler(handler)
+        for logger in loggers:
+            logger.removeHandler(handler)
     os_reader.close()
     company_db.close()
     if not os_async:
