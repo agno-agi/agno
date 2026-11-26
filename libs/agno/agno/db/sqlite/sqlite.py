@@ -9567,14 +9567,14 @@ class SqliteDb(BaseDb):
     # --- Projects ---
 
     def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
-        from agno.db.sql.company import lock_goal
+        from agno.db.sql.company import lock_parent
 
         table = self._get_table(table_type="projects", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create projects table")
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_goal(sess, goals, project_data["goal_id"])
+            lock_parent(sess, goals, table, project_data["goal_id"])
             if reuse:
                 existing = sess.execute(select(table).where(table.c.id == project_data["id"])).first()
                 if existing is not None:
@@ -9796,7 +9796,7 @@ class SqliteDb(BaseDb):
     # --- Tasks ---
 
     def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agno.db.sql.company import existing_task_proposal, lock_goal, require_project
+        from agno.db.sql.company import existing_task_proposal, lock_parent, require_project
 
         table = self._get_table(table_type="tasks", create_table_if_not_found=True)
         if table is None:
@@ -9804,7 +9804,7 @@ class SqliteDb(BaseDb):
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_goal(sess, goals, task_data["goal_id"])
+            lock_parent(sess, goals, projects, task_data["goal_id"], task_data.get("project_id"))
             require_project(sess, projects, task_data.get("project_id"), task_data["goal_id"])
             proposal = existing_task_proposal(sess, table, task_data)
             if proposal is not None:
@@ -9933,9 +9933,9 @@ class SqliteDb(BaseDb):
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
             lock_child(sess, goals, projects, table, task_id)
-            goal_id = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).scalar()
-            if goal_id is not None and fields.get("project_id") is not None:
-                require_project(sess, projects, fields["project_id"], goal_id, "backlog")
+            current = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).first()
+            if current is not None and fields.get("project_id") is not None:
+                require_project(sess, projects, fields["project_id"], current[0], "backlog")
             result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 

@@ -13,6 +13,10 @@ In the database that holds the Company tables (SQLite or PostgreSQL):
 - An archived Project or Task records the parent that archived it. A parent of type ``product``
   becomes type ``goal``, which is what restoring a Goal looks for.
 - The schema version rows move to the new table names.
+- The column ``goal_id`` of the projects and tasks tables accepts NULL: from 3.3.0 a Goal is optional
+  on a Project and on a Task. PostgreSQL drops the constraint in place. SQLite cannot, so there the
+  table is created again without it, its rows are copied, and it takes the old table's name and
+  indexes. No row or id changes. This also runs for a table created by a 3.3.0 development build.
 
 In the database that holds the schedules (SQLite, PostgreSQL or MongoDB):
 - ``payload.metadata.product_id`` of a Routine becomes ``goal_id``.
@@ -261,6 +265,20 @@ class _Sql:
     def drop_index(self, name: str) -> None:
         self.sess.execute(text(f"DROP INDEX {self.ref(name)}"))
 
+    def not_null(self, table_name: str, column_name: str) -> bool:
+        """Whether a column of an existing table refuses NULL."""
+        if self.postgres:
+            found = self._first(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_schema = :schema AND table_name = :name AND column_name = :column",
+                schema=self.schema,
+                name=table_name,
+                column=column_name,
+            )
+            return found is not None and found[0] == "NO"
+        info = self.sess.execute(text(f"PRAGMA table_info({self.quote(table_name)})")).fetchall()
+        return any(row[1] == column_name and bool(row[3]) for row in info)
+
 
 def _sqlite_index_under_name(stored: Optional[str], old: str, quoted_new: str) -> Optional[Tuple[str, str]]:
     """The statement that creates a stored SQLite index again under another name, if it is not there yet.
@@ -396,9 +414,93 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
     return changed
 
 
+# The name a SQLite table has while it is created again without NOT NULL on goal_id.
+_REBUILT_SUFFIX = "_agno_3_3_0_rebuilt"
+_NOT_NULL_GOAL = re.compile(r'''(["`\[]?\bgoal_id\b["`\]]?\s+\w+(?:\s*\([^)]*\))?)\s+NOT\s+NULL''', re.IGNORECASE)
+_CREATED_TABLE = re.compile(r'''^\s*CREATE\s+TABLE\s+("[^"]+"|`[^`]+`|\[[^\]]+\]|[^\s(]+)''', re.IGNORECASE)
+
+
+def _goal_optional_tables(tables: _CompanyTables) -> Tuple[str, str]:
+    return tables.projects, tables.tasks
+
+
+def _goal_optional_pending(sql: _Sql, table_name: str) -> bool:
+    """Whether a projects or tasks table still requires a Goal, or a SQLite rebuild of it stopped half way."""
+    if sql.table_exists(table_name):
+        return sql.not_null(table_name, "goal_id")
+    return not sql.postgres and sql.table_exists(table_name + _REBUILT_SUFFIX)
+
+
+def _sqlite_standard_indexes(sql: _Sql, table_name: str) -> None:
+    """Create the single-column indexes a new database gives this table, where one is missing."""
+    from agno.db.sqlite.schemas import PROJECTS_TABLE_SCHEMA, TASKS_TABLE_SCHEMA
+
+    columns = sql.columns(table_name)
+    schema = TASKS_TABLE_SCHEMA if "project_id" in columns else PROJECTS_TABLE_SCHEMA
+    for name, config in schema.items():
+        if isinstance(config, dict) and config.get("index") and name in columns:
+            index = sql.quote(f"idx_{table_name}_{name}")
+            sql.sess.execute(text(f"CREATE INDEX IF NOT EXISTS {index} ON {sql.quote(table_name)} ({sql.quote(name)})"))
+
+
+def _sqlite_goal_optional(sql: _Sql, table_name: str) -> None:
+    """Create a SQLite table again with goal_id accepting NULL, keeping its rows, name and indexes.
+
+    The old table is dropped only after the new one holds every row and accepts NULL. A run that
+    stopped before the drop starts again from the old table. A run that stopped after it finds the
+    new table under its temporary name and gives it the old name.
+    """
+    spare = table_name + _REBUILT_SUFFIX
+    quote = sql.quote
+    if not sql.table_exists(table_name):
+        sql.rename_table(spare, table_name)
+        _sqlite_standard_indexes(sql, table_name)
+        return
+    if sql.table_exists(spare):
+        sql.sess.execute(text(f"DROP TABLE {quote(spare)}"))
+    find = "SELECT sql FROM sqlite_master WHERE type = :type AND tbl_name = :name AND sql IS NOT NULL"
+    stored = sql._first(find + " AND name = :name", type="table", name=table_name)[0]
+    create, named = _CREATED_TABLE.subn(lambda _: f"CREATE TABLE {quote(spare)}", stored, count=1)
+    create, relaxed = _NOT_NULL_GOAL.subn(lambda match: match.group(1), create, count=1)
+    if not named or not relaxed:
+        raise CompanyGoalsMigrationError(
+            f"Table {table_name} could not be changed to make goal_id optional: its definition was not "
+            "recognised. Nothing was changed in it."
+        )
+    indexes = [row[0] for row in sql.sess.execute(text(find), {"type": "index", "name": table_name}).fetchall()]
+    sql.sess.execute(text(create))
+    columns = ", ".join(quote(name) for name in sql.columns(table_name))
+    sql.sess.execute(text(f"INSERT INTO {quote(spare)} ({columns}) SELECT {columns} FROM {quote(table_name)}"))
+    copied = sql._first(f"SELECT COUNT(*) FROM {quote(spare)}")[0]
+    if copied != sql._first(f"SELECT COUNT(*) FROM {quote(table_name)}")[0] or sql.not_null(spare, "goal_id"):
+        sql.sess.execute(text(f"DROP TABLE {quote(spare)}"))
+        raise CompanyGoalsMigrationError(
+            f"Table {table_name} could not be changed to make goal_id optional: the copy did not match. "
+            "Nothing was changed in it."
+        )
+    sql.sess.execute(text(f"DROP TABLE {quote(table_name)}"))
+    sql.rename_table(spare, table_name)
+    for index in indexes:
+        sql.sess.execute(text(index))
+    _sqlite_standard_indexes(sql, table_name)
+
+
+def _make_goal_optional(sql: _Sql, table_name: str) -> bool:
+    """Let goal_id be NULL on a projects or tasks table."""
+    if not _goal_optional_pending(sql, table_name):
+        return False
+    if sql.postgres:
+        sql.sess.execute(text(f"ALTER TABLE {sql.ref(table_name)} ALTER COLUMN {sql.quote('goal_id')} DROP NOT NULL"))
+    else:
+        _sqlite_goal_optional(sql, table_name)
+    return True
+
+
 def _rename_pending(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
-    """Whether a Company table still has its 3.2.0 name or columns."""
+    """Whether a Company table still has its 3.2.0 name or columns, or still requires a Goal."""
     sql = _Sql(sess, db_type, tables.schema)
+    if any(_goal_optional_pending(sql, name) for name in _goal_optional_tables(tables)):
+        return True
     pairs = ((tables.legacy_goals, tables.goals), (tables.legacy_details, tables.details))
     if any(_is_pending(sql, tables, legacy, current) for legacy, current in pairs):
         return True
@@ -519,6 +621,8 @@ def _rename_company(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
     changed = _rename_column(sql, tables.goals, "purpose", "objective") or changed
     for name in (tables.projects, tables.tasks, tables.sources):
         changed = _rename_column(sql, name, "product_id", "goal_id") or changed
+    for name in _goal_optional_tables(tables):
+        changed = _make_goal_optional(sql, name) or changed
     for name in (tables.projects, tables.tasks):
         changed = _rename_archive_parents(sql, name) or changed
     changed = _move_version_stamps(sql, tables) or changed

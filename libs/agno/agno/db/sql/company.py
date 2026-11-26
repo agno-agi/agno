@@ -12,12 +12,18 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
+from agno.db.schemas.projects import is_default_project, refuse_default_project
 from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 
 
 def active_parents(stmt: Any, table: Any, goals: Any, projects: Any = None) -> Any:
-    """Hide children of archived parents before counting or paging."""
-    stmt = stmt.where(select(goals.c.id).where(goals.c.id == table.c.goal_id, goals.c.deleted_at.is_(None)).exists())
+    """Hide children of archived parents before counting or paging. A record with no Goal has none to hide it."""
+    stmt = stmt.where(
+        or_(
+            table.c.goal_id.is_(None),
+            select(goals.c.id).where(goals.c.id == table.c.goal_id, goals.c.deleted_at.is_(None)).exists(),
+        )
+    )
     if projects is not None:
         stmt = stmt.where(
             or_(
@@ -40,6 +46,18 @@ def lock_goal(sess: Any, goals: Any, goal_id: str) -> None:
     row = sess.execute(stmt.values(updated_at=goals.c.updated_at).returning(goals.c.id)).first()
     if row is None:
         raise ValueError("Goal is missing or archived")
+
+
+def lock_parent(sess: Any, goals: Any, projects: Any, goal_id: Optional[str], project_id: Optional[str] = None) -> None:
+    """Serialize a hierarchy write on the record's Goal, or on its Project when the record has no Goal.
+
+    A Project and its Tasks with no Goal share the Project's row as their lock, the way records
+    of a Goal share the Goal's row. A new Project with no Goal has nothing to wait for.
+    """
+    if goal_id is not None:
+        lock_goal(sess, goals, goal_id)
+    elif project_id is not None:
+        sess.execute(projects.update().where(projects.c.id == project_id).values(updated_at=projects.c.updated_at))
 
 
 def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
@@ -71,7 +89,7 @@ def require_project(
     sess: Any,
     projects: Any,
     project_id: Optional[str],
-    goal_id: str,
+    goal_id: Optional[str],
     task_status: Optional[str] = None,
     *,
     reject_proposed: bool = False,
@@ -82,7 +100,9 @@ def require_project(
     row = sess.execute(select(projects).where(projects.c.id == project_id)).first()
     if row is None or row._mapping["deleted_at"] is not None:
         raise ValueError("Project is missing or archived")
-    if row._mapping["goal_id"] != goal_id:
+    # A Task carries its Project's Goal, or none when the Project has none. The Default Project
+    # holds Tasks of any Goal and of none.
+    if not is_default_project(project_id) and row._mapping["goal_id"] != goal_id:
         raise ValueError("Task and Project must belong to the same Goal")
     if reject_cancelled and row._mapping["status"] == "cancelled":
         raise CancelledProjectError("Cannot change Task status in a cancelled Project")
@@ -120,7 +140,7 @@ def lock_child(
     if row is None:
         return
     record = row._mapping
-    lock_goal(sess, goals, record["goal_id"])
+    lock_parent(sess, goals, projects, record["goal_id"], record["project_id"] if "project_id" in table.c else record_id)
     # Read the Project again after taking the Goal lock: a move may have won it.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
@@ -250,6 +270,7 @@ def archive_project(
     user_id: Optional[str],
     updated_before: Optional[int] = None,
 ) -> bool:
+    refuse_default_project(project_id, "archive")
     lock_child(sess, goals, projects, projects, project_id)
     stmt = select(projects).where(projects.c.id == project_id, projects.c.deleted_at.is_(None))
     if user_id is not None:

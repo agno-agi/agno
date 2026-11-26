@@ -7896,14 +7896,14 @@ class AsyncPostgresDb(AsyncBaseDb):
     # --- Projects ---
 
     async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
-        from agno.db.sql.company import lock_goal
+        from agno.db.sql.company import lock_parent
 
         table = await self._get_table(table_type="projects", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create projects table")
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_goal, goals, project_data["goal_id"])
+            await sess.run_sync(lock_parent, goals, table, project_data["goal_id"])
             if reuse:
                 existing = (await sess.execute(select(table).where(table.c.id == project_data["id"]))).first()
                 if existing is not None:
@@ -8129,7 +8129,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     # --- Tasks ---
 
     async def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agno.db.sql.company import existing_task_proposal, lock_goal, require_project
+        from agno.db.sql.company import existing_task_proposal, lock_parent, require_project
 
         table = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         if table is None:
@@ -8137,7 +8137,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_goal, goals, task_data["goal_id"])
+            await sess.run_sync(
+                lock_parent, goals, projects, task_data["goal_id"], task_data.get("project_id")
+            )
             await sess.run_sync(require_project, projects, task_data.get("project_id"), task_data["goal_id"])
             proposal = await sess.run_sync(existing_task_proposal, table, task_data)
             if proposal is not None:
@@ -8266,9 +8268,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
             await sess.run_sync(lock_child, goals, projects, table, task_id)
-            goal_id = (await sess.execute(select(table.c.goal_id).where(table.c.id == task_id))).scalar()
-            if goal_id is not None and fields.get("project_id") is not None:
-                await sess.run_sync(require_project, projects, fields["project_id"], goal_id, "backlog")
+            current = (await sess.execute(select(table.c.goal_id).where(table.c.id == task_id))).first()
+            if current is not None and fields.get("project_id") is not None:
+                await sess.run_sync(require_project, projects, fields["project_id"], current[0], "backlog")
             result = (
                 await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
             ).fetchone()
@@ -8458,7 +8460,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, lock_goal, require_open_room, require_project
+        from agno.db.sql.company import lock_child, lock_parent, require_open_room, require_project
 
         table = await self._get_table(table_type="tasks")
         if table is None:
@@ -8499,7 +8501,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 visible = (await sess.execute(stmt)).fetchone()
                 if visible is None:
                     return None
-                await sess.run_sync(lock_goal, goals, visible._mapping["goal_id"])
+                await sess.run_sync(
+                    lock_parent, goals, projects, visible._mapping["goal_id"], visible._mapping["project_id"]
+                )
             row = (await sess.execute(stmt)).fetchone()
             if row is None:
                 return None
