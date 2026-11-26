@@ -413,6 +413,7 @@ def test_cancelled_run_is_not_judged(monkeypatch):
     assert reliability_instances == []
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
 def test_cancelled_error_raised_inside_a_case_fails_only_that_case(monkeypatch):
     # A tool can raise CancelledError while the task itself is not cancelled; the suite goes on.
     _install_fake_evals(monkeypatch)
