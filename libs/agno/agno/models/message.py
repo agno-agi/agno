@@ -106,7 +106,7 @@ class Message(BaseModel):
     tool_call_error: Optional[bool] = None
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
-    # TODO: Rename to `store_in_history` to clarify that this flag controls whether the run keeps the message.
+    # When True, the message will be added to the agent's memory.
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
@@ -488,11 +488,3 @@ class Message(BaseModel):
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""
         return self.content is not None and len(self.content) > 0
-
-
-class _MessageContextNote(Message):
-    """Framework context sent as a prefix to the following user input."""
-
-    role: str = "user"
-    content: str
-    add_to_agent_memory: bool = False

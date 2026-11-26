@@ -662,9 +662,6 @@ class OpenAIResponses(Model):
                         fc_id_to_call_id[fc_id] = call_id
         return fc_id_to_call_id
 
-    def _context_text_block(self, text: str) -> Dict[str, str]:
-        return {"type": "input_text", "text": text}
-
     def _format_messages(
         self,
         messages: List[Message],

@@ -3,9 +3,10 @@
 Super Agent's tools add Tasks to the conversation's session state. When the Team builds a fresh
 run's messages, it reads the listed Tasks and marks changes since the last state shown to the model.
 
-The Team keeps the block separate from the person's input so the stored run holds their original
-message. For text input the model receives the block and the person's words together, including
-when a provider continues from its previous response.
+The Team sends the block as a user message of its own right before the person's input, and does
+not store it: the stored run holds the person's message as they sent it. It sits after the last
+assistant message, so a provider that continues from its previous response is still sent it. The
+model's provider has to accept two user messages in a row, or merge them in its own formatter.
 """
 
 import asyncio

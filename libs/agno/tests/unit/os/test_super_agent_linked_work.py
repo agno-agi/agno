@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from agno.models.message import _MessageContextNote
 from agno.os.manager import company_tasks
 from agno.os.manager.company_tasks import CompanyTaskTools
 from agno.os.manager.linked_work import (
@@ -402,20 +401,13 @@ class Scripted(ScriptedModel):
         return super().invoke(system + [m for m in messages if not m.from_history and m.role != "system"], tools)
 
 
-def split(content):
-    """A message as the model was sent it: the block that came with it ('' for none) and the text."""
-    content = str(content)
-    if not content.startswith(_HEADER):
-        return "", content
-    # The block has no empty line in it, so the first one ends it.
-    block_text, _, text = content.partition("\n\n")
-    return block_text, text
-
-
 def blocks(request):
-    """The linked-work blocks in one request to the model."""
-    found = [split(content)[0] for role, content, old in request if role == "user" and not old]
-    return [block_text for block_text in found if block_text]
+    """The linked-work blocks in one request to the model: each is a user message of its own."""
+    return [str(content) for role, content, old in request if role == "user" and not old and is_block(content)]
+
+
+def is_block(content):
+    return isinstance(content, str) and content.startswith(NOTE)
 
 
 def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
@@ -425,13 +417,14 @@ def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
     with authorization_scope(lambda: person(scopes)):
         run = asyncio.run(chat.os.manager.arun("Hello", user_id="alice", session_id=session, **options))
     sent = [blocks(request) for request in model.requests]
-    # Every model step of the run is sent the same block, once, as the start of the person's message.
+    # Every model step of the run is sent the same block, once, right before the person's message.
     assert all(found == sent[0] and len(found) <= 1 for found in sent), sent
     for request in model.requests:
         fresh = [content for role, content, old in request if not old and role == "user"]
-        assert len(fresh) == 1 and split(fresh[0])[1].startswith("Hello")
-        roles = [role for role, _, _ in request]
-        assert all(pair != ("user", "user") for pair in zip(roles, roles[1:])), roles
+        assert str(fresh[-1]).startswith("Hello") and len(fresh) == 1 + len(sent[0])
+        if sent[0]:
+            position = [content for _, content, _ in request].index(sent[0][0])
+            assert request[position + 1][:2] == ("user", fresh[-1])
     return run, (sent[0][0] if sent[0] else "")
 
 
@@ -906,7 +899,7 @@ def test_learning_is_not_given_a_message_the_run_does_not_keep(mode):
 
     learning = Learning()
     team = SimpleNamespace(_learning=learning, id="superagent")
-    block_message = _MessageContextNote(content=NOTE + "now")
+    block_message = Message(role="user", content=NOTE + "now", add_to_agent_memory=False)
     said = [Message(role="user", content="Hello"), Message(role="assistant", content="Hi")]
     run_messages = RunMessages(messages=[said[0], block_message, said[1]])
     session = SimpleNamespace(session_id="chat")
@@ -915,73 +908,6 @@ def test_learning_is_not_given_a_message_the_run_does_not_keep(mode):
     else:
         asyncio.run(_aprocess_learnings(team, run_messages, session, "alice"))
     assert learning.messages == said
-
-
-def test_a_note_is_sent_as_the_start_of_the_message_after_it():
-    from agno.models.message import Message
-
-    model = Scripted()
-
-    def view(messages):
-        return [(m.role, m.content) for m in model._with_notes_merged(messages)]
-
-    system, earlier, reply = Message(role="system", content="S"), Message(role="user", content="Earlier"), None
-    reply = Message(role="assistant", content="Reply")
-    note = _MessageContextNote(content="Note")
-    hello = Message(role="user", content="Hello")
-
-    # With no note the list itself is passed on, untouched.
-    plain = [system, earlier, reply, hello]
-    assert model._with_notes_merged(plain) is plain
-    assert view([system, earlier, reply, note, hello]) == [
-        ("system", "S"),
-        ("user", "Earlier"),
-        ("assistant", "Reply"),
-        ("user", "Note\n\nHello"),
-    ]
-    assert (note.content, hello.content, hello.add_to_agent_memory) == ("Note", "Hello", True)
-    # Two notes go in the order they were attached. A note with no message after it is sent as it is.
-    second = _MessageContextNote(content="Second")
-    assert view([note, second, hello]) == [("user", "Note\n\nSecond\n\nHello")]
-    assert view([system, note]) == [("system", "S"), ("user", "Note")]
-    assert view([note, reply, hello]) == [("user", "Note"), ("assistant", "Reply"), ("user", "Hello")]
-    # An unstored system note, as compaction writes, is not a user note.
-    compaction = Message(role="system", content="Summary", add_to_agent_memory=False)
-    kept = [system, compaction, hello]
-    assert model._with_notes_merged(kept) is kept
-
-
-@pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("mode", ["sync", "async"])
-def test_every_way_a_model_is_called_sends_the_note_with_the_message(mode, stream):
-    from agno.models.message import Message
-
-    model = Scripted()
-    messages = [
-        Message(role="system", content="S"),
-        _MessageContextNote(content=NOTE + "now"),
-        Message(role="user", content="Hello"),
-    ]
-    assistant = Message(role="assistant")
-
-    async def call():
-        if stream:
-            return [
-                part async for part in model._ainvoke_stream_with_retry(messages=messages, assistant_message=assistant)
-            ]
-        return await model._ainvoke_with_retry(messages=messages, assistant_message=assistant)
-
-    if mode == "async":
-        asyncio.run(call())
-    elif stream:
-        list(model._invoke_stream_with_retry(messages=messages, assistant_message=assistant))
-    else:
-        model._invoke_with_retry(messages=messages, assistant_message=assistant)
-    assert [(role, content) for role, content, _ in model.requests[0]] == [
-        ("system", "S"),
-        ("user", NOTE + "now\n\nHello"),
-    ]
-    assert len(messages) == 3
 
 
 def test_a_move_does_not_change_when_a_task_was_accepted_and_a_failed_run_is_not_dated(chat):  # noqa: F811
@@ -1048,7 +974,7 @@ def test_a_callers_dependencies_behave_as_they_did(chat, asked):  # noqa: F811
     _, sent = say(chat, **options)
     assert sent != "" and "secret-value" not in sent
     fresh = [content for role, content, old in chat.os.manager.model.requests[0] if role == "user" and not old]
-    person_message = split(fresh[-1])[1]
+    person_message = fresh[-1]
     if asked:
         # Asked for, the caller's dependencies are added to the person's message, and only theirs.
         added = json.loads(person_message.split("<additional context>")[1].split("</additional context>")[0])
@@ -1114,7 +1040,21 @@ def test_message_context_is_read_before_the_input_on_each_build(tmp_path, mode):
     assert tasks.reads == reads
     _, built = build([*supplied, Message(role="user", content="Current")])
     assert [m.content for m in built.messages[-4:-2]] == ["Past", "Answer"]
-    assert isinstance(built.messages[-2], _MessageContextNote) and built.messages[-1].content == "Current"
+    block_message = built.messages[-2]
+    assert (block_message.role, block_message.add_to_agent_memory) == ("user", False) and type(block_message) is Message
+    assert task["id"] in block_message.content and built.messages[-1].content == "Current"
+
+    # Text with an image: the block is its own message, and the image stays on the person's message.
+    from agno.media import Image
+
+    photo = Image(url="https://example.invalid/photo.png")
+    arguments = dict(run_response=TeamRunOutput(run_id="r", team_id="plain", session_id="s"), run_context=run_context)
+    arguments.update(session=session, input_message="Describe it", images=[photo], add_history_to_context=True)
+    built = (
+        _get_run_messages(team, **arguments) if mode == "sync" else asyncio.run(_aget_run_messages(team, **arguments))
+    )
+    assert task["id"] in built.messages[-2].content and not built.messages[-2].images
+    assert (built.messages[-1].content, built.messages[-1].images) == ("Describe it", [photo])
 
     tasks.rows.clear()
     assert build()[0] == before
@@ -1209,31 +1149,135 @@ def test_supplied_history_keeps_context_on_current_input(chained, multipart):
         run = team.run(messages, session_state=state.session_state)
     body = requests[0]
     sent = [item["content"] for item in body["input"]]
+    # The block is a user item of its own, after the supplied reply and right before the current input,
+    # whose text or parts are sent as given.
     if chained:
-        assert body["previous_response_id"] == "resp_earlier" and len(sent) == 1
+        assert body["previous_response_id"] == "resp_earlier" and len(sent) == 2
     else:
-        assert "previous_response_id" not in body and sent[-3:-1] == ["Earlier", "Reply"]
-    if multipart:
-        prefix, *remainder = sent[-1]
-        assert prefix["type"] == "input_text" and CHANGED in prefix["text"]
-        assert remainder == parts
-    else:
-        assert CHANGED in sent[-1] and sent[-1].endswith("\n\nHello")
+        assert "previous_response_id" not in body and sent[-4:-2] == ["Earlier", "Reply"]
+    assert sent[-2].startswith(NOTE) and CHANGED in sent[-2] and sent[-1] == original
+    assert [item["role"] for item in body["input"]][-2:] == ["user", "user"]
     assert [m.content for m in run.messages if m.role == "user"] == ["Earlier", original]
     assert messages[-1].content == original
 
 
-def test_bedrock_multipart_context_preserves_the_original_blocks():
-    pytest.importorskip("boto3")
-    from agno.models.aws.bedrock import AwsBedrock
-    from agno.models.message import Message
+@pytest.mark.parametrize("chained", [True, False])
+def test_the_block_is_in_the_requests_of_a_first_turn_a_later_turn_and_after_a_tool_call(tmp_path, chained):
+    """What OpenAI Responses is sent, read from the request bodies."""
+    import httpx
+    from openai import OpenAI
 
-    model = AwsBedrock()
-    parts = [{"image": {"format": "png", "source": {"bytes": b"image"}}}, {"text": "Describe it"}]
-    question = Message(role="user", content=parts)
-    sent, _ = model._format_messages(model._with_notes_merged([_MessageContextNote(content="Task update"), question]))
-    assert sent == [{"role": "user", "content": [{"text": "Task update"}, *parts]}]
-    assert question.content == parts
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+    from agno.team import Team
+
+    requests = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        answered = any(item.get("type") == "function_call_output" for item in body["input"])
+        asks_for_tool = any("use the tool" in str(item.get("content")) for item in body["input"])
+        number = len(requests)
+        if asks_for_tool and not answered:
+            output = [
+                {
+                    "type": "function_call",
+                    "id": f"fc_{number}",
+                    "call_id": f"call_{number}",
+                    "name": "ping",
+                    "arguments": "{}",
+                    "status": "completed",
+                }
+            ]
+        else:
+            text = {"type": "output_text", "text": "ok", "annotations": []}
+            output = [
+                {
+                    "type": "message",
+                    "id": f"msg_{number}",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [text],
+                }
+            ]
+        reply = {"id": f"resp_{number}", "object": "response", "created_at": 0, "model": "gpt-5.6-luna"}
+        return httpx.Response(
+            200, json={**reply, "output": output, "status": "completed", "error": None, "usage": None}
+        )
+
+    def ping() -> str:
+        """Return pong."""
+        return "pong"
+
+    client = OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(handle)))
+    model = OpenAIResponses(id="gpt-5.6-luna", client=client, use_previous_response_id=chained)
+    db = SqliteDb(db_file=str(tmp_path / "chat.db"))
+    team = Team(id="chat", members=[], model=model, db=db, tools=[ping], add_history_to_context=True)
+    task = row()
+    state = context()
+    link_task(state, task)
+    team._message_context = LinkedWork(Tasks(task))
+
+    def block_items(body):
+        return [
+            item for item in body["input"] if item.get("role") == "user" and str(item.get("content")).startswith(NOTE)
+        ]
+
+    try:
+        with client:
+            team.run("First", session_id="s", session_state=state.session_state)
+            team.run("Later", session_id="s")
+            team.run("Now use the tool", session_id="s")
+    finally:
+        db.close()
+    first, later, asked, after_tool = requests
+    # First turn and a later turn: the block is sent once, right before the person's message.
+    for body, text in ((first, "First"), (later, "Later"), (asked, "Now use the tool")):
+        assert len(block_items(body)) == 1
+        assert [item.get("content") for item in body["input"]][-1] == text
+        assert body["input"][-2] is block_items(body)[0] or body["input"][-2] == block_items(body)[0]
+    assert ("previous_response_id" in later) is chained
+    if chained:
+        # A later turn carries only what follows the last response: the block and the message.
+        assert len(later["input"]) == 2
+        # After the tool call the request continues the response that was sent the block, and
+        # carries the tool's result only.
+        assert after_tool["previous_response_id"] == "resp_3" and block_items(after_tool) == []
+        assert [item.get("type") for item in after_tool["input"]] == ["function_call_output"]
+    else:
+        # Replaying the context, the request after the tool call holds this turn's block once more,
+        # and no block from the earlier turns.
+        assert len(block_items(after_tool)) == 1
+
+
+def test_claude_merges_the_block_and_the_message_with_the_block_first():
+    """Claude requires alternating roles; its own formatter joins the two user messages."""
+    import base64
+
+    pytest.importorskip("anthropic")
+    from agno.media import Image
+    from agno.models.message import Message
+    from agno.utils.models.claude import format_messages
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkGQAAAAASUVORK5CYII="
+    )
+    given = [
+        Message(role="user", content="Earlier"),
+        Message(role="assistant", content="Reply"),
+        Message(role="user", content=NOTE + "now", add_to_agent_memory=False),
+        Message(role="user", content="Describe it", images=[Image(content=png, mime_type="image/png")]),
+    ]
+    formatted, _ = format_messages(given)
+    assert [message["role"] for message in formatted] == ["user", "assistant", "user"]
+    last = [part if isinstance(part, dict) else part.model_dump() for part in formatted[-1]["content"]]
+    kinds = [part["type"] for part in last]
+    # One user turn: the block first, then the person's text and their image.
+    assert kinds[0] == "text" and last[0]["text"].startswith(NOTE)
+    assert [part["text"] for part in last if part["type"] == "text"][1:] == ["Describe it"]
+    (image,) = [part for part in last if part["type"] == "image"]
+    assert image["source"]["data"] == base64.b64encode(png).decode()
 
 
 def test_gemini_sends_a_completion_notice_with_an_image_only_turn(tmp_path):

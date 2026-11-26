@@ -40,7 +40,7 @@ from agno.exceptions import (
 )
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
-from agno.models.message import Citations, Message, _MessageContextNote
+from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
@@ -223,38 +223,6 @@ class Model(ABC):
 
         return True
 
-    def _context_text_block(self, text: str) -> Dict[str, str]:
-        return {"type": "text", "text": text}
-
-    def _with_notes_merged(self, messages: Any) -> Any:
-        """Send framework notes and the following user input as one user message.
-
-        Framework notes give the model context for this turn and are omitted from run history.
-        Some providers require alternating roles, so we prepend the notes to a copy of the user's
-        text or multipart content. History and learning keep the original input.
-        """
-        if not isinstance(messages, list) or not any(isinstance(m, _MessageContextNote) for m in messages):
-            return messages
-        merged: List[Message] = []
-        notes: List[_MessageContextNote] = []
-        for message in messages:
-            if isinstance(message, _MessageContextNote):
-                notes.append(message)
-                continue
-            if notes and message.role == "user":
-                prefix = "\n\n".join(note.content for note in notes)
-                if isinstance(message.content, list):
-                    content: Union[str, List[Any]] = [self._context_text_block(prefix), *message.content]
-                else:
-                    content = f"{prefix}\n\n{message.content}" if message.content else prefix
-                message = message.model_copy(update={"content": content, "compressed_content": None})
-            else:
-                merged.extend(notes)
-            notes = []
-            merged.append(message)
-        merged.extend(notes)
-        return merged
-
     def _invoke_with_retry(self, **kwargs) -> ModelResponse:
         """
         Invoke the model with retry logic for ModelProviderError.
@@ -262,8 +230,6 @@ class Model(ABC):
         This method wraps the invoke() call and retries on ModelProviderError
         with optional exponential backoff.
         """
-        if "messages" in kwargs:
-            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -312,8 +278,6 @@ class Model(ABC):
         This method wraps the ainvoke() call and retries on ModelProviderError
         with optional exponential backoff.
         """
-        if "messages" in kwargs:
-            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -363,8 +327,6 @@ class Model(ABC):
         This method wraps the invoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
         """
-        if "messages" in kwargs:
-            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -417,8 +379,6 @@ class Model(ABC):
         This method wraps the ainvoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
         """
-        if "messages" in kwargs:
-            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 

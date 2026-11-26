@@ -16,7 +16,6 @@ from typing import (
     Dict,
     List,
     Optional,
-    Protocol,
     Sequence,
     Type,
     Union,
@@ -28,7 +27,7 @@ from typing_extensions import TypeGuard
 
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences, _MessageContextNote
+from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.messages import RunMessages
@@ -55,12 +54,6 @@ from agno.utils.team import (
     get_member_id,
 )
 from agno.utils.timer import Timer
-
-
-class _MessageContextProvider(Protocol):
-    def read(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
-
-    async def aread(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
 
 
 def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
@@ -1017,7 +1010,12 @@ def _attach_media_to_last_user_message(
 
 
 def _context_input_index(messages: List[Message], input_start: int) -> Optional[int]:
-    # Response chaining can omit everything through the last assistant reply.
+    """Where the Team's message context goes: right before the last user message of this run's input.
+
+    A provider that continues from its previous response is sent only what follows the last
+    assistant message, so the context is never placed before one. Input with no user message after
+    its last assistant message takes no context.
+    """
     for index in range(len(messages) - 1, input_start - 1, -1):
         if messages[index].role == "user":
             return index
@@ -1169,7 +1167,9 @@ def _get_run_messages(
         if index is not None:
             text = team._message_context.read(run_context, session)
             if text is not None:
-                run_messages.messages.insert(index, _MessageContextNote(content=text))
+                # Sent as a user message of its own and not stored with the run. A provider that
+                # refuses two user messages in a row has to merge them in its own formatter.
+                run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1319,7 +1319,9 @@ async def _aget_run_messages(
         if index is not None:
             text = await team._message_context.aread(run_context, session)
             if text is not None:
-                run_messages.messages.insert(index, _MessageContextNote(content=text))
+                # Sent as a user message of its own and not stored with the run. A provider that
+                # refuses two user messages in a row has to merge them in its own formatter.
+                run_messages.messages.insert(index, Message(role="user", content=text, add_to_agent_memory=False))
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
