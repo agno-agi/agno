@@ -1,4 +1,4 @@
-"""Task HTTP lifecycle and persistence contracts, following Products."""
+"""Task HTTP lifecycle and persistence contracts, following Goals."""
 
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -38,11 +38,11 @@ def client(request, tmp_path):
 
 
 def create(client):
-    parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
-    project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()
+    parent = client.post("/company/goals", json={"name": "SDK"}).json()["id"]
+    project = client.post("/company/projects", json={"goal_id": parent, "name": "Release"}).json()
     client.post("/company/projects/" + project["id"] + "/transitions", json={"target": "active", "reason": "Approved"})
     response = client.post(
-        "/company/tasks", json={"product_id": parent, "project_id": project["id"], "title": "Ship", "brief": "Build"}
+        "/company/tasks", json={"goal_id": parent, "project_id": project["id"], "title": "Ship", "brief": "Build"}
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -56,11 +56,9 @@ def transition(client, path, target):
 
 
 def test_cancelled_project_allows_task_cancellation_but_not_restart_over_http(client):
-    product_id = client.post("/company/products", json={"name": "Rejected plan"}).json()["id"]
-    project = client.post("/company/projects", json={"product_id": product_id, "name": "Draft"}).json()
-    task = client.post(
-        "/company/tasks", json={"product_id": product_id, "project_id": project["id"], "title": "Work"}
-    ).json()
+    goal_id = client.post("/company/goals", json={"name": "Rejected plan"}).json()["id"]
+    project = client.post("/company/projects", json={"goal_id": goal_id, "name": "Draft"}).json()
+    task = client.post("/company/tasks", json={"goal_id": goal_id, "project_id": project["id"], "title": "Work"}).json()
     response = client.post(
         f"/company/projects/{project['id']}/transitions", json={"target": "cancelled", "reason": "Reject"}
     )
@@ -133,10 +131,10 @@ def test_cancel_from_every_nonterminal_state(client, states):
 
 
 def test_create_in_status(client):
-    parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
-    project = client.post("/company/projects", json={"product_id": parent, "name": "Release"}).json()["id"]
+    parent = client.post("/company/goals", json={"name": "SDK"}).json()["id"]
+    project = client.post("/company/projects", json={"goal_id": parent, "name": "Release"}).json()["id"]
     client.post("/company/projects/" + project + "/transitions", json={"target": "active", "reason": "Approved"})
-    body = {"product_id": parent, "project_id": project, "title": "Ship"}
+    body = {"goal_id": parent, "project_id": project, "title": "Ship"}
     ready = client.post(
         "/company/tasks", json={**body, "status": "ready", "executor_type": "agent", "executor_id": "writer"}
     )
@@ -172,9 +170,7 @@ def test_no_lifecycle_or_identity_edits(client, body):
 
 def test_missing_parent_and_invalid_transitions(client):
     assert (
-        client.post(
-            "/company/tasks", json={"product_id": "missing", "project_id": "missing", "title": "Work"}
-        ).status_code
+        client.post("/company/tasks", json={"goal_id": "missing", "project_id": "missing", "title": "Work"}).status_code
         == 404
     )
     path = "/company/tasks/" + create(client)["id"]
@@ -187,7 +183,7 @@ def test_missing_parent_and_invalid_transitions(client):
     assert client.get("/company/tasks?limit=0").status_code == 422
 
 
-def test_cross_product_status_pagination(client):
+def test_cross_goal_status_pagination(client):
     records = [create(client) for _ in range(3)]
     path = "/company/tasks/" + records[0]["id"]
     assert transition(client, path, "cancelled").status_code == 200
@@ -196,9 +192,7 @@ def test_cross_product_status_pagination(client):
     ]
     assert all(p["meta"]["total_count"] == 2 for p in pages)
     assert {p["data"][0]["id"] for p in pages} == {r["id"] for r in records[1:]}
-    assert (
-        client.get("/company/tasks", params={"product_id": records[0]["product_id"]}).json()["meta"]["total_count"] == 1
-    )
+    assert client.get("/company/tasks", params={"goal_id": records[0]["goal_id"]}).json()["meta"]["total_count"] == 1
 
 
 def test_allowed_transitions_follow_the_transition_rules(client):
@@ -232,7 +226,7 @@ def test_unsupported_database(db):
         ("get", "/company/runs/missing", None),
         ("post", "/company/runs/missing/cancel", None),
         ("get", "/company/tasks/missing", None),
-        ("post", "/company/tasks", {"product_id": "p", "project_id": "p", "title": "Work"}),
+        ("post", "/company/tasks", {"goal_id": "p", "project_id": "p", "title": "Work"}),
         ("patch", "/company/tasks/missing", {"title": "Work"}),
         ("delete", "/company/tasks/missing", None),
         ("post", "/company/tasks/missing/restore", None),
@@ -317,20 +311,20 @@ def test_title_edits_at_every_stage_and_the_brief_and_structure_only_in_backlog(
         assert client.patch(path, json={}).json() == snapshot
 
 
-def test_task_project_must_belong_to_same_product(client):
+def test_task_project_must_belong_to_same_goal(client):
     task = create(client)
     other = create(client)
-    project = client.post("/company/projects", json={"product_id": other["product_id"], "name": "Other"}).json()
+    project = client.post("/company/projects", json={"goal_id": other["goal_id"], "name": "Other"}).json()
     path = "/company/tasks/" + task["id"]
     assert client.patch(path, json={"project_id": project["id"]}).status_code == 422
     assert (
         client.post(
-            "/company/tasks", json={"product_id": task["product_id"], "title": "Bad", "project_id": project["id"]}
+            "/company/tasks", json={"goal_id": task["goal_id"], "title": "Bad", "project_id": project["id"]}
         ).status_code
         == 422
     )
     assert client.patch(path, json={"project_id": "missing"}).status_code == 404
-    own = client.post("/company/projects", json={"product_id": task["product_id"], "name": "Own"}).json()
+    own = client.post("/company/projects", json={"goal_id": task["goal_id"], "name": "Own"}).json()
     assert client.patch(path, json={"project_id": own["id"]}).status_code == 200
     assert client.get("/company/tasks", params={"project_id": own["id"]}).json()["meta"]["total_count"] == 1
     assert client.patch(path, json={"project_id": None}).status_code == 422
@@ -360,9 +354,9 @@ def test_acceptance_with_no_executor_names_mini_agent_and_needs_it(client):
 
 
 def test_project_approval_keeps_ready_validation_and_permissions(client):
-    product = client.post("/company/products", json={"name": "SDK"}).json()
-    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
-    body = dict(product_id=product["id"], project_id=project["id"], title="Ship", status="ready")
+    goal = client.post("/company/goals", json={"name": "SDK"}).json()
+    project = client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"}).json()
+    body = dict(goal_id=goal["id"], project_id=project["id"], title="Ship", status="ready")
     missing_executor = client.post("/company/tasks", json=body)
     assert missing_executor.status_code == 422
     assert "executor" in missing_executor.text
@@ -408,9 +402,9 @@ def test_project_approval_keeps_ready_validation_and_permissions(client):
 
 
 def test_proposed_project_allows_backlog_preview_but_not_acceptance(client):
-    product = client.post("/company/products", json={"name": "SDK"}).json()
-    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Review"}).json()
-    body = {"product_id": product["id"], "project_id": project["id"], "title": "Draft"}
+    goal = client.post("/company/goals", json={"name": "SDK"}).json()
+    project = client.post("/company/projects", json={"goal_id": goal["id"], "name": "Review"}).json()
+    body = {"goal_id": goal["id"], "project_id": project["id"], "title": "Draft"}
     created = client.post("/company/tasks", json=body)
     assert created.status_code == 201, created.text
     task = created.json()

@@ -9,7 +9,15 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+    refuse_product_id,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -20,7 +28,12 @@ def get_tasks_router(
     db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, registry: Any = None
 ) -> APIRouter:
     """Build Task routes using native async storage or off-thread sync calls."""
-    router = APIRouter(prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Tasks"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
+    )
     auth_dependency = get_authentication_dependency(settings)
     manager = (
         AsyncCompanyManager(db, registry=registry)
@@ -192,7 +205,7 @@ def get_tasks_router(
         include_deleted: bool = Query(False),
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
-        product_id: Optional[str] = Query(None),
+        goal_id: Optional[str] = Query(None),
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
@@ -206,7 +219,7 @@ def get_tasks_router(
             include_deleted=include_deleted,
             sort_by=sort_by,
             sort_order=sort_order,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
             project_id=project_id,
             failed=failed,

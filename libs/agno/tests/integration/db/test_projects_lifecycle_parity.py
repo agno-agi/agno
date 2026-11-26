@@ -19,15 +19,15 @@ async def db(request, tmp_path):
     backend = request.param
     suffix = uuid4().hex[:12]
     kwargs = {
-        "products_table": "products_" + suffix,
+        "goals_table": "goals_" + suffix,
         "projects_table": "projects_" + suffix,
         "tasks_table": "tasks_" + suffix,
     }
     if "postgres" in backend:
-        kwargs.update(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", db_schema="products_" + suffix)
+        kwargs.update(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", db_schema="goals_" + suffix)
         cls = AsyncPostgresDb if backend.startswith("async") else PostgresDb
     else:
-        kwargs.update(db_file=str(tmp_path / "products.db"))
+        kwargs.update(db_file=str(tmp_path / "goals.db"))
         cls = AsyncSqliteDb if backend.startswith("async") else SqliteDb
     database = cls(**kwargs)
     try:
@@ -58,7 +58,7 @@ async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list_projects) == ([], 0)
     parent = await call(m.create, name="SDK", user_id="alice")
-    record = await call(m.create_project, product_id=parent["id"], name="Ship", user_id="alice", scoped_user_id="alice")
+    record = await call(m.create_project, goal_id=parent["id"], name="Ship", user_id="alice", scoped_user_id="alice")
     rid = record["id"]
     assert record["status"] == "proposed"
     assert await call(m.get_project, rid, user_id="bob") is None
@@ -106,7 +106,7 @@ async def test_filters_and_stable_paging(db):
             db.create_project,
             {
                 "id": str(i),
-                "product_id": parents[i % 2]["id"],
+                "goal_id": parents[i % 2]["id"],
                 "name": "Same",
                 "status": "proposed",
                 "user_id": owner,
@@ -118,7 +118,7 @@ async def test_filters_and_stable_paging(db):
     pages = [await call(m.list_projects, user_id="alice", status="proposed", limit=1, page=p) for p in [1, 2]]
     assert [p[1] for p in pages] == [2, 2]
     assert [p[0][0]["id"] for p in pages] == ["4", "2"]
-    assert (await call(m.list_projects, product_id=parents[1]["id"]))[1] == 3
+    assert (await call(m.list_projects, goal_id=parents[1]["id"]))[1] == 3
     assert (await call(m.list_projects, status="cancelled"))[1] == 1
     assert (await call(m.list_projects, user_id="absent")) == ([], 0)
 
@@ -128,12 +128,12 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
     m = manager(db)
     parent = await call(m.create, name="SDK", user_id="alice")
     with pytest.raises(LookupError):
-        await call(m.create_project, product_id=parent["id"], name="Hidden", user_id="bob", scoped_user_id="bob")
-    record = await call(m.create_project, product_id=parent["id"], name="Work")
+        await call(m.create_project, goal_id=parent["id"], name="Hidden", user_id="bob", scoped_user_id="bob")
+    record = await call(m.create_project, goal_id=parent["id"], name="Work")
     for fields in [
         {"status": "done"},
         {"id": "other"},
-        {"product_id": "other"},
+        {"goal_id": "other"},
         {"created_at": 0},
         {"deleted_at": 1},
         {"name": None},
@@ -154,7 +154,7 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
 async def test_custom_table_migrations_and_configuration_roundtrip(db):
     m = manager(db)
     parent = await call(m.create, name="SDK")
-    record = await call(m.create_project, product_id=parent["id"], name="Roundtrip", user_id="alice")
+    record = await call(m.create_project, goal_id=parent["id"], name="Roundtrip", user_id="alice")
     assert await call(db.table_exists, db.projects_table_name)
     assert not await call(db.table_exists, "agno_company_projects")
     assert await call(db.get_latest_schema_version, db.projects_table_name)

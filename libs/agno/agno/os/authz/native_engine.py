@@ -41,7 +41,13 @@ from agno.os.authz._db import (
 )
 from agno.os.authz._request_scope import amemoize, memoize
 from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
-from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
+from agno.os.authz._scope_policy import (
+    current_resource,
+    legacy_resources,
+    resource_action_to_scope,
+    resource_matches,
+    scope_to_resource_action,
+)
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 from agno.os.scopes import built_in_ids
 
@@ -82,6 +88,19 @@ def _normalize_effect(effect: str) -> str:
     if e not in (_ALLOW, _DENY):
         raise ValueError(f"effect must be 'allow' or 'deny', got {effect!r}")
     return e
+
+
+def _read_back(rows: List[_PolicyRow]) -> List[ScopeEntry]:
+    """A role's stored rows as scopes, each under the current name of its resource type.
+
+    A row stored under a renamed type and a row under the current one are the same permission, so
+    they read back as one entry, and a deny on either is the one shown, as it is the one enforced.
+    """
+    effects: Dict[str, str] = {}
+    for _, resource, action, effect in rows:
+        scope = resource_action_to_scope(current_resource(resource), action)
+        effects[scope] = _DENY if _DENY in (effect, effects.get(scope)) else effect
+    return list(effects.items())
 
 
 class NativePolicyEngine(PolicyEngine):
@@ -281,6 +300,11 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()  # a write must be visible to the rest of this request
         self._db.delete_authz_policy(role=role, resource=resource, action=action)
 
+    def _delete_legacy_policies(self, role: str, resource: str, action: str) -> None:
+        """Drop rows that store the same scope under a resource type's old name."""
+        for legacy in legacy_resources(resource):
+            self._delete_policy(role, legacy, action)
+
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
@@ -317,13 +341,15 @@ class NativePolicyEngine(PolicyEngine):
         resource, action = scope_to_resource_action(scope)  # validate before mutating
         effect = _normalize_effect(effect)
         self._persist_policy(role, resource, action, effect)
+        self._delete_legacy_policies(role, resource, action)
 
     def remove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
         self._delete_policy(role, resource, action)
+        self._delete_legacy_policies(role, resource, action)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
-        return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
+        return _read_back(self._policies_for({role}))
 
     def remove_role(self, role: str) -> None:
         # One call: the db drops policy, assignments and metadata in a single transaction,
@@ -451,10 +477,12 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
+        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect == _DENY:
                 continue
+            resource = current_resource(resource)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource == "*":
@@ -485,10 +513,12 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
+        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in self._policies_for(principals):
             if effect != _DENY:
                 continue
+            resource = current_resource(resource)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             # A collection/global deny (``agents/*``, the bare type, or the admin
@@ -612,6 +642,11 @@ class NativePolicyEngine(PolicyEngine):
         _invalidate_request_cache()
         await self._acall("delete_authz_policy", role=role, resource=resource, action=action)
 
+    async def _adelete_legacy_policies(self, role: str, resource: str, action: str) -> None:
+        """Async twin of :meth:`_delete_legacy_policies`."""
+        for legacy in legacy_resources(resource):
+            await self._adelete_policy(role, legacy, action)
+
     async def _apersist_grouping(self, subject: str, role: str, add: bool) -> None:
         _invalidate_request_cache()
         await self._acall("assign_authz_role" if add else "unassign_authz_role", subject, role)
@@ -634,13 +669,15 @@ class NativePolicyEngine(PolicyEngine):
         resource, action = scope_to_resource_action(scope)
         effect = _normalize_effect(effect)
         await self._apersist_policy(role, resource, action, effect)
+        await self._adelete_legacy_policies(role, resource, action)
 
     async def aremove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)
         await self._adelete_policy(role, resource, action)
+        await self._adelete_legacy_policies(role, resource, action)
 
     async def aget_role_scopes(self, role: str) -> List[ScopeEntry]:
-        return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in await self._apolicies_for({role})]
+        return _read_back(await self._apolicies_for({role}))
 
     async def aremove_role(self, role: str) -> None:
         await self._adelete_grouping_role(role)
@@ -738,10 +775,12 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
+        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in await self._apolicies_for(principals):
             if effect == _DENY:
                 continue
+            resource = current_resource(resource)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource == "*":
@@ -768,10 +807,12 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return set()
         ids: Set[str] = set()
+        resource_type = current_resource(resource_type)
         prefix = f"{resource_type}/"
         for _role, resource, policy_action, effect in await self._apolicies_for(principals):
             if effect != _DENY:
                 continue
+            resource = current_resource(resource)
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):

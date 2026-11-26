@@ -45,7 +45,7 @@ def _manager_member_refusal(endpoint: str) -> Optional[str]:
 
 
 def _company_routine_refusal(schedule: Any) -> Optional[str]:
-    """Company Routines stay linked to their Product, so only Company may change them."""
+    """Company Routines stay linked to their Goal, so only Company may change them."""
     if (
         schedule is None
         or getattr(schedule, "managed_by", None) != "company"

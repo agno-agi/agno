@@ -29,6 +29,7 @@ from agno.os.scopes import (
     get_resource_context_from_path,
     has_required_scopes,
     is_built_in,
+    without_renamed_defaults,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
@@ -800,6 +801,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Merge standalone middleware overrides with the default route scopes."""
         mappings = get_default_scope_mappings()
         if scope_mappings is not None:
+            # A mapping written for a route's old path overrides the default for its current path.
+            mappings = without_renamed_defaults(mappings, scope_mappings)
             mappings.update(scope_mappings)
         self.scope_mappings = mappings if self.authorization else (scope_mappings or {})
         # Service-account ACLs apply even when JWT authorization is disabled.

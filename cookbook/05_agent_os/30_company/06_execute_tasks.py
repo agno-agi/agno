@@ -62,15 +62,15 @@ if __name__ == "__main__":
         )
         try:
             with TestClient(agent_os.get_app()) as client:
-                product = client.post("/company/products", json={"name": "SDK"}).json()
+                goal = client.post("/company/goals", json={"name": "SDK"}).json()
                 project = client.post(
                     "/company/projects",
-                    json={"product_id": product["id"], "name": "Release"},
+                    json={"goal_id": goal["id"], "name": "Release"},
                 ).json()
                 task = client.post(
                     "/company/tasks",
                     json={
-                        "product_id": product["id"],
+                        "goal_id": goal["id"],
                         "project_id": project["id"],
                         "title": "Draft release notes",
                         "brief": "Summarize reviewed changes",
@@ -116,7 +116,7 @@ if __name__ == "__main__":
                 ).json()
                 assert history["meta"]["total_count"] == 1
                 attention = client.get(
-                    "/company/attention", params={"product_id": product["id"]}
+                    "/company/attention", params={"goal_id": goal["id"]}
                 ).json()
                 print("Task completed and awaits review")
                 print(json.dumps(attention, indent=2))
@@ -126,7 +126,7 @@ if __name__ == "__main__":
                     source = client.post(
                         "/company/sources",
                         json={
-                            "product_id": product["id"],
+                            "goal_id": goal["id"],
                             "type": "markdown",
                             "reference": str(release),
                         },
@@ -134,7 +134,7 @@ if __name__ == "__main__":
                     routine = client.post(
                         "/company/routines",
                         json={
-                            "product_id": product["id"],
+                            "goal_id": goal["id"],
                             "name": "intake",
                             "template": "intake",
                             "executor_type": "workflow",
@@ -158,7 +158,7 @@ if __name__ == "__main__":
                     routine.raise_for_status()
                     manager = CompanyManager(db, agent_os.registry)
                     project = manager.create_project(
-                        product_id=product["id"], name="Release guide"
+                        goal_id=goal["id"], name="Release guide"
                     )
                     manager.transition_project(
                         project_id=project["id"], target="active", reason="Scope agreed"
@@ -207,7 +207,7 @@ if __name__ == "__main__":
                     refresh = client.post(
                         "/company/routines",
                         json={
-                            "product_id": product["id"],
+                            "goal_id": goal["id"],
                             "name": "refresh",
                             "template": "refresh",
                             "executor_type": "workflow",
@@ -230,7 +230,7 @@ if __name__ == "__main__":
                         },
                     )
                     refresh.raise_for_status()
-                    assert manager.refresh(product["id"])["completion_proposals"]
+                    assert manager.refresh(goal["id"])["completion_proposals"]
                     assert manager.get_project(project["id"])["status"] == "active"
                     db.update_schedule(schedule["id"], next_run_at=0)
                     deadline = time.monotonic() + 30

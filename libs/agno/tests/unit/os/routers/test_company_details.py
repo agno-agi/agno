@@ -44,8 +44,7 @@ def test_details_permissions_edits_and_restart(tmp_path):
     data = read.json()
     body = {"expected_updated_at": data["updated_at"], "name": "Edited", "description": "Human identity"}
     assert (
-        client.patch("/company/details", json=body, headers=headers(["company:read", "products:write"])).status_code
-        == 403
+        client.patch("/company/details", json=body, headers=headers(["company:read", "goals:write"])).status_code == 403
     )
     edited = client.patch("/company/details", json=body, headers=headers(["company:write"]))
     assert edited.status_code == 200
@@ -66,8 +65,8 @@ def test_details_permissions_edits_and_restart(tmp_path):
 
 def test_database_scope_isolated(tmp_path):
     path = str(tmp_path / "shared.db")
-    first = SqliteDb(db_file=path, products_table="first_products")
-    second = SqliteDb(db_file=path, products_table="second_products")
+    first = SqliteDb(db_file=path, goals_table="first_goals")
+    second = SqliteDb(db_file=path, goals_table="second_goals")
     first.initialize_company("First")
     second.initialize_company("Second")
     assert first.get_company()["name"] == "First"
@@ -76,7 +75,7 @@ def test_database_scope_isolated(tmp_path):
     second.close()
 
 
-def test_next_manager_runs_use_saved_details_without_products(tmp_path):
+def test_next_manager_runs_use_saved_details_without_goals(tmp_path):
     from agno.models.base import Model
     from agno.models.message import MessageMetrics
     from agno.models.response import ModelResponse
@@ -160,12 +159,12 @@ def test_next_manager_runs_use_saved_details_without_products(tmp_path):
     db.close()
 
 
-def test_company_config_preserves_positional_products():
-    from agno.company import Product
+def test_company_config_preserves_positional_goals():
+    from agno.company import Goal
 
-    products = [Product(name="Existing")]
-    config = CompanyConfig(None, None, products)
-    assert config.products is products
+    goals = [Goal(name="Existing")]
+    config = CompanyConfig(None, None, goals)
+    assert config.goals is goals
     assert config.name == "Company"
     assert config.description is None
 
@@ -251,7 +250,7 @@ def _assert_managers_answer(client):
     assert run.status_code == 200 and run.json()["content"] == "Mini Agent runs Company Routines and Tasks only"
 
 
-def test_startup_applies_configuration_without_products(tmp_path):
+def test_startup_applies_configuration_without_goals(tmp_path):
     db = SqliteDb(db_file=str(tmp_path / "startup.db"))
     with TestClient(_company_os(db, name="Acme", description="What Acme does").get_app()):
         assert db.get_company()["name"] == "Acme"

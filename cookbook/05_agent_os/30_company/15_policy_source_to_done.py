@@ -11,7 +11,7 @@ With auto_accept on:
 
 At most five of the Routine's Tasks are open at once, so the review queue is the brake.
 Each automatic step is on the record with the Routine, and Super Agent reports them when
-asked for the Product's status.
+asked for the Goal's status.
 
 A named worker is one more argument, and a Task whose proposal suggests an executor runs
 on that executor instead. executors limits which executors a proposal may suggest:
@@ -63,7 +63,7 @@ from uuid import uuid4
 import httpx
 import jwt
 import uvicorn
-from agno.company import Product, Routine, Source
+from agno.company import Goal, Routine, Source
 from agno.db.postgres import PostgresDb
 from agno.job_queue import QueueConfig
 from agno.models.openai import OpenAIResponses
@@ -94,18 +94,18 @@ feedback.write_text(
 )
 
 INSTRUCTIONS = (
-    "Use the intake skill. Read the Product's Source. For each documentation problem a customer "
-    "reports there, propose one Task with intake_product_source, with its evidence. Put the Tasks "
+    "Use the intake skill. Read the Goal's Source. For each documentation problem a customer "
+    "reports there, propose one Task with intake_goal_source, with its evidence. Put the Tasks "
     "in a Project named 'Docs fixes': reuse it when it exists, propose it when it does not. Leave "
     "the executor empty. In the brief, quote the wrong text and ask the executor to write the "
     "corrected text as its deliverable. No file needs to change."
 )
 
 # ---------------------------------------------------------------------------
-# The Product, its Source and its Routine, declared in code
+# The Goal, its Source and its Routine, declared in code
 # ---------------------------------------------------------------------------
-products = [
-    Product(
+goals = [
+    Goal(
         id="docs",
         name="Docs",
         sources=[Source(type="markdown", reference=str(feedback))],
@@ -123,7 +123,7 @@ agent_os = AgentOS(
     authorization=Authorization(verification_keys=[SECRET], algorithm="HS256")
     if AUTHORIZATION
     else None,
-    company=CompanyConfig(model=model, products=products),
+    company=CompanyConfig(model=model, goals=goals),
     manager=OSManager(model=model, access_docs=False),
     queue=QueueConfig(durable=True, db=db, poll_interval=0.5),
     scheduler=True,
@@ -159,7 +159,7 @@ def ask(client: httpx.Client, message: str, session_id: str) -> Dict[str, Any]:
 def turn_on_from_chat(client: httpx.Client, routine_id: str) -> None:
     """The one action a person takes where authorization is on."""
     session_id = "turn-on-" + uuid4().hex[:8]
-    question = "What needs a decision in the Docs Product?"
+    question = "What needs a decision in the Docs Goal?"
     print(f"\n> {question}\n{ask(client, question, session_id).get('content')}")
 
     request = "Turn on auto-accept for the feedback-intake Routine."
@@ -188,7 +188,7 @@ def turn_on_from_chat(client: httpx.Client, routine_id: str) -> None:
 
 
 def tasks(client: httpx.Client) -> List[Dict[str, Any]]:
-    return client.get("/company/tasks", params={"product_id": "docs"}).json()["data"]
+    return client.get("/company/tasks", params={"goal_id": "docs"}).json()["data"]
 
 
 def tick() -> None:
@@ -222,7 +222,7 @@ def wait_until_healthy() -> None:
 
 
 def main(client: httpx.Client) -> None:
-    routine = client.get("/company/routines", params={"product_id": "docs"}).json()[
+    routine = client.get("/company/routines", params={"goal_id": "docs"}).json()[
         "data"
     ][0]
     print(f"Declared Routine '{routine['name']}' with auto_accept on.")
@@ -273,7 +273,7 @@ def main(client: httpx.Client) -> None:
         assert project["transitions"][0]["auto_accept"]["routine_id"] == routine["id"]
         assert not task["result"].get("invoked"), "Mini Agent holds no run tools here"
 
-    question = "What did the Docs Product's Routine decide without a person?"
+    question = "What did the Docs Goal's Routine decide without a person?"
     status = ask(client, question, "status-" + uuid4().hex[:8])
     print(f"\n> {question}\n{status.get('content')}")
 

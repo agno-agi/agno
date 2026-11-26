@@ -312,10 +312,10 @@ class _Routines:
 
     def __init__(self, system):
         self.system = system
-        self.product = CompanyManager(system.db).create(name="Docs")
+        self.goal = CompanyManager(system.db).create(name="Docs")
 
     def save(self, name, headers):
-        body = {"product_id": self.product["id"], "name": name, "cron_expr": "0 9 * * 1", "instructions": "Review."}
+        body = {"goal_id": self.goal["id"], "name": name, "cron_expr": "0 9 * * 1", "instructions": "Review."}
         return self.system.client.post("/company/routines", json=body, headers=headers)
 
     async def fire(self, routine_id):
@@ -334,7 +334,7 @@ class _Routines:
         return "fired" if result["status"] == "success" else (result.get("error") or result["status"])
 
 
-ROUTINE_SCOPES = ["routines:write", "schedules:write", "products:read", "wiki:read"]
+ROUTINE_SCOPES = ["routines:write", "schedules:write", "goals:read", "wiki:read"]
 
 
 def test_the_scheduler_keeps_its_plain_scopes():

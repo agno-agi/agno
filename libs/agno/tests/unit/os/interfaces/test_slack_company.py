@@ -82,12 +82,12 @@ def _seed_task(db_file: str) -> Dict[str, Any]:
         telemetry=False,
     )
     client = TestClient(agent_os.get_app())
-    product = client.post("/company/products", json={"name": "SDK"}).json()
-    project = client.post("/company/projects", json={"product_id": product["id"], "name": "Release"}).json()
+    goal = client.post("/company/goals", json={"name": "SDK"}).json()
+    project = client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"}).json()
     client.post(f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Approved"})
     task = client.post(
         "/company/tasks",
-        json={"product_id": product["id"], "project_id": project["id"], "title": "Investigate", "brief": "Find why"},
+        json={"goal_id": goal["id"], "project_id": project["id"], "title": "Investigate", "brief": "Find why"},
     ).json()
     client.post(
         f"/company/tasks/{task['id']}/transitions",

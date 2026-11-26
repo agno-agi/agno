@@ -24,7 +24,7 @@ db = company_db
 ROUTINE = dict(name="intake", template="intake", executor_type="agent", executor_id="reader")
 SOURCE = dict(type="website", reference="https://docs.agno.com")
 # POST /company/routines requires the same pair, so chat and HTTP agree on who may create a Routine.
-WRITE_SCOPES = ["products:write", "schedules:write", "routines:write"]
+WRITE_SCOPES = ["goals:write", "schedules:write", "routines:write"]
 
 
 def context(scopes=None, wrapper=None):
@@ -48,30 +48,30 @@ async def invoke(tools, tool_name, use_async, **kwargs):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_founder_creates_product_source_and_routines_visible_over_http(db, use_async):
+async def test_founder_creates_goal_source_and_routines_visible_over_http(db, use_async):
     reader = Agent(id="reader")
     registry = Registry(agents=[reader])
     tools = CompanyTools(db)
     os = AgentOS(db=db, agents=[Agent(id="chat", tools=[tools]), reader], company=CompanyConfig(), registry=registry)
-    product = await invoke(
+    goal = await invoke(
         tools,
-        "create_company_product",
+        "create_company_goal",
         use_async,
         name="Documentation",
-        purpose="Help people build agents",
+        objective="Help people build agents",
         sources=[SOURCE],
         routines=[ROUTINE],
         _agno_run_context=context(),
         _agno_agent=os.agents[0],
     )
-    assert product["user_id"] == "ana"
+    assert goal["user_id"] == "ana"
     routine = await invoke(
         tools,
-        "create_product_routine",
+        "create_goal_routine",
         use_async,
-        product_id=product["id"],
+        goal_id=goal["id"],
         name="custom",
-        instructions="Read the Product and report changes",
+        instructions="Read the Goal and report changes",
         executor_type="agent",
         executor_id="reader",
         cron_expr="0 9 * * *",
@@ -79,15 +79,15 @@ async def test_founder_creates_product_source_and_routines_visible_over_http(db,
         _agno_run_context=context(),
     )
     async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
-        products = (await client.get("/company/products")).json()["data"]
+        goals = (await client.get("/company/goals")).json()["data"]
         sources = (await client.get("/company/sources")).json()["data"]
         routines = (await client.get("/company/routines")).json()["data"]
-        assert [p["id"] for p in products] == [product["id"]]
+        assert [p["id"] for p in goals] == [goal["id"]]
         assert len(sources) == 1 and sources[0]["reference"] == SOURCE["reference"]
         assert sources[0]["user_id"] == "ana" and sources[0]["config"]["metadata"]["run_id"] == "chat-run"
         assert len(routines) == 2 and all(r["enabled"] and r["user_id"] == "ana" for r in routines)
         assert {r["schedule_type"] for r in routines} == {"scheduled", "on_demand"}
-        assert set(products[0]["metadata"]["routine_ids"]) == {r["id"] for r in routines}
+        assert set(goals[0]["metadata"]["routine_ids"]) == {r["id"] for r in routines}
     assert AUTHORIZATION_KEY not in routine["payload"]
     from agno.scheduler import ScheduleManager
 
@@ -98,54 +98,54 @@ async def test_founder_creates_product_source_and_routines_visible_over_http(db,
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("owner", [None, "owner"])
-async def test_isolated_member_adds_a_routine_to_a_product_they_do_not_own(db, use_async, owner):
+async def test_isolated_member_adds_a_routine_to_a_goal_they_do_not_own(db, use_async, owner):
     from agno.company.execution import _call
 
-    product_id = "declared" if owner is None else "owned"
+    goal_id = "declared" if owner is None else "owned"
     await _call(
         db,
-        "create_product",
-        {"id": product_id, "name": "Docs", "user_id": owner, "created_at": 1, "updated_at": None, "deleted_at": None},
+        "create_goal",
+        {"id": goal_id, "name": "Docs", "user_id": owner, "created_at": 1, "updated_at": None, "deleted_at": None},
     )
     tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]), user_isolation=True)
     routine = await invoke(
         tools,
-        "create_product_routine",
+        "create_goal_routine",
         use_async,
-        product_id=product_id,
+        goal_id=goal_id,
         **ROUTINE,
         _agno_run_context=context([*WRITE_SCOPES, "agents:reader:run"]),
     )
     assert routine["user_id"] == "ana" and routine["enabled"]
-    assert (await _call(db, "get_product", product_id))["metadata"]["routine_ids"] == [routine["id"]]
+    assert (await _call(db, "get_goal", goal_id))["metadata"]["routine_ids"] == [routine["id"]]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("tool", ["create_company_product", "create_product_routine"])
+@pytest.mark.parametrize("tool", ["create_company_goal", "create_goal_routine"])
 @pytest.mark.parametrize("wrapper", [None, _RoutineAuthorization, _ExecutorAuthorization])
-async def test_creation_refuses_missing_product_scope_and_automated_runs(db, use_async, tool, wrapper):
+async def test_creation_refuses_missing_goal_scope_and_automated_runs(db, use_async, tool, wrapper):
     tools = CompanyTools(db)
     kwargs = {"name": "Forbidden"}
-    if tool == "create_product_routine":
-        kwargs.update(product_id="missing", template="intake", executor_type="agent", executor_id="reader")
+    if tool == "create_goal_routine":
+        kwargs.update(goal_id="missing", template="intake", executor_type="agent", executor_id="reader")
     ctx = context(scopes=[] if wrapper is None else ["agent_os:admin"], wrapper=wrapper)
-    with pytest.raises(PermissionError, match="products:write" if wrapper is None else "automated"):
+    with pytest.raises(PermissionError, match="goals:write" if wrapper is None else "automated"):
         await invoke(tools, tool, use_async, **kwargs, _agno_run_context=ctx)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("scope", ["sources:write", "schedules:write", "routines:write", "agents:reader:run"])
-async def test_nested_permissions_fail_before_creating_product(db, use_async, scope):
+async def test_nested_permissions_fail_before_creating_goal(db, use_async, scope):
     tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]))
     scopes = [s for s in [*WRITE_SCOPES, "sources:write", "agents:reader:run"] if s != scope]
     with pytest.raises(PermissionError, match=scope):
         await invoke(
             tools,
-            "create_company_product",
+            "create_company_goal",
             use_async,
-            name="No partial Product",
+            name="No partial Goal",
             sources=[SOURCE],
             routines=[ROUTINE],
             _agno_agent=Agent(id="chat"),
@@ -153,7 +153,7 @@ async def test_nested_permissions_fail_before_creating_product(db, use_async, sc
         )
     from agno.company.execution import _call
 
-    assert (await _call(db, "get_products"))[1] == 0
+    assert (await _call(db, "get_goals"))[1] == 0
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ async def test_nested_permissions_fail_before_creating_product(db, use_async, sc
 @pytest.mark.parametrize(
     "invalid", ["local_source", "unknown_executor", "bad_cron", "auto_accept", "duplicate_routine"]
 )
-async def test_invalid_declarations_leave_no_product(db, use_async, invalid):
+async def test_invalid_declarations_leave_no_goal(db, use_async, invalid):
     tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]))
     sources, routines = [SOURCE], [dict(ROUTINE)]
     if invalid == "local_source":
@@ -179,7 +179,7 @@ async def test_invalid_declarations_leave_no_product(db, use_async, invalid):
     with pytest.raises((ValueError, PermissionError)):
         await invoke(
             tools,
-            "create_company_product",
+            "create_company_goal",
             use_async,
             name="Invalid",
             sources=sources,
@@ -189,18 +189,16 @@ async def test_invalid_declarations_leave_no_product(db, use_async, invalid):
         )
     from agno.company.execution import _call
 
-    assert (await _call(db, "get_products"))[1] == 0
+    assert (await _call(db, "get_goals"))[1] == 0
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_routine_creation_checks_the_product_before_its_executor(db, use_async):
+async def test_routine_creation_checks_the_goal_before_its_executor(db, use_async):
     tools = CompanyTools(db, user_isolation=True, registry=Registry(agents=[Agent(id="reader")]))
     unknown = {**ROUTINE, "executor_id": "missing"}
-    with pytest.raises(LookupError, match="Product not found"):
-        await invoke(
-            tools, "create_product_routine", use_async, product_id="missing", **unknown, _agno_run_context=context()
-        )
+    with pytest.raises(LookupError, match="Goal not found"):
+        await invoke(tools, "create_goal_routine", use_async, goal_id="missing", **unknown, _agno_run_context=context())
 
 
 def _failing_link(db, calls, error=None):
@@ -225,40 +223,40 @@ def _failing_link(db, calls, error=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("failing", ["add_product_routine", "update_schedule"])
+@pytest.mark.parametrize("failing", ["add_goal_routine", "update_schedule"])
 async def test_failed_link_or_enable_leaves_no_schedule_and_the_name_stays_usable(db, use_async, failing, monkeypatch):
     from agno.company.execution import _call
 
     tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]))
-    product = await invoke(tools, "create_company_product", use_async, name="Docs", _agno_run_context=context())
+    goal = await invoke(tools, "create_company_goal", use_async, name="Docs", _agno_run_context=context())
     original, calls = getattr(type(db), failing), []
     monkeypatch.setattr(type(db), failing, _failing_link(db, calls))
-    with pytest.raises(RuntimeError, match="linked" if failing == "add_product_routine" else "enabled"):
+    with pytest.raises(RuntimeError, match="linked" if failing == "add_goal_routine" else "enabled"):
         await invoke(
-            tools, "create_product_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
+            tools, "create_goal_routine", use_async, goal_id=goal["id"], **ROUTINE, _agno_run_context=context()
         )
     assert calls and (await _call(db, "get_schedules"))[1] == 0
-    assert (await _call(db, "get_product", product["id"]))["metadata"].get("routine_ids", []) == []
+    assert (await _call(db, "get_goal", goal["id"]))["metadata"].get("routine_ids", []) == []
     monkeypatch.setattr(type(db), failing, original)
     routine = await invoke(
-        tools, "create_product_routine", use_async, product_id=product["id"], **ROUTINE, _agno_run_context=context()
+        tools, "create_goal_routine", use_async, goal_id=goal["id"], **ROUTINE, _agno_run_context=context()
     )
-    assert routine["enabled"] and routine["name"] == product["id"] + ".intake"
-    assert (await _call(db, "get_product", product["id"]))["metadata"]["routine_ids"] == [routine["id"]]
+    assert routine["enabled"] and routine["name"] == goal["id"] + ".intake"
+    assert (await _call(db, "get_goal", goal["id"]))["metadata"]["routine_ids"] == [routine["id"]]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_failed_routine_write_discards_the_partial_product(db, use_async, monkeypatch):
+async def test_failed_routine_write_discards_the_partial_goal(db, use_async, monkeypatch):
     from agno.company.execution import _call
 
     tools = CompanyTools(db, registry=Registry(agents=[Agent(id="reader")]))
     calls: list = []
-    monkeypatch.setattr(type(db), "add_product_routine", _failing_link(db, calls, RuntimeError("link failed")))
+    monkeypatch.setattr(type(db), "add_goal_routine", _failing_link(db, calls, RuntimeError("link failed")))
     with pytest.raises(RuntimeError, match="link failed"):
         await invoke(
             tools,
-            "create_company_product",
+            "create_company_goal",
             use_async,
             name="Partial",
             sources=[SOURCE],
@@ -267,7 +265,7 @@ async def test_failed_routine_write_discards_the_partial_product(db, use_async, 
             _agno_run_context=context(),
         )
     assert calls
-    assert (await _call(db, "get_products"))[1] == 0
+    assert (await _call(db, "get_goals"))[1] == 0
     assert (await _call(db, "get_sources"))[1] == 0
     assert (await _call(db, "get_schedules"))[1] == 0
 
@@ -291,11 +289,11 @@ class CreationModel(OfflineModel):
                         id="create",
                         type="function",
                         function=dict(
-                            name="create_company_product",
+                            name="create_company_goal",
                             arguments=json.dumps(
                                 dict(
                                     name="Chat-created",
-                                    purpose="Serve our docs",
+                                    objective="Serve our docs",
                                     sources=[SOURCE],
                                     routines=[{**ROUTINE, "executor_id": "writer"}],
                                 )
@@ -324,27 +322,27 @@ async def test_super_agent_runtime_injects_caller_and_parses_declarations(db, tm
         telemetry=False,
     )
     with authorization_scope(lambda: context().authorization):
-        output = await os.manager.arun("Set up a Product for our docs site", user_id="ana")
+        output = await os.manager.arun("Set up a Goal for our docs site", user_id="ana")
     assert output.tools and not output.tools[0].tool_call_error, output
     async with AsyncClient(transport=ASGITransport(app=os.get_app()), base_url="http://test") as client:
-        products = (await client.get("/company/products")).json()["data"]
-        assert len(products) == 1 and products[0]["user_id"] == "ana"
+        goals = (await client.get("/company/goals")).json()["data"]
+        assert len(goals) == 1 and goals[0]["user_id"] == "ana"
         assert len((await client.get("/company/sources")).json()["data"]) == 1
         assert len((await client.get("/company/routines")).json()["data"]) == 1
 
 
 @pytest.mark.asyncio
-async def test_real_routine_run_cannot_create_product(system):
+async def test_real_routine_run_cannot_create_goal(system):
     client, db, worker, os, components = system
     components["writer"].model = CreationModel()
     components["writer"].tools = [CompanyTools(db)]
     os.resync(worker.authorization_app)
-    product = (await client.post("/company/products", json={"name": "Original"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Original"})).json()
     routine = (
         await client.post(
             "/company/routines",
             json=dict(
-                product_id=product["id"],
+                goal_id=goal["id"],
                 **{**ROUTINE, "executor_id": "writer"},
             ),
         )
@@ -371,7 +369,7 @@ async def test_real_routine_run_cannot_create_product(system):
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "failed", response.text
     assert "automated" in response.json()["error"]
-    assert [p["id"] for p in (await client.get("/company/products")).json()["data"]] == [product["id"]]
+    assert [p["id"] for p in (await client.get("/company/goals")).json()["data"]] == [goal["id"]]
 
 
 @pytest.mark.asyncio
@@ -387,14 +385,14 @@ async def test_provider_decides_permissions_and_records_human(db, use_async):
     ctx = context([])
     ctx.authorization.provider = HumanGrants()
     tools = CompanyTools(db, user_isolation=True, registry=Registry(agents=[Agent(id="reader")]))
-    product = await invoke(
-        tools, "create_company_product", use_async, name="Human grants", routines=[ROUTINE], _agno_run_context=ctx
+    goal = await invoke(
+        tools, "create_company_goal", use_async, name="Human grants", routines=[ROUTINE], _agno_run_context=ctx
     )
-    assert product["user_id"] == "ana" and len(product["metadata"]["routine_ids"]) == 1
+    assert goal["user_id"] == "ana" and len(goal["metadata"]["routine_ids"]) == 1
     ctx.authorization.context.principal_id = "dev"
     ctx.authorization.context.scopes = ["agent_os:admin"]
-    with pytest.raises(PermissionError, match="products:write"):
-        await invoke(tools, "create_company_product", use_async, name="Denied", _agno_run_context=ctx)
+    with pytest.raises(PermissionError, match="goals:write"):
+        await invoke(tools, "create_company_goal", use_async, name="Denied", _agno_run_context=ctx)
 
 
 @pytest.mark.asyncio
@@ -406,6 +404,6 @@ async def test_automatic_dispatch_context_overrides_human_grants(db, use_async):
     token = _automatic_task.set({"id": "automatically-dispatched"})
     try:
         with pytest.raises(PermissionError, match="automated"):
-            await invoke(tools, "create_company_product", use_async, name="Denied", _agno_run_context=context())
+            await invoke(tools, "create_company_goal", use_async, name="Denied", _agno_run_context=context())
     finally:
         _automatic_task.reset(token)

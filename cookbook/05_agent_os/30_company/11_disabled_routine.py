@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from agno.agent import Agent
-from agno.company import Product, Routine
+from agno.company import Goal, Routine
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS, CompanyConfig
 from fastapi.testclient import TestClient
@@ -17,7 +17,7 @@ if __name__ == "__main__":
     with TemporaryDirectory() as directory:
         db = SqliteDb(db_file=str(Path(directory) / "company.db"))
         reviewer = Agent(id="reviewer", db=db, telemetry=False)
-        product = Product(
+        goal = Goal(
             id="documentation",
             name="Documentation",
             routines=[
@@ -34,7 +34,7 @@ if __name__ == "__main__":
         agent_os = AgentOS(
             db=db,
             agents=[reviewer],
-            company=CompanyConfig(products=[product]),
+            company=CompanyConfig(goals=[goal]),
             telemetry=False,
         )
         with TestClient(agent_os.get_app()) as client:

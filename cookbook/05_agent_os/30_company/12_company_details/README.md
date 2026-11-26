@@ -1,6 +1,6 @@
 # Company details
 
-`CompanyConfig(name="Acme", description="What Acme does")` sets the singleton company at startup. There is always one shared row: changing the configuration updates it until someone edits it through the API or chat, and after that edits survive deployment and the configuration is no longer applied. The Company database and its configured Product table name define the scope; the details table is named `<products_table>_details`. Existing installations default to `Company` without a description.
+`CompanyConfig(name="Acme", description="What Acme does")` sets the singleton company at startup. There is always one shared row: changing the configuration updates it until someone edits it through the API or chat, and after that edits survive deployment and the configuration is no longer applied. The Company database and its configured Goal table name define the scope; the details table is named `<goals_table>_details`. Existing installations default to `Company` without a description.
 
 `GET /company/details` requires `company:read`. `PATCH /company/details` requires `company:write`, and the admin scope bypasses it as usual. Pass `expected_updated_at` from the last read with the changed `name` or `description`. A concurrent edit returns 409. Reload and reconcile your changes before retrying. `description: null` clears it.
 
@@ -18,7 +18,7 @@ Connect the AgentOS UI to `http://localhost:7777` and tell Super Agent:
 
 > Our company is Acme. We build warehouse robots.
 
-Super Agent saves company details itself with `update_company_details`. It is instructed to save the company's name or description when the person states or changes it. The tool description distinguishes statements about another organization from a request to save; that disambiguation is not repeated in the system prompts. Products and Routines are created only when the person asks for them.
+Super Agent saves company details itself with `update_company_details`. It is instructed to save the company's name or description when the person states or changes it. The tool description distinguishes statements about another organization from a request to save; that disambiguation is not repeated in the system prompts. Goals and Routines are created only when the person asks for them.
 
 Initial setup saves without another approval while the record is still unedited. Replacing human-edited details requests approval through `confirm_company_details`; rejecting it leaves the record unchanged. Open a new chat and ask what your company does, then try a name-only edit. Restart with a different `CompanyConfig` name and description to verify that the saved edit remains.
 

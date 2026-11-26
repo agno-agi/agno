@@ -15,11 +15,9 @@ from agno.db.schemas.company import validate_company_details
 from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
 
 
-def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -> Any:
+def active_parents(stmt: Any, table: Any, goals: Any, projects: Any = None) -> Any:
     """Hide children of archived parents before counting or paging."""
-    stmt = stmt.where(
-        select(products.c.id).where(products.c.id == table.c.product_id, products.c.deleted_at.is_(None)).exists()
-    )
+    stmt = stmt.where(select(goals.c.id).where(goals.c.id == table.c.goal_id, goals.c.deleted_at.is_(None)).exists())
     if projects is not None:
         stmt = stmt.where(
             or_(
@@ -32,22 +30,22 @@ def active_parents(stmt: Any, table: Any, products: Any, projects: Any = None) -
     return stmt
 
 
-def lock_product(sess: Any, products: Any, product_id: str) -> None:
-    """Serialize hierarchy writes on the Product, including on SQLite.
+def lock_goal(sess: Any, goals: Any, goal_id: str) -> None:
+    """Serialize hierarchy writes on the Goal, including on SQLite.
 
     A no-op UPDATE obtains a write lock without changing the activity timestamp.
     Every child creation, move, transition and restore shares this lock with archive.
     """
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
-    row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.id)).first()
+    stmt = goals.update().where(goals.c.id == goal_id, goals.c.deleted_at.is_(None))
+    row = sess.execute(stmt.values(updated_at=goals.c.updated_at).returning(goals.c.id)).first()
     if row is None:
-        raise ValueError("Product is missing or archived")
+        raise ValueError("Goal is missing or archived")
 
 
 def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
     """Refuse an automatic acceptance when its Routine already has max_open Tasks open.
 
-    The caller holds the Product lock, so two acceptances cannot both count a free place.
+    The caller holds the Goal lock, so two acceptances cannot both count a free place.
     A receipt with no max_open is not counted.
     """
     limit = auto_accept.get("max_open")
@@ -73,7 +71,7 @@ def require_project(
     sess: Any,
     projects: Any,
     project_id: Optional[str],
-    product_id: str,
+    goal_id: str,
     task_status: Optional[str] = None,
     *,
     reject_proposed: bool = False,
@@ -84,8 +82,8 @@ def require_project(
     row = sess.execute(select(projects).where(projects.c.id == project_id)).first()
     if row is None or row._mapping["deleted_at"] is not None:
         raise ValueError("Project is missing or archived")
-    if row._mapping["product_id"] != product_id:
-        raise ValueError("Task and Project must belong to the same Product")
+    if row._mapping["goal_id"] != goal_id:
+        raise ValueError("Task and Project must belong to the same Goal")
     if reject_cancelled and row._mapping["status"] == "cancelled":
         raise CancelledProjectError("Cannot change Task status in a cancelled Project")
     if reject_proposed and row._mapping["status"] == "proposed":
@@ -103,14 +101,14 @@ def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optio
     if data.get("dedupe_key") is None:
         return None
     row = sess.execute(
-        select(tasks).where(tasks.c.product_id == data["product_id"], tasks.c.dedupe_key == data["dedupe_key"])
+        select(tasks).where(tasks.c.goal_id == data["goal_id"], tasks.c.dedupe_key == data["dedupe_key"])
     ).first()
     return dict(row._mapping) if row is not None else None
 
 
 def lock_child(
     sess: Any,
-    products: Any,
+    goals: Any,
     projects: Any,
     table: Any,
     record_id: str,
@@ -122,13 +120,13 @@ def lock_child(
     if row is None:
         return
     record = row._mapping
-    lock_product(sess, products, record["product_id"])
-    # Read the Project again after taking the Product lock: a move may have won it.
+    lock_goal(sess, goals, record["goal_id"])
+    # Read the Project again after taking the Goal lock: a move may have won it.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
         status = row._mapping["status"] if restoring else None
         require_project(
-            sess, projects, row._mapping["project_id"], record["product_id"], status, reject_cancelled=reject_cancelled
+            sess, projects, row._mapping["project_id"], record["goal_id"], status, reject_cancelled=reject_cancelled
         )
 
 
@@ -212,49 +210,47 @@ def _refuse_open_tasks(sess: Any, tasks: Any, condition: Any) -> None:
         raise ValueError({"message": "Cannot archive with active Tasks", "tasks": [dict(row) for row in rows]})
 
 
-def archive_product(
-    sess: Any, products: Any, projects: Any, tasks: Any, product_id: str, user_id: Optional[str]
-) -> bool:
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+def archive_goal(sess: Any, goals: Any, projects: Any, tasks: Any, goal_id: str, user_id: Optional[str]) -> bool:
+    stmt = goals.update().where(goals.c.id == goal_id, goals.c.deleted_at.is_(None))
     if user_id is not None:
-        stmt = stmt.where(products.c.user_id == user_id)
+        stmt = stmt.where(goals.c.user_id == user_id)
     now = int(time.time())
     # Lock and change the parent first; a refusal rolls back the whole transaction.
-    if sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(products.c.id)).first() is None:
+    if sess.execute(stmt.values(deleted_at=now, updated_at=now).returning(goals.c.id)).first() is None:
         return False
-    _refuse_open_tasks(sess, tasks, tasks.c.product_id == product_id)
-    parent = {"type": "product", "id": product_id}
-    _archive_children(sess, projects, projects.c.product_id == product_id, parent, now)
-    _archive_children(sess, tasks, tasks.c.product_id == product_id, parent, now)
+    _refuse_open_tasks(sess, tasks, tasks.c.goal_id == goal_id)
+    parent = {"type": "goal", "id": goal_id}
+    _archive_children(sess, projects, projects.c.goal_id == goal_id, parent, now)
+    _archive_children(sess, tasks, tasks.c.goal_id == goal_id, parent, now)
     return True
 
 
-def restore_product(
-    sess: Any, products: Any, projects: Any, tasks: Any, product_id: str, user_id: Optional[str]
+def restore_goal(
+    sess: Any, goals: Any, projects: Any, tasks: Any, goal_id: str, user_id: Optional[str]
 ) -> Optional[Dict[str, Any]]:
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_not(None))
+    stmt = goals.update().where(goals.c.id == goal_id, goals.c.deleted_at.is_not(None))
     if user_id is not None:
-        stmt = stmt.where(products.c.user_id == user_id)
+        stmt = stmt.where(goals.c.user_id == user_id)
     now = int(time.time())
-    row = sess.execute(stmt.values(deleted_at=None, updated_at=now).returning(products)).first()
+    row = sess.execute(stmt.values(deleted_at=None, updated_at=now).returning(goals)).first()
     if row is None:
         return None
-    parent = {"type": "product", "id": product_id}
-    _restore_children(sess, projects, projects.c.product_id == product_id, parent, now)
-    _restore_children(sess, tasks, tasks.c.product_id == product_id, parent, now)
+    parent = {"type": "goal", "id": goal_id}
+    _restore_children(sess, projects, projects.c.goal_id == goal_id, parent, now)
+    _restore_children(sess, tasks, tasks.c.goal_id == goal_id, parent, now)
     return dict(row._mapping)
 
 
 def archive_project(
     sess: Any,
-    products: Any,
+    goals: Any,
     projects: Any,
     tasks: Any,
     project_id: str,
     user_id: Optional[str],
     updated_before: Optional[int] = None,
 ) -> bool:
-    lock_child(sess, products, projects, projects, project_id)
+    lock_child(sess, goals, projects, projects, project_id)
     stmt = select(projects).where(projects.c.id == project_id, projects.c.deleted_at.is_(None))
     if user_id is not None:
         stmt = stmt.where(projects.c.user_id == user_id)
@@ -280,9 +276,9 @@ def archive_project(
 
 
 def restore_project(
-    sess: Any, products: Any, projects: Any, tasks: Any, project_id: str, user_id: Optional[str]
+    sess: Any, goals: Any, projects: Any, tasks: Any, project_id: str, user_id: Optional[str]
 ) -> Optional[Dict[str, Any]]:
-    lock_child(sess, products, projects, projects, project_id)
+    lock_child(sess, goals, projects, projects, project_id)
     stmt = select(projects).where(projects.c.id == project_id, projects.c.deleted_at.is_not(None))
     if user_id is not None:
         stmt = stmt.where(projects.c.user_id == user_id)
@@ -300,34 +296,32 @@ def restore_project(
     return dict(restored._mapping)
 
 
-def product_counts(
-    sess: Any, products: Any, projects: Any, tasks: Any, product_ids: List[str]
-) -> Dict[str, Dict[str, Any]]:
-    """One grouped SQL statement for both kinds of child on a Product page."""
+def goal_counts(sess: Any, goals: Any, projects: Any, tasks: Any, goal_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """One grouped SQL statement for both kinds of child on a Goal page."""
     from agno.db.schemas.tasks import TASK_TRANSITIONS
 
     counts: Dict[str, Dict[str, Any]] = {
-        pid: {"projects": 0, "tasks": dict.fromkeys(TASK_TRANSITIONS, 0)} for pid in product_ids
+        pid: {"projects": 0, "tasks": dict.fromkeys(TASK_TRANSITIONS, 0)} for pid in goal_ids
     }
-    if not product_ids:
+    if not goal_ids:
         return counts
     project_query = active_parents(
-        select(projects.c.product_id.label("parent_id"), literal("projects").label("kind"), func.count().label("total"))
+        select(projects.c.goal_id.label("parent_id"), literal("projects").label("kind"), func.count().label("total"))
         .where(
-            projects.c.product_id.in_(product_ids),
+            projects.c.goal_id.in_(goal_ids),
             projects.c.deleted_at.is_(None),
             projects.c.status.in_(["proposed", "active"]),
         )
-        .group_by(projects.c.product_id),
+        .group_by(projects.c.goal_id),
         projects,
-        products,
+        goals,
     )
     task_query = active_parents(
-        select(tasks.c.product_id.label("parent_id"), tasks.c.status.label("kind"), func.count().label("total"))
-        .where(tasks.c.product_id.in_(product_ids), tasks.c.deleted_at.is_(None))
-        .group_by(tasks.c.product_id, tasks.c.status),
+        select(tasks.c.goal_id.label("parent_id"), tasks.c.status.label("kind"), func.count().label("total"))
+        .where(tasks.c.goal_id.in_(goal_ids), tasks.c.deleted_at.is_(None))
+        .group_by(tasks.c.goal_id, tasks.c.status),
         tasks,
-        products,
+        goals,
         projects,
     )
     for row in sess.execute(union_all(project_query, task_query)).mappings():
@@ -339,7 +333,7 @@ def product_counts(
 
 
 def project_counts(
-    sess: Any, products: Any, projects: Any, tasks: Any, project_ids: List[str]
+    sess: Any, goals: Any, projects: Any, tasks: Any, project_ids: List[str]
 ) -> Dict[str, Dict[str, Any]]:
     """One grouped SQL statement for all Task statuses on a Project page."""
     from agno.db.schemas.tasks import TASK_TRANSITIONS
@@ -352,7 +346,7 @@ def project_counts(
         .where(tasks.c.project_id.in_(project_ids), tasks.c.deleted_at.is_(None))
         .group_by(tasks.c.project_id, tasks.c.status),
         tasks,
-        products,
+        goals,
         projects,
     )
     for row in sess.execute(query).mappings():
@@ -361,14 +355,14 @@ def project_counts(
 
 
 def create_company_source(
-    sess: Any, products: Any, table: Any, source_data: Dict[str, Any], reuse: bool
+    sess: Any, goals: Any, table: Any, source_data: Dict[str, Any], reuse: bool
 ) -> Dict[str, Any]:
-    """Serialize Source additions with Product archives and identical discoveries."""
-    lock_product(sess, products, source_data["product_id"])
+    """Serialize Source additions with Goal archives and identical discoveries."""
+    lock_goal(sess, goals, source_data["goal_id"])
     if reuse:
         rows = sess.execute(
             select(table).where(
-                table.c.product_id == source_data["product_id"], table.c.reference == source_data["reference"]
+                table.c.goal_id == source_data["goal_id"], table.c.reference == source_data["reference"]
             )
         ).all()
         for row in rows:
@@ -391,41 +385,41 @@ def create_company_source(
     return dict(sess.execute(table.insert().values(**source_data).returning(table)).one()._mapping)
 
 
-def link_product_routine(sess: Any, products: Any, product_id: str, schedule_id: str) -> Dict[str, Any]:
+def link_goal_routine(sess: Any, goals: Any, goal_id: str, schedule_id: str) -> Dict[str, Any]:
     """Serialize metadata appends without comparing database-specific JSON encodings."""
-    from agno.db.schemas.products import product_metadata
+    from agno.db.schemas.goals import goal_metadata
 
-    lock_product(sess, products, product_id)
-    row = sess.execute(select(products).where(products.c.id == product_id)).one()
-    metadata = product_metadata(dict(row._mapping["metadata"] or {}))
+    lock_goal(sess, goals, goal_id)
+    row = sess.execute(select(goals).where(goals.c.id == goal_id)).one()
+    metadata = goal_metadata(dict(row._mapping["metadata"] or {}))
     ids = list(metadata.get("routine_ids") or [])
     if schedule_id not in ids:
         metadata["routine_ids"] = [*ids, schedule_id]
         row = sess.execute(
-            products.update()
-            .where(products.c.id == product_id)
+            goals.update()
+            .where(goals.c.id == goal_id)
             .values(metadata=metadata, updated_at=int(time.time()))
-            .returning(products)
+            .returning(goals)
         ).one()
     return dict(row._mapping)
 
 
-def update_product_row(
-    sess: Any, products: Any, product_id: str, user_id: Optional[str], fields: Dict[str, Any]
+def update_goal_row(
+    sess: Any, goals: Any, goal_id: str, user_id: Optional[str], fields: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
-    """Update an active Product; replacing metadata keeps the Routine ids linked to it."""
-    stmt = products.update().where(products.c.id == product_id, products.c.deleted_at.is_(None))
+    """Update an active Goal; replacing metadata keeps the Routine ids linked to it."""
+    stmt = goals.update().where(goals.c.id == goal_id, goals.c.deleted_at.is_(None))
     if user_id is not None:
-        stmt = stmt.where(products.c.user_id == user_id)
+        stmt = stmt.where(goals.c.user_id == user_id)
     if "metadata" in fields and "routine_ids" not in fields["metadata"]:
-        # A no-op UPDATE takes the write lock link_product_routine uses before reading the links.
-        row = sess.execute(stmt.values(updated_at=products.c.updated_at).returning(products.c.metadata)).first()
+        # A no-op UPDATE takes the write lock link_goal_routine uses before reading the links.
+        row = sess.execute(stmt.values(updated_at=goals.c.updated_at).returning(goals.c.metadata)).first()
         if row is None:
             return None
         routine_ids = (row[0] or {}).get("routine_ids")
         if routine_ids:
             fields = {**fields, "metadata": {**fields["metadata"], "routine_ids": routine_ids}}
-    result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(products)).fetchone()
+    result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(goals)).fetchone()
     return dict(result._mapping) if result else None
 
 

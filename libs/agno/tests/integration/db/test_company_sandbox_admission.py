@@ -53,7 +53,7 @@ async def engineering_task(client, db):
     await _call(
         db,
         "create_source",
-        {"id": task["id"], "product_id": task["product_id"], "type": "git", "reference": URL, "created_at": 1},
+        {"id": task["id"], "goal_id": task["goal_id"], "type": "git", "reference": URL, "created_at": 1},
     )
     ready = await client.post(
         path + "/transitions",
@@ -305,9 +305,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
     failed = await _call(db, "get_task", task["id"])
     assert failed["result"]["status"] == "ERROR"
     assert (await worker.store.get_job(job["id"]))["status"] == "completed"
-    source = await client.post(
-        "/company/sources", json={"product_id": task["product_id"], "type": "git", "reference": URL}
-    )
+    source = await client.post("/company/sources", json={"goal_id": task["goal_id"], "type": "git", "reference": URL})
     assert source.status_code == 201
     response = await client.post(path + "/runs", json={"attempt": 2})
     assert response.status_code == 202, response.text
@@ -330,7 +328,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
         "create_source",
         {
             "id": "other-repo",
-            "product_id": task["product_id"],
+            "goal_id": task["goal_id"],
             "type": "git",
             "reference": agent.repository.url,
             "created_at": 1,
