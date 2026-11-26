@@ -105,11 +105,15 @@ if __name__ == "__main__":
         assert task["status"] in ("in_progress", "in_review")
         for entry in task["transitions"]:
             decided_by = entry.get("user_id") or entry.get("started_by") or "the run"
-            print(f"  {entry['from']} -> {entry['target']} by {decided_by}: {entry['reason']}")
+            print(
+                f"  {entry['from']} -> {entry['target']} by {decided_by}: {entry['reason']}"
+            )
 
         print("\nWaiting for the Task to finish")
         finished = wait_for(client, task["id"], "in_review")
-        print(f"Task is {finished['status']}. A person reviews it; nothing completes it for them.")
+        print(
+            f"Task is {finished['status']}. A person reviews it; nothing completes it for them."
+        )
 
         # "Add a task" records the work accepted and does not start it.
         run = chat(
