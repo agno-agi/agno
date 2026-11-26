@@ -26,7 +26,8 @@ from sqlalchemy import text
 
 def draft(step_input: StepInput) -> StepOutput:
     context = json.loads(step_input.input)
-    assert set(context) == {"brief", "wiki", "evidence", "execution_context"}
+    # A workflow receives the brief and the evidence. Only Mini Agent also receives wiki pages.
+    assert set(context) == {"brief", "evidence", "execution_context"}
     return StepOutput(content="Draft ready for review: " + context["brief"])
 
 

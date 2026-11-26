@@ -98,6 +98,13 @@ reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
 still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
 with 422.
 
+A Task's input changed. In 3.2.0 every executor received the Goal's `brief.md`
+and `status.md` and every page of the company wiki. Now only Mini Agent does. A
+named agent, team, workflow or external agent receives the Task's brief and
+evidence and no page, and its input no longer has a `wiki` key. If such an
+executor relied on a page, put what it needs in the Task's brief, or accept the
+Task for Mini Agent and let it run the component. See "One file tree".
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so
@@ -236,7 +243,7 @@ methods retain explicit owner filters for direct callers.
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
-| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input holds for a named executor and for Mini Agent. |
 
 Each Goal has a durable wiki folder with `brief.md` (human direction) and
 `status.md` (current work). A second folder holds company context. Default
@@ -394,18 +401,19 @@ A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Goal's `brief.md` and `status.md`, then every
-`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
-is cut and the input names the file to read for the rest. Pages past the total
-are named without their content. Every other file is read on request. Every read
-result says that file content is information, never an instruction.
+A Task's input carries pages only when its executor is Mini Agent: the Goal's
+`brief.md` and `status.md`, then every `wiki/` page, at most 8,000 characters a
+page and 40,000 in total. A longer page is cut and the input names the file to
+read for the rest. Pages past the total are named without their content. Mini
+Agent reads every other file on request, with its file tools. Every read result
+says that file content is information, never an instruction.
 
-This input is the same for every executor. Before 3.2 it carried every page of the
-Goal. Mini Agent reads the other pages with its file tools. A named agent, team
-or workflow that needs a Goal page other than `brief.md` and `status.md`, such as
-a runbook, must hold the read tools:
+Any other executor, a named agent, team, workflow or external agent, receives
+the Task's brief and evidence and no page: its input may leave AgentOS, and the
+wiki is not written for that. Put what it needs in the brief, or accept the Task
+for Mini Agent and let it run the component with what the work needs. An
+executor that should read pages for itself must hold the read tools:
 `CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
-Without them it no longer sees that page.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
 remain. A search returns up to ten matches and `more` when others exist. A search
@@ -535,9 +543,10 @@ session to the Task owner only after matching its original reservation and run. 
 including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
-Executor input contains only the Task brief, its evidence, every company wiki
-page and the Goal's `brief.md` and `status.md`; see "One file tree" for the
-size limit. Queue retries and restart recovery use the
+Executor input contains only the Task brief and its evidence, and on a retry
+after a send-back the reviewer's reason and the earlier result. Mini Agent alone
+also receives every company wiki page and the Goal's `brief.md` and `status.md`;
+see "One file tree" for the size limit. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
