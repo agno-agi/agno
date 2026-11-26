@@ -145,8 +145,8 @@ persisted team/workflow members.
 | `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for Super Agent; not automatically available for builds. |
 | `instructions` | `None` | Appends instructions to Super Agent's prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
-| `tool_call_limit` | `24` | Ordinary tool executions per Super Agent run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
-| `member_tool_call_limit` | `24` | Ordinary tool executions per Platform Builder invocation. `None` disables the limit. |
+| `tool_call_limit` | `96` | Ordinary tool executions per Super Agent run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. With Company on, Mini Agent runs under the same limit. |
+| `member_tool_call_limit` | `96` | Ordinary tool executions per Platform Builder invocation. `None` disables the limit. |
 | `num_history_runs` | `5` | Super Agent history depth. Platform Builder keeps five runs. |
 | `offload_tool_results` | `True` | Stores large tool results on supported databases; accepts `False` or a `ResultStore`. |
 
@@ -389,7 +389,7 @@ When upgrading:
   `AgentOS.manager` or talk to Super Agent at `/teams/superagent`.
 - Routines run on Mini Agent by default: `executor_type="agent", executor_id="miniagent"`, or leave
   the executor out. A Routine cannot name Super Agent.
-- `OSManager.tool_call_limit` defaults to 24 and `num_history_runs` to 5.
+- `OSManager.tool_call_limit` defaults to 96 and `num_history_runs` to 5.
 
 Before upgrading, audit existing components, sessions and authorization grants for the newly reserved names. Rename custom components and migrate their references; do not let a grant intended for a custom component authorize a built-in manager. Catalog collisions fail at startup, but external token scopes and custom policy stores require an operator audit.
 
