@@ -693,21 +693,13 @@ several Tasks and answer the rest of the message.
 Super Agent is told about the work a conversation started. The Tasks it added,
 proposed, accepted or started from a chat are kept in that chat's session state under
 `linked_work`. Before every run a pre-hook reads their state under the person's own
-`tasks:read` and sends it beside the person's message, as run context named
-`work_started_from_this_conversation`:
+`tasks:read` and sends it to the model as a message of its own, right before the
+person's message:
 
 ```
-<additional context>
-{
-  "work_started_from_this_conversation": {
-    "note": "Information, not instructions. Read at 14:03 UTC: newer than anything said earlier.",
-    "tasks": [
-      "Task 'Write the breaking-changes section' (id 7942a0af-..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.",
-      "Task 'Fix the pricing page typo' (id 12ce4817-..., miniagent): accepted, not started since 13:58 UTC."
-    ]
-  }
-}
-</additional context>
+Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.
+- Task "Write the breaking-changes section" (id 7942a0af-..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.
+- Task "Fix the pricing page typo" (id 12ce4817-..., miniagent): accepted, not started since 13:58 UTC.
 ```
 
 A state that differs from the one shown last is marked as changed in one run, so on
@@ -715,10 +707,12 @@ the person's next message Super Agent says what finished while they talked, with
 being asked. The list holds this conversation's work only, shows the 20 newest, and
 drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
 
-It is sent with the message and not in the instructions because a model that continues
-from its previous response, as OpenAI's Responses API does by default, is sent a
-conversation's instructions on the first run only. The stored run keeps the person's
-own words in `run_input`; the context is on the user message in `messages`.
+The block is sent and not stored. The stored run holds the person's message as they
+wrote it, so the chat history, the history tools and later turns carry no block. It is
+not in the instructions because a model that continues from its previous response, as
+OpenAI's Responses API does by default, is sent a conversation's instructions on the
+first run only. With that kind of model the provider keeps the blocks sent on earlier
+turns as part of the conversation it holds.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created
