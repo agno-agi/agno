@@ -15,7 +15,10 @@ from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
 def get_company_files_router(agent_os: Any) -> APIRouter:
-    """Build the file routes. tasks/ is in the Company database and notes/ in the AgentOS database."""
+    """Build the file routes. tasks/ and notes/ are folders of the Company file system.
+
+    Without a Company database, notes/ is read from the same store in the AgentOS database.
+    """
     router = APIRouter(
         prefix="/company",
         responses=MIGRATION_REQUIRED_RESPONSE,
@@ -24,7 +27,8 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
     )
     auth = get_authentication_dependency(agent_os.settings)
     db = agent_os._company_db
-    files = CompanyFiles(db, notes_db=agent_os.db)
+    notes_db = db if db is not None else agent_os.db
+    files = CompanyFiles(db, notes_db=notes_db)
 
     def path_rules(folder: str) -> str:
         """What a path inside the folder must look like. The tree's limits count the folder's own name."""
@@ -58,8 +62,8 @@ def get_company_files_router(agent_os: Any) -> APIRouter:
         return f"tasks/{task['id']}"
 
     def notes_folder() -> str:
-        if agent_os.db is None:
-            raise HTTPException(503, "Company notes require the AgentOS database")
+        if notes_db is None:
+            raise HTTPException(503, "Company notes require a database")
         return "notes"
 
     def named(folder: str, entry: Dict[str, Any]) -> Dict[str, Any]:

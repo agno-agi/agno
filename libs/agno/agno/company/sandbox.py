@@ -76,7 +76,8 @@ async def _project_checkout(
             return checkout, result
         sources = []
         page = 1
-        while True:
+        # A Task with no Goal has no Sources: an unfiltered read would return every Goal's.
+        while task["goal_id"] is not None:
             rows, total = await _call(db, "get_sources", goal_id=task["goal_id"], limit=100, page=page)
             sources.extend(rows)
             if page * 100 >= total:

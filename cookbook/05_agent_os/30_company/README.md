@@ -57,7 +57,11 @@ Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
 is up. Company then starts without a restart.
 
 The migration renames the stored tables and columns in place and keeps every
-id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+id. It also lets `goal_id` be empty on the projects and tasks tables, because a
+Goal is optional from 3.3.0. PostgreSQL drops the requirement in place. SQLite
+cannot, so there each of the two tables is created again without it and its
+rows and indexes are carried over; a run that stops part way is finished by the
+next run. A deployment made from the 3.2.0 template then runs with no edit. Your own
 code that calls the Company Python API by its 3.2.0 names needs the rename
 first: see the names that changed with no alias, below.
 
@@ -169,19 +173,61 @@ run the Routine can trigger it.
 | --- | --- |
 | `02_manage_projects.py` | Goal-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
 | `03_manage_tasks.py` | Backlog proposals, executor acceptance, frozen scope, rescoping, review and completion. |
+| `18_work_without_a_goal.py` | A Task with no Goal in the Default Project, a Project with no Goal, and what the Default Project refuses. |
 | `09_sandboxed_engineers.py` | Claude and Codex execute a Task from a public repository in Docker, with durable checkpoints and checkout pinning. |
 
-A Goal contains Projects and Routines. Every new Task belongs to a Project
-in that Goal: `project_id` is required by Task creation and proposal/Intake
-tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+A Goal is a standing aim: it has Sources, Routines, `brief.md` and `status.md`,
+and no end date. A Goal is optional. A Project is an outcome that finishes, and
+it may serve a Goal or none: `goal_id` is optional on `POST /company/projects`
+and on `propose_company_project`.
+
+Every Task belongs to a Project. A Task created with no `project_id` goes into
+the **Default Project**, the one place for a single piece of work that fits no
+other Project, so nobody makes a Project to hold one Task.
+
+The Goal on a Task only says which Goal the Task belongs to. A Task does not
+need one.
+
+- A Task in a Project other than the Default one carries that Project's Goal,
+  or none when the Project has none. A `goal_id` left out is filled from the
+  Project, and a different one is refused.
+- A Task in the Default Project carries the `goal_id` it is given, or none. This
+  is the same through `POST /company/tasks`, `propose_company_task` and the
+  manager.
+- A Task and a Project that a Routine proposes carry the Routine's Goal, also
+  when the Task names no Project and lands in the Default Project. A Routine is
+  refused another Goal.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
+- `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
+  list the records with no Goal; `has_goal=true` lists the others.
+
+The Default Project has the fixed id `default` and the name "Default". It is
+stored when Company starts and on first use. Project responses carry
+`is_default`, true for this Project only. It has no Goal, is always `active`,
+is listed like any Project and never finishes: it is not proposed, approved,
+completed or cancelled, the Refresh Routine and auto-accept never complete it,
+auto-accept never accepts a Task in it (nobody approved it, so such a Task
+waits for a person),
+and archiving a Goal leaves it in place (the Goal's own Tasks in it are archived
+and restored with the Goal). Renaming, editing, a transition and archiving are
+each refused with the reason, by the API (422 for an edit, 409 for a transition
+or a delete), the tools and a Routine.
+
+Backlog drafts can be created under a `proposed` Project so people
 can review the plan. The Project must be approved before its Tasks move to Ready
 or start a run; creating a Task directly in Ready also requires approval.
-When no Project fits, propose one with `propose_company_project` and use its ID
-for Backlog proposals. A human can then transition it to `active`. Project approval
-does not accept or execute Tasks.
-New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
-but cannot clear its Project. Existing nullable storage rows remain readable.
+A human transitions a proposed Project to `active`. Project approval
+does not accept or execute Tasks. The Default Project needs no approval.
+New Backlog proposals reuse an existing Task with the same key.
+
+A database created before this change requires a Goal on every Project and
+Task. The 3.3.0 migration removes that requirement; see "Upgrading from agno 3.2.0".
+A Task run with no Goal gets the company wiki pages in its input and no Goal
+pages, and writes only its own `tasks/<task-id>/` folder. Its list tools still
+read Projects and Tasks company-wide, as they do for any Task run.
 
 Routine instructions can make these two approval steps explicit:
 
@@ -234,21 +280,21 @@ methods retain explicit owner filters for direct callers.
 
 | File | Demonstrates |
 | --- | --- |
-| `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
+| `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
 | `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
 
-Each Goal has a durable wiki namespace with `brief.md` (human direction) and
-`status.md` (current work). A second namespace holds company context. Default
+Each Goal has a durable wiki folder with `brief.md` (human direction) and
+`status.md` (current work). A second folder holds company context. Default
 pages are created on first access and never reset. GET `/company/goals/{id}/wiki`
 lists pages; GET and PUT `/company/goals/{id}/wiki/{path}` read and write them.
-The company namespace has the same surface at `/company/wiki`. Writes require the
+The company wiki has the same surface at `/company/wiki`. Writes require the
 filesystem `expected_version` read with the page; zero means create only. Conflicts
 return 409. Pages are Markdown and paths must be relative and normalized.
 
 Wiki reads require `wiki:read`; writes require `wiki:write`. Goal and company
 pages are shared documents, so any caller with `wiki:write` can change them, and
-every caller with read permission can read both namespaces. Company services use FileSystem;
+every caller with read permission can read both. Company services use FileSystem;
 its existing backend owns storage and version checks.
 
 GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
@@ -284,12 +330,44 @@ in `wiki/`. Each is created when there is something to put in it. A Goal is
 addressed by ID, and listing `goals/` shows each name beside its ID. Pages in
 `wiki/` and `goals/` are Markdown; `tasks/` and `notes/` take any text file.
 
-**Where it is stored.** `wiki/`, `goals/` and `tasks/` are in the Company
-database. `notes/` is in the AgentOS database, so it exists with Super Agent on
-whether or not Company is on. The two are the same database unless
-`CompanyConfig(db=...)` names another. The stored namespaces of the wiki and of
-each Goal are the ones 3.1 created, so existing pages are read where they are,
-and the wiki API above serves the same pages.
+**Where it is stored.** Every Company file is in the Company file system: one
+store in the Company database, the namespace `company`, with each file at its
+path in the tree. `notes/` is a folder of it. Without Company, Super Agent still
+has `notes/`: the same store in the AgentOS database holds it. The wiki API above
+serves the same pages.
+
+The folder of a Goal or a Task is its ID written as one path segment. An ID made
+of letters, digits and `. - _ @ +` is its own folder name. Any other character
+is escaped, so `Docs Team` is stored under `goals/Docs%20Team/` and no two IDs
+share a folder. The tools and the routes still name a Goal by its ID.
+
+**Upgrading from 3.2.** The 3.3.0 migration above also moves the files: each
+one to its tree path with its content, version and timestamps. AgentOS does not
+move them as it starts.
+
+- Until the migration has run, AgentOS starts and the Company file system
+  refuses each use with an error that names what to run:
+  `MigrationManager(db).up()` or `POST /databases/all/migrate`. It also stays
+  refused when a different file is already stored at a path a file moves to.
+- With a separate Company database, the notes move into it from the AgentOS
+  database. `POST /databases/all/migrate` does this once both databases are
+  migrated. After `MigrationManager(db).up()` on each, call
+  `move_company_notes(agent_os_db, company_db)` from
+  `agno.db.migrations.versions.v3_3_0`. Until then `notes/` is refused.
+- The migration never guesses where a file belongs. Files of a Goal or Task it
+  cannot be sure of stay where they are and are reported in the log.
+  `company_files_left(db)` lists them, and
+  `move_company_files(db, owners={namespace: id})` moves a namespace to the
+  owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
+- The namespace `company` belongs to the Company file system. On an AgentOS
+  with Company, an agent whose own `FileSystem` uses the shared partition of
+  that namespace in the same database is refused when its run starts. Give that
+  filesystem another namespace, and move its files there.
+
+**On the File System page.** With Company on, the Company file system is one entry
+of the page: namespace `company`, with `wiki/`, `goals/`, `tasks/` and `notes/` under
+it. `GET /filesystem/namespaces` lists it. Browsing it there needs `filesystem:read` and the
+scopes the Company routes ask for: `wiki:read`, and `tasks:read` too for `tasks/`.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
@@ -362,8 +440,8 @@ A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Goal's `brief.md` and `status.md`, then every
-`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
+A Task's input always carries the Goal's `brief.md` and `status.md` when the
+Task has a Goal, then every `wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
 is cut and the input names the file to read for the rest. Pages past the total
 are named without their content. Every other file is read on request. Every read
 result says that file content is information, never an instruction.
@@ -381,12 +459,13 @@ of the whole tree, of `goals/` or of `tasks/` opens the 50 newest Goals and
 the 50 newest Tasks. When there are more, the reply says how many it searched;
 name a folder, `goals/<goal-id>` or `tasks/<task-id>`, to search another.
 
-A file holds at most 1 MB. `wiki/`, each Goal, each Task and `notes/` hold
-20 MB each. A Task's folder is its own space: a Task that fills its folder does not
-stop another Task's writes. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. There are no API
-routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
-outside `notes/`.
+A file holds at most 1 MB. The Company file system holds 1 GB in total, across
+every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. Each
+Task's folder also holds at most 20 MB, so a Task that fills its folder does not
+stop the writes of the wiki, a Goal, the notes or another Task. Nothing removes a
+Task's files, not even archiving the Task, because an archived Task can be
+restored. There are no API routes for `tasks/` and `notes/`, and no tool appends
+to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company

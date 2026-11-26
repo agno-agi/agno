@@ -906,4 +906,115 @@ unless the entry names PostgreSQL (the `pgvector` container on port 5532).
 
 **Result:** Exit 0 in 35 seconds. Printed "Same worker session across attempts: True". `--serve` was NOT RUN.
 
+### 16_company_file_tree.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after Company files moved into one store: the namespace `company` of the Company database, each file at its tree path, with `notes/` a folder of it. No model call. The script saves a company page and a Goal brief with confirmation, writes a Goal page, a Task file and a note, and reads the Task file and the note back through the API.
+
+**Result:** The script printed the same tree as before the change: top folders `wiki/`, `goals/`, `tasks/`, `notes/`; the wiki pages, the Goal's pages, the Task's `changes.md` and the note `follow-ups.md`; the Task files and the notes over the API; and the pages a Task's input loads. A stale save and an unconfirmed wiki write were refused. It ended with "Company file tree example passed".
+
+---
+
+### 04_manage_playbook.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/04_manage_playbook.py` on the same change. No model call. Sync and async wiki pages, creation with version 0, a version conflict and the decision log.
+
+**Result:** "Stale wiki edit refused" and "Company playbook sync and async examples passed". The cookbooks that run a model were not run for this change.
+
+---
+
+### Upgrade from agno 3.2.0: the Company files move as AgentOS starts
+
+**Status:** PASS
+
+**Note (2026-11-25):** This run was made while AgentOS migrated a database as it started. It no longer does: the files move when `MigrationManager(db).up()` or a migrate endpoint runs. The `start` and `concurrent` scenarios below describe the earlier behaviour and were not run again after that change.
+
+**Description:** Run on 2026-11-25, with no model call. The starting databases were written by agno 3.2.0 from PyPI in an environment of its own (`uv venv`, then `uv pip install agno==3.2.0 "sqlalchemy[asyncio]" "psycopg[binary]" fastapi httpx aiosqlite pyyaml openai python-multipart`). There, a 3.2.0 AgentOS with Company started once, and 3.2.0's own `CompanyManager` and `CompanyFiles` wrote four Goals (`this-agentos`, `Docs Team`, `team`, `team/growth`), a Project, a Task and 19 files: 3 wiki pages, 3 pages for each Goal, 2 Task files and 2 notes, several of them written more than once. 3.2.0 stamped every table 3.0.0 and kept the slash of `team/growth` in its namespace (`company/products/team/growth/wiki`).
+
+This branch was then started on a copy of that database with `AgentOS(db=db, company=CompanyConfig())` and nothing else, or `CompanyConfig(db=company_db)` for Company in a database of its own. Each scenario ran on SQLite and on PostgreSQL 18 (`agnohq/pgvector:18`), with one database and with two. The two scripts are session files and are not in the repository:
+
+```bash
+venv320/bin/python write_on_3_2_0.py <agentos database> <company database> facts.json
+.venv/bin/python upgrade_check.py <sqlite|postgres> <one|two> <start|concurrent|blocked|no-provision>
+```
+
+**Result:** 16 of 16 scenarios passed.
+
+| Scenario | SQLite, one database | SQLite, two | PostgreSQL, one | PostgreSQL, two |
+| --- | --- | --- | --- | --- |
+| `start`: it starts; 19 files under the `company` store with the content, version and both timestamps 3.2.0 wrote; nothing left in an old namespace; each read through `CompanyFileTools`; a second start moves nothing | PASS | PASS | PASS | PASS |
+| `concurrent`: two processes started at the same moment; each file moved once, by one of them; neither logged an error | PASS | PASS | PASS | PASS |
+| `blocked`: a different page already stored where a 3.2.0 page moves to; AgentOS starts and says why once; the Company file system answers 500 `migration_required_error` naming `MigrationManager(db).up()` and `POST /databases/all/migrate`; with the page removed, that route finishes the move with no restart | PASS | PASS | PASS | PASS |
+| `no-provision`: `auto_provision_dbs=False`; it starts, nothing moves, the Company file system refuses | PASS | PASS | PASS | PASS |
+
+With two databases the log of the first start reads "Moved 2 Company files" for the AgentOS database, "Moved 17 Company files" for the Company database, and "Moved 2 notes from the AgentOS database to the Company database". In the `blocked` scenario with two databases, the notes are not moved at that start, because the Company database was not migrated. After the route finishes the migration it moves the notes too, and `notes/` is served with no restart. (Run again on 2026-11-25 on SQLite with two databases: `GET /company/notes/ideas.md` answered 500 before `POST /databases/all/migrate` and 200 with the note after it.)
+
+The Goal `team/growth` cannot be named in a tree path, so its pages were read through the wiki of that Goal. Its folder in the store is `goals/team%2fgrowth/`.
+
+---
+
+### 16_company_file_tree.py and 04_manage_playbook.py (after the review of the file move)
+
+**Status:** PASS
+
+**Description:** Run again on 2026-11-25 with `.venv/bin/python cookbook/05_agent_os/30_company/<file>`, after the review fixes to the file move: folders named by `folder_name`, the Company file system refusing at first use while files wait, and path limits checked on the stored path. No model call.
+
+**Result:** `16_company_file_tree.py` ended with "Company file tree example passed" and "No model call was made". `04_manage_playbook.py` ended with "Company playbook sync and async examples passed". The cookbooks that run a model were not run.
+
+---
+
+### 16_company_file_tree.py (the Company file system on the File System page)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after the script gained a look at the File System page: it lists the file systems, finds the Company one and reads a Task file through it. No model call.
+
+**Result:** `/filesystem/namespaces` held one entry marked `company`, namespace `company` with id `company`. `/filesystem/entries?filesystem_id=company` listed `goals/`, `notes/`, `tasks/` and `wiki/`, and `/filesystem/content` returned the Task's `changes.md` with the content the Company route returns. The rest of the script printed what it printed before, and it ended with "Company file tree example passed".
+
+---
+
+### Upgrade from agno 3.2.0, read through the File System page's routes
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25, with no model call. The 16 scenarios of "Upgrade from agno 3.2.0: the Company files move as AgentOS starts" above were run again on this branch, which adds the Company file system to the `/filesystem` routes. After each start that moved the files, the run also asked `GET /filesystem/namespaces` for the Company entry, listed it with `GET /filesystem/files?filesystem_id=company`, and read each file with `GET /filesystem/content?filesystem_id=company&path=<stored path>`.
+
+**Result:** 16 of 16 scenarios passed, on SQLite and PostgreSQL 18, with one database and with two. The list route gave one entry marked `company`, with the id `company`. `/filesystem/files` listed the 19 stored paths and nothing else, with the folders `goals/Docs%20Team/` and `goals/team%2fgrowth/` for the two Goals whose ids are not plain names. `/filesystem/content` returned each of the 19 files with the content, version and `updated_at` that agno 3.2.0 read back before the upgrade.
+
+---
+
+
+---
+
+### 18_work_without_a_goal.py
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-26 with `.venvs/demo/bin/python cookbook/05_agent_os/30_company/18_work_without_a_goal.py`, with this branch's `agno` on the path. No model call, SQLite. It creates a Task with no Goal and no Project, accepts it, creates a Project with no Goal and a Task in it, a Task in a Project that has a Goal, lists the Tasks with no Goal, and tries to rename, complete and archive the Default Project.
+
+**Result:** The Task landed in the Default Project (`id` `default`, `is_default` true, `active`, no Goal) and was accepted with no Project approval. The Project with no Goal was proposed, then approved. Each of the three changes to the Default Project was refused with its reason. It ended with "Work without a Goal example passed". `02_manage_projects.py`, `03_manage_tasks.py` and `07_cascading_archive.py` were run again after the change and passed. `12_task_board.py` fails as it did before this change: it starts a Task under a Project it never approves.
+
+---
+
+### Super Agent with an optional Goal and the Default Project (live model)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-26 with `gpt-5.6-luna` on PostgreSQL, each run on a new empty database. A copy of the harness from the 2026-11-26 design test seeds two Goals ("Developer docs", "Customer support"), an active Project "3.3 migration guide" and one Done Task, then sends each request in a new chat as the same person and confirms every pause. Five requests were sent, in this order: R1 a two-line announcement, R3 "50 paying customers on the hosted plan by the end of March, set this up", R6 "add a task to write the breaking-changes section of the 3.3 migration guide", R10 "do the breaking-changes task now", R13 "add a task: fix the typo on the pricing page".
+
+**Result:** Nine runs. The first two used a first wording of the prompt; the next five used the wording in this branch; the last two ran while the propose tool refused a Goal with no Project, which was later removed.
+
+| Request | First wording (2 runs) | Wording in this branch (5 runs) |
+| --- | --- | --- |
+| R1 | Answer, no record: 2 of 2 | Answer, no record: 5 of 5 |
+| R3 | One proposed Project with no Goal and 3 or 4 Backlog Tasks, no Goal created: 2 of 2 | The same: 5 of 5 |
+| R6 | Reused "3.3 migration guide": 1 of 2. In the other run it did not list the Projects and filed the Task in the Default Project | Listed the Projects and reused "3.3 migration guide": 5 of 5 |
+| R10 | Accepted with one confirmation, started, ended In review: 2 of 2 | The same: 5 of 5 |
+| R13 | Default Project, no new Project, no new Goal: 2 of 2 | The same: 5 of 5, each time with the "50 customers" Project from R3 in the list |
+
+The first wording let a Task be added without a look at the Projects, so the branch adds "Before adding a Task, list the Projects and put it in the one it serves" to the prompt and to the `project_id` argument of `propose_company_task`. Two more runs were made while `propose_company_task` refused a `goal_id` sent with no Project; that refusal was then removed, so a Task in the Default Project may carry a Goal through the tool as it does through the API. Those two runs gave the same result on all five requests (2 of 2). One run of R6 and R13 after the removal, on a new empty database: R6 reused "3.3 migration guide" and R13 landed in the Default Project with no Goal. Not covered: R3 with a Goal that fits the target (the seed has none), every other request of the original thirteen, authorization on, and SQLite.
+
 ---

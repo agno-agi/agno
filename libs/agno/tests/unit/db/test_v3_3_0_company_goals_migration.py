@@ -19,6 +19,7 @@ import httpx
 import pytest
 from sqlalchemy import BigInteger, String, Text, create_engine, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import JSON
 
@@ -26,6 +27,7 @@ import agno.db.postgres.schemas as postgres_schemas
 import agno.db.sqlite.schemas as sqlite_schemas
 from agno.company import AsyncCompanyManager, CompanyManager
 from agno.company.automation_history import _task_state, aautomation_failures
+from agno.company.filesystem import company_filesystem
 from agno.company.routines import _check_automatic_policy, _require_routine_goal
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.company.summary import _summary_state_filesystem
@@ -169,15 +171,21 @@ class _Database:
         self.postgres = "postgres" in kind
         self.location = location
         self.schema = location if self.postgres else None
-        self.url = POSTGRES_URL if self.postgres else "sqlite:///" + location
-        # PostgreSQL keeps every database's files in one shared schema, so the Goal that owns this
-        # database's files has an id no other test uses.
+        self.url = "sqlite:///" + location
+        if self.postgres:
+            # A database of its own: PostgreSQL keeps the files of every schema in one file table, and
+            # the migration moves every Company file of that table.
+            self.url = make_url(POSTGRES_URL).set(database=location).render_as_string(hide_password=False)
+            admin = create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+            with admin.connect() as conn:
+                conn.execute(text(f'CREATE DATABASE "{location}"'))
+            admin.dispose()
         self.files_goal = f"docs-{uuid.uuid4().hex[:10]}"
         self._opened: List[Any] = []
         self._patch = pytest.MonkeyPatch()
 
     def _open(self, cls: Any, **tables: Any) -> Any:
-        where = {"db_url": POSTGRES_URL, "db_schema": self.location} if self.postgres else {"db_file": self.location}
+        where = {"db_url": self.url, "db_schema": self.location} if self.postgres else {"db_file": self.location}
         db = cls(**where, **tables)
         self._opened.append(db)
         return db
@@ -197,13 +205,10 @@ class _Database:
             await _call(db.close)
         self._opened.clear()
         if self.postgres:
-            engine = create_engine(POSTGRES_URL)
-            with engine.begin() as conn:
-                conn.execute(text(f'DROP SCHEMA IF EXISTS "{self.location}" CASCADE'))
-                if inspect(conn).has_table("agno_fs", schema="fs"):
-                    files = {"namespace": f"company/products/{self.files_goal}/%"}
-                    conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE :namespace"), files)
-            engine.dispose()
+            admin = create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+            with admin.connect() as conn:
+                conn.execute(text(f'DROP DATABASE "{self.location}" WITH (FORCE)'))
+            admin.dispose()
 
     def _ref(self, name: str) -> str:
         return f'"{self.schema}"."{name}"' if self.schema else f'"{name}"'
@@ -759,9 +764,11 @@ async def test_stored_files_read_through_the_goal(database):
 
     assert page.content == "# Research\n\nFound on 3.2.0.\n"
     assert "research.md" in [row.path for row in listed]
-    # The files stay in the namespaces 3.2.0 wrote them to.
+    # The page moved into the Company file system, at its path in the tree.
     sync_db = database.sync_db()
-    assert FileSystem(sync_db, namespace=f"company/products/{goal}/wiki", user_scoped=False).read("research.md")
+    assert company_filesystem(sync_db).read(f"goals/{goal}/research.md") == "# Research\n\nFound on 3.2.0.\n"
+    assert FileSystem(sync_db, namespace=f"company/products/{goal}/wiki", user_scoped=False).list() == []
+    # The summary delivery state is not a file of the tree: it stays in its own namespace.
     assert _summary_state_filesystem(sync_db, goal).read("baseline.md") == "delivered on 3.2.0\n"
 
 
@@ -1358,3 +1365,147 @@ async def test_a_routine_names_the_tools_as_they_are_now(database):
     assert not set(re.findall(r"\w+", message)) & set(CompanyTools.renamed_tools)
     # A schedule that is not a Routine keeps its own message.
     assert INSTRUCTIONS_3_2_0 in (await _call(db.get_schedule, "a-persons-schedule"))["payload"]["message"]
+
+
+# ------------------------------------------------------------------------------ a Goal is optional
+
+
+def _goal_required(database: _Database) -> Dict[str, bool]:
+    """Whether goal_id refuses NULL, for the projects and the tasks table."""
+    engine = create_engine(database.url)
+    try:
+        inspector = inspect(engine)
+        return {
+            name: not next(
+                column["nullable"]
+                for column in inspector.get_columns(name, schema=database.schema)
+                if column["name"] == "goal_id"
+            )
+            for name in ("agno_company_projects", "agno_company_tasks")
+        }
+    finally:
+        engine.dispose()
+
+
+async def _assert_goal_optional(database: _Database) -> None:
+    """A Project and a Task with no Goal are stored, and the Task is in the Default Project."""
+    assert _goal_required(database) == {"agno_company_projects": False, "agno_company_tasks": False}
+    manager = _manager(database.db())
+    project = await _call(manager.create_project, name="Reach 50 customers by March")
+    task = await _call(manager.create_task, title="Fix the typo on the pricing page")
+    assert project["goal_id"] is None and task["goal_id"] is None
+    assert task["project_id"] == "default"
+    default = await _call(manager.get_project, "default")
+    assert (default["name"], default["status"], default["goal_id"]) == ("Default", "active", None)
+    assert default["is_default"] is True and default["counts"]["tasks"]["backlog"] == 1
+    without, _ = await _call(manager.list_tasks, has_goal=False)
+    assert [row["id"] for row in without] == [task["id"]]
+    with_goal, _ = await _call(manager.list_tasks, has_goal=True)
+    assert with_goal and task["id"] not in {row["id"] for row in with_goal}
+    projects, _ = await _call(manager.list_projects, has_goal=False)
+    assert {row["id"] for row in projects} == {"default", project["id"]}
+
+
+async def test_a_3_2_0_database_takes_a_project_and_a_task_with_no_goal(database):
+    _write_3_2_0(database)
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    await _assert_goal_optional(database)
+
+
+def _write_company_3_3_0_development(database: _Database) -> None:
+    """The Company tables a 3.3.0 development build created: current names, and goal_id required."""
+    with pytest.MonkeyPatch.context() as patch:
+        for module in (sqlite_schemas, postgres_schemas):
+            for attribute in ("PROJECTS_TABLE_SCHEMA", "TASKS_TABLE_SCHEMA"):
+                schema = dict(getattr(module, attribute))
+                schema["goal_id"] = {**schema["goal_id"], "nullable": False}
+                patch.setattr(module, attribute, schema)
+        db = database.sync_db()
+        for kind in ("goals", "company", "sources", "projects", "tasks"):
+            db._get_table(table_type=kind, create_table_if_not_found=True)
+        manager = CompanyManager(db)
+        manager.create(name="AgentOS", id=GOAL)
+        project = manager.create_project(goal_id=GOAL, name="Upgrade agno")
+        manager.create_task(goal_id=GOAL, project_id=project["id"], title="Read the release notes")
+
+
+async def test_a_database_of_a_development_build_becomes_goal_optional(database):
+    _write_company_3_3_0_development(database)
+    before = database.describe()
+    assert _goal_required(database) == {"agno_company_projects": True, "agno_company_tasks": True}
+    # The tables are stamped 3.3.0, so only the shape of the column says they wait.
+    assert await MigrationManager(database.db())._company_rename_pending() is True
+
+    await MigrationManager(database.db()).up()
+
+    assert await MigrationManager(database.db())._company_rename_pending() is False
+    after = database.describe()
+    for name in ("agno_company_goals", "agno_company_projects", "agno_company_tasks"):
+        assert after[name] == before[name], name
+    await _assert_goal_optional(database)
+    described = database.describe()
+    await MigrationManager(database.db()).up()
+    assert database.describe() == described
+
+
+async def test_an_index_the_user_added_survives_making_the_goal_optional(database):
+    _write_3_2_0(database)
+    tasks = database._ref("agno_company_tasks")
+    database.execute(f"CREATE INDEX newest_open_tasks ON {tasks} (created_at DESC) WHERE deleted_at IS NULL")
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    index = _index_sql(database, "agno_company_tasks")["newest_open_tasks"]
+    assert "DESC" in index.upper() and "deleted_at IS NULL" in index.replace('"', "")
+    await _assert_goal_optional(database)
+
+
+@pytest.mark.parametrize(
+    "stop_at",
+    [
+        'CREATE TABLE "agno_company_tasks_agno_3_3_0_rebuilt"',
+        'INSERT INTO "agno_company_tasks_agno_3_3_0_rebuilt"',
+        'DROP TABLE "agno_company_tasks"',
+        'ALTER TABLE "agno_company_tasks_agno_3_3_0_rebuilt" RENAME',
+        'CREATE INDEX "idx_agno_company_tasks_goal_id"',
+    ],
+    ids=["creating the copy", "copying the rows", "dropping the old table", "naming the copy", "its indexes"],
+)
+async def test_a_sqlite_run_that_stops_while_making_the_goal_optional(databases, monkeypatch, stop_at):
+    database, fresh = databases(), databases()
+    if database.postgres:
+        pytest.skip("PostgreSQL drops NOT NULL in place, in the migration's one transaction")
+    _write_3_2_0(database)
+    real_text = v3_3_0.text
+    stopped = []
+
+    def stop(statement: str) -> Any:
+        if statement.lstrip().startswith(stop_at):
+            stopped.append(statement)
+            raise RuntimeError("stopped while making the Goal optional")
+        return real_text(statement)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(v3_3_0, "text", stop)
+        with pytest.raises(RuntimeError, match="stopped while making the Goal optional"):
+            await MigrationManager(database.db()).up()
+    assert stopped
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    described = database.describe(rows=False)
+    assert "agno_company_tasks_agno_3_3_0_rebuilt" not in described
+    assert "agno_company_projects_agno_3_3_0_rebuilt" not in described
+    await _assert_goal_optional(database)
+    db = fresh.db()
+    for table_type in ("goals", "sources", "projects", "tasks"):
+        await _call(db._get_table, table_type, create_table_if_not_found=True)
+    described, expected = database.describe(rows=False), fresh.describe(rows=False)
+    for name in ("agno_company_projects", "agno_company_tasks"):
+        assert described[name]["indexes"] == expected[name]["indexes"], name
+        assert described[name]["unique"] == expected[name]["unique"], name

@@ -1085,22 +1085,43 @@ def tree_call(*args, **kwargs):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_one_task_filling_its_folder_does_not_refuse_another_tasks_write(system, monkeypatch, use_async):
+def test_one_task_filling_its_folder_does_not_refuse_another_tasks_or_the_wikis_writes(system, monkeypatch, use_async):
     import agno.company.files as company_files
-    from agno.fs.errors import FileSystemError
+    from agno.company.manager import CompanyManager
+    from agno.fs.errors import QuotaExceededError
 
-    # The limit, small enough to reach in a test, under the name it has before and after the change.
-    monkeypatch.setattr(company_files, "TASKS_NAMESPACE_BYTES", 1500, raising=False)
-    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500, raising=False)
+    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500)
     ids, files = task_files(system)
     first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
     tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
-    with pytest.raises(FileSystemError):
+    with pytest.raises(QuotaExceededError, match="folder is full"):
         tree_call(files, "write_company_file", None, use_async, path=f"{first}/more.md", content="x" * 1000)
-    written = tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    # A write that does not grow the folder is not refused.
+    smaller = tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 10)
+    assert smaller["version"] == 2
+    assert tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    wiki = CompanyManager(system.db).write_wiki(goal_id=None, path="people.md", content="Ada\n", expected_version=0)
+    assert wiki.version == 1
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_store_limit_covers_every_task_folder(system, use_async):
+    from agno.company.filesystem import set_company_filesystem_bytes
+    from agno.fs.errors import QuotaExceededError
+
+    ids, files = task_files(system)
+    # One limit for the whole Company file system, small enough to reach in a test.
+    set_company_filesystem_bytes(system.db, 1500)
+    first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
+    tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
+    # What one Task wrote counts against every folder: the store is full for both Tasks.
+    for folder in (first, second):
+        with pytest.raises(QuotaExceededError, match="storage is full"):
+            tree_call(files, "write_company_file", None, use_async, path=f"{folder}/more.md", content="x" * 1000)
+    written = tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 100)
     assert written["version"] == 1
     read = tree_call(files, "read_company_file", None, use_async, path=f"{second}/report.md")
-    assert read["content"] == "y" * 1000
+    assert read["content"] == "y" * 100
 
 
 @pytest.mark.parametrize("use_async", [False, True])

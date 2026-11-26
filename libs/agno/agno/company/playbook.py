@@ -1,20 +1,16 @@
-"""Company wiki namespaces, backed by the existing durable filesystem."""
+"""The company wiki and each Goal's pages: folders of the Company file system."""
 
 from typing import Any, Dict, Optional
 
+from agno.company.filesystem import company_folder, folder_name
 from agno.context.wiki.backend import DurableWikiBackend
 from agno.context.wiki.provider import WikiContextProvider
-from agno.fs import FileSystem
 from agno.fs._paths import normalize_path
-from agno.fs.errors import VersionConflictError
+from agno.fs.errors import InvalidPathError, QuotaExceededError, VersionConflictError
 
 
 def _wiki(db: Any, goal: Optional[Dict[str, Any]] = None) -> WikiContextProvider:
-    namespace = "company/wiki" if goal is None else f"company/products/{goal['id']}/wiki"
-    try:
-        filesystem = FileSystem(db, namespace=namespace, user_scoped=False)
-    except (TypeError, ValueError) as exc:
-        raise NotImplementedError("Company wiki requires a supported FileSystem database") from exc
+    filesystem = company_folder(db, "wiki" if goal is None else f"goals/{folder_name(goal['id'])}")
     return WikiContextProvider(
         id="company-wiki" if goal is None else f"goal-{goal['id']}-wiki",
         name="Company playbook" if goal is None else f"{goal['name']} playbook",
@@ -40,7 +36,8 @@ def _require_goal_scope(record: Dict[str, Any]) -> None:
     """Keep a Routine's authority on its own Goal; Company writes are not owner-scoped."""
     from agno.company.routines import _require_routine_goal
 
-    _require_routine_goal(record.get("goal_id") or record.get("id"))
+    goal_id = record.get("goal_id") or record.get("id")
+    _require_routine_goal(goal_id, company_wide=goal_id is None)
 
 
 def _seed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None:
@@ -52,6 +49,10 @@ def _seed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None
             provider.backend.filesystem.write(path, content, expected_version=0)
         except VersionConflictError:
             pass
+        except (QuotaExceededError, InvalidPathError):
+            # The store is at its limit, or the folder's name leaves no room for a path. A default page
+            # is not owed to a reader: the read goes on without it.
+            return
 
 
 async def _aseed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None:
@@ -63,3 +64,5 @@ async def _aseed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) 
             await provider.backend.filesystem.awrite(path, content, expected_version=0)
         except VersionConflictError:
             pass
+        except (QuotaExceededError, InvalidPathError):
+            return

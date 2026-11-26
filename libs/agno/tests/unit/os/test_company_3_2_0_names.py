@@ -903,7 +903,10 @@ def test_the_3_2_0_filter_is_refused_and_not_ignored(company_client, path):
 def test_the_goal_filter_narrows_the_list(company_client):
     listed = company_client.get("/company/projects", params={"goal_id": "docs"}).json()
     assert listed["meta"]["total_count"] == 1
-    assert company_client.get("/company/projects").json()["meta"]["total_count"] == 2
+    # Unfiltered, the list also holds the Default Project, which has no Goal.
+    everything = company_client.get("/company/projects").json()
+    assert everything["meta"]["total_count"] == 3
+    assert [project["name"] for project in everything["data"] if project["is_default"]] == ["Default"]
 
 
 def test_purpose_in_a_goal_body_is_refused_and_not_dropped(company_client):
@@ -946,9 +949,15 @@ def test_company_config_init_follows_its_fields():
 
     fields = dataclasses.fields(CompanyConfig)
     parameters = inspect.signature(CompanyConfig.__init__).parameters
-    # Every field, in the order of the fields, then the one 3.2.0 name.
-    assert [name for name in parameters if name != "self"] == [field.name for field in fields] + ["products"]
+    # Every field, in the order of the fields. The one 3.2.0 name comes after the fields that take a
+    # value by position, and a field added since is given by name, so no value changes its position.
+    by_name = ["max_filesystem_bytes"]
+    by_position = [field.name for field in fields if field.name not in by_name] + ["products"]
+    assert [name for name in parameters if name != "self"] == by_position + by_name
+    assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in by_name)
     assert parameters["products"].default is None
+    docs = [Goal(name="Docs")]
+    assert CompanyConfig(None, None, None, None, 30, "0 * * * *", "Company", None, docs).goals == docs
     built = CompanyConfig()
     for field in fields:
         default = parameters[field.name].default
@@ -969,6 +978,7 @@ def test_company_config_init_follows_its_fields():
         "cron_expr": "*/5 * * * *",
         "name": "Acme",
         "description": "Makes things.",
+        "max_filesystem_bytes": 5_000_000,
     }
     assert set(values) == {field.name for field in fields}
     config = CompanyConfig(**values)

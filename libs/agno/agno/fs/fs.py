@@ -500,6 +500,14 @@ class FileSystem:
             team_id=team_id if team_id is not None else getattr(team, "id", None),
         )
         resolved._require_resolved()
+        if (run_context is not None or agent is not None or team is not None) and not resolved._partition():
+            from agno.fs._reserved import is_reserved
+
+            if is_reserved(resolved.backend, resolved.namespace):
+                raise InvalidPathError(
+                    f"the namespace {resolved.namespace!r} of this database belongs to the Company file system. "
+                    "Give this filesystem another namespace."
+                )
         return resolved
 
     # ------------------------------------------------------------------
@@ -509,12 +517,14 @@ class FileSystem:
     def read(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return self.backend.read(namespace, normalize_path(path), **self._pk(self.backend.read))
+        return self.backend.read(namespace, normalize_path(path, limits=False), **self._pk(self.backend.read))
 
     def read_with_meta(self, path: str) -> Optional[FileData]:
         """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
-        return self.backend.read_with_meta(namespace, normalize_path(path), **self._pk(self.backend.read_with_meta))
+        return self.backend.read_with_meta(
+            namespace, normalize_path(path, limits=False), **self._pk(self.backend.read_with_meta)
+        )
 
     def write(
         self,
@@ -652,7 +662,11 @@ class FileSystem:
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
         return self.backend.move(
-            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+            namespace,
+            normalize_path(src, limits=False),
+            normalize_path(dst),
+            overwrite=overwrite,
+            **self._pk(self.backend.move),
         )
 
     def delete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
@@ -661,7 +675,7 @@ class FileSystem:
         kwargs = self._pk(self.backend.delete)
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
-        return self.backend.delete(namespace, normalize_path(path), **kwargs)
+        return self.backend.delete(namespace, normalize_path(path, limits=False), **kwargs)
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
@@ -711,13 +725,13 @@ class FileSystem:
     async def aread(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return await self.backend.aread(namespace, normalize_path(path), **self._pk(self.backend.read))
+        return await self.backend.aread(namespace, normalize_path(path, limits=False), **self._pk(self.backend.read))
 
     async def aread_with_meta(self, path: str) -> Optional[FileData]:
         """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
         return await self.backend.aread_with_meta(
-            namespace, normalize_path(path), **self._pk(self.backend.read_with_meta)
+            namespace, normalize_path(path, limits=False), **self._pk(self.backend.read_with_meta)
         )
 
     async def awrite(
@@ -858,7 +872,11 @@ class FileSystem:
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
         return await self.backend.amove(
-            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+            namespace,
+            normalize_path(src, limits=False),
+            normalize_path(dst),
+            overwrite=overwrite,
+            **self._pk(self.backend.move),
         )
 
     async def adelete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
@@ -867,7 +885,7 @@ class FileSystem:
         kwargs = self._pk(self.backend.delete)
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
-        return await self.backend.adelete(namespace, normalize_path(path), **kwargs)
+        return await self.backend.adelete(namespace, normalize_path(path, limits=False), **kwargs)
 
     async def alist(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""

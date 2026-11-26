@@ -82,7 +82,8 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
         original = AsyncSession.run_sync
 
         async def pause_before_lock(session, fn, *args, **kwargs):
-            if asyncio.current_task() is acceptance and fn is company.lock_goal:
+            # The async adapter takes the Goal lock through lock_parent.
+            if asyncio.current_task() is acceptance and fn is company.lock_parent:
                 paused.set()
                 await asyncio.wait_for(proceed.wait(), 10)
             return await original(session, fn, *args, **kwargs)
@@ -560,7 +561,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
                 if asyncio.current_task() is first and fn is company.require_project:
                     paused.set()
                     await asyncio.wait_for(proceed.wait(), 5)
-                if asyncio.current_task() is second and fn is company.lock_goal:
+                if asyncio.current_task() is second and fn is company.lock_parent:
                     attempted.set()
                 return await original_run_sync(session, fn, *args, **kwargs)
 
@@ -780,7 +781,10 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         if resource == "tasks":
             # Collaborators can assign another creator's Task to a shared Project.
             own_path = path
-            assert (await client.patch(own_path, json={"project_id": None}, headers=headers("bob"))).status_code == 422
+            # Taken out of its Project, the Task moves to the Default Project and keeps its Goal.
+            loose = await client.patch(own_path, json={"project_id": None}, headers=headers("bob"))
+            assert loose.status_code == 200, loose.text
+            assert (loose.json()["project_id"], loose.json()["goal_id"]) == ("default", own["goal_id"])
             assert (
                 await client.patch(own_path, json={"project_id": project["id"]}, headers=headers("bob"))
             ).status_code == 200

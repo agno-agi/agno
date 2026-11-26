@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from agno.company.files import LIST_ENTRIES, READ_CHARS, CompanyFiles
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+from agno.fs import FileSystem
 from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.os import AgentOS, CompanyConfig
 from agno.os.config import AuthorizationConfig
@@ -485,21 +486,21 @@ def test_the_file_routes_are_read_only(make):
 
 
 @pytest.mark.parametrize("os_async,company_async", [(False, True), (True, False)])
-def test_notes_come_from_the_agentos_database(tmp_path, os_async, company_async):
+def test_notes_come_from_the_company_database(tmp_path, os_async, company_async):
     primary_file, company_file = str(tmp_path / "primary.db"), str(tmp_path / "company.db")
     primary = (AsyncSqliteDb if os_async else SqliteDb)(db_file=primary_file)
     company = (AsyncSqliteDb if company_async else SqliteDb)(db_file=company_file)
     primary_writer, company_writer = SqliteDb(db_file=primary_file), SqliteDb(db_file=company_file)
-    files = CompanyFiles(company_writer, notes_db=primary_writer)
+    files = CompanyFiles(company_writer, notes_db=company_writer)
     agent_os = AgentOS(db=primary, company=CompanyConfig(db=company), telemetry=False)
     with TestClient(agent_os.get_app()) as client:
         task_id = new_task(client)
         files.write(f"tasks/{task_id}/report.md", "In the Company database.\n")
-        files.write("notes/ideas.md", "In the AgentOS database.\n")
-        # A note of the same path in the Company database is not the shared notes.
-        CompanyFiles(primary_writer, notes_db=company_writer).write("notes/stray.md", "Not served.\n")
+        files.write("notes/ideas.md", "In the Company database too.\n")
+        # Another file of the AgentOS database is not a note.
+        FileSystem(primary_writer, namespace="default", user_scoped=False).write("stray.md", "Not served.\n")
         assert [row["path"] for row in client.get("/company/notes").json()["data"]] == ["ideas.md"]
-        assert client.get("/company/notes/ideas.md").json()["content"] == "In the AgentOS database.\n"
+        assert client.get("/company/notes/ideas.md").json()["content"] == "In the Company database too.\n"
         assert client.get("/company/notes/stray.md").status_code == 404
         assert client.get(f"/company/tasks/{task_id}/files/report.md").json()["content"] == "In the Company database.\n"
     for db, is_async in [(primary, os_async), (company, company_async)]:

@@ -7,9 +7,9 @@ Super Agent and Mini Agent share one tree:
     tasks/<task-id>/        what one Task was given and what it produced
     notes/                  Super Agent's own notes
 
-wiki/, goals/ and tasks/ are stored in the Company database. notes/ is stored in
-the AgentOS database and is shared by everyone who talks to Super Agent, including
-when user isolation is on.
+Every folder is stored in the Company file system: one store in the Company
+database, with each file at its path in the tree. notes/ is shared by everyone who
+talks to Super Agent, including when user isolation is on.
 
 This script makes the tool calls Super Agent would make in a chat: it saves a company
 page, writes a Goal page, a note and a Task file, reads the Task file and the note
@@ -155,6 +155,33 @@ if __name__ == "__main__":
         print("Notes over the API:", [row["path"] for row in notes["data"]])
         note = client.get("/company/notes/follow-ups.md").json()
         assert note["content"] == "Ask about the docs search next week.\n"
+
+        # The File System page shows the same tree as one file system: namespace
+        # company, with the four folders under it. With authorization on,
+        # filesystem:read and wiki:read read it, and tasks/ needs tasks:read too.
+        listed = client.get("/filesystem/namespaces").json()["namespaces"]
+        company = next(entry for entry in listed if entry["company"])
+        print(
+            "On the File System page:", company["namespace"], "with id", company["id"]
+        )
+        top = client.get(
+            "/filesystem/entries", params={"filesystem_id": company["id"]}
+        ).json()
+        print("Under it:", [entry["path"] + "/" for entry in top["entries"]])
+        assert [entry["path"] for entry in top["entries"]] == [
+            "goals",
+            "notes",
+            "tasks",
+            "wiki",
+        ]
+        shown = client.get(
+            "/filesystem/content",
+            params={
+                "filesystem_id": company["id"],
+                "path": task_folder + "/changes.md",
+            },
+        ).json()
+        assert shown["content"] == page["content"]
 
         # A Task's input carries the Goal's brief and status and the company wiki.
         # The queue builds it when the Task starts. Everything else is read on request.
