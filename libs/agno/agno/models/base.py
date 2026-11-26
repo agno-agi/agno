@@ -229,8 +229,9 @@ class Model(ABC):
     def _with_notes_merged(self, messages: Any) -> Any:
         """Send framework notes and the following user input as one user message.
 
-        Some providers require alternating roles. When preparing the request, prepend the notes to
-        a copy of the user's text or multipart content so history and learning keep the original input.
+        Framework notes give the model context for this turn and are omitted from run history.
+        Some providers require alternating roles, so we prepend the notes to a copy of the user's
+        text or multipart content. History and learning keep the original input.
         """
         if not isinstance(messages, list) or not any(isinstance(m, _MessageContextNote) for m in messages):
             return messages
