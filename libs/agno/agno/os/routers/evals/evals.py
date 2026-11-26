@@ -864,6 +864,19 @@ def attach_routes(
         eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
         if eval_suite is None:
             raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
+        # create_fresh, as the posted-body route below: the cases run on one copy for this request, never the
+        # instance shared with live traffic. A registered suite runs exactly one registered agent or team.
+        target = eval_suite.cases[0]
+        if target.agent is not None:
+            fresh_agent = cast(
+                Agent, get_agent_by_id(agent_id=cast(str, target.agent.id), agents=agents, create_fresh=True)
+            )
+            eval_suite = replace(eval_suite, cases=tuple(replace(case, agent=fresh_agent) for case in eval_suite.cases))
+        else:
+            fresh_team = cast(
+                Team, get_team_by_id(team_id=cast(str, cast(Team, target.team).id), teams=teams, create_fresh=True)
+            )
+            eval_suite = replace(eval_suite, cases=tuple(replace(case, team=fresh_team) for case in eval_suite.cases))
         suite_run_input = suite_run_input or EvalSuiteRunInput()
         return await _run_eval_suite(
             request,

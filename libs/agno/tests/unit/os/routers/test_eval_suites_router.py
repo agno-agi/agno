@@ -511,3 +511,12 @@ def test_run_eval_suite_from_body_does_not_store_case_dependencies(client, db):
     stored_case = resp.json()["eval_input"]["cases"][0]
     assert "dependencies" not in stored_case
     assert stored_case["session_state"] == {"step": 1}
+
+
+def test_registered_eval_suite_runs_on_a_copy_of_the_agent(client, suite):
+    """The cases run on a per-request copy, as every other run route does, never on the shared instance."""
+    with patch.object(Agent, "arun", autospec=True, side_effect=_tool_run) as arun:
+        resp = client.post("/eval-suites/assistant-quality/runs", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 200
+    ran_on = {id(call.args[0]) for call in arun.call_args_list}
+    assert ran_on and id(suite.cases[0].agent) not in ran_on
