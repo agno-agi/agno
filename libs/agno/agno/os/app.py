@@ -405,7 +405,6 @@ class AgentOS:
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
-        eval_suites: Optional[List[EvalSuite]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
         authorization: Union[bool, "Authorization"] = False,
@@ -438,6 +437,7 @@ class AgentOS:
         manager: Optional[Union[bool, "OSManager"]] = None,
         company: Optional["CompanyConfig"] = None,
         filesystem: Optional[Union["FileSystem", List["FileSystem"]]] = None,
+        eval_suites: Optional[List[EvalSuite]] = None,
     ):
         """Initialize AgentOS.
 
@@ -455,7 +455,6 @@ class AgentOS:
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
-            eval_suites: List of eval suites to include in the OS
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
             company: Enable Company Goals, inheriting db unless a Company database is provided.
@@ -534,6 +533,7 @@ class AgentOS:
             filesystem: A FileSystem, or a list of them, to include in the OS. Each one is listed in
                 /config and browsable through the /filesystem routes whether or not an agent holds
                 it. An agent gets file tools on one only by holding it.
+            eval_suites: List of eval suites to include in the OS
         """
         if (
             not agents
