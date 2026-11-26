@@ -680,19 +680,24 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The person's reason when the Task was last returned to Ready after an attempt, until an attempt
-    reaches review again. A return from review answers a finished result; a return from In progress
-    answers a run that failed or was cancelled."""
-    returned = ("in_review", "in_progress")
-    reviews = [
-        entry
-        for entry in task.get("transitions") or []
-        if entry.get("from") == "in_review"
-        or entry.get("target") == "in_review"
-        or (entry.get("from") == "in_progress" and entry.get("target") == "ready")
-    ]
-    last = reviews[-1] if reviews else {}
-    return last.get("reason") if last.get("from") in returned and last.get("target") == "ready" else None
+    """What people said when they returned the Task to Ready after an attempt, oldest first, until an
+    attempt reaches review again.
+
+    A return from review answers a finished result. A return from In progress answers a run that
+    failed or was cancelled, and counts only while the Task holds such a result: the same move
+    withdraws a queued attempt, and the reason of that is a note, not a reply. A return to Backlog
+    withdraws the acceptance, and the work that is accepted next starts without the earlier replies.
+    """
+    replies: List[Tuple[str, Any]] = []
+    for entry in task.get("transitions") or []:
+        origin, target = entry.get("from"), entry.get("target")
+        if target in ("in_review", "backlog"):
+            replies = []
+        elif target == "ready" and origin in ("in_review", "in_progress"):
+            replies.append((origin, entry.get("reason")))
+    ended = (task.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+    kept = [reason for origin, reason in replies if reason and (origin == "in_review" or ended)]
+    return "\n\n".join(kept) or None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}

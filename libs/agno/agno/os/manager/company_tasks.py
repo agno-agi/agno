@@ -464,6 +464,22 @@ class CompanyTaskTools(Toolkit):
         self, agent_os: Any, app: Any, authority: Any, user_id: Any, run_context: Any, task_id: str
     ) -> str:
         """Queue an accepted Task's run through the start route's own path, as a caller already checked."""
+        return (await self._queue(agent_os, app, authority, user_id, run_context, task_id))[1]
+
+    async def _queue(
+        self,
+        agent_os: Any,
+        app: Any,
+        authority: Any,
+        user_id: Any,
+        run_context: Any,
+        task_id: str,
+        attempt: Optional[int] = None,
+    ) -> Tuple[bool, str]:
+        """Queue a Task's run and say whether the queue holds it, with the receipt or the refusal.
+
+        With an attempt, only that attempt is queued or joined: a Task that moved on is refused.
+        """
         from fastapi import HTTPException
 
         from agno.company.execution import _pending_task_attempt, _TaskRunConflict, _TaskRunUnavailable
@@ -474,9 +490,12 @@ class CompanyTaskTools(Toolkit):
             value = await starter.task(task_id)
             title = value.get("title") or task_id
             if value["status"] == "backlog":
-                return f"'{title}' is still a proposal. A person must accept it with an executor before it can start."
+                return (
+                    False,
+                    f"'{title}' is still a proposal. A person must accept it with an executor before it can start.",
+                )
             if value["status"] == "in_review":
-                return f"'{title}' is waiting for review. The person completes it or sends it back."
+                return False, f"'{title}' is waiting for review. The person completes it or sends it back."
             # A Task whose last attempt failed or was cancelled stays In progress. Starting it is a retry,
             # and the start route decides whether the earlier run has ended.
             ended = value["status"] == "in_progress" and (value.get("result") or {}).get("status") in (
@@ -485,22 +504,22 @@ class CompanyTaskTools(Toolkit):
             )
             if value["status"] != "ready" and _pending_task_attempt(value) is None and not ended:
                 meaning = TASK_STATUS_MEANING.get(value["status"], value["status"])
-                return f"'{title}' is {meaning}; only accepted work can start."
+                return False, f"'{title}' is {meaning}; only accepted work can start."
             if authority is not None:
                 # The start route's own requirements, beyond running the executor.
                 await authority.arequire("tasks", "write")
                 await authority.arequire("wiki", "read")
             caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(run_context))
-            response = await starter.submit(task_id, caller, None, value, None)
+            response = await starter.submit(task_id, caller, attempt, value, None)
             if response.status_code == 202:
                 link_task(run_context, await starter.task(task_id))
         except PermissionError as exc:
-            return f"Not started: {exc}"
+            return False, f"Not started: {exc}"
         except HTTPException as exc:
-            return f"Not started: {exc.detail}"
+            return False, f"Not started: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
-            return f"Not started: {exc}"
-        return _receipt("Queued", title, task_id, response)
+            return False, f"Not started: {exc}"
+        return response.status_code == 202, _receipt("Queued", title, task_id, response)
 
     def message_company_task(
         self, task_id: str, message: str, context: _OptionalContext = None, _agno_run_context: Optional[Any] = None
@@ -526,9 +545,10 @@ class CompanyTaskTools(Toolkit):
         asks it for changes or additions, such as "tell it to add a section" or "have it drop that
         restriction". It takes a Task waiting for review, and one whose last run failed or was
         cancelled. A Task that is still running is refused and nothing is queued or kept for later:
-        tell the person, who asks again when its run has ended. To complete a Task use review_company_task; to
-        retry a failed run unchanged use start_company_task. The turn does not end: the result is a
-        receipt, not the work.
+        tell the person, who asks again when its run has ended. To complete a Task use
+        review_company_task; to retry a failed run unchanged use start_company_task. A Task that a
+        Routine's policy accepted, or whose executor pushes code, is refused too: the person confirms
+        those through review_company_task. The turn does not end: the result is a receipt, not the work.
 
         Args:
             task_id: The Task to message.
@@ -592,22 +612,32 @@ class CompanyTaskTools(Toolkit):
                 kind, name = "agent", MINI_AGENT_ID
             executor = {"executor_type": kind, "executor_id": name}
             await _StartCaller.for_authority(app, authority, user_id).require_accept(starter.endpoint(executor))
+            confirmed = (
+                "send it back with review_company_task, which pauses for their confirmation, then start it"
+                if status == "in_review"
+                else "retry it unchanged with start_company_task, or send it back from the Company pages"
+            )
             if _is_sandboxed(starter.executor(executor)):
                 # Work for an executor that pushes code is confirmed by the person, as when it is added.
-                confirmed = (
-                    "send it back with review_company_task, which pauses for their confirmation, then start it"
-                    if status == "in_review"
-                    else "retry it unchanged with start_company_task, or send it back from the Company pages"
-                )
                 return (
                     f"Not sent: {kind} {name} runs in a sandbox and can push code, so the person confirms "
                     f"what '{title}' is asked to do: {confirmed}."
+                )
+            acceptances = [entry for entry in value.get("transitions") or [] if entry.get("target") == "ready"]
+            if acceptances and acceptances[-1].get("auto_accept"):
+                # A return to Ready is the person's own acceptance, and it lifts the limits of the policy
+                # that accepted the Task. The person confirms that, as when they send it back from review.
+                return (
+                    f"Not sent: a Routine's policy accepted '{title}', and a message would put it under the "
+                    f"person's own acceptance, so the person confirms it: {confirmed}."
                 )
             # What the start would refuse is refused before the Task leaves its stage.
             starter.worker(app)
             blocked = await _project_run_block(starter.db, value)
             if blocked:
                 return f"Not sent: {blocked}"
+            # The run this message answers. A Task that moves on to another run is not returned to Ready.
+            answered = value.get("job_id")
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             with authorization_scope(lambda: saved):
                 if context:
@@ -615,6 +645,11 @@ class CompanyTaskTools(Toolkit):
                     value = await _manager_call(
                         starter.manager, "change_task_context", task_id, add=context, user_id=user_id
                     )
+                    if (value["status"], value.get("job_id")) != (status, answered):
+                        return (
+                            f"Not sent: '{title}' changed while the message was being sent. "
+                            "The context was attached. Read it again."
+                        )
                 record = await _manager_call(
                     starter.manager,
                     "transition_task",
@@ -627,24 +662,29 @@ class CompanyTaskTools(Toolkit):
                     expected_updated_at=value["updated_at"],
                     # Seconds cannot tell two writes in one second apart. The stage and the run can.
                     expected_status=status,
-                    expected_job_id=value.get("job_id"),
+                    expected_job_id=answered,
                     **executor,
                 )
             if record is None:
                 attached = " The context was attached." if context else ""
                 return f"Not sent: '{title}' changed while the message was being sent.{attached} Read it again."
             link_task(_agno_run_context, record)
+            # Only the attempt that follows this return carries the message as its reply.
             attempt = task_next_attempt(record)
             try:
-                started = await self._start(agent_os, app, authority, user_id, _agno_run_context, task_id)
-            except Exception as exc:
-                started = f"Not started: {exc}"
-            if started.startswith("Not "):
-                return (
-                    f"The message is recorded on '{title}' (Task {task_id}) and it is Ready, but its run did "
-                    f"not start. {started} Start it with start_company_task: the message goes with it."
+                queued, receipt = await self._queue(
+                    agent_os, app, authority, user_id, _agno_run_context, task_id, attempt
                 )
-            return f"Sent the message to '{title}' as attempt {attempt}, in the Task's own session. {started}"
+            except Exception as exc:
+                queued, receipt = False, f"Not started: {exc}"
+            if queued:
+                return f"Sent the message to '{title}' as attempt {attempt}, in the Task's own session. {receipt}"
+            now = await _call(starter.db, "get_task", task_id) or {}
+            if now.get("status") == "ready":
+                then = "It is Ready: start it with start_company_task and the message goes with it."
+            else:
+                then = f"It is now {TASK_STATUS_MEANING.get(str(now.get('status')), now.get('status'))}."
+            return f"The message is recorded on '{title}' (Task {task_id}), but its run did not start. {receipt} {then}"
 
         return await self._decide(call)
 

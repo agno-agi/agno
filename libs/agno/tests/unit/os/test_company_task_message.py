@@ -6,7 +6,8 @@ import json
 import pytest
 from fastapi import HTTPException
 
-from agno.company.execution import _automatic_task, _review_feedback
+from agno.company.execution import _automatic_task, _review_feedback, _task_input
+from agno.company.manager import CompanyManager
 from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.db.schemas.tasks import task_run_id
 from agno.os.manager import company_tasks
@@ -25,10 +26,12 @@ from tests.unit.os.test_company_decision_tools import (
     call,
     chat,  # noqa: F401
     context,
+    finish,
     headers,
     in_review,
     person,
     records,
+    review,
     state,
     system,  # noqa: F401
     without_executor,
@@ -79,6 +82,24 @@ def ended(client, db, queue, task_id, how):
         expected_transitions=db.get_task(task_id)["transitions"],
     )
     assert db.get_task(task_id)["status"] == "in_progress"
+
+
+def fail(db, queue, task_id, attempt):
+    """Settle the Task's queued run of this attempt as failed, as the queue worker does."""
+    run_id = task_run_id(task_id, attempt)
+
+    async def settle():
+        job = await queue.store.claim_job(queue.worker_id, queue.config.lock_grace_seconds)
+        assert job is not None and job["id"] == run_id
+        assert await queue.store.complete_job(run_id, queue.worker_id, job["attempt"], "failed")
+
+    asyncio.run(settle())
+    db.complete_task_run(
+        task_id,
+        run_id,
+        {"run_id": run_id, "status": "ERROR", "content": "The model failed"},
+        expected_transitions=db.get_task(task_id)["transitions"],
+    )
 
 
 def sent_input(db, queue, task_id):
@@ -140,18 +161,70 @@ def test_a_message_to_a_task_whose_run_failed_or_was_cancelled_starts_its_next_a
 
 
 def test_a_return_from_a_failed_run_carries_its_reason_until_an_attempt_reaches_review():
+    failed = {"status": "ERROR"}
     history = [
         {"from": "ready", "target": "in_progress", "attempt": 1},
         {"from": "in_progress", "target": "ready", "reason": "Use the other key"},
     ]
-    assert _review_feedback({"transitions": history}) == "Use the other key"
+    assert _review_feedback({"transitions": history, "result": failed}) == "Use the other key"
     history += [{"from": "ready", "target": "in_progress", "attempt": 2}]
-    assert _review_feedback({"transitions": history}) == "Use the other key"
+    assert _review_feedback({"transitions": history, "result": failed}) == "Use the other key"
     history += [{"from": "in_progress", "target": "in_review", "reason": "Execution completed"}]
-    assert _review_feedback({"transitions": history}) is None
-    # A start is not a return, and a Task withdrawn to Backlog carries nothing.
-    assert _review_feedback({"transitions": history[:1]}) is None
-    assert _review_feedback({"transitions": [history[0], {"from": "in_progress", "target": "backlog"}]}) is None
+    assert _review_feedback({"transitions": history, "result": {"status": "COMPLETED"}}) is None
+    # A start is not a return.
+    assert _review_feedback({"transitions": history[:1], "result": failed}) is None
+
+
+def test_the_note_on_a_withdrawn_queued_attempt_is_not_a_reply(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    started(client, task["id"])
+    moved = client.post(
+        f"/company/tasks/{task['id']}/transitions",
+        json={"target": "ready", "reason": "Hold until Monday", "executor_type": "agent", "executor_id": "writer"},
+        headers=headers(),
+    )
+    assert moved.status_code == 200, moved.text
+    saved = db.get_task(task["id"])
+    assert saved["result"] is None and _review_feedback(saved) is None
+    sent = json.loads(asyncio.run(_task_input(CompanyManager(db, agent_os.registry), saved, accepted_execution=True)))
+    assert "review_feedback" not in sent and "previous_result" not in sent
+
+
+def test_a_reply_not_yet_acted_on_is_kept_beside_a_later_one(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    assert message(agent_os, context(), task["id"], text="Add a permissions section").startswith("Sent")
+    fail(db, queue, task["id"], 2)
+    assert message(agent_os, context(), task["id"], text="Try again, shorter").startswith("Sent")
+    _, sent = sent_input(db, queue, task["id"])
+    assert sent["review_feedback"] == "Add a permissions section\n\nTry again, shorter"
+    # Once an attempt reaches review, the next reply stands alone.
+    finish(db, queue, task["id"], attempt=3)
+    assert _review_feedback(db.get_task(task["id"])) is None
+    assert message(agent_os, context(), task["id"], text="Now add an example").startswith("Sent")
+    assert sent_input(db, queue, task["id"])[1]["review_feedback"] == "Now add an example"
+
+
+@pytest.mark.parametrize("origin", ["review", "failed"])
+def test_a_return_to_backlog_ends_the_earlier_replies(system, origin):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    if origin == "review":
+        in_review(client, db, queue, task["id"])
+    else:
+        ended(client, db, queue, task["id"], "failed")
+    accept = {"target": "ready", "executor_type": "agent", "executor_id": "writer"}
+    for body in (
+        {**accept, "reason": "Use the old draft"},
+        {"target": "backlog", "reason": "Rethink"},
+        {**accept, "reason": "Approved"},
+    ):
+        client.post(f"/company/tasks/{task['id']}/transitions", json=body, headers=headers()).raise_for_status()
+        if body["reason"] == "Use the old draft":
+            assert _review_feedback(db.get_task(task["id"])) == "Use the old draft"
+    assert _review_feedback(db.get_task(task["id"])) is None
 
 
 def test_a_task_with_no_executor_goes_to_mini_agent(system):  # noqa: F811
@@ -395,8 +468,10 @@ def test_a_failed_start_leaves_the_task_ready_with_the_message_and_says_so(syste
     with monkeypatch.context() as patched:
         patched.setattr(_TaskStarter, "submit", refuse)
         reply = message(agent_os, context(), task["id"])
-    assert reply.startswith(f"The message is recorded on 'Draft' (Task {task['id']}) and it is Ready, but its run did")
-    assert "not start" in reply and "The queue is" in reply and "start_company_task" in reply
+    assert reply.startswith(f"The message is recorded on 'Draft' (Task {task['id']}), but its run did not start.")
+    assert "The queue is" in reply and reply.endswith(
+        "It is Ready: start it with start_company_task and the message goes with it."
+    )
     assert not reply.startswith("Sent")
     saved = db.get_task(task["id"])
     assert saved["status"] == "ready" and saved["transitions"][-1]["reason"] == MESSAGE
@@ -431,6 +506,124 @@ def test_a_task_that_changes_while_the_message_is_sent_is_not_started(system, mo
     reply = message(agent_os, context(), task["id"])
     assert reply == "Not sent: 'Draft' changed while the message was being sent. Read it again."
     assert state(db) == before and jobs(queue) == queued
+
+
+def test_a_retry_started_while_context_is_attached_is_not_returned_to_ready(system, monkeypatch):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, earlier = records(client)
+    in_review(client, db, queue, earlier["id"])
+    _, task = records(client)
+    ended(client, db, queue, task["id"], "failed")
+    manager = type(_TaskStarter(agent_os).manager)
+    attach = manager.change_task_context
+
+    def racing(self, task_id, **fields):
+        # Another caller retries the failed Task while this call attaches its context.
+        assert client.post(f"/company/tasks/{task_id}/runs", headers=headers()).status_code == 202
+        return attach(self, task_id, **fields)
+
+    monkeypatch.setattr(manager, "change_task_context", racing)
+    reply = message(agent_os, context(), task["id"], context=[{"kind": "task", "ref": earlier["id"]}])
+    assert reply == (
+        "Not sent: 'Draft' changed while the message was being sent. The context was attached. Read it again."
+    )
+    saved = db.get_task(task["id"])
+    # The retry is still the Task's run, and the message is nowhere on its history.
+    assert saved["status"] == "in_progress" and saved["job_id"] == task_run_id(task["id"], 2)
+    assert saved["transitions"][-1]["attempt"] == 2
+    assert all(entry.get("reason") != MESSAGE for entry in saved["transitions"])
+
+
+def between_return_and_start(monkeypatch, act):
+    """Run act once, right after the message returned the Task to Ready and before its start."""
+    record_link = company_tasks.link_task
+
+    def link(run_context, record, **options):
+        if record.get("status") == "ready":
+            act()
+        return record_link(run_context, record, **options)
+
+    monkeypatch.setattr(company_tasks, "link_task", link)
+
+
+def test_a_task_closed_before_the_start_is_not_reported_as_sent(system, monkeypatch):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    queued = jobs(queue)
+
+    def cancel():
+        client.post(
+            f"/company/tasks/{task['id']}/transitions", json={"target": "cancelled", "reason": "No"}, headers=headers()
+        ).raise_for_status()
+
+    between_return_and_start(monkeypatch, cancel)
+    reply = message(agent_os, context(), task["id"])
+    assert reply == (
+        f"The message is recorded on 'Draft' (Task {task['id']}), but its run did not start. "
+        "'Draft' is cancelled; only accepted work can start. It is now cancelled."
+    )
+    assert jobs(queue) == queued
+
+
+def test_an_attempt_another_caller_started_and_lost_is_not_followed_by_an_extra_one(system, monkeypatch):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+
+    def start_and_fail():
+        from concurrent.futures import ThreadPoolExecutor
+
+        assert client.post(f"/company/tasks/{task['id']}/runs", headers=headers()).status_code == 202
+        # The message tool's event loop is running here, and settling a run starts one of its own.
+        with ThreadPoolExecutor(1) as pool:
+            pool.submit(fail, db, queue, task["id"], 2).result()
+
+    between_return_and_start(monkeypatch, start_and_fail)
+    reply = message(agent_os, context(), task["id"])
+    second = task_run_id(task["id"], 2)
+    # Attempt 2 carried the message. The receipt names it and how it stands; no attempt 3 is queued.
+    assert reply.startswith("Sent the message to 'Draft' as attempt 2") and f"run {second})" in reply, reply
+    assert "already has this attempt" in reply
+    saved = db.get_task(task["id"])
+    assert saved["job_id"] == second and task_run_id(task["id"], 3) not in jobs(queue)
+    assert sent_input(db, queue, task["id"])[1]["review_feedback"] == MESSAGE
+
+
+def accepted_by_policy(db, task_id):
+    """Mark the Task's acceptance as a Routine policy's, as an automatic acceptance records it."""
+    from sqlalchemy import update
+
+    saved = db.get_task(task_id)
+    next(entry for entry in saved["transitions"] if entry.get("target") == "ready")["auto_accept"] = {
+        "routine_id": "routine",
+        "policy": "policy",
+    }
+    table = db._get_table(table_type="tasks")
+    with db.Session() as sess, sess.begin():
+        sess.execute(update(table).where(table.c.id == task_id).values(transitions=saved["transitions"]))
+
+
+@pytest.mark.parametrize("stage", ["review", "failed"])
+def test_a_task_a_policy_accepted_keeps_the_confirmed_path(system, stage):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    if stage == "review":
+        in_review(client, db, queue, task["id"])
+    else:
+        ended(client, db, queue, task["id"], "failed")
+    accepted_by_policy(db, task["id"])
+    before, queued = state(db), jobs(queue)
+    reply = message(agent_os, context(), task["id"])
+    assert reply.startswith("Not sent: a Routine's policy accepted 'Draft'"), reply
+    assert ("review_company_task" in reply) is (stage == "review")
+    assert state(db) == before and jobs(queue) == queued
+    # A person who sent it back themselves has accepted it, and may message it from then on.
+    if stage == "review":
+        assert review(agent_os, context(), task, "send_back", "Redo").startswith("Sent 'Draft'")
+        assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
+        finish(db, queue, task["id"], attempt=2)
+        assert message(agent_os, context(), task["id"]).startswith("Sent the message to 'Draft' as attempt 3")
 
 
 # ----------------------------------------------------------------- no pause, and the sync tool
