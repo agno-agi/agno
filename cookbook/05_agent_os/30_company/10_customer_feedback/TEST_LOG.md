@@ -1,5 +1,22 @@
 # Customer feedback cookbook test log
 
+## 2026-11-24
+
+### company_os.py — startup after Product was renamed to Goal
+
+**Status:** PASS
+
+**Description:** Started the server on a new PostgreSQL database with the Goal declared as
+`Goal(objective=...)` and `CompanyConfig(goals=[feedback])`, read `GET /company/goals`, and
+stopped it. The words "product brief" and "product improvements" in this example mean the
+customer's product and were not renamed.
+
+**Result:** The server started with no warning or error in its log. `GET /company/goals`
+returned the Customer Feedback Goal with its objective. The UI workflow and the Routine's live
+run were NOT RUN. No model call was made.
+
+---
+
 ## 2026-10-23
 
 ### company_os.py — startup and live UI workflow

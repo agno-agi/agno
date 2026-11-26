@@ -10,13 +10,18 @@ from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS
 from agno.fs.errors import InvalidPathError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
-from agno.os.routers.company.schema import CompanyFileReadResponse, WikiPageResponse
+from agno.os.routers.company.schema import MIGRATION_REQUIRED_RESPONSE, CompanyFileReadResponse, WikiPageResponse
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
 
 def get_company_files_router(agent_os: Any) -> APIRouter:
     """Build the file routes. tasks/ is in the Company database and notes/ in the AgentOS database."""
-    router = APIRouter(prefix="/company", tags=["Company files"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Company files"],
+        dependencies=[Depends(get_scoped_user_id)],
+    )
     auth = get_authentication_dependency(agent_os.settings)
     db = agent_os._company_db
     files = CompanyFiles(db, notes_db=agent_os.db)

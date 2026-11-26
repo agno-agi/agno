@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
-from agno.company import Product, Routine
+from agno.company import Goal, Routine
 from agno.company.manager import CompanyManager
 from agno.company.routines import _routine_executor_endpoint, _RoutineAuthorization, load_routine_skills
 from agno.db.sqlite import SqliteDb
@@ -34,7 +34,7 @@ ROUTINE_SNAPSHOT = {
     "company_routine": True,
     "company_routine_unscoped": True,
     "company_routine_id": "routine",
-    "company_product_id": "sdk",
+    "company_goal_id": "sdk",
 }
 
 
@@ -78,7 +78,7 @@ class CountingModel(Model):
 
 
 def routine_authority():
-    return _RoutineAuthorization(None, routine_id="routine", product_id="sdk")
+    return _RoutineAuthorization(None, routine_id="routine", goal_id="sdk")
 
 
 def build(tmp_path, manager=True, **kwargs):
@@ -145,13 +145,13 @@ def test_runner_holds_company_tools_and_routine_skills_only(tmp_path):
     assert [type(tool) for tool in runner.tools.routine] == [CompanyTools]
     assert not any(isinstance(tool, (StudioTools, AgentOSTools)) for tool in runner.tools)
     assert not getattr(runner, "members", None)
-    assert {"refresh_company_product", "summarize_company_product", "intake_product_source"} <= set(
+    assert {"refresh_company_goal", "summarize_company_goal", "intake_goal_source"} <= set(
         runner.tools.routine[0].functions
     )
     assert sorted(skill.name for skill in runner.skills.get_all_skills()) == ["intake", "refresh", "summary"]
     # Super Agent holds the platform, so it keeps the two Routine tools off.
     company = next(tool for tool in os.manager.tools if isinstance(tool, CompanyTools))
-    assert not {"refresh_company_product", "summarize_company_product"} & set(company.functions)
+    assert not {"refresh_company_goal", "summarize_company_goal"} & set(company.functions)
 
 
 @pytest.mark.parametrize("skill", ["intake", "refresh", "summary"])
@@ -159,7 +159,7 @@ def test_every_tool_a_packaged_skill_names_is_on_the_runner(tmp_path, skill):
     os = build(tmp_path)
     functions = set(os._mini_agent.tools.routine[0].functions)
     text = load_routine_skills().get_skill(skill).instructions
-    named = set(re.findall(r"\b[a-z]+(?:_[a-z]+)*_(?:company|product)_[a-z_]+\b", text))
+    named = set(re.findall(r"\b[a-z]+(?:_[a-z]+)*_(?:company|goal)_[a-z_]+\b", text))
     assert named, text
     # propose_company_task is named only to say Routines do not use it.
     assert named - {"propose_company_task"} <= functions, named - functions
@@ -169,10 +169,10 @@ def test_every_tool_a_packaged_skill_names_is_on_the_runner(tmp_path, skill):
 @pytest.mark.parametrize(
     "tool,arguments",
     [
-        ("refresh_company_product", {"product_id": "{product}"}),
-        ("summarize_company_product", {"product_id": "{product}", "narrative": "Nothing changed."}),
+        ("refresh_company_goal", {"goal_id": "{goal}"}),
+        ("summarize_company_goal", {"goal_id": "{goal}", "narrative": "Nothing changed."}),
         (
-            "intake_product_source",
+            "intake_goal_source",
             {
                 "source_id": "{source}",
                 "title": "Fix the docs",
@@ -193,21 +193,21 @@ def test_runner_can_call_the_tool_each_skill_names(tmp_path, tool, arguments, us
     (notes / "notes.md").write_text("The install page is wrong.\n")
     os = build(tmp_path)
     company = CompanyManager(os.db)
-    product = company.create(name="SDK")
-    project = company.create_project(product_id=product["id"], name="Docs")
+    goal = company.create(name="SDK")
+    project = company.create_project(goal_id=goal["id"], name="Docs")
     company.transition_project(project_id=project["id"], target="active", reason="Approved")
-    source = company.create_source(product_id=product["id"], type="markdown", reference=str(notes))
+    source = company.create_source(goal_id=goal["id"], type="markdown", reference=str(notes))
     ids = {
-        "product": product["id"],
+        "goal": goal["id"],
         "project": project["id"],
         "source": source["id"],
         "hash": hashlib.sha256((notes / "notes.md").read_bytes()).hexdigest(),
     }
-    filled = json.loads(json.dumps(arguments).replace("{product}", ids["product"]).replace("{source}", ids["source"]))
+    filled = json.loads(json.dumps(arguments).replace("{goal}", ids["goal"]).replace("{source}", ids["source"]))
     filled = json.loads(json.dumps(filled).replace("{project}", ids["project"]).replace("{hash}", ids["hash"]))
     runner = os._mini_agent
     runner.model = CountingModel(tool, filled)
-    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    authority = _RoutineAuthorization(None, routine_id="routine", goal_id=goal["id"])
     with authorization_scope(lambda: authority):
         result = run(runner, use_async)
     executed = [execution for execution in result.tools or [] if execution.tool_name == tool]
@@ -215,7 +215,7 @@ def test_runner_can_call_the_tool_each_skill_names(tmp_path, tool, arguments, us
     reply = str(executed[0].result)
     assert "Permission required" not in reply and "requires Routine authority" not in reply, reply
     assert "not found" not in reply.lower(), reply
-    if tool == "refresh_company_product":
+    if tool == "refresh_company_goal":
         assert not executed[0].tool_call_error, reply
 
 
@@ -237,7 +237,7 @@ def test_runner_prompt_opens_by_saying_what_it_is(tmp_path, use_async):
     with authorization_scope(routine_authority):
         run(os._mini_agent, use_async)
     system = os._mini_agent.model.system
-    assert system.startswith("You are Mini Agent. You work unattended for a Product.")
+    assert system.startswith("You are Mini Agent. You work unattended for a Goal.")
     assert "This run is a Routine." in system and "This run is a Task." not in system
 
 
@@ -351,7 +351,7 @@ async def test_runner_is_not_in_the_mcp_listing(tmp_path):
 
 
 def test_routine_record_names_mini_agent_everywhere(tmp_path):
-    product = Product(
+    goal = Goal(
         id="sdk",
         name="SDK",
         routines=[
@@ -365,7 +365,7 @@ def test_routine_record_names_mini_agent_everywhere(tmp_path):
         ],
     )
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
-    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), products=[product]), telemetry=False)
+    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), goals=[goal]), telemetry=False)
     with TestClient(os.get_app()) as client:
         routine = client.get("/company/routines").json()["data"][0]
     # The API, the endpoint and the stored row all name the same component.
@@ -377,17 +377,17 @@ def test_routine_record_names_mini_agent_everywhere(tmp_path):
 
 
 def test_declared_routine_with_a_missing_executor_names_what_is_wrong(tmp_path):
-    product = Product(
+    goal = Goal(
         name="Docs",
         routines=[Routine(name="weekly", executor_type="agent", executor_id="company-manager", instructions="Review.")],
     )
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
-    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), products=[product]), telemetry=False)
+    os = AgentOS(db=db, company=CompanyConfig(model=CountingModel(), goals=[goal]), telemetry=False)
     with pytest.raises(ValueError) as raised:
         with TestClient(os.get_app()):
             pass
     message = str(raised.value)
-    assert "Product 'Docs'" in message and "Routine 'weekly'" in message
+    assert "Goal 'Docs'" in message and "Routine 'weekly'" in message
     assert "executor agent 'company-manager'" in message and "missing from the registry" in message
 
 
@@ -412,8 +412,8 @@ def test_a_routine_needs_both_executor_fields_or_neither(half):
 def test_routine_api_defaults_the_executor_to_mini_agent(tmp_path):
     os = build(tmp_path)
     with TestClient(os.get_app()) as client:
-        product = CompanyManager(os.db).create(name="Docs")
-        body = {"product_id": product["id"], "name": "weekly", "instructions": "Review."}
+        goal = CompanyManager(os.db).create(name="Docs")
+        body = {"goal_id": goal["id"], "name": "weekly", "instructions": "Review."}
         created = client.post("/company/routines", json=body)
         assert created.status_code == 201, created.text
         assert (created.json()["target_type"], created.json()["target_id"]) == ("agent", MINI_AGENT_ID)
@@ -425,19 +425,19 @@ def test_routine_api_defaults_the_executor_to_mini_agent(tmp_path):
 @pytest.mark.parametrize("use_async", [False, True])
 def test_routine_tool_defaults_the_executor_to_mini_agent(tmp_path, use_async):
     os = build(tmp_path)
-    product = CompanyManager(os.db).create(name="Docs")
+    goal = CompanyManager(os.db).create(name="Docs")
     company = next(tool for tool in os.manager.tools if isinstance(tool, CompanyTools))
     if use_async:
-        result = asyncio.run(company.acreate_product_routine(product["id"], "weekly", instructions="Review."))
+        result = asyncio.run(company.acreate_goal_routine(goal["id"], "weekly", instructions="Review."))
     else:
-        result = company.create_product_routine(product["id"], "weekly", instructions="Review.")
+        result = company.create_goal_routine(goal["id"], "weekly", instructions="Review.")
     # The tool result and the stored row name the same executor.
     assert (json.loads(result)["target_type"], json.loads(result)["target_id"]) == ("agent", MINI_AGENT_ID)
-    stored = os.db.get_schedule_by_name(product["id"] + ".weekly")
+    stored = os.db.get_schedule_by_name(goal["id"] + ".weekly")
     assert stored["endpoint"] == RUNNER_ENDPOINT and stored["target_id"] == MINI_AGENT_ID
-    call = company.acreate_product_routine if use_async else company.create_product_routine
+    call = company.acreate_goal_routine if use_async else company.create_goal_routine
     with pytest.raises(ValueError, match="Give executor_type and executor_id together"):
-        half = call(product["id"], "half", executor_id="reader", instructions="Review.")
+        half = call(goal["id"], "half", executor_id="reader", instructions="Review.")
         if use_async:
             asyncio.run(half)
 
@@ -445,14 +445,14 @@ def test_routine_tool_defaults_the_executor_to_mini_agent(tmp_path, use_async):
 @pytest.mark.parametrize("executor", [{}, {"executor_type": "agent", "executor_id": MINI_AGENT_ID}])
 def test_declared_routine_fails_at_startup_when_the_runner_is_unavailable(tmp_path, executor):
     # No model for Company, so there is no Mini Agent. A defaulted executor fails like a named one.
-    product = Product(name="Docs", routines=[Routine(name="weekly", instructions="Review.", **executor)])
+    goal = Goal(name="Docs", routines=[Routine(name="weekly", instructions="Review.", **executor)])
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
-    os = AgentOS(db=db, company=CompanyConfig(products=[product]), telemetry=False)
+    os = AgentOS(db=db, company=CompanyConfig(goals=[goal]), telemetry=False)
     with pytest.raises(ValueError) as raised:
         with TestClient(os.get_app()):
             pass
     message = str(raised.value)
-    assert "Product 'Docs'" in message and "Routine 'weekly'" in message
+    assert "Goal 'Docs'" in message and "Routine 'weekly'" in message
     assert "executor agent 'miniagent'" in message and "Mini Agent unavailable" in message
 
 
@@ -462,8 +462,8 @@ def test_created_routine_fails_the_same_with_or_without_a_named_executor(tmp_pat
     os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
     named = {"executor_type": "agent", "executor_id": MINI_AGENT_ID}
     with TestClient(os.get_app()) as client:
-        product = CompanyManager(db).create(name="Docs")
-        body = {"product_id": product["id"], "name": "weekly", "instructions": "Review."}
+        goal = CompanyManager(db).create(name="Docs")
+        body = {"goal_id": goal["id"], "name": "weekly", "instructions": "Review."}
         defaulted, explicit = (
             client.post("/company/routines", json=body),
             client.post("/company/routines", json={**body, **named}),
@@ -475,11 +475,9 @@ def test_created_routine_fails_the_same_with_or_without_a_named_executor(tmp_pat
     for executor in ({}, named):
         with pytest.raises(ValueError, match="Mini Agent unavailable") as raised:
             if use_async:
-                asyncio.run(
-                    company.acreate_product_routine(product["id"], "weekly", instructions="Review.", **executor)
-                )
+                asyncio.run(company.acreate_goal_routine(goal["id"], "weekly", instructions="Review.", **executor))
             else:
-                company.create_product_routine(product["id"], "weekly", instructions="Review.", **executor)
+                company.create_goal_routine(goal["id"], "weekly", instructions="Review.", **executor)
         errors.append(str(raised.value))
     assert errors[0] == errors[1]
     assert db.get_schedules()[1] == 0

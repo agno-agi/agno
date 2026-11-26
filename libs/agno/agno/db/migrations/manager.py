@@ -7,6 +7,33 @@ from packaging.version import Version
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.utils.log import log_error, log_info, log_warning
 
+# The Company tables are migrated together and before every other table. Their migration can refuse
+# a database, and a database it refuses is then left as it was.
+_COMPANY_TABLE_ATTRS = {
+    "goals": "goals_table_name",
+    "sources": "sources_table_name",
+    "projects": "projects_table_name",
+    "tasks": "tasks_table_name",
+}
+
+# Every table type the manager migrates, with the db attribute that holds the table's name.
+TABLE_TYPE_TO_ATTR = {
+    **_COMPANY_TABLE_ATTRS,
+    "memories": "memory_table_name",
+    "sessions": "session_table_name",
+    "metrics": "metrics_table_name",
+    "evals": "eval_table_name",
+    "knowledge": "knowledge_table_name",
+    "approvals": "approvals_table_name",
+    "components": "components_table_name",
+    "schedules": "schedules_table_name",
+    "schedule_runs": "schedule_runs_table_name",
+    "learnings": "learnings_table_name",
+}
+
+_COMPANY_RENAME_VERSION = packaging_version.parse("3.3.0")
+_BEFORE_COMPANY_RENAME = packaging_version.parse("3.0.0")
+
 
 class MigrationManager:
     """Manager class to handle database migrations"""
@@ -17,6 +44,7 @@ class MigrationManager:
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
         ("v3_0_0", packaging_version.parse("3.0.0")),
+        ("v3_3_0", packaging_version.parse("3.3.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -49,22 +77,7 @@ class MigrationManager:
             _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "products": "products_table_name",
-            "sources": "sources_table_name",
-            "projects": "projects_table_name",
-            "tasks": "tasks_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:
@@ -90,6 +103,14 @@ class MigrationManager:
                 )
                 continue
             current_version = packaging_version.parse(raw_version)
+
+            # A Company table created before the rename is stamped current, so its stamp cannot be trusted.
+            if (
+                table_type in _COMPANY_TABLE_ATTRS
+                and current_version >= _COMPANY_RENAME_VERSION <= _target_version
+                and await self._company_rename_pending()
+            ):
+                current_version = _BEFORE_COMPANY_RENAME
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
@@ -137,6 +158,14 @@ class MigrationManager:
                 log_info(f"Successfully stored version {latest_version} in database for table {table_name}")
             log_info("----------------------------------------------------------")
 
+    async def _company_rename_pending(self) -> bool:
+        """Whether a Company table still has its 3.2.0 name or columns."""
+        from agno.db.migrations.versions import v3_3_0
+
+        if isinstance(self.db, AsyncBaseDb):
+            return await v3_3_0.acompany_rename_pending(self.db)
+        return v3_3_0.company_rename_pending(self.db)
+
     async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.
 
@@ -164,22 +193,7 @@ class MigrationManager:
         _target_version = packaging_version.parse(target_version)
 
         # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "approvals": "approvals_table_name",
-            "components": "components_table_name",
-            "schedules": "schedules_table_name",
-            "products": "products_table_name",
-            "sources": "sources_table_name",
-            "projects": "projects_table_name",
-            "tasks": "tasks_table_name",
-            "schedule_runs": "schedule_runs_table_name",
-            "learnings": "learnings_table_name",
-        }
+        _table_type_to_attr = TABLE_TYPE_TO_ATTR
 
         # Select tables to migrate
         if table_type:

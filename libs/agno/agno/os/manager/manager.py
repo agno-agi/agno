@@ -399,7 +399,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         from agno.tools.company import CompanyTools
 
         tools.append(
-            # The file tree tools below read and write the wiki and every Product's pages.
+            # The file tree tools below read and write the wiki and every Goal's pages.
             CompanyTools(
                 company_db,
                 summary_tools=False,

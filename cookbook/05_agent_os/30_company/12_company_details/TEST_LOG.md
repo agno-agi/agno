@@ -1,5 +1,20 @@
 # Test log
 
+### Product renamed to Goal (2026-11-24)
+
+**Status:** PASS
+
+**Description:** Ran `company_details.py` against local PostgreSQL after the rename. The
+details table is named after the goals table, so its default name is now
+`agno_company_goals_details`. Started `chat.py` on a new PostgreSQL database, read
+`GET /company/goals`, and stopped it.
+
+**Result:** `company_details.py` exited 0 and printed "Saved identity retained; stale edit
+rejected." `chat.py` started with no warning or error in its log and served the Company
+routes. Its live chat makes paid model calls and was NOT RUN.
+
+---
+
 ### Current prompts — 97cdd12a87 (2026-11-10)
 
 **Live verification:** NOT RUN. The three historical live results below apply to `c346e021b0`, not this prompt revision. Approval is required before rerunning paid model calls.

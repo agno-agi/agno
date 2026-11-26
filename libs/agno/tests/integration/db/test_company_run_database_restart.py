@@ -37,7 +37,7 @@ async def main():
     db = cls(**json.loads(options))
     try:
         if mode == "write":
-            product = await AsyncCompanyManager(db).create(name="SDK")
+            goal = await AsyncCompanyManager(db).create(name="SDK")
             run = RunOutput(
                 run_id="prior-run", session_id="task-session", agent_id="writer",
                 content="Persisted before restart", status=RunStatus.completed,
@@ -47,7 +47,7 @@ async def main():
             )) is not None
             await db.upsert_run(run, session_id="task-session")
             await db.create_task({
-                "id": "task", "product_id": product["id"], "title": "Release",
+                "id": "task", "goal_id": goal["id"], "title": "Release",
                 "status": "in_progress", "created_at": int(time.time()),
                 "session_id": "task-session", "job_id": run.run_id,
                 "executor_type": "agent", "executor_id": "writer",

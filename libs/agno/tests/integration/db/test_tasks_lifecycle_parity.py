@@ -25,15 +25,15 @@ async def db(request, tmp_path):
     backend = request.param
     suffix = uuid4().hex[:12]
     kwargs = {
-        "products_table": "products_" + suffix,
+        "goals_table": "goals_" + suffix,
         "projects_table": "projects_" + suffix,
         "tasks_table": "tasks_" + suffix,
     }
     if "postgres" in backend:
-        kwargs.update(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", db_schema="products_" + suffix)
+        kwargs.update(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", db_schema="goals_" + suffix)
         cls = AsyncPostgresDb if backend.startswith("async") else PostgresDb
     else:
-        kwargs.update(db_file=str(tmp_path / "products.db"))
+        kwargs.update(db_file=str(tmp_path / "goals.db"))
         cls = AsyncSqliteDb if backend.startswith("async") else SqliteDb
     database = cls(**kwargs)
     try:
@@ -68,11 +68,11 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
     import agno.db.sql.company as company
 
     m = manager(db)
-    product = await call(m.create, name="Project move race")
-    approved = await call(m.create_project, product_id=product["id"], name="Approved")
-    proposed = await call(m.create_project, product_id=product["id"], name="Proposed")
+    goal = await call(m.create, name="Project move race")
+    approved = await call(m.create_project, goal_id=goal["id"], name="Approved")
+    proposed = await call(m.create_project, goal_id=goal["id"], name="Proposed")
     await call(m.transition_project, project_id=approved["id"], target="active", reason="Approve")
-    task = await call(m.create_task, product_id=product["id"], project_id=approved["id"], title="Draft")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=approved["id"], title="Draft")
     accept_args = (task["id"], "ready", "Accept")
     accept_kwargs = {"executor_type": "agent", "executor_id": "writer"}
 
@@ -82,7 +82,7 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
         original = AsyncSession.run_sync
 
         async def pause_before_lock(session, fn, *args, **kwargs):
-            if asyncio.current_task() is acceptance and fn is company.lock_product:
+            if asyncio.current_task() is acceptance and fn is company.lock_goal:
                 paused.set()
                 await asyncio.wait_for(proceed.wait(), 10)
             return await original(session, fn, *args, **kwargs)
@@ -98,7 +98,7 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
     else:
         paused = threading.Event()
         proceed = threading.Event()
-        original = company.lock_product
+        original = company.lock_goal
 
         def pause_before_lock(*args, **kwargs):
             if not paused.is_set():
@@ -107,7 +107,7 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
             return original(*args, **kwargs)
 
         with monkeypatch.context() as patch:
-            patch.setattr(company, "lock_product", pause_before_lock)
+            patch.setattr(company, "lock_goal", pause_before_lock)
             acceptance = asyncio.create_task(asyncio.to_thread(db.transition_task, *accept_args, **accept_kwargs))
             assert await asyncio.to_thread(paused.wait, 10)
             moved = await asyncio.to_thread(db.update_task, task["id"], project_id=proposed["id"])
@@ -125,9 +125,9 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
 @pytest.mark.parametrize("db", ["postgres", "async_postgres"], indirect=True)
 async def test_postgres_transition_hides_archived_or_other_owner_task(db):
     m = manager(db)
-    product = await call(m.create, name="Archived work")
-    project = await call(m.create_project, product_id=product["id"], name="Project")
-    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Draft", user_id="alice")
+    goal = await call(m.create, name="Archived work")
+    project = await call(m.create_project, goal_id=goal["id"], name="Project")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=project["id"], title="Draft", user_id="alice")
     assert await call(db.transition_task, task["id"], "cancelled", "Stop", user_id="bob") is None
     await call(m.delete_task, task["id"])
     await call(m.delete_project, project["id"])
@@ -139,9 +139,9 @@ async def test_postgres_transition_hides_archived_or_other_owner_task(db):
 @pytest.mark.parametrize("initial_status", ["backlog", "ready"])
 async def test_cancelled_project_allows_task_cleanup_only(db, initial_status):
     m = manager(db)
-    product = await call(m.create, name="Rejected plan")
-    project = await call(m.create_project, product_id=product["id"], name="Draft")
-    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    goal = await call(m.create, name="Rejected plan")
+    project = await call(m.create_project, goal_id=goal["id"], name="Draft")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=project["id"], title="Work")
     if initial_status == "ready":
         await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
         task = await call(
@@ -174,9 +174,9 @@ async def test_cancelled_project_allows_task_cleanup_only(db, initial_status):
 @pytest.mark.asyncio
 async def test_proposed_project_allows_backlog_task_cancellation(db):
     m = manager(db)
-    product = await call(m.create, name="Draft plan")
-    project = await call(m.create_project, product_id=product["id"], name="Draft")
-    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    goal = await call(m.create, name="Draft plan")
+    project = await call(m.create_project, goal_id=goal["id"], name="Draft")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=project["id"], title="Work")
 
     cancelled = await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop")
     assert cancelled["status"] == "cancelled"
@@ -185,10 +185,10 @@ async def test_proposed_project_allows_backlog_task_cancellation(db):
 @pytest.mark.asyncio
 async def test_cancelled_project_rejects_new_task_run_reservation(db):
     m = manager(db)
-    product = await call(m.create, name="Rejected run")
-    project = await call(m.create_project, product_id=product["id"], name="Draft")
+    goal = await call(m.create, name="Rejected run")
+    project = await call(m.create_project, goal_id=goal["id"], name="Draft")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
-    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=project["id"], title="Work")
     ready = await call(
         m.transition_task,
         task_id=task["id"],
@@ -206,10 +206,10 @@ async def test_cancelled_project_rejects_new_task_run_reservation(db):
 @pytest.mark.asyncio
 async def test_cancelled_project_allows_started_task_run_to_finish(db):
     m = manager(db)
-    product = await call(m.create, name="Run in progress")
-    project = await call(m.create_project, product_id=product["id"], name="Work")
+    goal = await call(m.create, name="Run in progress")
+    project = await call(m.create_project, goal_id=goal["id"], name="Work")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approve")
-    task = await call(m.create_task, product_id=product["id"], project_id=project["id"], title="Work")
+    task = await call(m.create_task, goal_id=goal["id"], project_id=project["id"], title="Work")
     ready = await call(
         m.transition_task,
         task_id=task["id"],
@@ -232,11 +232,11 @@ async def test_lifecycle_and_owner_guards(db):
     m = manager(db)
     assert await call(m.list_tasks) == ([], 0)
     parent = await call(m.create, name="SDK", user_id="alice")
-    project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    project = await call(m.create_project, goal_id=parent["id"], name="Release", user_id="alice")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
         m.create_task,
-        product_id=parent["id"],
+        goal_id=parent["id"],
         title="Ship",
         user_id="alice",
         scoped_user_id="alice",
@@ -296,7 +296,7 @@ async def test_filters_and_stable_paging(db):
             db.create_task,
             {
                 "id": str(i),
-                "product_id": parents[i % 2]["id"],
+                "goal_id": parents[i % 2]["id"],
                 "title": "Same",
                 "status": "backlog",
                 "user_id": owner,
@@ -308,7 +308,7 @@ async def test_filters_and_stable_paging(db):
     pages = [await call(m.list_tasks, user_id="alice", status="backlog", limit=1, page=p) for p in [1, 2]]
     assert [p[1] for p in pages] == [2, 2]
     assert [p[0][0]["id"] for p in pages] == ["4", "2"]
-    assert (await call(m.list_tasks, product_id=parents[1]["id"]))[1] == 3
+    assert (await call(m.list_tasks, goal_id=parents[1]["id"]))[1] == 3
     assert (await call(m.list_tasks, status="cancelled"))[1] == 1
     assert (await call(m.list_tasks, user_id="absent")) == ([], 0)
 
@@ -317,24 +317,24 @@ async def test_filters_and_stable_paging(db):
 async def test_validation_parent_visibility_and_immutable_fields(db):
     m = manager(db)
     parent = await call(m.create, name="SDK", user_id="alice")
-    project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    project = await call(m.create_project, goal_id=parent["id"], name="Release", user_id="alice")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     with pytest.raises(LookupError):
         await call(
             m.create_task,
-            product_id=parent["id"],
+            goal_id=parent["id"],
             title="Hidden",
             user_id="bob",
             scoped_user_id="bob",
             project_id=project["id"],
         )
-    project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    project = await call(m.create_project, goal_id=parent["id"], name="Release", user_id="alice")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
-    record = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
+    record = await call(m.create_task, goal_id=parent["id"], title="Work", project_id=project["id"])
     for fields in [
         {"status": "done"},
         {"id": "other"},
-        {"product_id": "other"},
+        {"goal_id": "other"},
         {"created_at": 0},
         {"deleted_at": 1},
         {"title": None},
@@ -355,10 +355,10 @@ async def test_validation_parent_visibility_and_immutable_fields(db):
 async def test_custom_table_migrations_and_configuration_roundtrip(db):
     m = manager(db)
     parent = await call(m.create, name="SDK")
-    project = await call(m.create_project, product_id=parent["id"], name="Release", user_id="alice")
+    project = await call(m.create_project, goal_id=parent["id"], name="Release", user_id="alice")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     record = await call(
-        m.create_task, product_id=parent["id"], title="Roundtrip", user_id="alice", project_id=project["id"]
+        m.create_task, goal_id=parent["id"], title="Roundtrip", user_id="alice", project_id=project["id"]
     )
     assert await call(db.table_exists, db.tasks_table_name)
     assert not await call(db.table_exists, "agno_company_tasks")
@@ -378,12 +378,12 @@ async def test_task_acceptance_and_project_consistency(db):
     m = manager(db)
     a = await call(m.create, name="A")
     b = await call(m.create, name="B")
-    project = await call(m.create_project, product_id=b["id"], name="Other")
+    project = await call(m.create_project, goal_id=b["id"], name="Other")
     with pytest.raises(ValueError):
-        await call(m.create_task, product_id=a["id"], title="Wrong", project_id=project["id"])
-    own_project = await call(m.create_project, product_id=a["id"], name="Release")
+        await call(m.create_task, goal_id=a["id"], title="Wrong", project_id=project["id"])
+    own_project = await call(m.create_project, goal_id=a["id"], name="Release")
     await call(m.transition_project, project_id=own_project["id"], target="active", reason="Approved")
-    task = await call(m.create_task, product_id=a["id"], title="Work", project_id=own_project["id"])
+    task = await call(m.create_task, goal_id=a["id"], title="Work", project_id=own_project["id"])
     with pytest.raises(ValueError):
         await call(m.update_task, task["id"], project_id=project["id"])
     ready = await call(
@@ -410,10 +410,10 @@ STRUCTURAL = [{"executor_id": "stale"}, {"evidence": [{"url": "https://example.t
 
 
 async def task_at(m, stage):
-    product = await call(m.create, name="SDK")
-    project = await call(m.create_project, product_id=product["id"], name="Release")
+    goal = await call(m.create, name="SDK")
+    project = await call(m.create_project, goal_id=goal["id"], name="Release")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
-    task = await call(m.create_task, product_id=product["id"], title="Original", brief="Body", project_id=project["id"])
+    task = await call(m.create_task, goal_id=goal["id"], title="Original", brief="Body", project_id=project["id"])
     if stage == "cancelled":
         return await call(m.transition_task, task_id=task["id"], target="cancelled", reason="Stop"), project
     for target in ["ready", "in_progress", "in_review", "done"][: STAGES.index(stage)]:
@@ -486,7 +486,7 @@ async def test_expected_status_makes_the_content_write_conditional(db, stage):
 async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_atomic(db, stage, structural):
     m = manager(db)
     task, project = await task_at(m, stage)
-    other = await call(m.create_project, product_id=task["product_id"], name="Other")
+    other = await call(m.create_project, goal_id=task["goal_id"], name="Other")
     for fields in [structural, {"project_id": other["id"]}]:
         with pytest.raises(ValueError, match="Backlog"):
             await call(m.update_task, task["id"], **fields)
@@ -543,9 +543,9 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
 
     m = manager(db)
     parent = await call(m.create, name="SDK")
-    project = await call(m.create_project, product_id=parent["id"], name="Release")
+    project = await call(m.create_project, goal_id=parent["id"], name="Release")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
-    task = await call(m.create_task, product_id=parent["id"], title="Work", project_id=project["id"])
+    task = await call(m.create_task, goal_id=parent["id"], title="Work", project_id=project["id"])
     if isinstance(db, (PostgresDb, AsyncPostgresDb)):
         import agno.db.sql.company as company
 
@@ -560,7 +560,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
                 if asyncio.current_task() is first and fn is company.require_project:
                     paused.set()
                     await asyncio.wait_for(proceed.wait(), 5)
-                if asyncio.current_task() is second and fn is company.lock_product:
+                if asyncio.current_task() is second and fn is company.lock_goal:
                     attempted.set()
                 return await original_run_sync(session, fn, *args, **kwargs)
 
@@ -587,7 +587,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
             from concurrent.futures import ThreadPoolExecutor
 
             original = task_schema.task_transition_fields
-            original_lock = company.lock_product
+            original_lock = company.lock_goal
             owner = threading.current_thread()
             attempted = threading.Event()
 
@@ -609,7 +609,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
 
                 with monkeypatch.context() as patch:
                     patch.setattr(task_schema, "task_transition_fields", start_competing_move)
-                    patch.setattr(company, "lock_product", tracked_lock)
+                    patch.setattr(company, "lock_goal", tracked_lock)
                     accepted = m.transition_task(
                         task_id=task["id"],
                         target="ready",
@@ -730,8 +730,8 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         return {"Authorization": "Bearer " + token}
 
     m = manager(db)
-    product = await call(m.create, name="Shared", user_id="alice")
-    project = await call(m.create_project, product_id=product["id"], name="Shared project", user_id="alice")
+    goal = await call(m.create, name="Shared", user_id="alice")
+    project = await call(m.create_project, goal_id=goal["id"], name="Shared project", user_id="alice")
     if resource == "tasks":
         await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     app = AgentOS(
@@ -749,7 +749,7 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
     initial_status = "backlog" if resource == "tasks" else "proposed"
     root = "/company/" + resource
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        body = {"product_id": product["id"], field: "Work"}
+        body = {"goal_id": goal["id"], field: "Work"}
         if resource == "tasks":
             body["project_id"] = project["id"]
         # A writer may propose its own work under another owner's shared parent.
@@ -761,7 +761,7 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
             project
             if resource == "projects"
             else await call(
-                m.create_task, product_id=product["id"], title="Alice task", user_id="alice", project_id=project["id"]
+                m.create_task, goal_id=goal["id"], title="Alice task", user_id="alice", project_id=project["id"]
             )
         )
         path = root + "/" + other["id"]
@@ -820,13 +820,13 @@ async def test_the_store_refuses_an_automatic_acceptance_past_the_routines_open_
     from agno.db.schemas.tasks import OpenTaskLimitError
 
     m = manager(db)
-    product = await call(m.create, name="SDK")
-    project = await call(m.create_project, product_id=product["id"], name="Release")
+    goal = await call(m.create, name="SDK")
+    project = await call(m.create_project, goal_id=goal["id"], name="Release")
     await call(m.transition_project, project_id=project["id"], target="active", reason="Approved")
     tasks = [
         await call(
             m.create_task,
-            product_id=product["id"],
+            goal_id=goal["id"],
             title=f"Task {n}",
             project_id=project["id"],
             origin="routine",

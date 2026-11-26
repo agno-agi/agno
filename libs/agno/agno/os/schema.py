@@ -3,7 +3,15 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -223,7 +231,26 @@ class FileSystemAgent(BaseModel):
 
 
 class FileSystemNamespace(FileSystemSummary):
-    agents: List[FileSystemAgent] = Field(..., description="Agents using this filesystem namespace and their access")
+    id: str = Field(
+        ...,
+        description=(
+            "Identifier to pass as filesystem_id to the /filesystem routes: the namespace, "
+            "with the backend added when two filesystems share a namespace"
+        ),
+    )
+    declared: bool = Field(False, description="Whether the filesystem is declared on the AgentOS")
+    agents: List[FileSystemAgent] = Field(
+        ...,
+        description="Agents using this filesystem namespace and their access; empty when no agent holds it",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _id_from_namespace(cls, data: Any) -> Any:
+        # An AgentOS that sends no id addresses the filesystem by its namespace.
+        if isinstance(data, dict) and "id" not in data and "namespace" in data:
+            return {**data, "id": data["namespace"]}
+        return data
 
 
 class FileSystemConfig(BaseModel):
@@ -233,11 +260,14 @@ class FileSystemConfig(BaseModel):
     )
 
 
-def _extract_filesystem(filesystem: Any, agent: Any, user_id: Optional[str] = None) -> FileSystemSummary:
-    """Describe one of the agent's filesystems, with its namespace resolved for the caller."""
+def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[str] = None) -> FileSystemSummary:
+    """Describe a filesystem, with its namespace resolved for the caller.
+
+    ``agent`` is the agent holding it, or None for a filesystem declared on the AgentOS.
+    """
     # Partitioned by the run's user, or isolated by a namespace naming the user.
     user_isolation = bool(filesystem.user_scoped) or "user_id" in filesystem._placeholders
-    filesystem = filesystem.resolve(user_id=user_id, agent_id=agent.id)
+    filesystem = filesystem.resolve(user_id=user_id, agent_id=getattr(agent, "id", None))
     backend = filesystem.backend
     backend_db = getattr(backend, "db", None)
     if backend_db is not None or hasattr(backend, "db_engine"):

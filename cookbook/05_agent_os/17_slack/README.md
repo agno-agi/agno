@@ -299,7 +299,7 @@ authz.define_role(
         "agents:run",
         "workflows:run",
         "company:read",
-        "products:read",
+        "goals:read",
         "projects:read",
         "projects:write",
         "tasks:read",

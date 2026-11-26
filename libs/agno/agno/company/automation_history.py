@@ -64,7 +64,7 @@ async def _record_task_failures(db: Any, company_db: Any, outcomes: List[Dict[st
         )
         diagnostic = {
             "task_id": task_id,
-            "product_id": task.get("product_id") if task else None,
+            "goal_id": task.get("goal_id") if task else None,
             "reason": outcome["reason"],
             "count": previous[1]["count"] + 1 if same and previous is not None else 1,
             "state": state,
@@ -89,7 +89,7 @@ async def _record_task_failures(db: Any, company_db: Any, outcomes: List[Dict[st
             )
 
 
-async def aautomation_failures(db: Any, company_db: Any, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+async def aautomation_failures(db: Any, company_db: Any, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Return current actionable failure streaks, including their repeated tick counts."""
     failures = []
     seen = set()
@@ -98,7 +98,7 @@ async def aautomation_failures(db: Any, company_db: Any, product_id: Optional[st
         if not diagnostic or diagnostic["task_id"] in seen:
             continue
         seen.add(diagnostic["task_id"])
-        if not diagnostic.get("active") or (product_id is not None and diagnostic.get("product_id") != product_id):
+        if not diagnostic.get("active") or (goal_id is not None and diagnostic.get("goal_id") != goal_id):
             continue
         task = await _call(company_db, "get_task", diagnostic["task_id"])
         if task is not None and _task_state(task) == diagnostic["state"]:
@@ -106,7 +106,7 @@ async def aautomation_failures(db: Any, company_db: Any, product_id: Optional[st
     return failures
 
 
-def automation_failures(db: Any, company_db: Any, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def automation_failures(db: Any, company_db: Any, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Read current failure streaks through synchronous stores."""
     rows = []
     page = 1
@@ -123,7 +123,7 @@ def automation_failures(db: Any, company_db: Any, product_id: Optional[str] = No
         if not diagnostic or diagnostic["task_id"] in seen:
             continue
         seen.add(diagnostic["task_id"])
-        if not diagnostic.get("active") or (product_id is not None and diagnostic.get("product_id") != product_id):
+        if not diagnostic.get("active") or (goal_id is not None and diagnostic.get("goal_id") != goal_id):
             continue
         task = company_db.get_task(diagnostic["task_id"])
         if task is not None and _task_state(task) == diagnostic["state"]:
