@@ -6,8 +6,6 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
-
 from agno.agent import Agent
 from agno.db.schemas.tasks import task_run_id
 from agno.db.sqlite import SqliteDb
@@ -22,6 +20,7 @@ from agno.os.manager.company_tasks import CompanyTaskTools
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
+from fastapi.testclient import TestClient
 
 SECRET = "company-task-tools-tests-secret-at-least-32-bytes"
 SCOPES = ["goals:read", "goals:write", "projects:write", "tasks:read", "tasks:write", "wiki:read"]
@@ -212,7 +211,7 @@ def test_a_run_without_permissions_is_refused_under_a_jwt_middleware(system):
     assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None
 
 
-def test_start_ends_the_coordinator_turn_with_its_receipt(tmp_path):
+def test_start_does_not_end_the_coordinator_turn(tmp_path):
     from agno.models.openai import OpenAIResponses
     from agno.os import OSManager
     from agno.tools.function import Function
@@ -226,8 +225,9 @@ def test_start_ends_the_coordinator_turn_with_its_receipt(tmp_path):
     assert len(tools) == 1
     functions = tools[0].get_async_functions()
     start_tool: Function = functions["start_company_task"]
-    assert start_tool.stop_after_tool_call is True and start_tool.show_result is True
-    assert not functions["get_company_task_status"].stop_after_tool_call
+    # Several Tasks can be started and the person answered in one reply.
+    assert not start_tool.stop_after_tool_call and not start_tool.show_result
+    assert not functions["add_company_task"].stop_after_tool_call
 
     without_company = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     assert not any(isinstance(tool, CompanyTaskTools) for tool in without_company.manager.tools)
