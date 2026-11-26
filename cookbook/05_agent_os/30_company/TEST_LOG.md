@@ -36,7 +36,7 @@ Mini Agent ran the Release Writer.
 
 **Status:** PASS, with one wording change made after the first runs
 
-**Description:** Eight requests in a harness that confirms every pause and records
+**Description:** Nine requests in a harness that confirms every pause and records
 it, on a Goal with a website Source and one active Project. The harness is kept
 outside the repository.
 
@@ -63,6 +63,26 @@ After adding a Task that is not started, Super Agent offers once to start it. In
 four runs on that wording, seven of eight replies made the offer ("Ask me to start
 it when you're ready"), one only said the Task was not started, and no added Task
 was started before the person said yes.
+
+---
+
+### Move a Task from chat, and a schedule aimed at Super Agent
+
+**Status:** PASS
+
+**Description:** One run on a new PostgreSQL database with `gpt-5.6-luna`,
+authorization off, AgentOS served over HTTP with the scheduler on. First: "Add a
+task: fix the typo on the pricing page", then "Move that task into the 3.3
+migration guide project". Second: a schedule on `/teams/superagent/runs` whose
+message says to add a Task and start it now, triggered once.
+
+**Result:** The added Task was Ready in the Default Project. The second message
+called `move_company_task` once, with no confirmation. The Task was then in the
+named Project, still Ready, with the same brief, executor and accepter, and its
+history ended with a `move` entry naming the person. The scheduled run carried
+`agno_scheduled` in its metadata; `add_company_task` answered that a scheduled
+run has no person present, the reply said nothing was created, and no Task was
+created.
 
 ---
 

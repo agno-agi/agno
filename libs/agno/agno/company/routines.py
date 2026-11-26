@@ -546,9 +546,9 @@ def _auto_accept_note(policy: Any, reason: Optional[str], turn_off: str, turn_on
             else f"at most {policy.limits.max_acceptances} in all"
         )
         return (
-            f"Auto-accept is on: this Routine's proposals are accepted and run on {policy.default_executor} "
-            f"with no person, {bound}, and finished work waits In review. Proposals with no Project wait "
-            f"for a person. {turn_off}"
+            f"Auto-accept is on: this Routine's proposals are accepted and run with no person, on "
+            f"{policy.default_executor} unless a proposal names another executor, {bound}, and finished "
+            f"work waits In review. Proposals with no Project wait for a person. {turn_off}"
         )
     why = f": {reason.rstrip('.')}" if reason else ""
     return f"Auto-accept is off{why}. This Routine's proposals wait for a person. {turn_on}"
