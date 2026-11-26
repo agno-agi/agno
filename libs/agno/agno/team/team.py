@@ -12,7 +12,6 @@ from typing import (
     List,
     Literal,
     Optional,
-    Protocol,
     Sequence,
     Set,
     Tuple,
@@ -78,12 +77,6 @@ from agno.utils.log import (
     log_error,
     log_warning,
 )
-
-
-class _MessageContextProvider(Protocol):
-    def read(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
-
-    async def aread(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
 
 
 @dataclass(init=False)
@@ -473,7 +466,9 @@ class Team:
     _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
 
     # Supplies transient context when building a fresh run's model input.
-    _message_context: Optional[_MessageContextProvider] = field(default=None, init=False, repr=False, compare=False)
+    _message_context: Optional[_messages._MessageContextProvider] = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __init__(
         self,

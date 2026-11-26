@@ -16,6 +16,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Protocol,
     Sequence,
     Type,
     Union,
@@ -54,6 +55,12 @@ from agno.utils.team import (
     get_member_id,
 )
 from agno.utils.timer import Timer
+
+
+class _MessageContextProvider(Protocol):
+    def read(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
+
+    async def aread(self, run_context: RunContext, session: TeamSession) -> Optional[str]: ...
 
 
 def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
