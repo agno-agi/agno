@@ -13,7 +13,8 @@ talks to Super Agent, including when user isolation is on.
 
 This script makes the tool calls Super Agent would make in a chat: it saves a company
 page, writes a Goal page, a note and a Task file, reads the Task file and the note
-back through the API, and then prints what a Task's input loads. In a chat,
+back through the API, and then prints what a Task's input holds for a named executor
+and for Mini Agent. In a chat,
 save_company_page pauses until the person confirms the page and the change; here the
 script is that person.
 
@@ -31,6 +32,7 @@ from agno.company.execution import _task_input
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.registry._reserved import MINI_AGENT_ID
 from agno.run import RunContext
 from fastapi.testclient import TestClient
 
@@ -183,11 +185,21 @@ if __name__ == "__main__":
         ).json()
         assert shown["content"] == page["content"]
 
-        # A Task's input carries the Goal's brief and status and the company wiki.
-        # The queue builds it when the Task starts. Everything else is read on request.
-        payload = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]))))
+        # The queue builds a Task's input when the Task starts, for the executor it was accepted for.
+        # A named agent, team or workflow receives the brief and the evidence, and no page.
+        stored = db.get_task(task["id"])
+        named = {**stored, "executor_type": "agent", "executor_id": "release-writer"}
+        payload = json.loads(asyncio.run(_task_input(manager, named)))
+        print("A named executor's input holds:", sorted(payload))
+        assert set(payload) == {"brief", "evidence"}
+        assert "Python developers" not in json.dumps(payload)
+
+        # Mini Agent's input also carries the Goal's brief and status and the company wiki.
+        # Everything else is read on request.
+        mini = {**stored, "executor_type": "agent", "executor_id": MINI_AGENT_ID}
+        payload = json.loads(asyncio.run(_task_input(manager, mini)))
         loaded = [page["file"] for page in payload["wiki"]]
-        print("A Task's input loads:", loaded)
+        print("Mini Agent's input loads:", loaded)
         assert loaded == [
             goal_folder + "/brief.md",
             goal_folder + "/status.md",
