@@ -601,6 +601,34 @@ def test_a_task_past_five_added_to_be_started_later_is_still_held_once_it_is_acc
         assert started.startswith("Queued"), started
 
 
+@pytest.mark.parametrize("through", ["chat", "api"])
+def test_a_task_added_for_later_is_still_held_after_a_return_to_backlog(policy, through):  # noqa: F811
+    tools = CompanyTaskTools(policy.os)
+    asyncio.run(tools.aadd_company_task("Later", "Do it.", False, _agno_run_context=policy_chat()))
+    held = only_task(policy.db)
+    # Back to Backlog, as an edit of the brief needs, then accepted again.
+    back = policy.manager.transition_task(task_id=held["id"], target="backlog", reason="Edit the brief")
+    assert back["status"] == "backlog"
+    if through == "chat":
+        assert accept(policy.os, policy_chat(), back, executor=("agent", MINI_AGENT_ID)).startswith("Accepted")
+    else:
+        again = policy.client.post(
+            f"/company/tasks/{held['id']}/transitions",
+            json={"target": "ready", "reason": "Go", "executor_type": "agent", "executor_id": MINI_AGENT_ID},
+            headers=policy_headers(POLICY_SCOPES),
+        )
+        assert again.status_code == 200, again.text
+    accepted = policy.db.get_task(held["id"])
+    assert accepted["status"] == "ready" and accepted["transitions"][-1]["start_on_request"] is True
+
+    policy.tick()
+
+    # The person asked only to add it, so it still waits for a start.
+    assert policy.db.get_task(held["id"]) == accepted
+    started = asyncio.run(tools.astart_company_task(held["id"], _agno_run_context=policy_chat()))
+    assert started.startswith("Queued"), started
+
+
 def test_a_routine_created_in_chat_is_triggered_by_hand_where_authorization_is_off(tmp_path):
     # A deployment that checks no permissions and knows no caller: the chat's user id is only a label.
     system = PolicySystem(tmp_path, authorization=False)  # noqa: F811
