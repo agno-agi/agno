@@ -61,6 +61,8 @@ Proposing work:
 Task briefs:
 - Write for the executor who will do the work: the desired outcome, the deliverable, how it will be
   checked, and any restrictions in the Routine's instructions.
+- A Task run starts with its brief and its evidence and nothing else. State in the brief the facts the
+  work depends on, and attach what it builds on with context: pages and Tasks of your Goal, wiki pages.
 - A Routine only proposes. Leave that limit out of the brief; it does not apply to the executor.
 
 Sources and status:

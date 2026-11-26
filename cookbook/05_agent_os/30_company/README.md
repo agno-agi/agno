@@ -111,6 +111,11 @@ The input carries what is attached under `context`. If an executor relied on a
 page, attach that page to the Task, or put what it needs in the brief. Mini Agent
 also reads any page with its file tools. See "What a Task run is given".
 
+This holds for an input built after the upgrade. A retry that was already queued
+on 3.2.0 keeps the input it was queued with, and an agent or team with
+`add_history_to_context=True` reads its own earlier attempts of the same Task,
+so an attempt that ran on 3.2.0 can bring its pages back.
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so

@@ -288,8 +288,11 @@ def test_work_with_no_goal_runs_the_whole_lifecycle(system):
 def test_the_input_of_a_task_carries_no_page_with_or_without_a_goal(system):
     manager = system.manager
     goal = manager.create(name="Developer docs")
-    loose = manager.create_task(title="Fix the typo", brief="Change 'recieve' to 'receive'.")
-    tagged = manager.create_task(title="A stray finding", goal_id=goal["id"])
+    mini = {"executor_type": "agent", "executor_id": "miniagent"}
+    loose = manager.create_task(title="Fix the typo", brief="Change 'recieve' to 'receive'.", **mini)
+    tagged = manager.create_task(title="A stray finding", goal_id=goal["id"], **mini)
+    named = {**loose, "executor_type": "agent", "executor_id": "writer"}
+    assert list(json.loads(asyncio.run(_task_input(manager, named)))) == ["brief", "evidence"]
 
     for task in (loose, tagged):
         for executor in ({}, {"executor_type": "agent", "executor_id": "miniagent"}):
