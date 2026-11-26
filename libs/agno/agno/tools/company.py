@@ -130,7 +130,6 @@ def _require_decision_log_write(run_context):
 def _require_human_creation(run_context, operation="create Company Goals and Routines"):
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
-
     from agno.run.authorization import WORK_UPDATE_REFUSAL, in_work_update
 
     if in_work_update(run_context):

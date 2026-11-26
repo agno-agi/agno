@@ -266,32 +266,41 @@ class WorkUpdates:
         def read() -> Tuple[Any, Any]:
             session = db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
             found = db.get_runs(
-                session_id=session_id, limit=_RUNS_READ, sort_by="created_at", sort_order="desc", deserialize=False
+                session_id=session_id, limit=_RUNS_READ, sort_by="run_index", sort_order="desc", deserialize=False
             )
             return session, found
 
         if isinstance(db, AsyncBaseDb):
             session = await db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
             found = await db.get_runs(
-                session_id=session_id, limit=_RUNS_READ, sort_by="created_at", sort_order="desc", deserialize=False
+                session_id=session_id, limit=_RUNS_READ, sort_by="run_index", sort_order="desc", deserialize=False
             )
         else:
             session, found = await asyncio.to_thread(read)
-        rows = found[0] if isinstance(found, tuple) else found
-        return (session if isinstance(session, dict) else None), [row for row in rows or [] if isinstance(row, dict)]
+        rows = [row for row in (found[0] if isinstance(found, tuple) else found) or [] if isinstance(row, dict)]
+        # Newest first whatever the store returned: a turn's place in the conversation, then its time.
+        rows.sort(key=lambda row: (row.get("run_index") or 0, row.get("created_at") or 0), reverse=True)
+        return (session if isinstance(session, dict) else None), rows
 
     @staticmethod
     def _listed(session: Dict[str, Any], work: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """The conversation's own record of this work, or None when it holds none.
 
         A run names the conversation that asked for it, and only the conversation's stored list says
-        the conversation did. A run whose end the conversation was already shown is not reported again.
+        the conversation did. An end the conversation was already shown is not reported again: the
+        entry holds the state last shown to the model, in a turn of the person or an earlier work update.
         """
         state = (session.get("session_data") or {}).get("session_state")
         listed = state.get(LINKED_WORK_KEY) if isinstance(state, dict) else None
         for entry in listed if isinstance(listed, list) else []:
             if isinstance(entry, dict) and entry.get("kind") == work.get("kind") and entry.get("id") == work.get("id"):
-                return None if entry.get("ended") else entry
+                shown, status = str(entry.get("shown") or ""), str(work.get("status"))
+                if work.get("kind") == "task":
+                    # A Task's shown state ends with its latest run and how that run ended.
+                    seen = shown.endswith(f":{work.get('run_id')}:{status}")
+                else:
+                    seen = shown == status
+                return None if entry.get("ended") or seen else entry
         return None
 
     def _authority(self, agent_os: Any, snapshot: Optional[Dict[str, Any]], user_id: Optional[str]) -> Tuple[Any, bool]:
