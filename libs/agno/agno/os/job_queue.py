@@ -1394,7 +1394,7 @@ class QueueWorker:
             async def read_then_tell() -> None:
                 try:
                     ticket = await self.store.get_job(job["id"])
-                    final = states.get((ticket or {}).get("status"))
+                    final = states.get(str((ticket or {}).get("status")))
                     if final is not None:
                         notify_requester(asked, {**work, "status": final}, authority)
                 except Exception as exc:

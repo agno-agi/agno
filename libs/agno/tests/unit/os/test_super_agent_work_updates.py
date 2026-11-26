@@ -506,6 +506,31 @@ def test_a_conversation_with_a_turn_going_is_not_interrupted(system):
     assert "Changed since your last turn." in shown[0] and shown[1] == "Anything else?"
 
 
+def test_a_turn_going_when_the_work_ends_means_no_work_update_even_if_it_ends_at_once(system, monkeypatch):
+    monkeypatch.setattr(work_update, "SETTLE_SECONDS", 0.6)
+
+    async def steps():
+        run_id = await system.start()
+        GATES["chat"] = asyncio.Event()
+        turn = asyncio.ensure_future(system.say("What is 17 times 23?"))
+        await asyncio.sleep(0.05)
+        GATES["writer"].set()
+        for _ in range(300):
+            await system.work()
+            if system.row(run_id)["status"] == "COMPLETED" and not run_background._requester_notices:
+                break
+            await asyncio.sleep(0.01)
+        # The person's turn ends right after the work did, well before the wait for other work is over.
+        GATES["chat"].set()
+        await turn
+        GATES["chat"] = None
+        await asyncio.sleep(1.0)
+        await system.settle()
+        return system.row(run_id)["status"], system.updates_stored()
+
+    assert scenario(steps) == ("COMPLETED", [])
+
+
 def test_two_runs_ending_together_get_one_work_update_that_shows_both(system):
     async def steps():
         await system.start()
@@ -851,8 +876,9 @@ def test_the_note_carries_no_result_text(system):
     work, update = scenario(steps)
     assert content(work) == "done"
     lines = sent(update).split("\n")
-    assert len(lines) == 3 and len(sent(update)) < 700
-    assert "Change nothing" in lines[2] and "Read the result with your tools" in lines[2]
+    assert len(lines) == 3 and len(sent(update)) < 900
+    assert "Change nothing" in lines[2] and "Read each result with your tools" in lines[2]
+    assert 'report every item that "Work started from this conversation" marks' in lines[2]
 
 
 # ----------------------------------------------------------------- whose authority
