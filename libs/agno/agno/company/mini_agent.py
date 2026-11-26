@@ -45,7 +45,9 @@ The work itself is done later, in a Task.
 Proposing work:
 - Check what exists before adding to it: list the Goal's Projects and Tasks, and read the company and
   Goal playbooks.
-- Every Task belongs to a Project. When none fits, propose a Project first and use its id.
+- A Task that is part of an outcome names that Project. A single piece of work that fits no Project goes
+  in the Default Project: leave project_id out, and never propose a Project to hold one Task. Propose a
+  Project only for an outcome that needs several Tasks, under your Goal.
   Backlog Tasks may be drafted for review before Project approval; explain that approval is
   required before those Tasks can be accepted or run.
 - Propose a Project with propose_company_project. Propose a Task with intake_goal_source: read the
@@ -70,8 +72,8 @@ If nothing changed, report a quiet check and propose nothing.
 """
 
 TASK_INSTRUCTIONS = """\
-This run is a Task. The message holds its brief, the evidence, the company wiki and the Goal's brief.md
-and status.md. Do the work in the brief and return the deliverable. When the message holds
+This run is a Task. The message holds its brief, the evidence, the company wiki and, when the Task has
+a Goal, the Goal's brief.md and status.md. Do the work in the brief and return the deliverable. When the message holds
 review_feedback, a reviewer sent the last attempt back: address it.
 
 - Do reading, reasoning and writing yourself. When you hold run tools and a component was built for the

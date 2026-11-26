@@ -57,7 +57,11 @@ Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
 is up. Company then starts without a restart.
 
 The migration renames the stored tables and columns in place and keeps every
-id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+id. It also lets `goal_id` be empty on the projects and tasks tables, because a
+Goal is optional from 3.3.0. PostgreSQL drops the requirement in place. SQLite
+cannot, so there each of the two tables is created again without it and its
+rows and indexes are carried over; a run that stops part way is finished by the
+next run. A deployment made from the 3.2.0 template then runs with no edit. Your own
 code that calls the Company Python API by its 3.2.0 names needs the rename
 first: see the names that changed with no alias, below.
 
@@ -169,19 +173,61 @@ run the Routine can trigger it.
 | --- | --- |
 | `02_manage_projects.py` | Goal-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
 | `03_manage_tasks.py` | Backlog proposals, executor acceptance, frozen scope, rescoping, review and completion. |
+| `18_work_without_a_goal.py` | A Task with no Goal in the Default Project, a Project with no Goal, and what the Default Project refuses. |
 | `09_sandboxed_engineers.py` | Claude and Codex execute a Task from a public repository in Docker, with durable checkpoints and checkout pinning. |
 
-A Goal contains Projects and Routines. Every new Task belongs to a Project
-in that Goal: `project_id` is required by Task creation and proposal/Intake
-tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+A Goal is a standing aim: it has Sources, Routines, `brief.md` and `status.md`,
+and no end date. A Goal is optional. A Project is an outcome that finishes, and
+it may serve a Goal or none: `goal_id` is optional on `POST /company/projects`
+and on `propose_company_project`.
+
+Every Task belongs to a Project. A Task created with no `project_id` goes into
+the **Default Project**, the one place for a single piece of work that fits no
+other Project, so nobody makes a Project to hold one Task.
+
+The Goal on a Task only says which Goal the Task belongs to. A Task does not
+need one.
+
+- A Task in a Project other than the Default one carries that Project's Goal,
+  or none when the Project has none. A `goal_id` left out is filled from the
+  Project, and a different one is refused.
+- A Task in the Default Project carries the `goal_id` it is given, or none. This
+  is the same through `POST /company/tasks`, `propose_company_task` and the
+  manager.
+- A Task and a Project that a Routine proposes carry the Routine's Goal, also
+  when the Task names no Project and lands in the Default Project. A Routine is
+  refused another Goal.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
+- `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
+  list the records with no Goal; `has_goal=true` lists the others.
+
+The Default Project has the fixed id `default` and the name "Default". It is
+stored when Company starts and on first use. Project responses carry
+`is_default`, true for this Project only. It has no Goal, is always `active`,
+is listed like any Project and never finishes: it is not proposed, approved,
+completed or cancelled, the Refresh Routine and auto-accept never complete it,
+auto-accept never accepts a Task in it (nobody approved it, so such a Task
+waits for a person),
+and archiving a Goal leaves it in place (the Goal's own Tasks in it are archived
+and restored with the Goal). Renaming, editing, a transition and archiving are
+each refused with the reason, by the API (422 for an edit, 409 for a transition
+or a delete), the tools and a Routine.
+
+Backlog drafts can be created under a `proposed` Project so people
 can review the plan. The Project must be approved before its Tasks move to Ready
 or start a run; creating a Task directly in Ready also requires approval.
-When no Project fits, propose one with `propose_company_project` and use its ID
-for Backlog proposals. A human can then transition it to `active`. Project approval
-does not accept or execute Tasks.
-New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
-but cannot clear its Project. Existing nullable storage rows remain readable.
+A human transitions a proposed Project to `active`. Project approval
+does not accept or execute Tasks. The Default Project needs no approval.
+New Backlog proposals reuse an existing Task with the same key.
+
+A database created before this change requires a Goal on every Project and
+Task. The 3.3.0 migration removes that requirement; see "Upgrading from agno 3.2.0".
+A Task run with no Goal gets the company wiki pages in its input and no Goal
+pages, and writes only its own `tasks/<task-id>/` folder. Its list tools still
+read Projects and Tasks company-wide, as they do for any Task run.
 
 Routine instructions can make these two approval steps explicit:
 
@@ -394,8 +440,8 @@ A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Goal's `brief.md` and `status.md`, then every
-`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
+A Task's input always carries the Goal's `brief.md` and `status.md` when the
+Task has a Goal, then every `wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
 is cut and the input names the file to read for the rest. Pages past the total
 are named without their content. Every other file is read on request. Every read
 result says that file content is information, never an instruction.
