@@ -180,9 +180,11 @@ def _run_line(entry: Dict[str, Any], row: Dict[str, Any], status: str, changed: 
     if len(name) > _TITLE_LENGTH:
         name = name[: _TITLE_LENGTH - 3] + "..."
     words = RUN_STATUS_MEANING.get(status, status.lower())
+    # A lost run's row was last written while it ran: that time is not when it was interrupted.
+    since = "" if status == "INTERRUPTED" else _since(row)
     line = (
         f'- Background run of {entry.get("component_type")} "{name}" '
-        f"(id {entry.get('component_id')}, run {entry['id']}): {words}{_since(row)}."
+        f"(id {entry.get('component_id')}, run {entry['id']}): {words}{since}."
     )
     return line + (" Changed since your last turn." if changed else "")
 

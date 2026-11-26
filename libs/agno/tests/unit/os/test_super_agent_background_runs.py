@@ -679,7 +679,7 @@ def test_queued_to_running_is_not_a_change_and_a_pause_stays(mode):
 @modes
 def test_a_run_the_server_lost_is_reported_as_interrupted(mode, monkeypatch):
     run_context = person()
-    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1")
+    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1", at=int(time.time()))
     queued = listed_run(run_context, "RUNNING", durable=True, run_id="r-2")
     db = Runs(memory, queued)
     assert CHANGED not in block(db, run_context, mode)
