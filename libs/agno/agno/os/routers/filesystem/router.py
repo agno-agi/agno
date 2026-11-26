@@ -29,6 +29,7 @@ from agno.os.routers.filesystem.schema import (
     FileSystemContentResponse,
     FileSystemEntry,
     FileSystemListResponse,
+    FileSystemNamespacesResponse,
     FileSystemSearchEntry,
     FileSystemSearchResponse,
     FileSystemTableEntry,
@@ -46,7 +47,6 @@ from agno.os.routers.filesystem.utils import (
 from agno.os.schema import (
     BadRequestResponse,
     FileSystemAgent,
-    FileSystemConfig,
     FileSystemNamespace,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -743,7 +743,7 @@ def get_filesystem_router(
 
     @router.get(
         "/filesystem/namespaces",
-        response_model=FileSystemConfig,
+        response_model=FileSystemNamespacesResponse,
         response_model_exclude_none=True,
         tags=["FileSystem"],
         operation_id="list_filesystems",
@@ -755,14 +755,21 @@ def get_filesystem_router(
             "Take ids from this list: /config describes only the agents declared in code, so an id it gives "
             "can name two filesystems here. file_count, folder_count and total_bytes cover every file the "
             "caller can read in it, at any depth; they are left out when the filesystem cannot be read. "
-            "available is false on an entry whose id cannot be opened until every agent loads."
+            "available is false on an entry whose id cannot be opened until every agent loads. "
+            "Entries are sorted by id and paged; query keeps those whose id or namespace contains it, and the "
+            "counts are computed for the returned page only."
         ),
     )
     async def list_filesystems(
         request: Request,
         namespace: Optional[str] = Query(None, description="Filter by resolved namespace"),
         agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
-    ) -> FileSystemConfig:
+        query: Optional[str] = Query(
+            None, min_length=1, max_length=200, description="Keep the filesystems whose id or namespace contains it"
+        ),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        limit: int = Query(50, ge=1, le=100, description="Page size"),
+    ) -> FileSystemNamespacesResponse:
         # An empty agent_id names no agent.
         agent_id = agent_id or None
         access = await get_company_access(request)
@@ -796,7 +803,14 @@ def get_filesystem_router(
                 FileSystemAgent(id=holder, access="read_only" if holder in source.read_only_agent_ids else "full")
                 for holder in sorted(source.agent_ids)
             ]
-        entries = {key: entry for key, entry in entries.items() if namespace is None or entry.namespace == namespace}
+        # Case-insensitive, on the id and on the namespace as the caller sees them.
+        needle = query.strip().casefold() if query else ""
+        entries = {
+            key: entry
+            for key, entry in entries.items()
+            if (namespace is None or entry.namespace == namespace)
+            and (not needle or needle in entry.id.casefold() or needle in entry.namespace.casefold())
+        }
         unsettled = (
             _numbered_ids(ids, sources, set(await _source_ids(os, request, {}))) if failure is not None else set()
         )
@@ -804,25 +818,27 @@ def get_filesystem_router(
             if entry.id in unsettled:
                 # The id may name another filesystem once every agent loads, so the other routes refuse it.
                 entry.available = False
+        ordered = sorted(entries.items(), key=lambda item: (item[1].id, item[1].namespace))
+        total_count = len(ordered)
+        start = (page - 1) * limit
+        shown = ordered[start : start + limit]
+        # Counting reads every path of a filesystem, so only the page that is returned is counted.
         readable = [
             (entry, sources[key].filesystem if held_by_agent is None else held_by_agent[key])
-            for key, entry in entries.items()
+            for key, entry in shown
             if key in sources and entry.available is not False
         ]
         for start in range(0, len(readable), _MAX_CONCURRENT_FILESYSTEM_READS):
             batch = readable[start : start + _MAX_CONCURRENT_FILESYSTEM_READS]
             await asyncio.gather(*(_set_counts(entry, filesystem, request) for entry, filesystem in batch))
-        return FileSystemConfig(
-            namespaces=sorted(
-                entries.values(),
-                key=lambda listed: (
-                    listed.backend_type,
-                    listed.db_id or "",
-                    listed.namespace,
-                    listed.id,
-                    [holder.id for holder in listed.agents],
-                ),
-            )
+        return FileSystemNamespacesResponse(
+            namespaces=[entry for _, entry in shown],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=(total_count + limit - 1) // limit if total_count else 0,
+                total_count=total_count,
+            ),
         )
 
     @router.get(

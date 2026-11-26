@@ -133,7 +133,7 @@ def test_without_wiki_read_the_company_filesystem_is_not_listed_and_not_read(sys
     ids = written(system)
     caller = headers(scopes)
 
-    assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+    assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
     assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
     for address in ({"filesystem_id": "company"}, {"namespace": "company"}):
         for path, params in (
@@ -204,7 +204,7 @@ def test_an_agent_that_holds_the_company_filesystem_is_read_within_the_callers_c
                 assert "wiki:read" in refused.json()["detail"] and "needle" not in refused.text
         assert system.client.get("/filesystem/namespaces", params=agent, headers=caller).status_code == 403
         # Every agent's files, with none named, leave the Company files out.
-        assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+        assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
         assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
 
     # With wiki:read and not tasks:read, the files of Tasks are left out and refused.
@@ -231,7 +231,7 @@ def test_a_declared_filesystem_on_the_company_store_asks_for_the_company_scopes(
         handle = SqliteDb(id="handle", db_file=system.db.db_file)
         system.os.filesystems.append(FileSystem(handle, namespace="company"))
         caller = headers(FILES_ONLY)
-        assert system.client.get("/filesystem/namespaces", headers=caller).json() == {"namespaces": []}
+        assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
         assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
         handle.close()
     finally:
@@ -256,9 +256,12 @@ def test_a_request_by_namespace_alone_reads_the_company_filesystem(system):
     assert [entry["namespace"] for entry in only.json()["namespaces"]] == ["company"]
     rows = system.client.get("/filesystem/files", params={**by_namespace, "limit": 100}, headers=caller).json()
     assert rows["entries"] and {row["namespace"] for row in rows["entries"]} == {"company"}
-    assert system.client.get("/filesystem/namespaces", params={"namespace": "missing"}, headers=caller).json() == {
-        "namespaces": []
-    }
+    assert (
+        system.client.get("/filesystem/namespaces", params={"namespace": "missing"}, headers=caller).json()[
+            "namespaces"
+        ]
+        == []
+    )
 
 
 def test_reading_the_company_filesystem_needs_filesystem_read(system):
@@ -326,7 +329,7 @@ def test_without_company_the_notes_store_is_not_listed(tmp_path):
         assert company_filesystem(db).read("notes/ideas.md") == "A note"
         with TestClient(agent_os.get_app()) as client:
             assert client.get("/config").json()["filesystem"]["namespaces"] == []
-            assert client.get("/filesystem/namespaces").json() == {"namespaces": []}
+            assert client.get("/filesystem/namespaces").json()["namespaces"] == []
             by_id = client.get("/filesystem/content", params={"filesystem_id": "company", "path": "notes/ideas.md"})
             assert by_id.status_code == 404
             assert "A note" not in by_id.text
@@ -339,7 +342,7 @@ def test_a_database_that_cannot_hold_files_has_no_company_entry():
 
     with TestClient(AgentOS(db=InMemoryDb(), company=CompanyConfig(), telemetry=False).get_app()) as client:
         assert client.get("/config").json()["filesystem"]["namespaces"] == []
-        assert client.get("/filesystem/namespaces").json() == {"namespaces": []}
+        assert client.get("/filesystem/namespaces").json()["namespaces"] == []
 
 
 def test_the_company_store_declared_is_one_entry_and_an_agent_is_refused_it(tmp_path):
@@ -368,6 +371,57 @@ def test_the_company_store_declared_is_one_entry_and_an_agent_is_refused_it(tmp_
 
 
 # ------------------------------------------------------------------ the list of file systems
+
+
+def test_the_list_is_sorted_by_id_paged_and_searched_and_counts_only_the_page(tmp_path, monkeypatch):
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    names = ["zeta", "Alpha", "beta-notes", "gamma", "notes/delta"]
+    stores = [FileSystem(db, namespace=name) for name in names]
+    for filesystem in stores:
+        filesystem.write("page.md", "x")
+    agent_os = AgentOS(db=db, filesystem=stores, telemetry=False)
+    counted: list = []
+    set_counts = filesystem_router._set_counts
+
+    async def spy(entry, filesystem, request):
+        counted.append(entry.id)
+        await set_counts(entry, filesystem, request)
+
+    monkeypatch.setattr(filesystem_router, "_set_counts", spy)
+    try:
+        with TestClient(agent_os.get_app()) as client:
+
+            def listed(**params) -> tuple:
+                response = client.get("/filesystem/namespaces", params=params)
+                assert response.status_code == 200, response.text
+                body = response.json()
+                meta = body["meta"]
+                page = (meta["page"], meta["limit"], meta["total_pages"], meta["total_count"])
+                return [entry["id"] for entry in body["namespaces"]], page
+
+            # Namespaces are stored lower-cased, and the list is sorted by id.
+            ordered = ["alpha", "beta-notes", "gamma", "notes/delta", "zeta"]
+            assert listed() == (ordered, (1, 50, 1, 5))
+            counted.clear()
+            assert listed(limit=2) == (ordered[:2], (1, 2, 3, 5))
+            # Only the page that is returned is counted.
+            assert counted == ordered[:2]
+            assert listed(limit=2, page=3) == (ordered[4:], (3, 2, 3, 5))
+            assert listed(limit=2, page=4) == ([], (4, 2, 3, 5))
+            # The search matches the id or the namespace, in any case, and the pages are of what it keeps.
+            assert listed(query="NOTES") == (["beta-notes", "notes/delta"], (1, 50, 1, 2))
+            assert listed(query="notes", limit=1, page=2) == (["notes/delta"], (2, 1, 2, 2))
+            assert listed(query="nothing") == ([], (1, 50, 0, 0))
+            # It narrows the exact namespace filter, never widens it.
+            assert listed(query="a", namespace="gamma") == (["gamma"], (1, 50, 1, 1))
+            for params in ({"limit": 0}, {"limit": 101}, {"page": 0}, {"query": ""}):
+                assert client.get("/filesystem/namespaces", params=params).status_code == 422, params
+            entry = client.get("/filesystem/namespaces", params={"query": "zeta"}).json()["namespaces"][0]
+            assert (entry["file_count"], entry["folder_count"], entry["total_bytes"]) == (1, 0, 1)
+    finally:
+        db.close()
 
 
 def test_the_list_counts_files_and_folders_at_every_depth(tmp_path):
