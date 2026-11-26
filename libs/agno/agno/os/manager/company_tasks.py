@@ -497,10 +497,13 @@ class CompanyTaskTools(Toolkit):
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
         if response.status_code == 202:
-            # Listed in the state the receipt reports, a started run. A worker that has already
-            # finished is then a change on the next turn, and no second read can fail a start that succeeded.
+            # A repeated start can return an already-paused attempt. Record what the receipt told the chat.
             started = json.loads(bytes(response.body)) if response.body else {}
-            link_task(run_context, {"id": task_id, "status": "in_progress", "job_id": started.get("run_id")})
+            link_task(
+                run_context,
+                {"id": task_id, "status": "in_progress", "job_id": started.get("run_id")},
+                paused=started.get("status") == "PAUSED",
+            )
         return _receipt("Queued", title, task_id, response)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:

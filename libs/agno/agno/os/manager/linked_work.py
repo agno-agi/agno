@@ -62,7 +62,7 @@ def _entries(run_context: Any) -> List[Dict[str, Any]]:
     return [entry for entry in listed if isinstance(entry, dict) and isinstance(entry.get("id"), str)]
 
 
-def link_task(run_context: Any, value: Any, add: bool = True) -> None:
+def link_task(run_context: Any, value: Any, add: bool = True, *, paused: bool = False) -> None:
     """Record a Task this conversation created or acted on, in the state its tool result reports.
 
     A Task already listed keeps its place and takes the new state as shown, so what this conversation
@@ -78,7 +78,7 @@ def link_task(run_context: Any, value: Any, add: bool = True) -> None:
             return
         entry = {"kind": "task", "id": value["id"], "added_at": int(time.time())}
         entries.append(entry)
-    entry["shown"] = _task_phase(value)
+    entry["shown"] = _task_phase(value, paused)
     entry["changed_in"] = None
     entry["receipt_in"] = getattr(run_context, "run_id", None)
     state[LINKED_WORK_KEY] = entries[-_KEPT:]
@@ -222,11 +222,11 @@ class LinkedWork:
 
     def _head(self, run_context: Any) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
         """The newest entries to read, the owner the reads are limited to, and whether to read at all."""
-        from agno.tools.company import _scoped_user
-
         entries = _entries(run_context)
         if not entries:
             return [], None, False
+        from agno.tools.company import _scoped_user
+
         try:
             owner = _scoped_user(run_context, self.user_isolation)
         except PermissionError:
@@ -321,12 +321,12 @@ class LinkedWork:
         if isinstance(self.db, AsyncBaseDb):
             return None
         try:
-            authority = _caller_authorization(run_context)
-            if authority is not None:
-                authority.require("tasks", "read")
             head, owner, found = self._head(run_context)
             if not found:
                 return None
+            authority = _caller_authorization(run_context)
+            if authority is not None:
+                authority.require("tasks", "read")
             values = [self.db.get_task(entry["id"], user_id=owner) for entry in head]
             queue = self.queue_worker() if self.queue_worker else None
             pauses = _read_pauses(queue, _active_jobs(values)) if queue is not None else {}
@@ -339,12 +339,12 @@ class LinkedWork:
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         try:
-            authority = _caller_authorization(run_context)
-            if authority is not None:
-                await authority.arequire("tasks", "read")
             head, owner, found = self._head(run_context)
             if not found:
                 return None
+            authority = _caller_authorization(run_context)
+            if authority is not None:
+                await authority.arequire("tasks", "read")
             if isinstance(self.db, AsyncBaseDb):
                 values = list(await asyncio.gather(*(self.db.get_task(entry["id"], user_id=owner) for entry in head)))
             else:

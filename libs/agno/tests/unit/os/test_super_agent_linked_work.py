@@ -298,9 +298,19 @@ def test_a_task_is_listed_once_however_often_it_is_recorded():
 
 
 @modes
-def test_no_block_without_a_list_and_no_read(mode):
+def test_no_block_without_a_list_and_no_read(mode, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
     db = Tasks(row())
-    assert block(db, context(), mode) == "" and db.reads == 0
+    turn = context()
+    provider = turn.authorization.provider
+    authorize = Mock(wraps=provider.authorize_route)
+    aauthorize = AsyncMock(wraps=provider.aauthorize_route)
+    monkeypatch.setattr(provider, "authorize_route", authorize)
+    monkeypatch.setattr(provider, "aauthorize_route", aauthorize)
+    assert block(db, turn, mode) == "" and db.reads == 0
+    authorize.assert_not_called()
+    aauthorize.assert_not_called()
     assert block(db, RunContext(run_id="r", session_id="s", session_state=None), mode) == ""
 
 
@@ -700,6 +710,30 @@ def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode, mon
     resumed = next_line()
     assert "started" in resumed and "waiting" not in resumed and resumed.endswith(CHANGED)
     assert CHANGED not in next_line()
+
+
+@pytest.mark.parametrize("resume_before_next_turn", [False, True])
+def test_starting_a_paused_task_keeps_the_phase_from_its_receipt(chat, resume_before_next_turn):  # noqa: F811
+    from tests.unit.os.test_mini_agent_tasks import publish_notes
+
+    chat.writer.tools = [publish_notes]
+    chat.writer.model = ScriptedModel([("publish_notes", {})])
+    say(chat, [("add_company_task", {**ADD, "start": True})])
+    work(chat)
+    task = only_task(chat)
+    _, note = say(chat)
+    assert note.endswith("waiting for a person to approve or answer. " + CHANGED)
+    run, _ = say(chat, [("start_company_task", {"task_id": task["id"]})])
+    assert "already has this attempt, now PAUSED" in run.tools[0].result
+
+    if not resume_before_next_turn:
+        _, note = say(chat)
+        assert note.endswith("waiting for a person to approve or answer.")
+    assert asyncio.run(chat.queue.store.continue_job(task["job_id"], {}))["outcome"] == "queued"
+    _, note = say(chat)
+    assert "started" in note and note.endswith(CHANGED)
+    _, note = say(chat)
+    assert CHANGED not in note
 
 
 @modes
