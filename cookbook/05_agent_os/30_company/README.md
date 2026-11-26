@@ -111,6 +111,11 @@ The input carries what is attached under `context`. If an executor relied on a
 page, attach that page to the Task, or put what it needs in the brief. Mini Agent
 also reads any page with its file tools. See "What a Task run is given".
 
+This holds for an input built after the upgrade. A retry that was already queued
+on 3.2.0 keeps the input it was queued with, and an agent or team with
+`add_history_to_context=True` reads its own earlier attempts of the same Task,
+so an attempt that ran on 3.2.0 can bring its pages back.
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so
@@ -675,7 +680,9 @@ creates the Task Ready, with that person as `accepted_by` and on its acceptance
 transition, and the run does not pause. With `start` true, "do X", it also queues the
 run through the same path as `start_company_task`. With `start` false, "add a task to
 do X", the Task stays Ready and is held: its acceptance records `start_on_request`,
-and the automation tick, which starts other Ready Tasks, leaves it alone. Super Agent
+and the automation tick, which starts other Ready Tasks, leaves it alone. A Task that
+was recorded as a proposal instead, for an executor that pushes code or past five in
+one request, is held the same way once the person accepts it. Super Agent
 offers once to start it; on a yes it starts it with `start_company_task`. With no executor named it runs on agent
 `miniagent`. With no Project named it goes in the Default Project.
 
@@ -751,15 +758,17 @@ of an accepted Task stays frozen, as before.
 | Backlog | Yes, as before | A draft. It may also sit in a proposed Project. |
 | Ready | Yes | Nothing is running. A Task a policy accepted is the exception: the policy accepted it for its Project, so return it to Backlog or accept it yourself first. |
 | In progress | No, 409 | A queued or running attempt is checked against the Task's history, and its input was built from the Project it started in. Move it once it is In review. |
-| In review | Yes | The run has ended. A review confirmation requested before the move is refused, because the Task changed. |
+| In review | Yes | The run has ended. A review confirmation requested before the move still decides the Task: it is bound to the Task and its run, not to its Project. |
 | Done | Yes | The record moves to the Project it belongs with. |
 | Cancelled | No, 409 | Closed work. |
 
 An accepted Task moves only into an active Project; the Default Project always is. The
 Goal rule is the same as for a Backlog move: a Task with a Goal moves only to a Project
 of that Goal or the Default Project, and a Task with no Goal takes the Goal of the
-Project it moves into. Only a person moves an accepted Task: a Routine or Task run is
-refused. The move is added to the Task's `transitions` as
+Project it moves into. While a Task is Ready, only the person who accepted it may make a
+move that gives it a Goal, because its run would act for that Goal under their
+acceptance; anyone else gets 403. Where authorization is off every caller is trusted.
+Only a person moves an accepted Task: a Routine or Task run is refused. The move is added to the Task's `transitions` as
 `{"action": "move", "project": {"from": ..., "to": ...}, "user_id": ..., "created_at": ...}`.
 It has no `from` or `target` stage, because the stage does not change.
 
@@ -826,7 +835,7 @@ What Mini Agent may do follows the kind of run:
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
 Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
-scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
+scheduler, shell, file or web tools, and stops after 96 tool calls in a run. It takes Super Agent's limit, `OSManager(tool_call_limit=...)`; `None` removes it. The
 run tools check the run themselves: called in a Routine run they return an error.
 A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.

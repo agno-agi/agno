@@ -7488,7 +7488,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_child, goals, projects, table, task_id)
+            await sess.run_sync(lock_child, goals, projects, table, task_id, moving_to=fields.get("project_id"))
             current = (
                 (
                     await sess.execute(

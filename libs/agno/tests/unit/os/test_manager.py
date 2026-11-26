@@ -2262,9 +2262,9 @@ def test_manager_limits_cover_the_lead_and_builder_without_changing_application_
     os = AgentOS(
         db=db, agents=[application_agent], manager=config, company=CompanyConfig(model=OfflineModel()), telemetry=False
     )
-    assert os.manager.tool_call_limit == limits.get("tool_call_limit", 24)
+    assert os.manager.tool_call_limit == limits.get("tool_call_limit", 96)
     assert [member.id for member in os.manager.members] == [BUILDER_ID]
-    assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 24) for member in os.manager.members)
+    assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 96) for member in os.manager.members)
     assert application_agent.tool_call_limit is None
     assert "Application context" in os.manager.instructions()
     assert all(
@@ -2430,8 +2430,24 @@ def test_instruction_sections_follow_the_attached_tools(db, company_enabled, acc
     assert not {MANAGER_INSTRUCTIONS, DOCS_INSTRUCTIONS, COMPANY_INSTRUCTIONS} & set(builder)
 
 
+@pytest.mark.parametrize("limit", [7, 0, None])
+def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
+    from agno.os import CompanyConfig
+
+    os = AgentOS(
+        db=db,
+        company=CompanyConfig(model=OfflineModel()),
+        manager=OSManager(model=OfflineModel(), tool_call_limit=limit, member_tool_call_limit=3),
+        telemetry=False,
+    )
+    assert os.manager.tool_call_limit == limit
+    assert os._mini_agent.tool_call_limit == limit
+    os.resync(os.get_app())
+    assert os._mini_agent.tool_call_limit == limit
+
+
 @pytest.mark.parametrize("with_manager", [False, True])
-def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
+def test_mini_agent_ignores_the_member_limit_and_manager_instructions(db, with_manager):
     from agno.os import CompanyConfig
     from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
 
@@ -2441,14 +2457,14 @@ def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
         manager=OSManager(model=OfflineModel(), member_tool_call_limit=7) if with_manager else None,
         telemetry=False,
     )
-    # Mini Agent keeps its own limit; the manager's member limits do not bound it.
-    assert os._mini_agent.tool_call_limit == 30
+    # Mini Agent takes Super Agent's limit, the default here; the member limit does not bound it.
+    assert os._mini_agent.tool_call_limit == 96
     assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
     if with_manager:
         assert manager_member(os, MINI_AGENT_ID) is None
         assert manager_member(os, BUILDER_ID).tool_call_limit == 7
         os.resync(os.get_app())
-        assert os._mini_agent.tool_call_limit == 30
+        assert os._mini_agent.tool_call_limit == 96
         assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
 
 
