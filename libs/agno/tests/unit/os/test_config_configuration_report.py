@@ -11,9 +11,10 @@ from unittest.mock import patch
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import create_engine, event
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.job_queue.config import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
@@ -21,6 +22,7 @@ from agno.os import AgentOS, Authorization
 from agno.os.authz import UserDirectory
 from agno.os.authz.audit import LoggingAuditSink
 from agno.os.config import AuthorizationConfig
+from agno.os.public import PublicSurface
 from agno.os.schema import ConfigResponse
 from agno.os.settings import AgnoAPISettings
 
@@ -29,15 +31,16 @@ OS_KEY = "configuration-report-security-key"
 OS_ID = "report-os"
 MEMBER_SCOPES = ["config:read", "agents:read"]
 
-ADMIN_ONLY_FIELDS = {"managed_roles", "default_role", "token_scopes_trusted", "audience_verified"}
+ADMIN_ONLY_FIELDS = {"managed_roles", "default_role", "roles_from_token", "token_scopes_trusted", "audience_verified"}
 FEATURES_OFF = {
     "user_directory": {"enabled": False, "auto_provision": False, "fail_closed": False},
     "audit": {"enabled": False, "changes_readable": False, "decisions_readable": False},
     "tracing": {"enabled": False},
     "scheduler": {"enabled": False},
     "mcp": {"enabled": False},
+    "public": {"enabled": False, "agents": [], "teams": [], "workflows": [], "mcp": False},
 }
-ADMIN_ONLY_FEATURES = {"user_directory", "audit"}
+ADMIN_ONLY_FEATURES = {"user_directory", "audit", "public"}
 PUBLIC_FEATURES_OFF = {k: v for k, v in FEATURES_OFF.items() if k not in ADMIN_ONLY_FEATURES}
 
 
@@ -90,6 +93,7 @@ class TestNoAuth:
             "mode": "none",
             "user_isolation": False,
             "managed_roles": False,
+            "roles_from_token": False,
             "token_scopes_trusted": False,
             "audience_verified": False,
         }
@@ -115,6 +119,7 @@ class TestSecurityKey:
             "mode": "security_key",
             "user_isolation": False,
             "managed_roles": False,
+            "roles_from_token": False,
             "token_scopes_trusted": False,
             "audience_verified": False,
         }
@@ -136,6 +141,7 @@ class TestScopeAuthorization:
             "mode": "jwt",
             "user_isolation": False,
             "managed_roles": False,
+            "roles_from_token": False,
             "token_scopes_trusted": True,
             "audience_verified": False,
         }
@@ -177,6 +183,7 @@ class TestManagedRoles:
             "mode": "jwt",
             "user_isolation": False,
             "managed_roles": True,
+            "roles_from_token": False,
             "default_role": "member",
             "token_scopes_trusted": False,
             "audience_verified": False,
@@ -208,6 +215,11 @@ class TestManagedRoles:
     def test_audience_check_is_reported_when_it_runs(self, db):
         agent_os = _os(db, authorization=_roles(verify_audience=True))
         assert _config(agent_os, _bearer("alice")).json()["authorization"]["audience_verified"] is True
+
+    def test_roles_carried_on_the_token_are_reported(self, db):
+        agent_os = _os(db, authorization=_roles(roles_claim="roles"))
+        assert _config(agent_os, _bearer("alice")).json()["authorization"]["roles_from_token"] is True
+        assert "roles_from_token" not in _config(agent_os, _bearer("bob")).json()["authorization"]
 
     def test_no_default_role_omits_the_field(self, db):
         authorization = Authorization(verification_keys=[SECRET], algorithm="HS256", audience=OS_ID)
@@ -309,6 +321,22 @@ class TestFeatures:
         with TestClient(app) as client:
             assert client.get("/config").json()["features"]["mcp"] == {"enabled": True}
             assert client.get("/info").json()["mcp"]["enabled"] is True
+
+    def _public_os(self, **kwargs):
+        # A public surface needs a PostgreSQL db; no connection is made for these requests.
+        pg = PostgresDb(db_engine=create_engine("postgresql+psycopg://unused:unused@127.0.0.1:1/unused"))
+        agent = Agent(id="cfg-agent", name="Cfg Agent")
+        public = PublicSurface(agents=[agent])
+        return AgentOS(
+            id=OS_ID, agents=[agent], db=pg, public=public, auto_provision_dbs=False, telemetry=False, **kwargs
+        )
+
+    def test_public_surface_is_reported_to_administrators_only(self):
+        config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256")
+        agent_os = self._public_os(authorization=True, authorization_config=config)
+        assert "public" not in _config(agent_os, _bearer("bob", MEMBER_SCOPES)).json()["features"]
+        public = _config(agent_os, _bearer("alice", ["agent_os:admin"])).json()["features"]["public"]
+        assert public == {"enabled": True, "agents": ["cfg-agent"], "teams": [], "workflows": [], "mcp": False}
 
     def test_queue_stays_in_its_own_block(self, db):
         body = _config(_os(db, queue=QueueConfig(durable=True, db=InMemoryQueueStore()))).json()

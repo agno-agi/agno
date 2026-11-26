@@ -48,6 +48,7 @@ from agno.os.schema import (
     McpInfo,
     Model,
     NotFoundResponse,
+    PublicStatus,
     QueueCapabilities,
     TeamSummaryResponse,
     UnauthenticatedResponse,
@@ -289,6 +290,7 @@ async def _authorization_report(os: "AgentOS", request: Request, is_admin: bool)
     report.managed_roles = bool(enabled and role_store is not None and role_store.roles_decide)
     if report.managed_roles:
         report.default_role = await role_store.adefault_role()
+    report.roles_from_token = bool(report.managed_roles and role_store.roles_claim)
     report.token_scopes_trusted = bool(enabled and token_scopes_are_authoritative(request))
     # The audience is checked only when a JWT is what authenticates the request and the
     # check resolves to a value to compare against.
@@ -340,6 +342,16 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
         decisions_readable=bool(
             role_store is not None and audit_sink is not None and hasattr(audit_sink, "read_decisions")
         ),
+    )
+    # The policy the public middleware admits outside requests by; absent without a public surface.
+    policy = getattr(state, "public_route_policy", None)
+    selected = policy.selected if policy is not None else {}
+    report.public = PublicStatus(
+        enabled=policy is not None,
+        agents=sorted(selected.get("agents", ())),
+        teams=sorted(selected.get("teams", ())),
+        workflows=sorted(selected.get("workflows", ())),
+        mcp=bool(policy is not None and policy.mcp),
     )
     return report
 

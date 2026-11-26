@@ -5,11 +5,11 @@ Configuration Report - read how an AgentOS is set up
 
 - `authorization`: how requests are authenticated and authorized.
   Every caller sees `enabled`, `mode` and `user_isolation`.
-  An administrator also sees `managed_roles`, `default_role`,
+  An administrator also sees `managed_roles`, `default_role`, `roles_from_token`,
   `token_scopes_trusted` and `audience_verified`.
 - `features`: which optional features are running.
   Every caller sees tracing, the scheduler and the MCP server.
-  An administrator also sees the user directory and audit.
+  An administrator also sees the user directory, audit and the public surface.
 
 Both blocks report what the running AgentOS does, not the arguments it was given,
 and neither holds a key, an audience, a database location or a role's scopes.

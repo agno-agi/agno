@@ -212,6 +212,11 @@ class FileSystemSummary(BaseModel):
     user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
     max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+    description: Optional[str] = Field(
+        None,
+        description="What the store is for, as written for the model. When several stores share an entry, "
+        "the declared one's, else the first agent's by id",
+    )
 
 
 class FileSystemAgent(BaseModel):
@@ -285,6 +290,7 @@ def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[st
         user_isolation=user_isolation,
         max_file_bytes=filesystem.max_file_bytes,
         max_namespace_bytes=filesystem.max_namespace_bytes,
+        description=filesystem.description,
     )
 
 
@@ -530,6 +536,11 @@ class AuthorizationReport(BaseModel):
         description="Roles managed on this AgentOS decide requests. False under scope-only authorization "
         "and when a custom authorization provider decides alone. Administrators only",
     )
+    roles_from_token: Optional[bool] = Field(
+        None,
+        description="A caller's roles can also come from a claim on their token, so the stored assignments "
+        "do not list every role a user holds. Administrators only",
+    )
     default_role: Optional[str] = Field(
         None,
         description="Name of the role a newly provisioned user receives; absent when no default is set. "
@@ -578,13 +589,28 @@ class AuditStatus(FeatureStatus):
     )
 
 
+class PublicStatus(FeatureStatus):
+    """The public surface: components served to outside callers under public input and rate limits."""
+
+    agents: Optional[List[str]] = Field(None, description="IDs of the agents anonymous callers can run")
+    teams: Optional[List[str]] = Field(None, description="IDs of the teams anonymous callers can run")
+    workflows: Optional[List[str]] = Field(
+        None, description="IDs of the public workflows. Callers still need a bearer token, unlike agents and teams"
+    )
+    mcp: Optional[bool] = Field(
+        None,
+        description="The MCP server is on the public surface. Anonymous only without mcp_auth; "
+        "/info carries the OAuth details when sign-in is required",
+    )
+
+
 class FeaturesReport(BaseModel):
     """Which optional features run on this AgentOS, so a client can show or hide their
     pages without probing each route. Reported as EFFECTIVE behavior: a feature that was
     requested but could not start is reported off. `tracing`, `scheduler` and `mcp` go to
-    every caller that can read /config; `user_directory` and `audit` go to administrators
-    only, since the pages they gate are admin-only. Every field is optional so a client
-    parses responses from servers that omit it."""
+    every caller that can read /config; `user_directory`, `audit` and `public` go to
+    administrators only. Every field is optional so a client parses responses from
+    servers that omit it."""
 
     user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
     audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
@@ -592,6 +618,9 @@ class FeaturesReport(BaseModel):
     scheduler: Optional[FeatureStatus] = Field(None, description="Scheduled runs are polled and executed")
     mcp: Optional[FeatureStatus] = Field(
         None, description="The MCP server is served; /info carries its path and OAuth details"
+    )
+    public: Optional[PublicStatus] = Field(
+        None, description="Components served under public limits. Administrators only"
     )
 
 
