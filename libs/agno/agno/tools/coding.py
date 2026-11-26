@@ -456,8 +456,9 @@ class CodingTools(Toolkit):
             output, was_truncated, _ = self._truncate_output(output)
 
             # Add summary footer
-            shown_start = offset + 1
-            shown_end = offset + len(selected_lines)
+            shown_lines = len(output.split("\n")) if output else 0
+            shown_start = offset + 1 if shown_lines > 0 else offset
+            shown_end = offset + shown_lines
             if was_truncated or shown_end < total_lines or offset > 0:
                 output += f"\n[Showing lines {shown_start}-{shown_end} of {total_lines} total]"
 
@@ -715,8 +716,7 @@ class CodingTools(Toolkit):
             if include:
                 cmd.extend(["--include", include])
 
-            cmd.append(pattern)
-            cmd.append(str(resolved_path))
+            cmd.extend(["-e", pattern, str(resolved_path)])
 
             result = subprocess.run(
                 cmd,
@@ -739,7 +739,7 @@ class CodingTools(Toolkit):
             output = output.replace(base_str, "")
 
             # Enforce global match limit
-            output_lines = output.split("\n")
+            output_lines = output.splitlines()
             if len(output_lines) > limit:
                 output = "\n".join(output_lines[:limit])
                 output += f"\n[Results limited to {limit} matches]"

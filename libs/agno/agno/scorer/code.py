@@ -71,8 +71,11 @@ class CodeScorer:
         values are invisible to it (under-invalidation, accepted). `__code__.co_code`
         is not used: it varies across Python versions and misses co_consts and closures.
         """
+        target: Any = self.fn
+        if not (inspect.isroutine(target) or inspect.isclass(target)) and callable(target):
+            target = target.__call__
         try:
-            source = inspect.getsource(self.fn)
+            source = inspect.getsource(target)
         except (OSError, TypeError) as exc:
             raise FingerprintError(
                 f"CodeScorer cannot digest {self.fn!r}: source is not retrievable "
