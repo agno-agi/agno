@@ -18,6 +18,7 @@ from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.fs import FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.session import TeamSession
 from agno.tools.company_files import CompanyFileTools
 from tests.unit.os.test_company_file_tree import call, pages, person, records, routine_run, task_run, tree
 from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
@@ -75,6 +76,21 @@ def test_every_file_is_stored_at_its_tree_path_in_one_namespace(system, use_asyn
     assert served.status_code == 200 and served.json()["content"] == "Report"
     assert system.client.get("/company/notes/ideas.md", headers=headers()).json()["content"] == "A note"
     assert system.client.get("/company/wiki/people.md", headers=headers()).json()["content"] == "Ada\n"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_path_written_on_3_2_0_under_products_names_the_goal_folder(system, use_async):
+    ids = records(system)
+    files = tree(system.os)
+    page = f"goals/{ids['goal']}/research.md"
+    call(files, "write_company_file", use_async=use_async, path=page, content="Research", expected_version=0)
+
+    # A page, a brief or a note written on 3.2.0 names the folder as that version did.
+    for old in (f"products/{ids['goal']}/research.md", f"company/products/{ids['goal']}/research.md"):
+        read = call(files, "read_company_file", use_async=use_async, path=old)
+        assert (read["path"], read["content"]) == (page, "Research")
+    listed = call(files, "list_company_files", use_async=use_async, folder=f"products/{ids['goal']}")
+    assert "research.md" in [entry["path"].rsplit("/", 1)[-1] for entry in listed["files"]]
 
 
 def test_without_company_the_same_store_in_the_agentos_database_holds_notes_alone(tmp_path):
@@ -223,6 +239,7 @@ def test_super_agent_without_company_does_not_read_or_write_notes_past_the_ones_
     reader = SqliteDb(db_file=db_file)
     # An AgentOS without Company on 3.2.0: Super Agent's notes, where that version kept them.
     FileSystem(reader, namespace="company/notes", user_scoped=False).write("ideas.md", "A note from 3.2.0")
+    reader.upsert_session(TeamSession(session_id="chat", team_id="superagent", created_at=1))
     # Super Agent needs a synchronous AgentOS database. Its tools are called both ways.
     db = SqliteDb(db_file=db_file)
     agent_os = AgentOS(db=db, manager=OSManager(model=ScriptedModel()), telemetry=False)
@@ -266,7 +283,7 @@ def _notes_left_in_the_agentos_database(tmp_path, where: str) -> tuple:
 
 @pytest.mark.parametrize("where", ["company/notes", "company"])
 @pytest.mark.parametrize("os_async", [False, True])
-def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, os_async):
+def test_the_migrate_route_moves_notes_left_in_the_agentos_database(tmp_path, where, os_async):
     from fastapi.testclient import TestClient
 
     os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, where)
@@ -278,6 +295,10 @@ def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, 
         return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
 
     with TestClient(start().get_app(), raise_server_exceptions=False) as client:
+        # The start moves nothing: the note is where it was, and notes/ says what to run.
+        assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
+        assert "notes/ideas.md" not in stored(company_db)
+        assert client.post("/databases/all/migrate").status_code == 200
         served = client.get("/company/notes/ideas.md")
         assert served.status_code == 200 and served.json()["content"] == "A note"
         assert [row["path"] for row in client.get("/company/notes").json()["data"]] == ["ideas.md"]
@@ -296,7 +317,7 @@ def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, 
 
 @pytest.mark.parametrize("reason", ["provisioning is off", "another note is in the way"])
 @pytest.mark.parametrize("os_async", [False, True])
-def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(tmp_path, reason, os_async):
+def test_notes_left_in_the_agentos_database_are_refused_until_they_move(tmp_path, reason, os_async):
     import logging
 
     from fastapi.testclient import TestClient
@@ -333,13 +354,15 @@ def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(
                 message = _refused(client.get(url))
                 assert "move_company_notes" in message and "agno.db.migrations.versions.v3_3_0" in message
                 assert "amove_company_notes" in message
-            not_moved = [message for message in errors if "Notes were not moved" in message]
+            # The start did not try to move them.
+            assert [message for message in errors if "Notes were not moved" in message] == []
             if reason == "another note is in the way":
-                # The start says once why it moved nothing.
+                # The migrate route says once why it moved nothing, and notes/ stays refused.
+                assert client.post("/databases/all/migrate").status_code == 200
+                not_moved = [message for message in errors if "Notes were not moved" in message]
                 assert len(not_moved) == 1 and "notes/ideas.md" in not_moved[0]
+                assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
                 in_the_way.delete("notes/ideas.md")
-            else:
-                assert not_moved == []
             # The call the error names is the whole remedy, and the same AgentOS then serves the note.
             assert move_company_notes(os_reader, company_db) == 1
             served = client.get("/company/notes/ideas.md")
@@ -369,24 +392,31 @@ def test_notes_left_behind_are_refused_through_the_synchronous_tree_too(tmp_path
     assert move_company_notes(os_db, company_db) == 1
     assert files.read("notes/ideas.md")["content"] == "A note"
 
-    # A synchronous use cannot ask an asynchronous AgentOS database. What the last asynchronous use found stands.
+    # A synchronous use cannot ask an asynchronous AgentOS database, so it refuses until an asynchronous
+    # check finds nothing waiting.
     later_file = str(tmp_path / "later.db")
     FileSystem(SqliteDb(db_file=later_file), namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
     later_os, later_company = AsyncSqliteDb(db_file=later_file), SqliteDb(db_file=str(tmp_path / "later-company.db"))
     set_company_notes_source(later_company, later_os)
     later = CompanyFiles(later_company, notes_db=later_company)
-    assert later.list("notes")["files"] == []
+    for use in (lambda: later.list("notes"), lambda: later.write("notes/new.md", "Not written")):
+        with pytest.raises(MigrationRequiredError, match="amove_company_notes"):
+            use()
+    assert stored(later_company) == {}
 
-    async def use_async() -> None:
+    async def move_and_check() -> None:
+        from agno.db.migrations.versions.v3_3_0 import amove_company_notes
+
         try:
+            with pytest.raises(MigrationRequiredError, match="move_company_notes"):
+                await later.alist("notes")
+            assert await amove_company_notes(later_os, later_company) == 1
             await later.alist("notes")
         finally:
             await later_os.db_engine.dispose()
 
-    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
-        asyncio.run(use_async())
-    with pytest.raises(MigrationRequiredError, match="move_company_notes"):
-        later.list("notes")
+    asyncio.run(move_and_check())
+    assert later.read("notes/ideas.md")["content"] == "A note"
     for db in (os_db, company_db, later_company):
         db.close()
 
@@ -1201,25 +1231,31 @@ def test_a_write_on_an_asynchronous_database_is_held_to_the_same_limits(tmp_path
     assert asyncio.run(write()) == 1
 
 
-def test_notes_are_not_moved_at_the_start_while_a_database_is_not_migrated(tmp_path):
+def test_a_migrate_route_does_not_move_notes_while_the_company_database_is_not_migrated(tmp_path):
     from fastapi.testclient import TestClient
 
     os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, "company/notes")
-    # The Company database has a table behind an older migration, which the start leaves for an operator.
-    company_db._get_table("sessions", create_table_if_not_found=True)
-    company_db._get_table("memories", create_table_if_not_found=True)
-    company_db.upsert_schema_version(company_db.session_table_name, "2.5.0")
-    company_db.upsert_schema_version(company_db.memory_table_name, "3.0.0")
+    # The Company database holds a page where 3.2.0 kept it.
+    company_db._get_table("goals", create_table_if_not_found=True)
+    FileSystem(company_db, namespace="company/wiki", user_scoped=False).write("handbook.md", "The handbook")
     agent_os = AgentOS(db=os_reader, company=CompanyConfig(db=company_db), telemetry=False)
 
+    def notes_in_the_agentos_database() -> list:
+        spaces = [FileSystem(os_reader, namespace=name, user_scoped=False) for name in ("company", "company/notes")]
+        return [meta.path for files in spaces for meta in files.list()]
+
     with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
-        assert id(company_db) in agent_os._unmigrated_dbs
-        # The note is where it was, in one place, and notes/ says what to run.
-        assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
-    assert [meta.path for meta in FileSystem(os_reader, namespace="company/notes", user_scoped=False).list()] == [
-        "ideas.md"
-    ]
-    assert "notes/ideas.md" not in stored(company_db)
+        # Only the AgentOS database is migrated. The Company database still holds files where 3.2.0 kept them.
+        assert client.post(f"/databases/{os_reader.id}/migrate").status_code == 200
+        assert _refused(client.get("/company/notes/ideas.md"))
+        # The note is where it was: it is not moved into a store that is still to be migrated.
+        assert len(notes_in_the_agentos_database()) == 1
+
+        # With both migrated, the route moves the notes.
+        assert client.post("/databases/all/migrate").status_code == 200
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
+    assert notes_in_the_agentos_database() == []
+    assert stored(company_db)["wiki/handbook.md"] == "The handbook"
     os_reader.close()
     company_db.close()
 
@@ -1250,3 +1286,30 @@ def test_a_goal_whose_id_is_longer_than_a_name_keeps_its_pages(system):
     assert manager.read_wiki(longest, "status.md").content == "Kept from 3.2.0"
     with pytest.raises(InvalidPathError, match="and 0 characters"):
         manager.write_wiki(goal_id=longest, path="new.md", content="x", expected_version=0)
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_folder_with_a_limit_of_its_own_holds_every_write_and_append_to_it(tmp_path, use_async):
+    db = (AsyncSqliteDb if use_async else SqliteDb)(db_file=str(tmp_path / "files.db"))
+    capped = company_folder(db, "tasks/t", max_folder_bytes=1500)
+    other = company_folder(db, "tasks/u", max_folder_bytes=1500)
+
+    async def run() -> None:
+        async def do(store, method: str, *args, **kwargs):
+            if use_async:
+                return await getattr(store, f"a{method}")(*args, **kwargs)
+            return getattr(store, method)(*args, **kwargs)
+
+        await do(capped, "write", "report.md", "x" * 1000)
+        with pytest.raises(QuotaExceededError, match="folder is full") as refused:
+            await do(capped, "append", "log.md", "y" * 600)
+        assert (refused.value.scope, refused.value.current, refused.value.limit) == ("folder", 1000, 1500)
+        with pytest.raises(QuotaExceededError, match="folder is full"):
+            await do(capped, "write", "more.md", "y" * 600)
+        # A file of the same size in its place does not grow the folder.
+        assert (await do(capped, "write", "report.md", "z" * 1000)).version == 2
+        assert (await do(other, "append", "log.md", "y" * 600)).path == "log.md"
+        if use_async:
+            await db.db_engine.dispose()
+
+    asyncio.run(run())
