@@ -227,7 +227,11 @@ class Model(ABC):
         return {"type": "text", "text": text}
 
     def _with_notes_merged(self, messages: Any) -> Any:
-        """Prefix the current user input on a provider copy, preserving its original content for storage."""
+        """Send framework notes and the following user input as one user message.
+
+        Some providers require alternating roles. When preparing the request, prepend the notes to
+        a copy of the user's text or multipart content so history and learning keep the original input.
+        """
         if not isinstance(messages, list) or not any(isinstance(m, _MessageContextNote) for m in messages):
             return messages
         merged: List[Message] = []
