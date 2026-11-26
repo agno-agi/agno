@@ -158,7 +158,9 @@ class VectorSearchResult(BaseModel):
     name: Optional[str] = Field(None, description="Name of the document")
     meta_data: Optional[Dict[str, Any]] = Field(None, description="Metadata associated with the document")
     usage: Optional[Dict[str, Any]] = Field(None, description="Usage statistics (e.g., token counts)")
-    reranking_score: Optional[float] = Field(None, description="Reranking score for relevance", ge=0.0, le=1.0)
+    # Not all rerankers score in [0, 1]: MMR subtracts a redundancy term and goes
+    # negative, and cross-encoder rerankers write raw logits.
+    reranking_score: Optional[float] = Field(None, description="Reranking score for relevance", ge=-1.0, le=1.0)
     content_id: Optional[str] = Field(None, description="ID of the source content")
     content_origin: Optional[str] = Field(None, description="Origin URL or source of the content")
     size: Optional[int] = Field(None, description="Size of the content in bytes", ge=0)

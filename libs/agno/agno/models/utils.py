@@ -35,9 +35,11 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
     "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
     "fireworks": ("agno.models.fireworks", "Fireworks", "Fireworks", "fireworks"),
+    "flexai": ("agno.models.flexai", "FlexAI", "FlexAI", "flexai"),
     "google": ("agno.models.google", "Gemini", "Gemini", "google"),
     "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
     "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
+    "heabsy": ("agno.models.heabsy", "Heabsy", "Heabsy", "heabsy"),
     "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
     "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
     "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
@@ -71,6 +73,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
     "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
     "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
+    "sarvam": ("agno.models.sarvam", "Sarvam", "Sarvam", "sarvam"),
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
     "synthorai": ("agno.models.synthorai", "Synthorai", "Synthorai", "synthorai"),
     "together": ("agno.models.together", "Together", "Together", "together"),
@@ -83,6 +86,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
     "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
+    "yapi": ("agno.models.yapi", "YAPI", "YAPI", "yapi"),
 }
 
 # key -> (module, class_name): the construction registry consumed by `_get_model_class`, the

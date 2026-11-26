@@ -389,12 +389,16 @@ class StepInput:
             # Return dict with {step_name: content} for each sub-step
             parallel_content = {}
             for sub_step in step_output.steps:
-                if sub_step.step_name and sub_step.content:
+                if sub_step.step_name and sub_step.content is not None and str(sub_step.content).strip():
                     # Check if this sub-step has its own nested steps (like Condition -> Research Step)
                     if sub_step.steps and len(sub_step.steps) > 0:
                         # This is a composite step (like Condition) - get content from its nested steps
                         for nested_step in sub_step.steps:
-                            if nested_step.step_name and nested_step.content:
+                            if (
+                                nested_step.step_name
+                                and nested_step.content is not None
+                                and str(nested_step.content).strip()
+                            ):
                                 parallel_content[nested_step.step_name] = str(nested_step.content)
                     else:
                         # This is a direct step - use its content
@@ -425,7 +429,7 @@ class StepInput:
 
         content_parts = []
         for step_name, output in self.previous_step_outputs.items():
-            if output.content:
+            if output.content is not None and str(output.content).strip():
                 content_parts.append(f"=== {step_name} ===\n{output.content}")
 
         return "\n\n".join(content_parts)
@@ -476,18 +480,21 @@ class StepInput:
             else:
                 input_dict = str(self.input)
 
-        previous_step_content_str: Optional[str] = None
+        previous_step_content_val: Optional[Union[str, int, float, bool]] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
-            previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
+            previous_step_content_val = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
         elif isinstance(self.previous_step_content, dict):
             import json
 
-            previous_step_content_str = json.dumps(
+            previous_step_content_val = json.dumps(
                 self.previous_step_content, indent=2, default=str, ensure_ascii=False
             )
+        elif isinstance(self.previous_step_content, (str, int, float, bool)) and not self.previous_step_content:
+            # Keep falsy scalars as is so a restored 0 or False stays falsy.
+            previous_step_content_val = self.previous_step_content
         elif self.previous_step_content:
-            previous_step_content_str = str(self.previous_step_content)
+            previous_step_content_val = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
@@ -498,7 +505,7 @@ class StepInput:
         return {
             "input": input_dict,
             "previous_step_outputs": previous_steps_dict,
-            "previous_step_content": previous_step_content_str,
+            "previous_step_content": previous_step_content_val,
             "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
@@ -532,6 +539,14 @@ class StepInput:
             audio=audio,
             files=files,
         )
+
+
+@dataclass
+class StepProgress:
+    """A function executor's observer update; never a separate executor run."""
+
+    content: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -576,11 +591,13 @@ class StepOutput:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified content field
-        content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        content_dict: Optional[Union[str, int, float, bool, Dict[str, Any], List[Any]]] = None
         if self.content is not None:
             if isinstance(self.content, BaseModel):
                 content_dict = self.content.model_dump(exclude_none=True, mode="json")
-            elif isinstance(self.content, (dict, list)):
+            elif isinstance(self.content, (dict, list, str, int, float, bool)):
+                # JSON carries these as themselves. Stringifying made a restored
+                # 0 or False truthy, flipping decisions taken on step content.
                 content_dict = self.content
             else:
                 content_dict = str(self.content)

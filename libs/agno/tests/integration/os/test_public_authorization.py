@@ -16,7 +16,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.os import AgentOS, MCPConfig
+from agno.os import AgentOS, CORSConfig, MCPConfig
 from agno.os.config import AuthorizationConfig
 from agno.os.middleware.jwt import AuthMiddleware
 from agno.os.public import PublicSurface
@@ -516,7 +516,7 @@ def test_custom_workflow_socket_cannot_inherit_the_native_authentication_exempti
 
 
 def test_mcp_serves_only_explicit_tools_for_anonymous_and_admin_callers(runtime):
-    with TestClient(runtime.os.get_app()) as client:
+    with TestClient(runtime.os.get_app(), base_url="http://localhost") as client:
         for credentials in ({}, auth()):
             response = client.post(
                 "/mcp",
@@ -549,3 +549,134 @@ def test_configured_mcp_oauth_still_requires_its_own_authentication(runtime):
         assert response.status_code == 401, response.text
         assert "resource_metadata" in response.headers["www-authenticate"]
         assert client.get("/config", headers=auth()).status_code == 200
+
+
+@pytest.mark.parametrize("hosts,hostname", [(None, "localhost"), (["docs.example.com"], "docs.example.com")])
+def test_public_mcp_card_matches_anonymous_access_and_default_host_guard(runtime, hosts, hostname):
+    # The default host guard is localhost-only even though REST requires JWTs.
+    # An explicit deployment allowlist remains authoritative.
+    from agno.os.mcp import _mcp_server_is_open
+
+    assert _mcp_server_is_open(runtime.os) is True
+    runtime.os.mcp_config.allowed_hosts = hosts
+    with TestClient(runtime.os.get_app(), base_url=f"http://{hostname}") as client:
+        card = client.get("/mcp/server-card")
+        assert card.status_code == 200, card.text
+        assert "headers" not in card.json()["remotes"][0]
+        headers = {"Accept": "application/json, text/event-stream"}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "public-card-test", "version": "1"},
+            },
+        }
+        response = client.post("/mcp", json=payload, headers=headers)
+        assert response.status_code == 200 and "serverInfo" in response.text, response.text
+        assert client.get("/config").status_code == 401
+        assert client.get("/config", headers=auth()).status_code == 200
+        rejected = client.post("/mcp", json=payload, headers={**headers, "Host": "unlisted.example.com"})
+        # PublicSurface sanitizes the transport's invalid_host error.
+        assert rejected.status_code == 400, rejected.text
+
+
+@pytest.mark.parametrize("authorization,public_mcp", [(False, True), (True, False)])
+def test_public_surface_does_not_hide_required_mcp_auth(runtime, monkeypatch, authorization, public_mcp):
+    from agno.os.mcp import _mcp_server_is_open
+
+    runtime.os.authorization = authorization
+    runtime.surface.mcp = public_mcp
+    # An environment JWT source keeps authentication configured even when
+    # per-route authorization is off.
+    monkeypatch.setenv("JWT_VERIFICATION_KEY", KEY)
+    assert _mcp_server_is_open(runtime.os) is False
+
+
+def test_public_surface_does_not_override_mcp_auth_provider(runtime):
+    from agno.os.mcp import _mcp_server_is_open
+
+    runtime.os.mcp_auth = object()
+    assert _mcp_server_is_open(runtime.os) is False
+
+
+PREVIEW = "https://docs-feature.example.com"
+PREVIEW_PATTERN = r"https://docs-[a-z0-9-]+\.example\.com"
+
+
+def browser_runtime(runtime):
+    runtime.os.cors_allowed_origins = [ORIGIN]
+    runtime.os.cors = CORSConfig(origins=[ORIGIN], origin_regex=PREVIEW_PATTERN)
+    runtime.surface.enforce_browser_origins = True
+    return TestClient(runtime.os.get_app())
+
+
+@pytest.mark.parametrize("origin", [ORIGIN, PREVIEW])
+def test_browser_policy_preflight_and_execution(runtime, origin):
+    client = browser_runtime(runtime)
+    headers = {"Origin": origin}
+    preflight = client.options("/agents/docs/runs", headers={**headers, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    response = client.post("/agents/docs/runs", headers=headers, data={"message": "hi", "stream": "false"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+@pytest.mark.parametrize("origin", ["https://evil.example.com", PREVIEW + ".evil.test", "null"])
+def test_unlisted_browser_origin_cannot_start_a_run(runtime, origin):
+    client = browser_runtime(runtime)
+    response = client.post("/agents/docs/runs", headers={"Origin": origin}, data={"message": "hi"})
+    assert response.status_code == 403
+    assert "access-control-allow-origin" not in response.headers
+    assert runtime.limiter.calls == []
+    preflight = client.options("/agents/docs/runs", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 400
+
+
+@pytest.mark.parametrize("status", [401, 403, 413, 429])
+def test_preview_cors_headers_survive_auth_and_admission_errors(runtime, status):
+    client = browser_runtime(runtime)
+    headers = {"Origin": PREVIEW}
+    if status == 401:
+        response = client.get("/config", headers=headers)
+    elif status == 403:
+        response = client.get("/config", headers={**headers, **auth(token(scopes=[]))})
+    else:
+        if status == 413:
+            runtime.surface.max_body_bytes = 10
+        else:
+            runtime.limiter.allowed = False
+        response = client.post("/agents/docs/runs", headers=headers, data={"message": "a long enough request"})
+    assert response.status_code == status, response.text
+    assert response.headers["access-control-allow-origin"] == PREVIEW
+
+
+def test_browser_policy_rejects_ambiguous_origins_and_allows_non_browser_clients(runtime):
+    client = browser_runtime(runtime)
+    response = client.post(
+        "/agents/docs/runs", headers=[("Origin", ORIGIN), ("Origin", PREVIEW)], data={"message": "hi"}
+    )
+    assert response.status_code == 403
+    assert client.post("/agents/docs/runs", data={"message": "hi", "stream": "false"}).status_code == 200
+
+
+def test_browser_policy_websocket_origin(runtime):
+    client = browser_runtime(runtime)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/workflows/ws", headers={"Origin": "https://evil.example.com"}):
+            pass
+    with client.websocket_connect("/workflows/ws", headers={"Origin": PREVIEW}) as socket:
+        assert socket.receive_json()["event"] == "connected"
+        socket.send_json({"action": "authenticate", "token": token()})
+        assert socket.receive_json()["event"] == "authenticated"
+
+
+def test_explicit_empty_cors_origins_do_not_reflect_auth_errors(runtime):
+    runtime.os.cors_allowed_origins = []
+    client = TestClient(runtime.os.get_app())
+    response = client.get("/config", headers={"Origin": ORIGIN})
+    assert response.status_code == 401
+    assert "access-control-allow-origin" not in response.headers

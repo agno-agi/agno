@@ -25,6 +25,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
@@ -34,7 +35,9 @@ from agno.utils.log import (
 from agno.utils.timer import Timer
 
 
-def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+def get_update_user_memory_function(
+    agent: Agent, user_id: Optional[str] = None, run_response: Optional[RunOutput] = None, async_mode: bool = False
+) -> Function:
     def update_user_memory(task: str) -> str:
         """Use this function to submit a task to modify the Agent's memory.
         Describe the task in detail and be specific.
@@ -47,7 +50,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = agent.memory_manager.update_memory_task(task=task, user_id=user_id)
+        response = agent.memory_manager.update_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
 
         return response
 
@@ -63,7 +68,9 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
             str: A string indicating the status of the task.
         """
         agent.memory_manager = cast(MemoryManager, agent.memory_manager)
-        response = await agent.memory_manager.aupdate_memory_task(task=task, user_id=user_id)
+        response = await agent.memory_manager.aupdate_memory_task(
+            task=task, user_id=user_id, run_metrics=run_response.metrics if run_response else None
+        )
         return response
 
     if async_mode:
@@ -148,6 +155,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -180,6 +188,7 @@ def create_knowledge_search_tool(
                     filters=_resolve_filters(filters),
                     validate_filters=True,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -214,6 +223,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -242,6 +252,7 @@ def create_knowledge_search_tool(
                     query=query,
                     filters=knowledge_filters,
                     run_context=run_context,
+                    run_response=run_response,
                 )
             except Exception as e:
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -258,7 +269,7 @@ def create_knowledge_search_tool(
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
     def get_chat_history(num_chats: Optional[int] = None) -> str:
-        """Use this function to get the chat history between the user and agent.
+        """Use this function to get the chat history between the user and agent, oldest first.
 
         Args:
             num_chats: The number of chats to return.
@@ -274,21 +285,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
             - To get all chats, use num_chats=None.
             - To get the first chat, use num_chats=None and pick the first message.
         """
-        import json
-
-        history: List[Dict[str, Any]] = []
-        all_chats = session.get_messages()
-
-        if len(all_chats) == 0:
-            return json.dumps([])
-
-        for chat in all_chats:  # type: ignore
-            history.append(chat.to_dict())  # type: ignore
-
-        if num_chats is not None:
-            history = history[-num_chats:]
-
-        return json.dumps(history, ensure_ascii=False)
+        return get_chat_history_json(session, num_chats=num_chats)
 
     return get_chat_history
 

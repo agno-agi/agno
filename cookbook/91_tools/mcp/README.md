@@ -57,7 +57,11 @@ This example shows how to choose which MCP protocol era `MCPTools` negotiates. T
 
 This example connects to Magic Hour's hosted MCP server to create images and videos. It shows bearer authentication, long-running render handling, reuse of project IDs after timeouts, and exact output URL retrieval.
 
-14. ParlayAPI Read-Only Discovery (`parlayapi.py`)
+14. GetYouTubeTranscript Agent (`getyoutubetranscript.py`)
+
+This example connects to GetYouTubeTranscript's hosted MCP server to read and research YouTube videos: transcripts in any caption language a video has, YouTube search, and channel and playlist data. It shows bearer authentication and quoting with timestamps.
+
+15. ParlayAPI Read-Only Discovery (`parlayapi.py`)
 
 This example launches the published ParlayAPI MCP server with an explicit tool
 allowlist. The default only discovers four public metadata tools locally. It
@@ -134,6 +138,7 @@ python structured_content.py
 python emem.py
 python peer_cash.py
 python magic_hour.py
+python getyoutubetranscript.py
 ```
 
 ## How It Works
@@ -157,4 +162,4 @@ You can modify these examples to:
 ## More Information
 
 - Read more about [MCP](https://modelcontextprotocol.io/introduction)
-- Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp)
+- Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp/overview)

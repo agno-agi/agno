@@ -4,6 +4,8 @@
 
 **Status:** PASS (offline discovery and configuration)
 
+Rechecked on November 26, 2026 after incorporating the current main branch. All six focused tests passed with Python 3.12. The default command listed exactly four public tool names. Ruff checks and formatting passed for both example files.
+
 **Description:** Agno 3.0.9 connects over stdio to the published parlayapi-mcp
 0.3.7 package. The default discovers four read-only metadata tools without calling
 ParlayAPI or a model. Private discovery exposes seven allowlisted tools with a
@@ -26,6 +28,16 @@ ruff check cookbook/91_tools/mcp/parlayapi.py cookbook/91_tools/mcp/test_parlaya
 bash scripts/format.sh
 bash scripts/validate.sh
 ```
+
+---
+
+### getyoutubetranscript.py
+
+**Status:** NOT RUN
+
+**Description:** Connects to GetYouTubeTranscript's production Streamable HTTP MCP endpoint through Agno's `MCPTools` with bearer authentication and runs a research task with OpenAI.
+
+**Result:** Not run end to end through Agno. Checked directly against the endpoint: `initialize` and `tools/list` succeed and list 13 tools (`get_youtube_transcript`, `search_youtube`, channel and playlist tools, `get_credits`); a `tools/call` with an invalid bearer token returns HTTP 401, and one without a token returns `invalid_token`. The example passes Python compilation; Ruff was not run.
 
 ---
 
@@ -71,5 +83,25 @@ the agent produced a grounded one-sentence answer about the repository.
 **Description:** Tests for this cookbook directory have not been executed yet in this workspace.
 
 **Result:** Add individual run results after executing examples.
+
+---
+
+### mem0.py, supabase.py
+
+**Status:** PASS (model only)
+
+**Description:** Moved off `o4-mini`, which OpenAI shut down on 2026-10-23, to `OpenAIResponses(id="gpt-5.6-terra")`. `OpenAIChat` rejects function tools for this model (`use /v1/responses or set reasoning_effort to 'none'`), so both examples switch to `OpenAIResponses`.
+
+**Result:** An async run with a function tool and `ReasoningTools` completes on `OpenAIResponses(id="gpt-5.6-terra")` and errors on `OpenAIChat`.
+
+---
+
+### graphiti.py
+
+**Status:** PASS
+
+**Description:** Moved off `o3-mini` to `OpenAIResponses(id="gpt-5.6-sol")`. Ran against the Graphiti MCP server (`zepai/knowledge-graph-mcp`) on SSE at `localhost:8000/sse`.
+
+**Result:** The agent calls `add_memory`, `get_episodes`, `search_nodes` and `search_memory_facts` and answers.
 
 ---

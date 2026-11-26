@@ -27,7 +27,7 @@ def canonical_page_name(url: str) -> str:
     path = unquote(parsed.path or "")
 
     for suffix in _INDEX_SUFFIXES:
-        if path.endswith(suffix):
+        if path.endswith("/" + suffix):
             path = path[: -len(suffix)]
             break
     path = path.strip("/")
@@ -59,7 +59,7 @@ def canonical_page_url(url: str) -> str:
     parsed = urlparse(url)
     path = parsed.path or ""
     for suffix in _INDEX_SUFFIXES:
-        if path.endswith(suffix):
+        if path.endswith("/" + suffix):
             path = path[: -len(suffix)]
             break
     # The site root's two spellings ("" and "/") must canonicalise identically

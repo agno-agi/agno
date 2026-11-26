@@ -238,7 +238,11 @@ def test_pre_post_hook_receives_messages():
 def test_tool_hook_receives_messages():
     """Test that tool hooks receive run messages via run_context.messages."""
     captured_messages.clear()
-    agent = Agent(tools=[modulo], tool_hooks=[messages_tool_hook])
+    agent = Agent(
+        tools=[modulo],
+        tool_hooks=[messages_tool_hook],
+        instructions="Always use the modulo tool to compute remainders.",
+    )
 
     response: RunOutput = agent.run("Compute 10 mod 3")
 

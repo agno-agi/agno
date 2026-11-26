@@ -1,0 +1,2246 @@
+"""Synchronous and asynchronous management of Company Goals."""
+
+import time
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
+from uuid import uuid4
+
+from agno.company.summary import _serialized_summary
+from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
+from agno.db.schemas.goals import validate_goal_fields
+from agno.db.schemas.projects import (
+    DEFAULT_PROJECT_ID,
+    default_project_row,
+    is_default_project,
+    refuse_default_project,
+)
+from agno.db.utils import is_unique_violation
+
+
+def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
+    """An identified agent or team may add website Sources only."""
+    if type != "website":
+        raise PermissionError("Agents may add only website Sources; local repository and path Sources require a human")
+    if executor_type not in {"agent", "team"} or not executor_id or not run_id:
+        raise ValueError("Adding a Source requires the calling agent or team and run identity")
+
+
+def _same_text(sent: Optional[str], stored: Optional[str]) -> bool:
+    """Whether two texts have the same words. No text and empty text are the same, and spacing is not compared."""
+    return (sent or "").split() == (stored or "").split()
+
+
+def _routine_provenance(endpoint: str) -> Dict[str, Any]:
+    from agno.db.schemas.scheduler import _schedule_endpoint_targets
+
+    return {"managed_by": "company", **_schedule_endpoint_targets("company", endpoint)}
+
+
+def _without_routine_links(fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Routine links change only through Routine create and removal, never a metadata edit."""
+    metadata = fields.get("metadata")
+    if not isinstance(metadata, dict) or "routine_ids" not in metadata:
+        return fields
+    return {**fields, "metadata": {key: value for key, value in metadata.items() if key != "routine_ids"}}
+
+
+_AUTOMATIC_DECISIONS = {"active": "approved", "ready": "accepted", "done": "completed"}
+
+
+def _automatic_decisions(projects: Any, tasks: Any, limit: int) -> List[Dict[str, Any]]:
+    """The decisions a Routine's policy made on these records, newest first."""
+    decisions = []
+    for kind, rows in (("project", projects), ("task", tasks)):
+        for row in rows:
+            for position, entry in enumerate(row.get("transitions") or []):
+                receipt = entry.get("auto_accept")
+                if not receipt or entry.get("target") not in _AUTOMATIC_DECISIONS:
+                    continue
+                decisions.append(
+                    {
+                        "position": position,
+                        "record": kind,
+                        "id": row["id"],
+                        "title": row.get("title") or row.get("name"),
+                        "decision": _AUTOMATIC_DECISIONS[entry["target"]],
+                        "routine_id": receipt.get("routine_id"),
+                        "policy": receipt.get("policy"),
+                        "policy_author": entry.get("user_id"),
+                        "at": entry.get("created_at"),
+                    }
+                )
+    # Within one second, a record's later step comes first.
+    decisions.sort(key=lambda item: (item["at"] or 0, item.pop("position")), reverse=True)
+    return decisions[:limit]
+
+
+def _open_limit(schedule: Optional[Dict[str, Any]]) -> Optional[int]:
+    """A Routine's limit on open Tasks, when its auto-accept is on and bounded by one."""
+    from agno.company.routines import _stored_policy
+
+    metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
+    raw = metadata.get("auto_accept")
+    if not schedule or not schedule.get("enabled") or not raw or metadata.get("deleted_at") is not None:
+        return None
+    policy, _ = _stored_policy(raw)
+    return policy.max_open if policy.limits is None else None
+
+
+def _has_policy(schedule: Optional[Dict[str, Any]]) -> bool:
+    """Whether a Routine has an auto-accept policy, running or paused."""
+    metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
+    return bool(metadata.get("auto_accept")) and metadata.get("deleted_at") is None
+
+
+def _at_limit(goal: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], tasks: Any) -> List[Dict[str, Any]]:
+    """The Goal's Routines whose auto-accept is waiting because their open Tasks are at the limit."""
+    from agno.company.routines import _open_tasks
+
+    waiting = []
+    for schedule in schedules:
+        max_open = _open_limit(schedule)
+        if schedule is None or max_open is None:
+            continue
+        open_now = _open_tasks(tasks, schedule["id"])
+        if open_now >= max_open:
+            # A proposal in the Default Project waits for a person, not for room under the limit.
+            backlog = sum(
+                1
+                for t in tasks
+                if t.get("routine_id") == schedule["id"]
+                and t["status"] == "backlog"
+                and not is_default_project(t.get("project_id"))
+            )
+            waiting.append(
+                {
+                    "routine_id": schedule["id"],
+                    "routine": schedule["name"].removeprefix(goal["id"] + "."),
+                    "open_tasks": open_now,
+                    "max_open": max_open,
+                    "proposals_waiting": backlog,
+                    "note": "Auto-accept is at its limit. Complete or cancel an open Task for it to accept more.",
+                }
+            )
+    return waiting
+
+
+# The automatic decisions listed for a Goal come from this many of its most recently changed
+# Projects and Tasks, so reading them costs one page of each.
+_DECISION_RECORDS = 100
+
+
+def _waiting_for_a_person(schedules: Any, goal_id: Optional[str]) -> List[Dict[str, Any]]:
+    """Routines whose auto_accept is declared in code and that no person has turned on."""
+    from agno.company.routines import _DECLARED, _stored_policy
+
+    waiting = []
+    for schedule in schedules:
+        payload = schedule.get("payload") or {}
+        metadata = payload.get("metadata") or {}
+        if (
+            schedule.get("managed_by") != "company"
+            or not schedule.get("enabled")
+            or not metadata.get("auto_accept")
+            or metadata.get("deleted_at") is not None
+            or payload.get("_agno_company_acceptance") != _DECLARED
+            or goal_id not in (None, metadata.get("goal_id"))
+        ):
+            continue
+        policy, _ = _stored_policy(metadata["auto_accept"])
+        waiting.append(
+            {
+                "routine_id": schedule["id"],
+                "routine": schedule["name"].removeprefix(str(metadata.get("goal_id")) + "."),
+                "goal_id": metadata.get("goal_id"),
+                "default_executor": policy.default_executor,
+                "note": "This Routine declares auto-accept and does not run until a person turns it on. "
+                "Turn auto-accept on for it once; it and its declared policy then run under that person's permissions.",
+            }
+        )
+    return waiting
+
+
+def _marked(project: Dict[str, Any]) -> Dict[str, Any]:
+    """A Project with is_default, the field a client keys on to show the Default Project apart."""
+    return {**project, "is_default": is_default_project(project["id"])}
+
+
+def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]:
+    """The Goal a Task in this Project carries.
+
+    A Task in an ordinary Project carries that Project's Goal, or none when the Project has none.
+    A Task in the Default Project carries the Goal it is given, or none.
+    """
+    if is_default_project(project["id"]):
+        return goal_id
+    if goal_id is not None and project["goal_id"] != goal_id:
+        raise ValueError("Task and Project must belong to the same Goal")
+    return project["goal_id"]
+
+
+def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
+    """The id of the Project a Routine proposes under this name in a Goal."""
+    from uuid import NAMESPACE_URL, uuid5
+
+    return str(uuid5(NAMESPACE_URL, f"company-project/{goal_id}/{routine_id}/{name}"))
+
+
+def _project_proposal_id(goal_id: str, name: str) -> Optional[str]:
+    from agno.company.routines import _RoutineAuthorization
+    from agno.run.authorization import current_authorization
+
+    authority = current_authorization()
+    if isinstance(authority, _RoutineAuthorization):
+        return _routine_project_id(goal_id, authority.routine_id, name)
+    return None
+
+
+class CompanyManager:
+    """Manage Goals through a synchronous database.
+
+    user_id=None leaves reads and writes unscoped; a string restricts them to
+    that owner. On create it records the accountable owner.
+    """
+
+    def __init__(
+        self, db: BaseDb, registry: Any = None, schedule_db: Any = None, automation_history_retention_days: int = 30
+    ):
+        self.automation_history_retention_days = automation_history_retention_days
+        self.db = db
+        self.registry = registry
+        self.schedule_db = schedule_db if schedule_db is not None else db
+
+    def create(
+        self,
+        *,
+        name: str,
+        objective: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Goal."""
+        fields = {"name": name, "objective": objective, "metadata": metadata}
+        validate_goal_fields(fields)
+        return self.db.create_goal(
+            {
+                **fields,
+                "id": id or str(uuid4()),
+                "user_id": user_id,
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    def create_routine(
+        self,
+        *,
+        goal_id: str,
+        routine: Any,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        check: Optional[Callable[[Dict[str, Any]], None]] = None,
+        agent_os: Any = None,
+    ) -> Dict[str, Any]:
+        """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
+
+        Any writer may add a Routine to a Goal, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Goal the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        """
+        from agno.company.declarations import Routine
+        from agno.company.routines import _declared_schedule_fields, _require_routine_goal
+
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_routine_goal(goal_id)
+        routine = Routine.model_validate(routine)
+        fields = _declared_schedule_fields(goal_id, routine, self.registry, agent_os=agent_os)
+        if check is not None:
+            check(fields)
+        return self._write_routine(goal_id, routine, fields, user_id)
+
+    def _write_routine(self, goal_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        schedule = schedules.create(
+            **{key: value for key, value in fields.items() if key != "cron_expr"},
+            cron=fields["cron_expr"],
+            user_id=user_id,
+            enabled_on_create=False,
+            provenance=_routine_provenance(fields["endpoint"]),
+        )
+        linked = False
+        try:
+            if self.db.add_goal_routine(goal_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Goal")
+            linked = True
+            enabled = schedules.enable(schedule.id, user_id=user_id) if routine.enabled else schedule
+            if enabled is None:
+                raise RuntimeError("Routine could not be enabled")
+        except Exception:
+            if linked:
+                self._unlink_routine(goal_id, schedule.id)
+            schedules.delete(schedule.id, user_id=user_id)
+            raise
+        return enabled.to_dict()
+
+    def _unlink_routine(self, goal_id: str, schedule_id: str) -> None:
+        goal = self.get(goal_id)
+        if goal is not None:
+            metadata = dict(goal.get("metadata") or {})
+            metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
+            self.db.update_goal(goal_id, metadata=metadata)
+
+    def discard_goal(
+        self,
+        goal_id: str,
+        *,
+        source_ids: Sequence[str] = (),
+        schedule_ids: Sequence[str] = (),
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Remove a Goal whose declared records could not all be created."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        for schedule_id in schedule_ids:
+            schedules.delete(schedule_id, user_id=user_id)
+        for source_id in source_ids:
+            self.db.delete_source(source_id)
+        self.db.delete_goal(goal_id)
+
+    def get(
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible Goal, optionally including deleted records."""
+        record = self.db.get_goal(goal_id, user_id=user_id, include_deleted=include_deleted)
+        if record is not None:
+            record["counts"] = (self.db.get_goal_counts([goal_id]))[goal_id]
+        return record
+
+    def list(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Return a page of visible Goals and the total before pagination."""
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        rows, total = self.db.get_goals(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        counts = self.db.get_goal_counts([row["id"] for row in rows])
+        return [{**row, "counts": counts[row["id"]]} for row in rows], total
+
+    def update(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update name, objective or metadata on an active Goal; linked Routine ids are kept."""
+        validate_goal_fields(fields)
+        return self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
+
+    def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
+        return self.db.delete_goal(goal_id, user_id=user_id)
+
+    def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and only children archived by it; return None if already active."""
+        return self.db.restore_goal(goal_id, user_id=user_id)
+
+    def create_project(
+        self,
+        *,
+        name: str,
+        goal_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        target_date: Optional[int] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Propose a Project, under a Goal or under none. One a Routine proposes carries the Routine's Goal.
+
+        scoped_user_id filters the Goal while user_id records the creator.
+        """
+        from agno.company.routines import _require_routine_goal, _RoutineAuthorization
+        from agno.db.schemas.projects import validate_project_fields
+        from agno.run.authorization import current_authorization
+
+        authority = current_authorization()
+        if goal_id is None and isinstance(authority, _RoutineAuthorization):
+            # A Project a Routine proposes carries the Routine's Goal.
+            goal_id = authority.goal_id
+        _require_routine_goal(goal_id)
+        fields = {"name": name, "outcome": outcome, "target_date": target_date}
+        validate_project_fields(fields)
+        if goal_id is not None and self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        proposal_id = _project_proposal_id(goal_id, name) if goal_id is not None else None
+        if proposal_id is not None:
+            existing = self.db.get_project(proposal_id, include_deleted=True)
+            if existing is not None:
+                return existing
+        return self.db.create_project(
+            {
+                **fields,
+                "goal_id": goal_id,
+                "id": proposal_id or str(uuid4()),
+                "status": "proposed",
+                "user_id": user_id,
+                "transitions": [],
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            },
+            reuse=proposal_id is not None,
+        )
+
+    def default_project(self) -> Dict[str, Any]:
+        """The Default Project. It is stored on first use, so every Company database has exactly one."""
+        project = self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            try:
+                project = self.db.create_project(default_project_row(), reuse=True)
+            except Exception as exc:
+                # Another process stored it first.
+                if not is_unique_violation(exc):
+                    raise
+                project = self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            raise RuntimeError("The Default Project could not be stored")
+        return _marked(project)
+
+    def _task_project(self, project_id: Optional[str], scoped_user_id: Optional[str]) -> Dict[str, Any]:
+        """The Project a Task goes into: the one named, or the Default Project when none is."""
+        if not project_id or is_default_project(project_id):
+            return self.default_project()
+        project = self.db.get_project(project_id, user_id=scoped_user_id)
+        if project is None:
+            raise LookupError("Project not found")
+        return project
+
+    def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible project, optionally including deleted records."""
+        record = self.db.get_project(project_id, user_id=user_id, include_deleted=include_deleted)
+        if record is not None:
+            record = _marked(record)
+            record["counts"] = (self.db.get_project_counts([project_id]))[project_id]
+        return record
+
+    def list_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        goal_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        rows, total = self.db.get_projects(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            goal_id=goal_id,
+            status=status,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            has_goal=has_goal,
+        )
+        counts = self.db.get_project_counts([row["id"] for row in rows])
+        return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
+
+    def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update the name, outcome or target date of a visible Project. The Default Project is refused."""
+        from agno.db.schemas.projects import validate_project_fields
+
+        validate_project_fields(fields)
+        refuse_default_project(project_id, "edit")
+        if expected_status is not None:
+            fields["expected_status"] = expected_status
+        return self.db.update_project(project_id, user_id=user_id, **fields)
+
+    def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; active Tasks and the Default Project raise ValueError."""
+        from agno.company.routines import _require_routine_goal
+
+        refuse_default_project(project_id, "archive")
+        record = self.db.get_project(project_id)
+        if record is not None:
+            _require_routine_goal(record["goal_id"])
+        return self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
+
+    def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Project and only Tasks archived by it."""
+        return self.db.restore_project(project_id, user_id=user_id)
+
+    def transition_project(
+        self,
+        *,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply an explicit transition; the caller enforces platform authorization."""
+        from agno.company.execution import _ExecutorAuthorization
+        from agno.db.schemas.projects import validate_project_completion
+        from agno.run.authorization import current_authorization
+
+        refuse_default_project(project_id, "transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
+        if target == "done":
+            page = 1
+            while True:
+                tasks, total = self.db.get_tasks(project_id=project_id, limit=100, page=page)
+                validate_project_completion(tasks)
+                if page * 100 >= total:
+                    break
+                page += 1
+        return self.db.transition_project(
+            project_id,
+            target,
+            reason,
+            user_id=user_id,
+            accepted_by=accepted_by,
+            expected_updated_at=expected_updated_at,
+            auto_accept=auto_accept,
+        )
+
+    def create_task(
+        self,
+        *,
+        title: str,
+        goal_id: Optional[str] = None,
+        brief: Optional[str] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        evidence: Optional[List[Dict[str, Any]]] = None,
+        origin: str = "human",
+        routine_id: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Task. With no project_id it goes into the Default Project.
+
+        In a Project other than the Default one the Task carries that Project's Goal, and a
+        goal_id that differs is refused. In the Default Project it carries the goal_id given, or
+        none. scoped_user_id filters the Goal and the Project while user_id records the creator.
+        """
+        from agno.company.routines import _RoutineAuthorization
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _RoutineAuthorization):
+            raise PermissionError(
+                "Routines must propose Tasks through intake_goal_source with evidence and a dedupe key"
+            )
+        from agno.db.schemas.tasks import validate_task_fields
+
+        fields = {
+            "title": title,
+            "brief": brief,
+            "project_id": project_id,
+            "evidence": evidence,
+            "executor_type": executor_type,
+            "executor_id": executor_id,
+        }
+        validate_task_fields(fields)
+        if goal_id is not None and self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        project = self._task_project(project_id, scoped_user_id)
+        goal_id = _task_goal(goal_id, project)
+        fields["project_id"] = project["id"]
+        task = {
+            **fields,
+            "goal_id": goal_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return self.db.create_task(task)
+
+    def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible task, optionally including deleted records."""
+        return self.db.get_task(task_id, user_id=user_id, include_deleted=include_deleted)
+
+    def list_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        goal_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        return self.db.get_tasks(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            goal_id=goal_id,
+            status=status,
+            project_id=project_id,
+            failed=failed,
+            session_id=session_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            has_goal=has_goal,
+        )
+
+    def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+
+        A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
+        so it moves only to a Project of the same Goal or to the Default Project. A Task with no
+        Goal takes the Goal of the Project it moves into.
+        """
+        from agno.db.schemas.tasks import validate_task_fields
+
+        validate_task_fields(fields)
+        existing = self.db.get_task(task_id, user_id=user_id)
+        if existing is None:
+            return None
+        if existing["status"] != "backlog":
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
+        if "project_id" in fields:
+            # A Task always has a Project: moved out of one, it goes to the Default Project.
+            project = self._task_project(fields["project_id"], None)
+            fields["project_id"] = project["id"]
+            _task_goal(existing["goal_id"], project)
+        return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+
+    def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
+        """Soft-delete a visible task."""
+        return self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted task."""
+        return self.db.restore_task(task_id, user_id=user_id)
+
+    def _accept_task(self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            # A Task with no Goal has no Sources: an unfiltered read would return every Goal's.
+            while task["goal_id"] is not None:
+                rows, total = self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
+
+    def transition_task(
+        self,
+        *,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply an explicit transition; the caller enforces platform authorization."""
+        from agno.company.execution import _ExecutorAuthorization
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
+        if target == "ready":
+            existing = self.db.get_task(task_id, user_id=user_id)
+            if existing is None:
+                return None
+            self._accept_task(existing, executor_type, executor_id)
+        return self.db.transition_task(
+            task_id,
+            target,
+            reason,
+            user_id=user_id,
+            accepted_by=accepted_by,
+            executor_type=executor_type,
+            executor_id=executor_id,
+            expected_updated_at=expected_updated_at,
+            auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
+        )
+
+    def _tasks_in(self, goal_id: str, status: str) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            batch, total = self.db.get_tasks(goal_id=goal_id, status=status, limit=100, page=page)
+            rows.extend(batch)
+            if page * 100 >= total:
+                return rows
+            page += 1
+
+    def auto_accept_status(self, goal_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Goal.
+
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Goal's
+        most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
+        person to finish an open Task. Both are empty, and nothing is read, for a Goal whose Routines
+        have no policy.
+        """
+        goal = self.get(goal_id) or {}
+        routine_ids = (goal.get("metadata") or {}).get("routine_ids") or []
+        schedules = [self.schedule_db.get_schedule(routine_id) for routine_id in routine_ids]
+        status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
+        if not any(_has_policy(schedule) for schedule in schedules):
+            return status
+        if any(_open_limit(schedule) is not None for schedule in schedules):
+            from agno.company.routines import _OPEN_STATUSES
+
+            tasks = [row for stage in _OPEN_STATUSES for row in self._tasks_in(goal_id, stage)]
+            if _at_limit(goal, schedules, tasks):
+                # Only a Routine at its limit has proposals waiting on it.
+                tasks += self._tasks_in(goal_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(goal, schedules, tasks)
+        if decisions:
+            latest: Dict[str, Any] = dict(
+                goal_id=goal_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
+            projects, _ = self.db.get_projects(**latest)
+            recent, _ = self.db.get_tasks(**latest)
+            status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
+        return status
+
+    def auto_accept_waiting(self, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = ScheduleManager(self.schedule_db).list_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], goal_id)
+
+    def attention(self, goal_id: Optional[str] = None) -> Dict[str, Any]:
+        """Company-wide counts over the same filters used by the Task list."""
+        counts: Dict[str, Any] = {}
+        for name, filters in (
+            ("proposals", {"status": "backlog"}),
+            ("in_review", {"status": "in_review"}),
+            ("failed", {"failed": True}),
+        ):
+            _, counts[name] = self.list_tasks(goal_id=goal_id, limit=1, **filters)
+        from agno.company.routines import _failed_routines
+
+        goals = []
+        if goal_id is not None:
+            goal = self.get(goal_id)
+            if goal is not None:
+                goals.append(goal)
+        else:
+            page = 1
+            while True:
+                rows, total = self.list(limit=100, page=page)
+                goals.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+        counts["failed"] += _failed_routines(self.schedule_db, goals)
+        from agno.company.automation_history import automation_failures
+
+        failures = automation_failures(self.schedule_db, self.db, goal_id)
+        if failures:
+            counts["automation_failures"] = failures
+            counts["failed"] += len(failures)
+        return counts
+
+    def get_wiki(self, goal_id: Optional[str] = None):
+        """Return a Goal or company wiki; reads are company-wide.
+
+        Default pages are created atomically on first access and never reset.
+        """
+        from agno.company.playbook import _seed, _wiki
+
+        goal = self.get(goal_id) if goal_id is not None else None
+        if goal_id is not None and goal is None:
+            raise LookupError("Goal not found")
+        provider = _wiki(self.db, goal)
+        _seed(provider, goal)
+        return provider
+
+    def list_wiki(self, goal_id: Optional[str] = None, limit: int = 20, page: int = 1):
+        """List wiki pages with the standard Company pagination."""
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        provider = self.get_wiki(goal_id)
+        pages = provider.backend.filesystem.list()
+        return pages[(page - 1) * limit : page * limit], len(pages)
+
+    def read_wiki(self, goal_id: Optional[str], path: str):
+        """Read a Markdown page and its filesystem version."""
+        from agno.company.playbook import _page_path
+
+        provider = self.get_wiki(goal_id)
+        result = provider.backend.filesystem.read_with_meta(_page_path(path))
+        if result is None:
+            raise LookupError("Wiki page not found")
+        return result
+
+    def write_wiki(
+        self,
+        *,
+        goal_id: Optional[str],
+        path: str,
+        content: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ):
+        """Write with a filesystem version check. Version zero means create only.
+
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
+        """
+        from agno.company.playbook import _page_path, _require_goal_scope
+
+        if expected_version < 0:
+            raise ValueError("expected_version must be nonnegative")
+        goal = self.get(goal_id) if goal_id is not None else {}
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        provider = self.get_wiki(goal_id)
+        return provider.backend.filesystem.write(_page_path(path), content, expected_version=expected_version)
+
+    def log_decision(
+        self,
+        *,
+        decision: str,
+        reasoning: Optional[str] = None,
+        context: Optional[str] = None,
+        outcome: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ):
+        """Append an owned entry to the learning decision log, never a wiki page."""
+        from agno.company.decisions import CompanyDecisionLogStore, _new_decision
+
+        entry = _new_decision(decision, reasoning, context, outcome, user_id, session_id, agent_id)
+        CompanyDecisionLogStore(self.db).save(entry)
+        return entry
+
+    def list_decisions(
+        self,
+        query: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 20,
+        page: int = 1,
+    ):
+        """Search Company decisions across owners using the learning store's filters."""
+        from agno.company.decisions import CompanyDecisionLogStore
+
+        if limit < 1 or page < 1 or (days is not None and days < 1):
+            raise ValueError("limit, page and days must be positive")
+        entries = CompanyDecisionLogStore(self.db).search(
+            query=query, agent_id=agent_id, session_id=session_id, days=days, limit=None
+        )
+        return entries[(page - 1) * limit : page * limit], len(entries)
+
+    def create_source(
+        self,
+        *,
+        goal_id: str,
+        type: str,
+        reference: str,
+        credential_ref: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Configure a reader on a Goal; secret values are never resolved."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.db.schemas.sources import validate_source_fields
+
+        fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
+        validate_source_fields(fields)
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return self.db.create_source(
+            {
+                **fields,
+                "id": source_id or str(uuid4()),
+                "goal_id": goal_id,
+                "user_id": user_id,
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    def add_source(
+        self,
+        *,
+        goal_id: str,
+        type: str,
+        reference: str,
+        executor_id: str,
+        executor_type: str,
+        run_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Add a website discovered by an identified agent or team without widening an existing Source."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.db.schemas.sources import validate_source_fields
+
+        _validate_agent_source(type, executor_type, executor_id, run_id)
+        validate_source_fields(dict(type=type, reference=reference, config=config))
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return self.db.create_source(
+            {
+                "id": str(uuid4()),
+                "goal_id": goal_id,
+                "type": type,
+                "reference": reference,
+                "credential_ref": None,
+                "user_id": user_id,
+                "config": {**(config or {}), "metadata": {executor_type + "_id": executor_id, "run_id": run_id}},
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            },
+            reuse=True,
+        )
+
+    def get_source(self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False):
+        """Read a configured Source."""
+        return self.db.get_source(source_id, user_id=user_id, include_deleted=include_deleted)
+
+    def list_sources(
+        self,
+        goal_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+    ):
+        """List Sources using the database's paging and owner filters."""
+        return self.db.get_sources(
+            goal_id=goal_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
+        )
+
+    def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_goal_scope
+
+        source = self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None:
+            return False
+        goal = self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return self.db.delete_source(source_id)
+
+    def restore_source(self, source_id: str, user_id: Optional[str] = None):
+        """Restore a Source."""
+        from agno.company.playbook import _require_goal_scope
+
+        source = self.get_source(source_id, include_deleted=True)
+        if source is None:
+            return None
+        goal = self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return self.db.restore_source(source_id)
+
+    def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
+        """Read the configured reader and attach this run's immutable evidence."""
+        from agno.company.sources import read_source
+
+        source = self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or self.get(source["goal_id"]) is None:
+            raise LookupError("Source not found")
+        return read_source(source, run_id, links=links)
+
+    def browse_source(
+        self,
+        source_id: str,
+        run_id: str,
+        path: Optional[str] = None,
+        pattern: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 20,
+        content_offset: int = 0,
+        max_chars: int = 8000,
+    ):
+        """Page Source discovery or read a bounded fragment with the full document's hash."""
+        from agno.company.sources import browse_source
+
+        source = self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or self.get(source["goal_id"]) is None:
+            raise LookupError("Source not found")
+        return browse_source(source, run_id, path, pattern, offset, limit, content_offset, max_chars)
+
+    def intake(
+        self,
+        *,
+        source_id: str,
+        run_id: str,
+        proposal: Any,
+        user_id: Optional[str] = None,
+        routine_id: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ):
+        """Persist an explicit proposal with verified evidence and a stable Source-local identity.
+
+        The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
+        the Default Project when none is named.
+        """
+        from agno.company.declarations import IntakeProposal
+        from agno.company.sources import _proposal_fields
+        from agno.db.schemas.tasks import validate_task_fields
+
+        validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
+
+        source = self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None:
+            raise LookupError("Source not found")
+        # With no Project named, the proposal goes to the Default Project, tagged with the Source's Goal.
+        project = self._task_project(project_id, None)
+        project_id = project["id"]
+        _task_goal(source["goal_id"], project)
+        proposal = IntakeProposal.model_validate(proposal)
+        evidence = self.read_source(source_id, run_id, links=proposal.evidence_links)
+        fields = _proposal_fields(source_id, proposal, evidence)
+        routine_id = _proposal_origin().get("routine_id", routine_id)
+        return self.db.create_task(
+            {
+                **fields,
+                "id": str(uuid4()),
+                "goal_id": source["goal_id"],
+                "status": "backlog",
+                "executor_type": executor_type,
+                "executor_id": executor_id,
+                "project_id": project_id,
+                "origin": "routine" if routine_id else "product_manager",
+                "routine_id": routine_id,
+                "session_id": str(uuid4()),
+                "user_id": user_id,
+                "transitions": [],
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    def refresh(self, goal_id: str, user_id: Optional[str] = None):
+        """Propose Project completion and apply the Goal's archive window."""
+        from agno.company.refresh import refresh_goal
+
+        return refresh_goal(self, goal_id, user_id)
+
+    @_serialized_summary
+    def summarize(self, *, goal_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None):
+        """Write the observed report to the wiki and deliver using Goal configuration."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.company.summary import (
+            _STATE_PATH,
+            _delivery_state,
+            _load_summary_state,
+            _summary_delivered,
+            _summary_page,
+            _summary_report,
+            deliver_summary,
+        )
+
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        delivery = (goal.get("metadata") or {}).get("summary") or {}
+        if not delivery.get("interface") or not delivery.get("destination"):
+            raise ValueError("Goal summary requires an interface and destination")
+        counts = self.attention(goal_id)
+        rows = []
+        page = 1
+        while True:
+            tasks, total = self.list_tasks(goal_id=goal_id, limit=100, page=page)
+            rows.extend(tasks)
+            if page * 100 >= total:
+                break
+            page += 1
+        path = "summary.md"
+        try:
+            existing = self.read_wiki(goal_id, path)
+        except LookupError:
+            existing = None
+        state_fs, previous, state_version = _load_summary_state(self.db, goal_id, existing.content if existing else "")
+        content = _summary_report(goal, counts, rows, narrative, previous)
+        report, delivered, marker = _summary_page(previous, run_id, content)
+        if delivered:
+            return {"path": path, "delivered": True, "quiet": True}
+        saved = self.write_wiki(
+            goal_id=goal_id,
+            path=path,
+            content=report,
+            expected_version=existing.metadata.version if existing else 0,
+            user_id=user_id,
+        )
+        deliver_summary(
+            interfaces,
+            delivery["interface"],
+            delivery["destination"],
+            content.partition("\n\n<!-- Company summary snapshot:")[0],
+        )
+        completed = _summary_delivered(report, marker)
+        state_fs.write(_STATE_PATH, _delivery_state(completed), expected_version=state_version)
+        self.write_wiki(goal_id=goal_id, path=path, content=completed, expected_version=saved.version, user_id=user_id)
+        return {"path": path, "delivered": True, "quiet": not rows}
+
+
+class AsyncCompanyManager:
+    """Manage Goals through an asynchronous database.
+
+    user_id=None leaves reads and writes unscoped; a string restricts them to
+    that owner. On create it records the accountable owner.
+    """
+
+    def __init__(
+        self,
+        db: AsyncBaseDb,
+        registry: Any = None,
+        schedule_db: Any = None,
+        automation_history_retention_days: int = 30,
+    ):
+        self.automation_history_retention_days = automation_history_retention_days
+        self.db = db
+        self.registry = registry
+        self.schedule_db = schedule_db if schedule_db is not None else db
+
+    async def create(
+        self,
+        *,
+        name: str,
+        objective: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Goal."""
+        fields = {"name": name, "objective": objective, "metadata": metadata}
+        validate_goal_fields(fields)
+        return await self.db.create_goal(
+            {
+                **fields,
+                "id": id or str(uuid4()),
+                "user_id": user_id,
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    async def create_routine(
+        self,
+        *,
+        goal_id: str,
+        routine: Any,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        check: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        agent_os: Any = None,
+    ) -> Dict[str, Any]:
+        """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
+
+        Any writer may add a Routine to a Goal, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Goal the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        """
+        from agno.company.declarations import Routine
+        from agno.company.routines import _declared_schedule_fields, _require_routine_goal
+
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_routine_goal(goal_id)
+        routine = Routine.model_validate(routine)
+        fields = _declared_schedule_fields(goal_id, routine, self.registry, agent_os=agent_os)
+        if check is not None:
+            await check(fields)
+        return await self._write_routine(goal_id, routine, fields, user_id)
+
+    async def _write_routine(self, goal_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+        """Create and link the schedule, then enable it if requested; roll back failed writes."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        schedule = await schedules.acreate(
+            **{key: value for key, value in fields.items() if key != "cron_expr"},
+            cron=fields["cron_expr"],
+            user_id=user_id,
+            enabled_on_create=False,
+            provenance=_routine_provenance(fields["endpoint"]),
+        )
+        linked = False
+        try:
+            if await self.db.add_goal_routine(goal_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Goal")
+            linked = True
+            enabled = await schedules.aenable(schedule.id, user_id=user_id) if routine.enabled else schedule
+            if enabled is None:
+                raise RuntimeError("Routine could not be enabled")
+        except Exception:
+            if linked:
+                await self._unlink_routine(goal_id, schedule.id)
+            await schedules.adelete(schedule.id, user_id=user_id)
+            raise
+        return enabled.to_dict()
+
+    async def _unlink_routine(self, goal_id: str, schedule_id: str) -> None:
+        goal = await self.get(goal_id)
+        if goal is not None:
+            metadata = dict(goal.get("metadata") or {})
+            metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
+            await self.db.update_goal(goal_id, metadata=metadata)
+
+    async def discard_goal(
+        self,
+        goal_id: str,
+        *,
+        source_ids: Sequence[str] = (),
+        schedule_ids: Sequence[str] = (),
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Remove a Goal whose declared records could not all be created."""
+        from agno.scheduler import ScheduleManager
+
+        schedules = ScheduleManager(self.schedule_db)
+        for schedule_id in schedule_ids:
+            await schedules.adelete(schedule_id, user_id=user_id)
+        for source_id in source_ids:
+            await self.db.delete_source(source_id)
+        await self.db.delete_goal(goal_id)
+
+    async def get(
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible Goal, optionally including deleted records."""
+        record = await self.db.get_goal(goal_id, user_id=user_id, include_deleted=include_deleted)
+        if record is not None:
+            record["counts"] = (await self.db.get_goal_counts([goal_id]))[goal_id]
+        return record
+
+    async def list(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Return a page of visible Goals and the total before pagination."""
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        rows, total = await self.db.get_goals(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        counts = await self.db.get_goal_counts([row["id"] for row in rows])
+        return [{**row, "counts": counts[row["id"]]} for row in rows], total
+
+    async def update(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update name, objective or metadata on an active Goal; linked Routine ids are kept."""
+        validate_goal_fields(fields)
+        return await self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
+
+    async def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
+        return await self.db.delete_goal(goal_id, user_id=user_id)
+
+    async def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and only children archived by it; return None if already active."""
+        return await self.db.restore_goal(goal_id, user_id=user_id)
+
+    async def create_project(
+        self,
+        *,
+        name: str,
+        goal_id: Optional[str] = None,
+        outcome: Optional[str] = None,
+        target_date: Optional[int] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Propose a Project, under a Goal or under none. One a Routine proposes carries the Routine's Goal.
+
+        scoped_user_id filters the Goal while user_id records the creator.
+        """
+        from agno.company.routines import _require_routine_goal, _RoutineAuthorization
+        from agno.db.schemas.projects import validate_project_fields
+        from agno.run.authorization import current_authorization
+
+        authority = current_authorization()
+        if goal_id is None and isinstance(authority, _RoutineAuthorization):
+            # A Project a Routine proposes carries the Routine's Goal.
+            goal_id = authority.goal_id
+        _require_routine_goal(goal_id)
+        fields = {"name": name, "outcome": outcome, "target_date": target_date}
+        validate_project_fields(fields)
+        if goal_id is not None and await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        proposal_id = _project_proposal_id(goal_id, name) if goal_id is not None else None
+        if proposal_id is not None:
+            existing = await self.db.get_project(proposal_id, include_deleted=True)
+            if existing is not None:
+                return existing
+        return await self.db.create_project(
+            {
+                **fields,
+                "goal_id": goal_id,
+                "id": proposal_id or str(uuid4()),
+                "status": "proposed",
+                "user_id": user_id,
+                "transitions": [],
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            },
+            reuse=proposal_id is not None,
+        )
+
+    async def default_project(self) -> Dict[str, Any]:
+        """The Default Project. It is stored on first use, so every Company database has exactly one."""
+        project = await self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            try:
+                project = await self.db.create_project(default_project_row(), reuse=True)
+            except Exception as exc:
+                # Another process stored it first.
+                if not is_unique_violation(exc):
+                    raise
+                project = await self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            raise RuntimeError("The Default Project could not be stored")
+        return _marked(project)
+
+    async def _task_project(self, project_id: Optional[str], scoped_user_id: Optional[str]) -> Dict[str, Any]:
+        """The Project a Task goes into: the one named, or the Default Project when none is."""
+        if not project_id or is_default_project(project_id):
+            return await self.default_project()
+        project = await self.db.get_project(project_id, user_id=scoped_user_id)
+        if project is None:
+            raise LookupError("Project not found")
+        return project
+
+    async def get_project(
+        self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible project, optionally including deleted records."""
+        record = await self.db.get_project(project_id, user_id=user_id, include_deleted=include_deleted)
+        if record is not None:
+            record = _marked(record)
+            record["counts"] = (await self.db.get_project_counts([project_id]))[project_id]
+        return record
+
+    async def list_projects(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        goal_id: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        rows, total = await self.db.get_projects(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            goal_id=goal_id,
+            status=status,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            has_goal=has_goal,
+        )
+        counts = await self.db.get_project_counts([row["id"] for row in rows])
+        return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
+
+    async def update_project(
+        self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update the name, outcome or target date of a visible Project. The Default Project is refused."""
+        from agno.db.schemas.projects import validate_project_fields
+
+        validate_project_fields(fields)
+        refuse_default_project(project_id, "edit")
+        if expected_status is not None:
+            fields["expected_status"] = expected_status
+        return await self.db.update_project(project_id, user_id=user_id, **fields)
+
+    async def delete_project(
+        self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Archive a Project and its Tasks atomically; active Tasks and the Default Project raise ValueError."""
+        from agno.company.routines import _require_routine_goal
+
+        refuse_default_project(project_id, "archive")
+        record = await self.db.get_project(project_id)
+        if record is not None:
+            _require_routine_goal(record["goal_id"])
+        return await self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
+
+    async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Project and only Tasks archived by it."""
+        return await self.db.restore_project(project_id, user_id=user_id)
+
+    async def transition_project(
+        self,
+        *,
+        project_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply an explicit transition; the caller enforces platform authorization."""
+        from agno.company.execution import _ExecutorAuthorization
+        from agno.db.schemas.projects import validate_project_completion
+        from agno.run.authorization import current_authorization
+
+        refuse_default_project(project_id, "transition")
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
+        if target == "done":
+            page = 1
+            while True:
+                tasks, total = await self.db.get_tasks(project_id=project_id, limit=100, page=page)
+                validate_project_completion(tasks)
+                if page * 100 >= total:
+                    break
+                page += 1
+        return await self.db.transition_project(
+            project_id,
+            target,
+            reason,
+            user_id=user_id,
+            accepted_by=accepted_by,
+            expected_updated_at=expected_updated_at,
+            auto_accept=auto_accept,
+        )
+
+    async def create_task(
+        self,
+        *,
+        title: str,
+        goal_id: Optional[str] = None,
+        brief: Optional[str] = None,
+        project_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        evidence: Optional[List[Dict[str, Any]]] = None,
+        origin: str = "human",
+        routine_id: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        status: str = "backlog",
+        accepted_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Task. With no project_id it goes into the Default Project.
+
+        In a Project other than the Default one the Task carries that Project's Goal, and a
+        goal_id that differs is refused. In the Default Project it carries the goal_id given, or
+        none. scoped_user_id filters the Goal and the Project while user_id records the creator.
+        """
+        from agno.company.routines import _RoutineAuthorization
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _RoutineAuthorization):
+            raise PermissionError(
+                "Routines must propose Tasks through intake_goal_source with evidence and a dedupe key"
+            )
+        from agno.db.schemas.tasks import validate_task_fields
+
+        fields = {
+            "title": title,
+            "brief": brief,
+            "project_id": project_id,
+            "evidence": evidence,
+            "executor_type": executor_type,
+            "executor_id": executor_id,
+        }
+        validate_task_fields(fields)
+        if goal_id is not None and await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        project = await self._task_project(project_id, scoped_user_id)
+        goal_id = _task_goal(goal_id, project)
+        fields["project_id"] = project["id"]
+        task = {
+            **fields,
+            "goal_id": goal_id,
+            "id": str(uuid4()),
+            "status": "backlog",
+            "origin": origin,
+            "routine_id": routine_id,
+            **_proposal_origin(),
+            "session_id": str(uuid4()),
+            "user_id": user_id,
+            "transitions": [],
+            "created_at": int(time.time()),
+            "updated_at": None,
+            "deleted_at": None,
+        }
+        if status != "backlog":
+            from agno.db.schemas.tasks import task_transition_fields
+
+            accepting = {"executor_type": executor_type, "executor_id": executor_id} if status == "ready" else {}
+            if accepting:
+                await self._accept_task(task, executor_type, executor_id)
+            task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+        return await self.db.create_task(task)
+
+    async def get_task(
+        self, task_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Get a visible task, optionally including deleted records."""
+        return await self.db.get_task(task_id, user_id=user_id, include_deleted=include_deleted)
+
+    async def list_tasks(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+        goal_id: Optional[str] = None,
+        status: Optional[str] = None,
+        project_id: Optional[str] = None,
+        failed: Optional[bool] = None,
+        session_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        return await self.db.get_tasks(
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            include_deleted=include_deleted,
+            goal_id=goal_id,
+            status=status,
+            project_id=project_id,
+            failed=failed,
+            session_id=session_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            has_goal=has_goal,
+        )
+
+    async def update_task(
+        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+
+        A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
+        so it moves only to a Project of the same Goal or to the Default Project. A Task with no
+        Goal takes the Goal of the Project it moves into.
+        """
+        from agno.db.schemas.tasks import validate_task_fields
+
+        validate_task_fields(fields)
+        existing = await self.db.get_task(task_id, user_id=user_id)
+        if existing is None:
+            return None
+        if existing["status"] != "backlog":
+            # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
+            if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
+                del fields["brief"]
+            if set(fields) - {"title"}:
+                raise ValueError("Accepted task scope requires a return to Backlog")
+            if not fields:
+                return existing
+        elif "brief" in fields and expected_status is None:
+            # The write itself checks the stage, so an acceptance that lands first is not overwritten.
+            expected_status = "backlog"
+        if "project_id" in fields:
+            # A Task always has a Project: moved out of one, it goes to the Default Project.
+            project = await self._task_project(fields["project_id"], None)
+            fields["project_id"] = project["id"]
+            _task_goal(existing["goal_id"], project)
+        return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+
+    async def delete_task(
+        self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
+    ) -> bool:
+        """Soft-delete a visible task."""
+        return await self.db.delete_task(task_id, user_id=user_id, updated_before=updated_before)
+
+    async def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a deleted task."""
+        return await self.db.restore_task(task_id, user_id=user_id)
+
+    async def _accept_task(
+        self, task: Dict[str, Any], executor_type: Optional[str], executor_id: Optional[str]
+    ) -> None:
+        """Check that the executor can accept this Task before it enters Ready."""
+        from agno.company.execution import _executor
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        from agno.company.sandbox import _accept_checkout, _accept_sandbox, _is_sandboxed
+
+        if _is_sandboxed(component):
+            sources = []
+            page = 1
+            # A Task with no Goal has no Sources: an unfiltered read would return every Goal's.
+            while task["goal_id"] is not None:
+                rows, total = await self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
+                sources.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+            _accept_sandbox(component, sources)
+        _accept_checkout(component, task)
+
+    async def transition_task(
+        self,
+        *,
+        task_id: str,
+        target: str,
+        reason: str,
+        user_id: Optional[str] = None,
+        accepted_by: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        expected_updated_at: Optional[int] = _UNSET_UPDATED_AT,
+        auto_accept: Optional[Dict[str, Any]] = None,
+        expected_status: Optional[str] = None,
+        expected_job_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Apply an explicit transition; the caller enforces platform authorization."""
+        from agno.company.execution import _ExecutorAuthorization
+        from agno.run.authorization import current_authorization
+
+        if isinstance(current_authorization(), _ExecutorAuthorization):
+            raise PermissionError(
+                "Routine and Task runs cannot accept, review, complete or cancel a Task; a human decides"
+            )
+        if target == "ready":
+            existing = await self.db.get_task(task_id, user_id=user_id)
+            if existing is None:
+                return None
+            await self._accept_task(existing, executor_type, executor_id)
+        return await self.db.transition_task(
+            task_id,
+            target,
+            reason,
+            user_id=user_id,
+            accepted_by=accepted_by,
+            executor_type=executor_type,
+            executor_id=executor_id,
+            expected_updated_at=expected_updated_at,
+            auto_accept=auto_accept,
+            expected_status=expected_status,
+            expected_job_id=expected_job_id,
+        )
+
+    async def _tasks_in(self, goal_id: str, status: str) -> List[Dict[str, Any]]:
+        from agno.company.execution import _call
+
+        rows: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            batch, total = await _call(self.db, "get_tasks", goal_id=goal_id, status=status, limit=100, page=page)
+            rows.extend(batch)
+            if page * 100 >= total:
+                return rows
+            page += 1
+
+    async def auto_accept_status(self, goal_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Goal.
+
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Goal's
+        most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
+        person to finish an open Task. Both are empty, and nothing is read, for a Goal whose Routines
+        have no policy.
+        """
+        from agno.company.execution import _call
+
+        goal = await self.get(goal_id) or {}
+        routine_ids = (goal.get("metadata") or {}).get("routine_ids") or []
+        schedules = [await _call(self.schedule_db, "get_schedule", routine_id) for routine_id in routine_ids]
+        status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
+        if not any(_has_policy(schedule) for schedule in schedules):
+            return status
+        if any(_open_limit(schedule) is not None for schedule in schedules):
+            from agno.company.routines import _OPEN_STATUSES
+
+            tasks = [row for stage in _OPEN_STATUSES for row in await self._tasks_in(goal_id, stage)]
+            if _at_limit(goal, schedules, tasks):
+                # Only a Routine at its limit has proposals waiting on it.
+                tasks += await self._tasks_in(goal_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(goal, schedules, tasks)
+        if decisions:
+            latest: Dict[str, Any] = dict(
+                goal_id=goal_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+            )
+            projects, _ = await _call(self.db, "get_projects", **latest)
+            recent, _ = await _call(self.db, "get_tasks", **latest)
+            status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
+        return status
+
+    async def auto_accept_waiting(self, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Routines that declare auto_accept in code and wait for a person to turn it on.
+
+        This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
+        """
+        from agno.scheduler import ScheduleManager
+
+        rows = await ScheduleManager(self.schedule_db).alist_all()
+        return _waiting_for_a_person([row.to_dict() for row in rows], goal_id)
+
+    async def attention(self, goal_id: Optional[str] = None) -> Dict[str, Any]:
+        """Company-wide counts over the same filters used by the Task list."""
+        counts: Dict[str, Any] = {}
+        for name, filters in (
+            ("proposals", {"status": "backlog"}),
+            ("in_review", {"status": "in_review"}),
+            ("failed", {"failed": True}),
+        ):
+            _, counts[name] = await self.list_tasks(goal_id=goal_id, limit=1, **filters)
+        from agno.company.routines import _afailed_routines
+
+        goals = []
+        if goal_id is not None:
+            goal = await self.get(goal_id)
+            if goal is not None:
+                goals.append(goal)
+        else:
+            page = 1
+            while True:
+                rows, total = await self.list(limit=100, page=page)
+                goals.extend(rows)
+                if page * 100 >= total:
+                    break
+                page += 1
+        counts["failed"] += await _afailed_routines(self.schedule_db, goals)
+        from agno.company.automation_history import aautomation_failures
+
+        failures = await aautomation_failures(self.schedule_db, self.db, goal_id)
+        if failures:
+            counts["automation_failures"] = failures
+            counts["failed"] += len(failures)
+        return counts
+
+    async def get_wiki(self, goal_id: Optional[str] = None):
+        """Return a Goal or company wiki; reads are company-wide.
+
+        Default pages are created atomically on first access and never reset.
+        """
+        from agno.company.playbook import _aseed, _wiki
+
+        goal = await self.get(goal_id) if goal_id is not None else None
+        if goal_id is not None and goal is None:
+            raise LookupError("Goal not found")
+        provider = _wiki(self.db, goal)
+        await _aseed(provider, goal)
+        return provider
+
+    async def list_wiki(self, goal_id: Optional[str] = None, limit: int = 20, page: int = 1):
+        """List wiki pages with the standard Company pagination."""
+        if limit < 1 or page < 1:
+            raise ValueError("limit and page must be positive")
+        provider = await self.get_wiki(goal_id)
+        pages = await provider.backend.filesystem.alist()
+        return pages[(page - 1) * limit : page * limit], len(pages)
+
+    async def read_wiki(self, goal_id: Optional[str], path: str):
+        """Read a Markdown page and its filesystem version."""
+        from agno.company.playbook import _page_path
+
+        provider = await self.get_wiki(goal_id)
+        result = await provider.backend.filesystem.aread_with_meta(_page_path(path))
+        if result is None:
+            raise LookupError("Wiki page not found")
+        return result
+
+    async def write_wiki(
+        self,
+        *,
+        goal_id: Optional[str],
+        path: str,
+        content: str,
+        expected_version: int,
+        user_id: Optional[str] = None,
+    ):
+        """Write with a filesystem version check. Version zero means create only.
+
+        ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
+        """
+        from agno.company.playbook import _page_path, _require_goal_scope
+
+        if expected_version < 0:
+            raise ValueError("expected_version must be nonnegative")
+        goal = await self.get(goal_id) if goal_id is not None else {}
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        provider = await self.get_wiki(goal_id)
+        return await provider.backend.filesystem.awrite(_page_path(path), content, expected_version=expected_version)
+
+    async def log_decision(
+        self,
+        *,
+        decision: str,
+        reasoning: Optional[str] = None,
+        context: Optional[str] = None,
+        outcome: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ):
+        """Append an owned entry to the learning decision log, never a wiki page."""
+        from agno.company.decisions import CompanyDecisionLogStore, _new_decision
+
+        entry = _new_decision(decision, reasoning, context, outcome, user_id, session_id, agent_id)
+        await CompanyDecisionLogStore(self.db).asave(entry)
+        return entry
+
+    async def list_decisions(
+        self,
+        query: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 20,
+        page: int = 1,
+    ):
+        """Search Company decisions across owners using the learning store's filters."""
+        from agno.company.decisions import CompanyDecisionLogStore
+
+        if limit < 1 or page < 1 or (days is not None and days < 1):
+            raise ValueError("limit, page and days must be positive")
+        entries = await CompanyDecisionLogStore(self.db).asearch(
+            query=query, agent_id=agent_id, session_id=session_id, days=days, limit=None
+        )
+        return entries[(page - 1) * limit : page * limit], len(entries)
+
+    async def create_source(
+        self,
+        *,
+        goal_id: str,
+        type: str,
+        reference: str,
+        credential_ref: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Configure a reader on a Goal; secret values are never resolved."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.db.schemas.sources import validate_source_fields
+
+        fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
+        validate_source_fields(fields)
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return await self.db.create_source(
+            {
+                **fields,
+                "id": source_id or str(uuid4()),
+                "goal_id": goal_id,
+                "user_id": user_id,
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    async def add_source(
+        self,
+        *,
+        goal_id: str,
+        type: str,
+        reference: str,
+        executor_id: str,
+        executor_type: str,
+        run_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        scoped_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Add a website discovered by an identified agent or team without widening an existing Source."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.db.schemas.sources import validate_source_fields
+
+        _validate_agent_source(type, executor_type, executor_id, run_id)
+        validate_source_fields(dict(type=type, reference=reference, config=config))
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return await self.db.create_source(
+            {
+                "id": str(uuid4()),
+                "goal_id": goal_id,
+                "type": type,
+                "reference": reference,
+                "credential_ref": None,
+                "user_id": user_id,
+                "config": {**(config or {}), "metadata": {executor_type + "_id": executor_id, "run_id": run_id}},
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            },
+            reuse=True,
+        )
+
+    async def get_source(self, source_id: str, user_id: Optional[str] = None, include_deleted: bool = False):
+        """Read a configured Source."""
+        return await self.db.get_source(source_id, user_id=user_id, include_deleted=include_deleted)
+
+    async def list_sources(
+        self,
+        goal_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+        page: int = 1,
+        include_deleted: bool = False,
+    ):
+        """List Sources using the database's paging and owner filters."""
+        return await self.db.get_sources(
+            goal_id=goal_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
+        )
+
+    async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
+        """Soft delete a Source."""
+        from agno.company.playbook import _require_goal_scope
+
+        source = await self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None:
+            return False
+        goal = await self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return await self.db.delete_source(source_id)
+
+    async def restore_source(self, source_id: str, user_id: Optional[str] = None):
+        """Restore a Source."""
+        from agno.company.playbook import _require_goal_scope
+
+        source = await self.get_source(source_id, include_deleted=True)
+        if source is None:
+            return None
+        goal = await self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        return await self.db.restore_source(source_id)
+
+    async def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
+        """Read the configured reader and attach this run's immutable evidence."""
+        from agno.company.sources import aread_source
+
+        source = await self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or await self.get(source["goal_id"]) is None:
+            raise LookupError("Source not found")
+        return await aread_source(source, run_id, links=links)
+
+    async def browse_source(
+        self,
+        source_id: str,
+        run_id: str,
+        path: Optional[str] = None,
+        pattern: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 20,
+        content_offset: int = 0,
+        max_chars: int = 8000,
+    ):
+        """Page Source discovery or read a bounded fragment with the full document's hash."""
+        from agno.company.sources import abrowse_source
+
+        source = await self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or await self.get(source["goal_id"]) is None:
+            raise LookupError("Source not found")
+        return await abrowse_source(source, run_id, path, pattern, offset, limit, content_offset, max_chars)
+
+    async def intake(
+        self,
+        *,
+        source_id: str,
+        run_id: str,
+        proposal: Any,
+        user_id: Optional[str] = None,
+        routine_id: Optional[str] = None,
+        executor_type: Optional[str] = None,
+        executor_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ):
+        """Persist an explicit proposal with verified evidence and a stable Source-local identity.
+
+        The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
+        the Default Project when none is named.
+        """
+        from agno.company.declarations import IntakeProposal
+        from agno.company.sources import _proposal_fields
+        from agno.db.schemas.tasks import validate_task_fields
+
+        validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
+
+        source = await self.get_source(source_id)
+        from agno.company.routines import _require_routine_goal
+
+        if source is not None:
+            _require_routine_goal(source["goal_id"])
+        if source is None:
+            raise LookupError("Source not found")
+        # With no Project named, the proposal goes to the Default Project, tagged with the Source's Goal.
+        project = await self._task_project(project_id, None)
+        project_id = project["id"]
+        _task_goal(source["goal_id"], project)
+        proposal = IntakeProposal.model_validate(proposal)
+        evidence = await self.read_source(source_id, run_id, links=proposal.evidence_links)
+        fields = _proposal_fields(source_id, proposal, evidence)
+        routine_id = _proposal_origin().get("routine_id", routine_id)
+        return await self.db.create_task(
+            {
+                **fields,
+                "id": str(uuid4()),
+                "goal_id": source["goal_id"],
+                "status": "backlog",
+                "executor_type": executor_type,
+                "executor_id": executor_id,
+                "project_id": project_id,
+                "origin": "routine" if routine_id else "product_manager",
+                "routine_id": routine_id,
+                "session_id": str(uuid4()),
+                "user_id": user_id,
+                "transitions": [],
+                "created_at": int(time.time()),
+                "updated_at": None,
+                "deleted_at": None,
+            }
+        )
+
+    async def refresh(self, goal_id: str, user_id: Optional[str] = None):
+        """Propose Project completion and apply the Goal's archive window."""
+        from agno.company.refresh import arefresh_goal
+
+        return await arefresh_goal(self, goal_id, user_id)
+
+    @_serialized_summary
+    async def summarize(
+        self, *, goal_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
+    ):
+        """Write the observed report to the wiki and deliver using Goal configuration."""
+        from agno.company.playbook import _require_goal_scope
+        from agno.company.summary import (
+            _STATE_PATH,
+            _aload_summary_state,
+            _delivery_state,
+            _summary_delivered,
+            _summary_page,
+            _summary_report,
+            adeliver_summary,
+        )
+
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        delivery = (goal.get("metadata") or {}).get("summary") or {}
+        if not delivery.get("interface") or not delivery.get("destination"):
+            raise ValueError("Goal summary requires an interface and destination")
+        counts = await self.attention(goal_id)
+        rows = []
+        page = 1
+        while True:
+            tasks, total = await self.list_tasks(goal_id=goal_id, limit=100, page=page)
+            rows.extend(tasks)
+            if page * 100 >= total:
+                break
+            page += 1
+        path = "summary.md"
+        try:
+            existing = await self.read_wiki(goal_id, path)
+        except LookupError:
+            existing = None
+        state_fs, previous, state_version = await _aload_summary_state(
+            self.db, goal_id, existing.content if existing else ""
+        )
+        content = _summary_report(goal, counts, rows, narrative, previous)
+        report, delivered, marker = _summary_page(previous, run_id, content)
+        if delivered:
+            return {"path": path, "delivered": True, "quiet": True}
+        saved = await self.write_wiki(
+            goal_id=goal_id,
+            path=path,
+            content=report,
+            expected_version=existing.metadata.version if existing else 0,
+            user_id=user_id,
+        )
+        await adeliver_summary(
+            interfaces,
+            delivery["interface"],
+            delivery["destination"],
+            content.partition("\n\n<!-- Company summary snapshot:")[0],
+        )
+        completed = _summary_delivered(report, marker)
+        await state_fs.awrite(_STATE_PATH, _delivery_state(completed), expected_version=state_version)
+        await self.write_wiki(
+            goal_id=goal_id, path=path, content=completed, expected_version=saved.version, user_id=user_id
+        )
+        return {"path": path, "delivered": True, "quiet": not rows}
+
+
+def _proposal_origin():
+    from agno.company.routines import _RoutineAuthorization
+    from agno.run.authorization import current_authorization
+
+    authority = current_authorization()
+    if isinstance(authority, _RoutineAuthorization) and authority.routine_id:
+        return {"origin": "routine", "routine_id": authority.routine_id}
+    return {}

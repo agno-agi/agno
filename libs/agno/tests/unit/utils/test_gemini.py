@@ -1,7 +1,13 @@
+import inspect
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+from google.genai.types import Part
+
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
+from agno.tools.company import CompanyTools
 from agno.utils.gemini import (
     convert_schema,
     format_function_definitions,
@@ -804,3 +810,61 @@ def test_format_image_for_message_falls_back_to_jpeg_for_unknown_bytes():
 
     assert result is not None
     assert result["mime_type"] == "image/jpeg"
+
+
+def test_format_image_for_message_content_passes_the_bytes_through():
+    """Part.from_bytes takes raw bytes; a base64 string would only be decoded back into a copy."""
+    result = format_image_for_message(Image(content=PNG_BYTES))
+
+    assert result is not None
+    assert result["data"] is PNG_BYTES
+
+
+def test_format_image_for_message_url_passes_the_downloaded_bytes_through():
+    with patch.object(Image, "get_content_bytes", return_value=WEBP_BYTES):
+        result = format_image_for_message(Image(url="https://example.com/photo.webp"))
+
+    assert result is not None
+    assert result["data"] is WEBP_BYTES
+
+
+def test_formatted_image_builds_the_same_part_as_before():
+    part = Part.from_bytes(**format_image_for_message(Image(content=PNG_BYTES)))  # type: ignore[arg-type]
+
+    assert part.inline_data is not None
+    assert part.inline_data.data == PNG_BYTES
+    assert part.inline_data.mime_type == "image/png"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async, strict):
+    db = SqliteDb(db_file=str(tmp_path / "gemini-schema.db"))
+    try:
+        toolkit = CompanyTools(db)
+        functions = toolkit.get_async_functions() if use_async else toolkit.functions
+        for name, function in functions.items():
+            function.process_entrypoint(strict=strict)
+            converted = format_function_definitions([{"type": "function", "function": function.to_dict()}])
+            properties = converted.function_declarations[0].parameters.properties
+            assert not any(key.startswith("_agno_") for key in properties)
+            signature = inspect.signature(getattr(toolkit, ("a" if use_async else "") + name))
+            for argument, parameter in signature.parameters.items():
+                if parameter.default is inspect.Parameter.empty or argument.startswith("_agno_"):
+                    continue
+                schema = properties[argument]
+                assert schema.nullable is True, (name, argument)
+                assert not schema.any_of, (name, argument)
+                assert not schema.enum, (name, argument)
+                expected_type = (
+                    "INTEGER"
+                    if argument in ("limit", "page", "days", "offset", "content_offset", "max_chars")
+                    else "ARRAY"
+                    if argument in ("sources", "routines")
+                    else "BOOLEAN"
+                    if argument == "enabled"
+                    else "STRING"
+                )
+                assert schema.type == ("OBJECT" if argument == "config" else expected_type), (name, argument)
+    finally:
+        db.close()

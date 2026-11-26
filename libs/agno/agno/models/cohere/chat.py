@@ -364,9 +364,10 @@ class Cohere(Model):
 
         Args:
             response: Raw response chunk from the model provider
+            tool_use: The current tool being built across chunks
 
         Returns:
-            ModelResponse: Parsed response delta
+            Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated tool_use
         """
         model_response = ModelResponse()
 
@@ -427,5 +428,6 @@ class Cohere(Model):
         metrics.input_tokens = response_usage.tokens.input_tokens or 0
         metrics.output_tokens = response_usage.tokens.output_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.cache_read_tokens = getattr(response_usage, "cached_tokens", None) or 0
 
         return metrics

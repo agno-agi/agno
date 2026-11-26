@@ -213,6 +213,28 @@ def test_read_file_chunked_uses_actual_file_line_numbers():
         assert out == "     2\tb\n     3\tc\n     4\td"
 
 
+def test_read_file_accepts_a_file_of_exactly_max_file_lines():
+    """The line limit is inclusive: a file with exactly max_file_lines lines reads whole.
+
+    Text files end with a newline, which is a line terminator and not a line of its
+    own, so it must not count against max_file_lines.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, max_file_lines=5)
+        (Path(tmp_dir) / "five.txt").write_text("one\ntwo\nthree\nfour\nfive\n")
+        out = ws.read_file("five.txt")
+        assert out == "     1\tone\n     2\ttwo\n     3\tthree\n     4\tfour\n     5\tfive"
+
+
+def test_read_file_too_long_reports_the_real_line_count():
+    """A file one line over the limit is refused, and the count in the message is the file's."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, max_file_lines=5)
+        (Path(tmp_dir) / "six.txt").write_text("one\ntwo\nthree\nfour\nfive\nsix\n")
+        result = ws.read_file("six.txt")
+        assert result.startswith("Error: file too long (6 lines > 5)")
+
+
 def test_read_file_missing():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
@@ -1693,3 +1715,41 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
+
+
+# ------------------------------------------------------------------
+# run_command / arun_command: explicit zero tail tests
+# ------------------------------------------------------------------
+
+
+def test_run_command_zero_tail_returns_empty():
+    """tail=0 asks for no lines; [-0:] slicing returns the whole output instead."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=0,
+        )
+        assert out == ""
+
+
+def test_run_command_positive_tail_returns_last_lines():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(
+            [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+            tail=2,
+        )
+        assert out == "b" + chr(10) + "c"
+
+
+def test_arun_command_zero_tail_returns_empty():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = asyncio.run(
+            ws.arun_command(
+                [sys.executable, "-c", "import sys; sys.stdout.write(chr(97) + chr(10) + chr(98) + chr(10) + chr(99))"],
+                tail=0,
+            )
+        )
+        assert out == ""

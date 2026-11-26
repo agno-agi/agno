@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
+from typing import Annotated, Any, Dict, Literal, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -103,6 +103,12 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     type_origin = get_origin(type_hint)
     # log_info(f"Type origin: {type_origin}")
     if type_origin is not None:
+        if type_origin is Annotated:
+            # Unwrap Annotated[T, ...] so dataclass Field-constrained fields and
+            # include_extras type hints map to T instead of the empty-object stub.
+            if not type_args:
+                return None
+            return get_json_schema_for_arg(type_args[0])
         if type_origin is Literal:
             # Handle Literal types - check all values to determine the appropriate JSON type
             # Order matters: check bool before int since bool is a subclass of int in Python

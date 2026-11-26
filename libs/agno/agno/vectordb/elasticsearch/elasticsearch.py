@@ -75,7 +75,7 @@ class Elasticsearch(VectorDb):
         similarity (Similarity): Similarity function for the dense_vector field
         search_type (SearchType): Default search type (vector, keyword, or hybrid)
         embedder (Embedder): Embedder instance for generating vector embeddings
-        reranker (Optional[Reranker]): Optional reranker for improving search results
+        reranker (Optional[Reranker]): Optional reranker for improving search results. Deprecated: pass the reranker to Knowledge instead.
     """
 
     def __init__(
@@ -143,7 +143,7 @@ class Elasticsearch(VectorDb):
                 no replica, which keeps a single-node cluster green; pass a replica count
                 on a multi-node cluster to make the index redundant. A serverless project
                 rejects shard settings, and the index is then created without them.
-            reranker: Optional reranker for improving search results
+            reranker: Optional reranker for improving search results. Deprecated: pass the reranker to Knowledge instead.
             id: Optional custom ID. Derived from the url and index name if not provided.
             name: Optional name for the vector database
             description: Optional description for the vector database
@@ -988,6 +988,7 @@ class Elasticsearch(VectorDb):
             content=doc_data["content"],
             name=doc_data.get("name"),
             meta_data=meta_data,
+            embedder=self.embedder,
             embedding=doc_data.get("embedding"),
             usage=doc_data.get("usage"),
             reranking_score=doc_data.get("reranking_score"),

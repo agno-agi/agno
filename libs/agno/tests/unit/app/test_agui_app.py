@@ -14,6 +14,7 @@ from ag_ui.core.types import (
     UserMessage,
     VideoInputContent,
 )
+from pydantic import ValidationError
 
 from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
@@ -1868,7 +1869,8 @@ async def test_state_delta_after_tool_call():
 
     # Verify the delta contains the right operations
     delta_event = events[delta_idx]
-    delta_paths = [op["path"] for op in delta_event.delta]
+    # ag-ui-protocol 1.0 parses each JSON Patch entry into a typed operation; earlier releases keep the dict.
+    delta_paths = [op["path"] if isinstance(op, dict) else op.path for op in delta_event.delta]
     assert "/counter" in delta_paths
     assert "/status" in delta_paths
 
@@ -2027,6 +2029,11 @@ def test_extract_media_all_types():
 
 def test_extract_media_binary_content():
     """Test AG-UI binary content is routed to the matching Agno media bucket."""
+    try:
+        UserMessage(id="probe", content=[BinaryInputContent(mime_type="image/png", data="aGk=")])
+    except ValidationError:
+        pytest.skip("ag-ui-protocol 1.0 removed the binary content part, so no message can carry one")
+
     image_bytes = b"binary-image"
     audio_bytes = b"binary-audio"
     video_bytes = b"binary-video"

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import and_, not_, or_, update
+    from sqlalchemy import and_, not_, null, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.exc import NoSuchTableError
@@ -26,11 +26,14 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
+from datetime import datetime
+
 from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
+from agno.knowledge.utils import STORE_RECENCY_METADATA_KEY
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import (
     VectorDb,
@@ -47,6 +50,16 @@ from agno.vectordb.search import SearchType
 
 if TYPE_CHECKING:
     from agno.db.postgres import PostgresDb
+
+
+# ts_rank_cd returns small unbounded values, so a rank is reported on a 0-1 scale with
+# x/(x+k). Shared by keyword and hybrid search, which must agree on the scale.
+_RANK_NORMALIZATION_K = 0.1
+
+
+def _normalized_rank(rank: Any) -> Any:
+    """Map a ts_rank_cd expression onto 0-1."""
+    return rank / (rank + _RANK_NORMALIZATION_K)
 
 
 class PgVector(VectorDb):
@@ -75,6 +88,7 @@ class PgVector(VectorDb):
         content_language: str = "english",
         schema_version: int = 1,
         reranker: Optional[Reranker] = None,
+        return_updated_at: bool = False,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
         *,
@@ -100,7 +114,7 @@ class PgVector(VectorDb):
             vector_score_weight (float): Weight for vector similarity in hybrid search.
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
-            reranker (Optional[Reranker]): Reranker instance for reranking search results.
+            reranker (Optional[Reranker]): Reranker instance for reranking search results. Deprecated: pass the reranker to Knowledge instead.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
@@ -178,6 +192,9 @@ class PgVector(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+        # Off by default: the timestamp lands in meta_data, which is serialized into the
+        # model's prompt, so only stores whose caller wants recency ranking should pay for it.
+        self.return_updated_at: bool = return_updated_at
 
         # Schema creation flag
         self.create_schema: bool = create_schema
@@ -627,6 +644,9 @@ class PgVector(VectorDb):
                             "usage": insert_stmt.excluded.usage,
                             "content_hash": insert_stmt.excluded.content_hash,
                             "content_id": insert_stmt.excluded.content_id,
+                            # onupdate does not fire for on_conflict_do_update, so a
+                            # re-ingested row would otherwise keep a null updated_at.
+                            "updated_at": func.now(),
                         }
                         if self._user_id_column_exists():
                             # The owner is folded into the id, so a conflict is always same-owner
@@ -864,6 +884,9 @@ class PgVector(VectorDb):
                             "usage": insert_stmt.excluded.usage,
                             "content_hash": insert_stmt.excluded.content_hash,
                             "content_id": insert_stmt.excluded.content_id,
+                            # onupdate does not fire for on_conflict_do_update, so a
+                            # re-ingested row would otherwise keep a null updated_at.
+                            "updated_at": func.now(),
                         }
                         if self._user_id_column_exists():
                             # The owner is folded into the id, so a conflict is always same-owner
@@ -909,6 +932,43 @@ class PgVector(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for document {content_id}: {str(e)}")
             raise
+
+    def _with_recency(self, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
+        """Report the stored last-modified time, under a key of our own.
+
+        Reported only when asked for: it travels in meta_data, which reaches the model's
+        prompt, and it is namespaced so it cannot mask a timestamp the user set themselves.
+        """
+        merged = dict(meta_data) if meta_data else {}
+        if not self.return_updated_at:
+            return merged
+        timestamp = getattr(result, STORE_RECENCY_METADATA_KEY, None)
+        # A table without the columns selects NULL, so the value is not always a datetime.
+        if isinstance(timestamp, datetime):
+            merged[STORE_RECENCY_METADATA_KEY] = timestamp.isoformat()
+        return merged
+
+    def _with_scores(self, meta_data: Optional[Dict[str, Any]], result: Any) -> Dict[str, Any]:
+        """Recency plus the row's own relevance score, where the query computes one."""
+        merged = self._with_recency(meta_data, result)
+        score = getattr(result, "similarity_score", None)
+        if score is not None:
+            merged["similarity_score"] = float(score)
+        return merged
+
+    def _recency_column(self):
+        """The stored last-modified time, for rerankers that weight by recency.
+
+        updated_at is only set once a row has been re-ingested or had its metadata
+        changed, so an untouched row falls back to when it was first stored.
+        """
+        columns = self.table.c
+        # A table created before these columns existed still has to be searchable.
+        if "updated_at" in columns and "created_at" in columns:
+            return func.coalesce(columns.updated_at, columns.created_at).label(STORE_RECENCY_METADATA_KEY)
+        if "created_at" in columns:
+            return columns.created_at.label(STORE_RECENCY_METADATA_KEY)
+        return null().label(STORE_RECENCY_METADATA_KEY)
 
     def search(
         self,
@@ -1024,6 +1084,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                self._recency_column(),
                 distance_expr.label("distance"),
             ]
 
@@ -1085,7 +1146,7 @@ class PgVector(VectorDb):
                 # For inner product, negate since pgvector returns negative values
                 raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
                 similarity_score = normalize_score(raw_distance, self.distance)
-                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data = self._with_recency(result.meta_data, result)
                 meta_data["similarity_score"] = similarity_score
 
                 search_results.append(
@@ -1168,6 +1229,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                self._recency_column(),
             ]
 
             # Build the base statement
@@ -1201,6 +1263,12 @@ class PgVector(VectorDb):
                     ]
                     stmt = stmt.where(and_(*sqlalchemy_conditions))
 
+            # Surface the rank too, so a reranker that blends in another signal has a
+            # relevance score to blend with rather than treating every row as 0. Reported
+            # on the same 0-1 scale as the other search types, since ts_rank_cd itself
+            # returns small unbounded values that would barely register in a blend.
+            stmt = stmt.add_columns(_normalized_rank(text_rank).label("similarity_score"))
+
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
 
@@ -1227,7 +1295,7 @@ class PgVector(VectorDb):
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=self._with_scores(result.meta_data, result),
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -1275,6 +1343,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                self._recency_column(),
             ]
 
             # === TEXT SEARCH COMPONENT ===
@@ -1296,7 +1365,7 @@ class PgVector(VectorDb):
             # text_rank: score how well document matches the query (0.0 to 1.0)
             # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
             raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
-            text_rank = raw_text_rank / (raw_text_rank + 0.1)
+            text_rank = _normalized_rank(raw_text_rank)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:
@@ -1379,7 +1448,7 @@ class PgVector(VectorDb):
 
             search_results: List[Document] = []
             for result in results:
-                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data = self._with_recency(result.meta_data, result)
                 meta_data["similarity_score"] = float(result.hybrid_score)
 
                 search_results.append(

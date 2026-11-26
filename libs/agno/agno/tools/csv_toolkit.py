@@ -1,10 +1,19 @@
 import csv
 import json
+from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
+
+
+def _format_csv_row(row: List[str]) -> str:
+    """Format one CSV row without its line terminator."""
+    # The default terminator is required for older Pythons to quote a bare "\r".
+    output = StringIO(newline="")
+    csv.writer(output).writerow(row)
+    return output.getvalue()[: -len("\r\n")]
 
 
 class CsvTools(Toolkit):
@@ -78,7 +87,7 @@ class CsvTools(Toolkit):
 
             # Read the csv file
             csv_data = []
-            _row_limit = row_limit or self.row_limit
+            _row_limit = self.row_limit if row_limit is None else row_limit
             with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 if _row_limit is not None:
@@ -129,7 +138,7 @@ class CsvTools(Toolkit):
             sql_query (str): The SQL Query to run on the csv file.
 
         Returns:
-            str: The query results if successful, otherwise returns an error message.
+            str: The query results as CSV if successful, otherwise returns an error message.
         """
         try:
             import duckdb
@@ -170,15 +179,9 @@ class CsvTools(Toolkit):
             if query_result is not None:
                 try:
                     results_as_python_objects = query_result.fetchall()
-                    result_rows = []
-                    for row in results_as_python_objects:
-                        if len(row) == 1:
-                            result_rows.append(str(row[0]))
-                        else:
-                            result_rows.append(",".join(str(x) for x in row))
-
-                    result_data = "\n".join(result_rows)
-                    result_output = ",".join(query_result.columns) + "\n" + result_data
+                    rows = [query_result.columns]
+                    rows.extend([str(value) for value in row] for row in results_as_python_objects)
+                    result_output = "\n".join(_format_csv_row(row) for row in rows)
                 except AttributeError:
                     result_output = str(query_result)
 
