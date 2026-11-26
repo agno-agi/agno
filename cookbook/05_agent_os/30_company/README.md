@@ -476,8 +476,12 @@ acceptance.
 - A person with `tasks:write` attaches any reference they may read: `wiki:read`
   for every kind, and `tasks:read` as well for a Task or a Task's file. A
   reference they may not read, or that names nothing, is refused and nothing is
-  attached. Super Agent acts for the person it talks to, with
-  `propose_company_task(context=[...])` and `update_company_task_context`.
+  attached. Super Agent acts for the person it talks to, with `context` on
+  `add_company_task` and `propose_company_task`, and with
+  `update_company_task_context` afterwards. Work a person asks to have done is
+  created accepted and started by one `add_company_task` call, so its context is
+  attached in that call: the run is queued before anything could be added later.
+  A Task that call holds back for the person's confirmation keeps its context.
 - A Routine run changes the context of Backlog Tasks of its own Goal only, with
   references to that Goal's pages and Tasks and to `wiki/`.
 - A Task run never changes a context, whatever its executor and whatever tools
