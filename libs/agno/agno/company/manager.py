@@ -360,13 +360,18 @@ class CompanyManager:
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Propose a Project, under a Goal or under none.
+        """Propose a Project, under a Goal or under none. One a Routine proposes carries the Routine's Goal.
 
         scoped_user_id filters the Goal while user_id records the creator.
         """
-        from agno.company.routines import _require_routine_goal
+        from agno.company.routines import _require_routine_goal, _RoutineAuthorization
         from agno.db.schemas.projects import validate_project_fields
+        from agno.run.authorization import current_authorization
 
+        authority = current_authorization()
+        if goal_id is None and isinstance(authority, _RoutineAuthorization):
+            # A Project a Routine proposes carries the Routine's Goal.
+            goal_id = authority.goal_id
         _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
@@ -436,8 +441,12 @@ class CompanyManager:
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Goals, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         rows, total = self.db.get_projects(
@@ -449,6 +458,7 @@ class CompanyManager:
             status=status,
             sort_by=sort_by,
             sort_order=sort_order,
+            has_goal=has_goal,
         )
         counts = self.db.get_project_counts([row["id"] for row in rows])
         return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
@@ -535,10 +545,13 @@ class CompanyManager:
         status: str = "backlog",
         accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a Task. With no project_id it goes into the Default Project, with the Goal given or none.
+        """Create a Task. With no project_id it goes into the Default Project.
 
-        In any other Project the Task carries that Project's Goal. scoped_user_id filters the Goal
-        and the Project while user_id records the creator.
+        A Task's Goal is derived: in a Project that has a Goal it is that Goal, and a goal_id that
+        differs is refused. In the Default Project it is the goal_id given, which is how a Routine's
+        proposal is tagged with the Routine's Goal and how the HTTP API files a Task under a Goal
+        with no Project; with none given the Task has no Goal. scoped_user_id filters the Goal and
+        the Project while user_id records the creator.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
@@ -606,8 +619,12 @@ class CompanyManager:
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Goals, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         return self.db.get_tasks(
@@ -622,6 +639,7 @@ class CompanyManager:
             session_id=session_id,
             sort_by=sort_by,
             sort_order=sort_order,
+            has_goal=has_goal,
         )
 
     def update_task(
@@ -1359,13 +1377,18 @@ class AsyncCompanyManager:
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Propose a Project, under a Goal or under none.
+        """Propose a Project, under a Goal or under none. One a Routine proposes carries the Routine's Goal.
 
         scoped_user_id filters the Goal while user_id records the creator.
         """
-        from agno.company.routines import _require_routine_goal
+        from agno.company.routines import _require_routine_goal, _RoutineAuthorization
         from agno.db.schemas.projects import validate_project_fields
+        from agno.run.authorization import current_authorization
 
+        authority = current_authorization()
+        if goal_id is None and isinstance(authority, _RoutineAuthorization):
+            # A Project a Routine proposes carries the Routine's Goal.
+            goal_id = authority.goal_id
         _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
@@ -1435,8 +1458,12 @@ class AsyncCompanyManager:
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Goals, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         rows, total = await self.db.get_projects(
@@ -1448,6 +1475,7 @@ class AsyncCompanyManager:
             status=status,
             sort_by=sort_by,
             sort_order=sort_order,
+            has_goal=has_goal,
         )
         counts = await self.db.get_project_counts([row["id"] for row in rows])
         return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
@@ -1534,10 +1562,13 @@ class AsyncCompanyManager:
         status: str = "backlog",
         accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a Task. With no project_id it goes into the Default Project, with the Goal given or none.
+        """Create a Task. With no project_id it goes into the Default Project.
 
-        In any other Project the Task carries that Project's Goal. scoped_user_id filters the Goal
-        and the Project while user_id records the creator.
+        A Task's Goal is derived: in a Project that has a Goal it is that Goal, and a goal_id that
+        differs is refused. In the Default Project it is the goal_id given, which is how a Routine's
+        proposal is tagged with the Routine's Goal and how the HTTP API files a Task under a Goal
+        with no Project; with none given the Task has no Goal. scoped_user_id filters the Goal and
+        the Project while user_id records the creator.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
@@ -1605,8 +1636,12 @@ class AsyncCompanyManager:
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Goals, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination.
+
+        has_goal=False lists only records with no Goal, and True only records with one.
+        """
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         return await self.db.get_tasks(
@@ -1621,6 +1656,7 @@ class AsyncCompanyManager:
             session_id=session_id,
             sort_by=sort_by,
             sort_order=sort_order,
+            has_goal=has_goal,
         )
 
     async def update_task(

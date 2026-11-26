@@ -106,6 +106,8 @@ async def test_the_async_manager_stores_and_uses_the_default_project(tmp_path):
             await manager.transition_project(project_id=DEFAULT_PROJECT_ID, target="done", reason="All done")
         with pytest.raises(ValueError, match=ARCHIVE):
             await manager.delete_project(DEFAULT_PROJECT_ID)
+        assert (await manager.list_tasks(has_goal=False))[1] == 1 and (await manager.list_tasks(has_goal=True))[1] == 0
+        assert (await manager.list_projects(has_goal=False))[1] == 2
         rows, total = await manager.list_projects()
         assert {row["id"]: row["is_default"] for row in rows} == {DEFAULT_PROJECT_ID: True, project["id"]: False}
     finally:
@@ -221,6 +223,11 @@ def test_the_manager_takes_a_project_and_a_task_with_no_goal(system):
     assert counts == {DEFAULT_PROJECT_ID: 2, project["id"]: 1, under_goal["id"]: 1}
     assert manager.list_tasks()[1] == 4
     assert manager.list_tasks(goal_id=goal["id"])[1] == 2
+    without = {task["id"] for task in manager.list_tasks(has_goal=False)[0]}
+    assert without == {loose["id"], in_project["id"]}
+    assert {task["id"] for task in manager.list_tasks(has_goal=True)[0]} == {inherited["id"], tagged["id"]}
+    assert {row["id"] for row in manager.list_projects(has_goal=False)[0]} == {DEFAULT_PROJECT_ID, project["id"]}
+    assert [row["id"] for row in manager.list_projects(has_goal=True)[0]] == [under_goal["id"]]
     assert manager.attention()["proposals"] == 4 and manager.attention(goal["id"])["proposals"] == 2
     assert manager.get(goal["id"])["counts"]["tasks"]["backlog"] == 2
 
@@ -308,6 +315,12 @@ def test_the_api_takes_a_project_and_a_task_with_no_goal(system):
     in_default = listed(system, "/company/tasks", project_id=DEFAULT_PROJECT_ID)
     assert {t["id"] for t in in_default} == {loose["id"], tagged["id"]}
     assert [t["id"] for t in listed(system, "/company/tasks", goal_id=goal["id"])] == [tagged["id"]]
+    # has_goal=false lists the records with no Goal, and has_goal=true the others.
+    assert {t["id"] for t in listed(system, "/company/tasks", has_goal="false")} == {loose["id"], in_project["id"]}
+    assert [t["id"] for t in listed(system, "/company/tasks", has_goal="true")] == [tagged["id"]]
+    no_goal = listed(system, "/company/projects", has_goal="false")
+    assert {p["id"] for p in no_goal} == {DEFAULT_PROJECT_ID, project["id"]}
+    assert listed(system, "/company/projects", has_goal="true") == []
 
     moved = system.client.patch(
         f"/company/tasks/{in_project['id']}", json={"project_id": None}, headers=headers()
@@ -335,6 +348,24 @@ def test_the_tools_take_a_project_and_a_task_with_no_goal(system, use_async):
     assert (loose["goal_id"], loose["project_id"], loose["status"]) == (None, DEFAULT_PROJECT_ID, "backlog")
     in_project = call("propose_company_task", goal_id=None, title="Count paying customers", project_id=project["id"])
     assert in_project["goal_id"] is None
+
+    # A Task's Goal comes from its Project. It is not chosen in a proposal.
+    goal = system.manager.create(name="Developer docs")
+    under_goal = call("propose_company_project", goal_id=goal["id"], name="3.3 migration guide")
+    derived = call(
+        "propose_company_task", goal_id=None, title="Write the breaking changes", project_id=under_goal["id"]
+    )
+    assert derived["goal_id"] == goal["id"]
+    agreed = call("propose_company_task", goal_id=goal["id"], title="Review it", project_id=under_goal["id"])
+    assert agreed["goal_id"] == goal["id"]
+    for project_id in (None, "", DEFAULT_PROJECT_ID):
+        with pytest.raises(ValueError, match="A Task takes its Goal from its Project"):
+            call("propose_company_task", goal_id=goal["id"], title="Tagged by choice", project_id=project_id)
+    with pytest.raises(ValueError, match="Task and Project must belong to the same Goal"):
+        call("propose_company_task", goal_id=goal["id"], title="Mismatched", project_id=project["id"])
+    system.manager.delete_task(derived["id"])
+    system.manager.delete_task(agreed["id"])
+    system.manager.delete_project(under_goal["id"])
 
     projects = call("list_company_projects")["data"]
     assert {p["id"]: p["is_default"] for p in projects} == {DEFAULT_PROJECT_ID: True, project["id"]: False}
@@ -402,9 +433,10 @@ def test_a_routine_is_refused_outside_its_goal(open_system, tmp_path):
 
     authority = _RoutineAuthorization(None, routine_id=routine_id, goal_id=goal_id)
     with authorization_scope(lambda: authority):
-        for refused in (None, other["id"]):
-            with pytest.raises(PermissionError, match="Routine authority is restricted to its configured Goal"):
-                manager.create_project(goal_id=refused, name="Outside")
+        with pytest.raises(PermissionError, match="Routine authority is restricted to its configured Goal"):
+            manager.create_project(goal_id=other["id"], name="Outside")
+        # A Project a Routine proposes carries the Routine's Goal, also when it names none.
+        assert manager.create_project(name="Named no Goal")["goal_id"] == goal_id
         with pytest.raises(PermissionError, match="Routines must propose Tasks through intake_goal_source"):
             manager.create_task(title="A loose Task")
         for project in (loose_project, other_project):

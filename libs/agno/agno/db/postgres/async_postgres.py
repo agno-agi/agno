@@ -7938,6 +7938,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -7952,6 +7953,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         stmt = active_parents(select(table), table, goals)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if user_id is not None:
@@ -8198,6 +8201,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -8226,6 +8230,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             stmt = stmt.where(table.c.session_id == session_id)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if project_id is not None:

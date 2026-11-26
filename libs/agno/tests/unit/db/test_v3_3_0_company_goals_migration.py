@@ -1398,6 +1398,12 @@ async def _assert_goal_optional(database: _Database) -> None:
     default = await _call(manager.get_project, "default")
     assert (default["name"], default["status"], default["goal_id"]) == ("Default", "active", None)
     assert default["is_default"] is True and default["counts"]["tasks"]["backlog"] == 1
+    without, _ = await _call(manager.list_tasks, has_goal=False)
+    assert [row["id"] for row in without] == [task["id"]]
+    with_goal, _ = await _call(manager.list_tasks, has_goal=True)
+    assert with_goal and task["id"] not in {row["id"] for row in with_goal}
+    projects, _ = await _call(manager.list_projects, has_goal=False)
+    assert {row["id"] for row in projects} == {"default", project["id"]}
 
 
 async def test_a_3_2_0_database_takes_a_project_and_a_task_with_no_goal(database):

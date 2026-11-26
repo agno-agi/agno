@@ -6,7 +6,7 @@ without a Goal.
 
 Prerequisites: Install agno and sqlalchemy.
 Run: .venv/bin/python cookbook/05_agent_os/30_company/18_work_without_a_goal.py
-Try: Give the Project a Goal with goal_id, or tag the loose Task with one.
+Try: Give the Project a Goal with goal_id, and see its Task take that Goal.
 """
 
 from tempfile import TemporaryDirectory
@@ -67,12 +67,15 @@ if __name__ == "__main__":
         )
         print(f"Project '{project['name']}' is active with no Goal")
 
-        # A Project may still serve a Goal, and the Default Project holds a Task of any Goal.
+        # A Project may still serve a Goal. A Task takes its Goal from its Project: it is not chosen.
         goal = manager.create(name="Customer growth", user_id="alice")
         under_goal = manager.create_project(goal_id=goal["id"], name="Launch week")
-        assert under_goal["goal_id"] == goal["id"]
-        stray = manager.create_task(goal_id=goal["id"], title="Reply to the Acme lead")
-        assert stray["project_id"] == default["id"] and stray["goal_id"] == goal["id"]
+        launch = manager.create_task(
+            title="Write the launch post", project_id=under_goal["id"]
+        )
+        assert launch["goal_id"] == goal["id"]
+        without_goal, _ = manager.list_tasks(has_goal=False)
+        assert {task["id"] for task in without_goal} == {typo["id"], first["id"]}
 
         # The Default Project never finishes and cannot be changed.
         for change in (
