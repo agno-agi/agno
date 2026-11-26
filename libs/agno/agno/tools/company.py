@@ -17,6 +17,7 @@ from pydantic import BeforeValidator
 from agno.company.declarations import Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_goal, _RoutineAuthorization, _run_kind
+from agno.db.schemas.projects import refuse_default_project
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
 from agno.run.authorization import current_authorization, requires_permission
@@ -757,8 +758,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List proposed and active Projects across owners.
 
+        The Project with is_default true is the Default Project: it holds Tasks that fit no other
+        Project, is always active and never finishes.
+
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Projects under no Goal.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
@@ -785,7 +789,7 @@ class CompanyTools(Toolkit):
         person to complete or cancel an open Task. Say so when listing what needs a decision.
 
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Tasks under no Goal.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
@@ -802,7 +806,7 @@ class CompanyTools(Toolkit):
         at_limit: List[Dict[str, Any]] = []
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
-            for listed in dict.fromkeys(row["goal_id"] for row in result[0]):
+            for listed in dict.fromkeys(row["goal_id"] for row in result[0] if row["goal_id"] is not None):
                 at_limit.extend(manager.auto_accept_status(listed, decisions=False)["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
@@ -811,13 +815,18 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def propose_company_project(
-        self, goal_id: str, name: str, outcome: _OptionalString = None, _agno_run_context: Optional[Any] = None
+        self, name: str,
+        goal_id: _OptionalString = None,
+        outcome: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Propose a Project for human review; never activate or complete it.
 
         Args:
+            goal_id: The Goal this Project serves; null when it serves no Goal.
             outcome: Expected or observed outcome; null leaves it unspecified.
         """
+        goal_id = _empty_to_none(goal_id)
         outcome = _empty_to_none(outcome)
         _permission("projects", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -830,8 +839,8 @@ class CompanyTools(Toolkit):
     @requires_permission()
     def propose_company_task(
         self,
-        goal_id: str,
         title: str,
+        goal_id: _OptionalString = None,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
@@ -846,16 +855,17 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
-                proposed Project can hold Backlog drafts; human approval is required before accepting or
-                running them.
+            project_id: The Project this Task is part of; null puts it in the Default Project, the place
+                for a single piece of work that fits no Project. A proposed Project can hold Backlog
+                drafts; human approval is required before accepting or running them.
+            goal_id: The Goal this Task serves. Null in a Project takes the Project's Goal; null in the
+                Default Project leaves the Task under no Goal.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         brief = _empty_to_none(brief)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
+        goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         _permission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -885,6 +895,7 @@ class CompanyTools(Toolkit):
             raise LookupError("Project not found")
         self._scoped_user(_agno_run_context)
         _require_routine_goal(row["goal_id"])
+        refuse_default_project(project_id, "edit")
         if row["status"] != "proposed":
             raise ValueError("Only proposed Projects may be edited by Company tools")
         return _public_json(
@@ -1085,8 +1096,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List proposed and active Projects across owners.
 
+        The Project with is_default true is the Default Project: it holds Tasks that fit no other
+        Project, is always active and never finishes.
+
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Projects under no Goal.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
@@ -1113,7 +1127,7 @@ class CompanyTools(Toolkit):
         person to complete or cancel an open Task. Say so when listing what needs a decision.
 
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Tasks under no Goal.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
@@ -1130,7 +1144,7 @@ class CompanyTools(Toolkit):
         at_limit: List[Dict[str, Any]] = []
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
-            for listed in dict.fromkeys(row["goal_id"] for row in result[0]):
+            for listed in dict.fromkeys(row["goal_id"] for row in result[0] if row["goal_id"] is not None):
                 at_limit.extend((await manager.auto_accept_status(listed, decisions=False))["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
@@ -1139,13 +1153,18 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     async def apropose_company_project(
-        self, goal_id: str, name: str, outcome: _OptionalString = None, _agno_run_context: Optional[Any] = None
+        self, name: str,
+        goal_id: _OptionalString = None,
+        outcome: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Propose a Project for human review; never activate or complete it.
 
         Args:
+            goal_id: The Goal this Project serves; null when it serves no Goal.
             outcome: Expected or observed outcome; null leaves it unspecified.
         """
+        goal_id = _empty_to_none(goal_id)
         outcome = _empty_to_none(outcome)
         await _apermission("projects", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -1158,8 +1177,8 @@ class CompanyTools(Toolkit):
     @requires_permission()
     async def apropose_company_task(
         self,
-        goal_id: str,
         title: str,
+        goal_id: _OptionalString = None,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
@@ -1174,16 +1193,17 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
-                proposed Project can hold Backlog drafts; human approval is required before accepting or
-                running them.
+            project_id: The Project this Task is part of; null puts it in the Default Project, the place
+                for a single piece of work that fits no Project. A proposed Project can hold Backlog
+                drafts; human approval is required before accepting or running them.
+            goal_id: The Goal this Task serves. Null in a Project takes the Project's Goal; null in the
+                Default Project leaves the Task under no Goal.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         brief = _empty_to_none(brief)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
+        goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -1213,6 +1233,7 @@ class CompanyTools(Toolkit):
             raise LookupError("Project not found")
         self._scoped_user(_agno_run_context)
         _require_routine_goal(row["goal_id"])
+        refuse_default_project(project_id, "edit")
         if row["status"] != "proposed":
             raise ValueError("Only proposed Projects may be edited by Company tools")
         return _public_json(
@@ -1501,14 +1522,13 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Goal. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
+                with that Goal. A proposed Project can hold Backlog drafts; human approval is required
+                before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         _permission("sources", "read", _agno_run_context)
         _permission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -1702,14 +1722,13 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Goal. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
+                with that Goal. A proposed Project can hold Backlog drafts; human approval is required
+                before accepting or running them.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         await _apermission("sources", "read", _agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
