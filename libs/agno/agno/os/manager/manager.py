@@ -447,9 +447,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
         pre_hooks=pre_hooks,
-        # The work a conversation started is sent beside each message, not in the instructions: a
-        # model that continues from its previous response is sent the instructions of the first run only.
-        add_dependencies_to_context=company_db is not None,
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
