@@ -228,7 +228,9 @@ def _process_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        # A message that is sent but not kept with the run is the framework's own note, not the
+        # conversation: nothing is learned from it.
+        messages = [m for m in run_messages.messages if m.add_to_agent_memory] if run_messages else []
         team._learning.process(
             messages=messages,
             user_id=user_id,
@@ -256,7 +258,9 @@ async def _aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        # A message that is sent but not kept with the run is the framework's own note, not the
+        # conversation: nothing is learned from it.
+        messages = [m for m in run_messages.messages if m.add_to_agent_memory] if run_messages else []
         await team._learning.aprocess(
             messages=messages,
             user_id=user_id,

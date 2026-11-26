@@ -115,7 +115,9 @@ async def alink_proposal(run_context: Any = None, fc: Any = None) -> None:
 
 
 def _since(value: Dict[str, Any]) -> str:
-    at = value.get("updated_at") or value.get("created_at")
+    # The last recorded step of the Task, not its last edit: renaming a Task does not move it.
+    steps = [step.get("created_at") for step in value.get("transitions") or [] if isinstance(step, dict)]
+    at = next((moment for moment in reversed(steps) if moment), None) or value.get("created_at")
     if not isinstance(at, (int, float)) or isinstance(at, bool):
         return ""
     moment = datetime.fromtimestamp(at, timezone.utc)
@@ -123,12 +125,17 @@ def _since(value: Dict[str, Any]) -> str:
     return " since " + moment.strftime("%H:%M UTC" if today else "%Y-%m-%d %H:%M UTC")
 
 
+def _one_line(text: Any) -> str:
+    """Text written by people and agents, made safe for a line of the block: one line, cut, and never
+    able to close the quotes around it."""
+    cleaned = " ".join(str(text or "").split()).replace('"', "'")
+    return cleaned if len(cleaned) <= _TITLE_LENGTH else cleaned[: _TITLE_LENGTH - 3] + "..."
+
+
 def _line(value: Dict[str, Any], changed: bool) -> str:
-    # A title is text written by people and agents: one line, cut, and never able to close the quotes.
-    title = " ".join(str(value.get("title") or "").split()).replace('"', "'")
-    if len(title) > _TITLE_LENGTH:
-        title = title[: _TITLE_LENGTH - 3] + "..."
-    executor = f", {value['executor_id']}" if value.get("executor_id") else ""
+    title = _one_line(value.get("title"))
+    # A proposal can name any text as its executor.
+    executor = f", {_one_line(value['executor_id'])}" if value.get("executor_id") else ""
     line = f'- Task "{title}" (id {value["id"]}{executor}): {_task_words(value)}{_since(value)}.'
     return line + (" Changed since your last turn." if changed else "")
 
@@ -155,15 +162,32 @@ class LinkedWork(BaseGuardrail):
             owner = _scoped_user(run_context, self.user_isolation)
         except PermissionError:
             return [], None, False
-        newest = sorted(entries, key=lambda entry: entry.get("added_at") or 0, reverse=True)
-        return [entry for entry in newest if entry.get("kind") == "task"][:_LISTED], owner, True
+        # Entries are kept in the order they were added, so the newest are the last.
+        newest = [entry for entry in reversed(entries) if entry.get("kind") == "task"]
+        return newest[:_LISTED], owner, True
 
-    def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]]) -> Optional[str]:
+    @staticmethod
+    def _replied(session: Any, run_id: Any) -> bool:
+        """Whether the run a change was shown in completed, so the person was given its reply.
+
+        With no session to look in, the run is taken to have replied.
+        """
+        if session is None:
+            return True
+        for run in getattr(session, "runs", None) or []:
+            if getattr(run, "run_id", None) == run_id:
+                status = getattr(run, "status", None)
+                return str(getattr(status, "value", status)).upper() == "COMPLETED"
+        return False
+
+    def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any) -> Optional[str]:
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
 
         A change is marked with the run it was first shown in. A retry builds the block again under
         the same run id and gets the same mark. A continued run keeps its run id and runs no pre-hook,
-        so the mark is given in one run however often that run pauses or retries.
+        so the mark is given in one run however often that run pauses or retries. A run that failed,
+        was cancelled or still waits for a confirmation gave the person no reply, so its marks pass to
+        the next run.
         """
         run_id = getattr(run_context, "run_id", None)
         entries = _entries(run_context)
@@ -174,7 +198,9 @@ class LinkedWork(BaseGuardrail):
                 entries.remove(entry)
                 continue
             phase = _task_phase(value)
-            if entry.get("shown") != phase:
+            shown_in = entry.get("changed_in")
+            unheard = shown_in is not None and shown_in != run_id and not self._replied(session, shown_in)
+            if entry.get("shown") != phase or unheard:
                 entry["shown"] = phase
                 entry["changed_in"] = run_id
             changed = run_id is not None and entry.get("changed_in") == run_id
@@ -207,13 +233,13 @@ class LinkedWork(BaseGuardrail):
             attached[LINKED_WORK_MESSAGE] = Message(role="user", content=block, add_to_agent_memory=False)
         run_context._hook_messages = attached or None
 
-    def check(self, run_input: Any = None, run_context: Any = None) -> None:
-        self._attach(run_context, self.read(run_context))
+    def check(self, run_input: Any = None, run_context: Any = None, session: Any = None) -> None:
+        self._attach(run_context, self.read(run_context, session))
 
-    async def async_check(self, run_input: Any = None, run_context: Any = None) -> None:
-        self._attach(run_context, await self.aread(run_context))
+    async def async_check(self, run_input: Any = None, run_context: Any = None, session: Any = None) -> None:
+        self._attach(run_context, await self.aread(run_context, session))
 
-    def read(self, run_context: Any) -> Optional[str]:
+    def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         authority = _caller_authorization(run_context)
         # A synchronous run cannot read an asynchronous database, and the block is optional.
         if isinstance(self.db, AsyncBaseDb):
@@ -224,14 +250,15 @@ class LinkedWork(BaseGuardrail):
             head, owner, found = self._head(run_context)
             if not found:
                 return None
-            return self._block(run_context, [(entry, self.db.get_task(entry["id"], user_id=owner)) for entry in head])
+            read = [(entry, self.db.get_task(entry["id"], user_id=owner)) for entry in head]
+            return self._block(run_context, read, session)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:
             log_warning(f"Linked work unavailable for this run: {exc}")
             return None
 
-    async def aread(self, run_context: Any) -> Optional[str]:
+    async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         authority = _caller_authorization(run_context)
         try:
             if authority is not None:
@@ -245,7 +272,7 @@ class LinkedWork(BaseGuardrail):
                 values = await asyncio.to_thread(
                     lambda: [self.db.get_task(entry["id"], user_id=owner) for entry in head]
                 )
-            return self._block(run_context, list(zip(head, values)))
+            return self._block(run_context, list(zip(head, values)), session)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:
