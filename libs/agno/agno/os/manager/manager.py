@@ -395,8 +395,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
     company_db = agent_os._company_db
-    # Super Agent can edit the platform, so a Company Routine never runs on it.
-    pre_hooks: List[Any] = [_RoutineBoundary(routine=False)]
+    message_context = None
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
         from agno.os.manager.linked_work import LinkedWork, alink_proposal, link_proposal
@@ -418,7 +417,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.append(company_tools)
         tools.append(CompanyTaskTools(agent_os))
         instructions.extend([COMPANY_INSTRUCTIONS, LINKED_WORK_INSTRUCTIONS])
-        pre_hooks.append(LinkedWork(company_db, _user_isolation(agent_os)))
+        message_context = LinkedWork(company_db, _user_isolation(agent_os))
     # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
     notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
@@ -446,7 +445,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools=tools,
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
-        pre_hooks=pre_hooks,
+        # Super Agent can edit the platform, so a Company Routine never runs on it.
+        pre_hooks=[_RoutineBoundary(routine=False)],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
@@ -454,6 +454,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
+    team._message_context = message_context
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})
     registry.exclude_components([team, builder])
     return _Manager(config=config, team=team, builder=builder)

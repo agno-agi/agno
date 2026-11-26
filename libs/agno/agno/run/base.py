@@ -47,11 +47,6 @@ class RunContext:
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
 
-    # Internal: messages the framework's own pre-hooks attach to this run, by the name of what attached
-    # them. A Team sends them right before the run's input. Agents and workflows do not read this.
-    # Not a constructor argument, so the positions of the fields above are what they were.
-    _hook_messages: Optional[Dict[str, Message]] = field(default=None, init=False, repr=False, compare=False)
-
 
 class _EventIndexCarrier:
     """Plain (non-dataclass) base carrying ``event_index``.

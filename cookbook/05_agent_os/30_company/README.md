@@ -692,9 +692,9 @@ several Tasks and answer the rest of the message.
 
 Super Agent is told about the work a conversation started. The Tasks it added,
 proposed, accepted or started from a chat are kept in that chat's session state under
-`linked_work`. Before every run a pre-hook reads their state under the person's own
-`tasks:read` and sends it to the model as a message of its own, right before the
-person's message:
+`linked_work`. When the Team builds a fresh run's messages, it reads those Tasks
+under the person's own `tasks:read` permission. For a text message, the model sees
+the current task state followed by the person's words. A typical update looks like this.
 
 ```
 Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.

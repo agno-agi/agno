@@ -1,13 +1,11 @@
 """The work a Super Agent conversation started, and the block that shows it to Super Agent.
 
-The list is kept in the conversation's own session state. Super Agent's tools add to it as they act,
-and a pre-hook reads it at the start of every run, so only a run of the conversation writes it. Each
-entry keeps the state last shown to the model: a different live state is marked as changed, in one run.
+Super Agent's tools add Tasks to the conversation's session state. When the Team builds a fresh
+run's messages, it reads the listed Tasks and marks changes since the last state shown to the model.
 
-The block is attached as a message of its own right before the person's message and is not stored
-with the run. The model is sent the two as one message, the block first. Instructions would not carry it: a model that continues from its previous response is sent
-the instructions of a conversation's first run only, and what follows the last reply is what every
-request carries.
+The Team keeps the block separate from the person's input so the stored run holds their original
+message. For text input the model receives the block and the person's words together, including
+when a provider continues from its previous response.
 """
 
 import asyncio
@@ -18,8 +16,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
-from agno.guardrails.base import BaseGuardrail
-from agno.models.message import Message
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
@@ -31,9 +27,6 @@ _LISTED = 20
 # Entries kept in session state. Past it the oldest is forgotten.
 _KEPT = 100
 _TITLE_LENGTH = 80
-
-# The name the block's message is attached to the run under.
-LINKED_WORK_MESSAGE = "linked_work"
 
 _HEADER = "Work started from this conversation"
 
@@ -153,12 +146,8 @@ def _line(value: Dict[str, Any], changed: bool) -> str:
     return line + (" Changed since your last turn." if changed else "")
 
 
-class LinkedWork(BaseGuardrail):
-    """Before each run, read the listed work as the caller and attach the block to the run.
-
-    A pre-hook of Super Agent. It refuses nothing: with no list, no permission or a failed read, the
-    run goes on without the block.
-    """
+class LinkedWork:
+    """Supply the current state of the conversation's Tasks under the caller's read permissions."""
 
     def __init__(self, db: Any, user_isolation: bool = False):
         self.db = db
@@ -200,10 +189,9 @@ class LinkedWork(BaseGuardrail):
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
 
         A change is marked with the run it was first shown in. A retry builds the block again under
-        the same run id and gets the same mark. A continued run keeps its run id and runs no pre-hook,
-        so the mark is given once to a run however often it retries. A run that failed, was
-        cancelled or paused for a confirmation may have given the person no reply that had the change
-        in view, so its marks pass to the next run.
+        the same run id and gets the same mark. A continued run uses the stored messages.
+        If a run failed, was cancelled or paused for a confirmation, the person may still need to
+        hear the change, so its marks pass to the next run.
         """
         run_id = getattr(run_context, "run_id", None)
         entries = _entries(run_context)
@@ -238,29 +226,12 @@ class LinkedWork(BaseGuardrail):
             f"Read at {read_at}: newer than anything said earlier.\n" + "\n".join(lines)
         )
 
-    @staticmethod
-    def _attach(run_context: Any, block: Optional[str]) -> None:
-        """Attach the block as this run's message, or take away the one an earlier attempt attached."""
-        attached = dict(getattr(run_context, "_hook_messages", None) or {})
-        attached.pop(LINKED_WORK_MESSAGE, None)
-        if block is not None:
-            # Sent to the model and not stored: the person's own message stays as they wrote it, and
-            # no earlier block is replayed with the history.
-            attached[LINKED_WORK_MESSAGE] = Message(role="user", content=block, add_to_agent_memory=False)
-        run_context._hook_messages = attached or None
-
-    def check(self, run_input: Any = None, run_context: Any = None, session: Any = None) -> None:
-        self._attach(run_context, self.read(run_context, session))
-
-    async def async_check(self, run_input: Any = None, run_context: Any = None, session: Any = None) -> None:
-        self._attach(run_context, await self.aread(run_context, session))
-
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
-        authority = _caller_authorization(run_context)
         # A synchronous run cannot read an asynchronous database, and the block is optional.
         if isinstance(self.db, AsyncBaseDb):
             return None
         try:
+            authority = _caller_authorization(run_context)
             if authority is not None:
                 authority.require("tasks", "read")
             head, owner, found = self._head(run_context)
@@ -275,8 +246,8 @@ class LinkedWork(BaseGuardrail):
             return None
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
-        authority = _caller_authorization(run_context)
         try:
+            authority = _caller_authorization(run_context)
             if authority is not None:
                 await authority.arequire("tasks", "read")
             head, owner, found = self._head(run_context)

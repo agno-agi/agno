@@ -14,7 +14,6 @@ from agno.os.manager.linked_work import (
     _HEADER,
     _KEPT,
     LINKED_WORK_KEY,
-    LINKED_WORK_MESSAGE,
     LinkedWork,
     alink_proposal,
     link_proposal,
@@ -77,18 +76,12 @@ def context(run_id="run-1", user="alice", scopes=None, linked=None, session="cha
 
 
 def block(db, run_context, mode="sync", isolation=False):
-    """The lines of the block the pre-hook attaches to the run, or '' when it attaches none."""
-    hook = LinkedWork(db, isolation)
-    hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
-    attached = run_context._hook_messages
-    run_context._hook_messages = None
-    if attached is None:
+    """Read the task lines that Super Agent supplies for this run."""
+    provider = LinkedWork(db, isolation)
+    text = provider.read(run_context) if mode == "sync" else asyncio.run(provider.aread(run_context))
+    if text is None:
         return ""
-    (message,) = attached.values()
-    assert list(attached) == [LINKED_WORK_MESSAGE]
-    # A message of its own, in the person's position, sent and not stored.
-    assert (message.role, message.add_to_agent_memory) == ("user", False)
-    header, lines = message.content.split("\n", 1)
+    header, lines = text.split("\n", 1)
     assert header.startswith(NOTE) and header.endswith(": newer than anything said earlier.")
     return lines
 
@@ -850,59 +843,22 @@ def test_a_move_does_not_change_when_a_task_was_accepted_and_a_failed_run_is_not
     assert _since(failed) == ""
 
 
-def test_the_attached_messages_are_not_a_constructor_argument():
-    from dataclasses import fields
+def test_a_super_agent_run_copy_reads_linked_work_with_background_hooks(chat):  # noqa: F811
+    from fastapi import BackgroundTasks
 
-    names = [field.name for field in fields(RunContext) if field.init]
-    assert names[-1] == "client_tools" and "_hook_messages" not in names
-    with pytest.raises(TypeError):
-        RunContext(run_id="r", session_id="s", _hook_messages={})
-    assert RunContext(run_id="r", session_id="s")._hook_messages is None
-
-
-def test_the_hook_is_a_pre_hook_of_super_agent_and_runs_sync_and_async(chat):  # noqa: F811
-    # Looked up before the first run: a run replaces each hook with the method it calls.
-    (hook,) = [hook for hook in chat.os.manager.pre_hooks if isinstance(hook, LinkedWork)]
-    assert not chat.os.manager.add_dependencies_to_context and chat.os.manager.dependencies is None
+    manager = chat.os.manager
+    copied = manager.deep_copy(update={"model": Scripted()})
+    assert isinstance(copied._message_context, LinkedWork)
+    assert copied._message_context is manager._message_context
     say(chat, [("add_company_task", {**ADD, "start": False})])
     task = only_task(chat)
 
-    def run_context():
-        state = {LINKED_WORK_KEY: linked(chat)}
-        return RunContext(run_id="next-run", session_id="chat", user_id="alice", session_state=state)
-
-    sync, later = run_context(), run_context()
+    copied.propagate_run_hooks_in_background(True)
     with authorization_scope(person):
-        hook.check(run_context=sync)
-        asyncio.run(hook.async_check(run_context=later))
-    assert task["id"] in sync._hook_messages[LINKED_WORK_MESSAGE].content
-    assert sync._hook_messages[LINKED_WORK_MESSAGE].content == later._hook_messages[LINKED_WORK_MESSAGE].content
-    assert sync.dependencies is None
-
-
-def test_a_second_attempt_of_one_run_replaces_the_block_and_keeps_what_others_attached():
-    from agno.models.message import Message
-
-    task = row()
-    db = Tasks(task)
-    run_context = context()
-    link_task(run_context, task)
-    other = Message(role="user", content="A note from another hook", add_to_agent_memory=False)
-    run_context._hook_messages = {"other": other}
-    hook = LinkedWork(db)
-    hook.check(run_context=run_context)
-    first = run_context._hook_messages[LINKED_WORK_MESSAGE]
-    hook.check(run_context=run_context)
-    assert list(run_context._hook_messages) == ["other", LINKED_WORK_MESSAGE]
-    assert run_context._hook_messages["other"] is other
-    assert run_context._hook_messages[LINKED_WORK_MESSAGE].content == first.content
-    # With nothing left to show, the block an earlier attempt attached is taken away.
-    db.rows.clear()
-    hook.check(run_context=run_context)
-    assert list(run_context._hook_messages) == ["other"]
-    run_context._hook_messages = None
-    hook.check(run_context=run_context)
-    assert run_context._hook_messages is None
+        run = asyncio.run(copied.arun("Hello", user_id="alice", session_id="chat", background_tasks=BackgroundTasks()))
+    assert run.status.value == "COMPLETED"
+    (note,) = blocks(copied.model.requests[0])
+    assert task["id"] in note
 
 
 def test_nothing_of_the_block_is_stored_and_the_persons_message_is_what_they_sent(chat):  # noqa: F811
@@ -949,9 +905,7 @@ def test_a_callers_dependencies_behave_as_they_did(chat, asked):  # noqa: F811
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
-def test_a_run_with_nothing_attached_builds_the_messages_it_built_before(tmp_path, mode):
-    """The Team's message builder with the attached-messages path never entered, entered with nothing,
-    and entered with one message: the first two are the same, and the third adds only that message."""
+def test_message_context_is_read_before_the_input_on_each_build(tmp_path, mode):
     from agno.db.sqlite import SqliteDb
     from agno.models.message import Message
     from agno.run.team import TeamRunOutput
@@ -973,13 +927,9 @@ def test_a_run_with_nothing_attached_builds_the_messages_it_built_before(tmp_pat
     )
     session = TeamSession(session_id="s", team_id="plain", runs=[earlier])
 
-    def build(attached, absent=False):
-        run_context = RunContext(run_id="r", session_id="s", session_state={})
-        if absent:
-            # A context from before the field existed, as the builder saw it then.
-            run_context._hook_messages = None
-        else:
-            run_context._hook_messages = attached
+    run_context = RunContext(run_id="r", session_id="s", session_state={})
+
+    def build():
         arguments = dict(
             run_response=TeamRunOutput(run_id="r", team_id="plain", session_id="s"), run_context=run_context
         )
@@ -990,15 +940,23 @@ def test_a_run_with_nothing_attached_builds_the_messages_it_built_before(tmp_pat
             built = asyncio.run(_aget_run_messages(team, **arguments))
         return [(m.role, m.content, m.from_history, m.add_to_agent_memory) for m in built.messages], built
 
-    before, _ = build(None, absent=True)
-    nothing, _ = build({})
-    assert nothing == before and RunContext(run_id="r", session_id="s")._hook_messages is None
+    assert team._message_context is None
+    before, _ = build()
     assert [entry[:2] for entry in before][-3:] == [("user", "Earlier"), ("assistant", "Reply"), ("user", "Hello")]
 
-    note = Message(role="user", content="A note", add_to_agent_memory=False)
-    attached, built = build({"note": note})
-    assert attached == [*before[:-1], ("user", "A note", False, False), before[-1]]
+    task = row()
+    tasks = Tasks(task)
+    team._message_context = LinkedWork(tasks)
+    assert build()[0] == before
+    link_task(run_context, task)
+    messages, built = build()
+    note = built.messages[-2]
+    assert task["id"] in note.content
+    assert messages == [*before[:-1], ("user", note.content, False, False), before[-1]]
     assert built.user_message.content == "Hello"
+
+    tasks.rows.clear()
+    assert build()[0] == before
     db.close()
 
 
@@ -1078,7 +1036,7 @@ def test_an_os_without_company_is_unchanged(tmp_path):
     model = Scripted()
     agent_os = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     manager = agent_os.manager
-    assert not any(isinstance(hook, LinkedWork) for hook in manager.pre_hooks)
+    assert manager._message_context is None
     assert not manager.add_dependencies_to_context
     assert not any(isinstance(tool, CompanyTaskTools) for tool in manager.tools)
     # A list in the session state of such an OS is never read, and nothing is sent with the message.
