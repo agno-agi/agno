@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+from weakref import ref
 
 from agno.agent import Agent
 from agno.agents.base import BaseExternalAgent
@@ -293,7 +294,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.linked_work import LinkedWork
-    from agno.os.manager.work_update import WorkUpdateBoundary, work_update_gate
+    from agno.os.manager.work_update import WorkUpdateBoundary, WorkUpdateState
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -402,7 +403,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         instructions.append(SOURCE_INSTRUCTIONS)
     # Super Agent can edit the platform, so a Company Routine never runs on it.
     # A work update is given its tools before the block is read, and every run is recorded as going.
-    pre_hooks: List[Any] = [_RoutineBoundary(routine=False), WorkUpdateBoundary(), linked_work]
+    work_update_boundary = WorkUpdateBoundary()
+    pre_hooks: List[Any] = [_RoutineBoundary(routine=False), work_update_boundary, linked_work]
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
         from agno.os.manager.linked_work import alink_proposal, link_proposal
@@ -453,8 +455,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
         pre_hooks=pre_hooks,
-        # In a work update nobody is present: every tool that does not read is refused.
-        tool_hooks=[work_update_gate],
+        # A work update keeps what a turn of the person stored while it ran.
+        post_hooks=[WorkUpdateState()],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
@@ -462,6 +464,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
+    work_update_boundary.served = ref(team)
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})
     registry.exclude_components([team, builder])
     return _Manager(config=config, team=team, builder=builder)

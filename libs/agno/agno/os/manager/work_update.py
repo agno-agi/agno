@@ -9,10 +9,15 @@ Three things live here:
 - WorkUpdates is told when work ends. It starts the work update, only when the conversation is idle,
   as the person who asked and with the authority saved when the work was started.
 - WorkUpdateBoundary is a pre-hook of Super Agent. For a work update it offers the model the tools
-  that read and no member. For every run it records that the conversation has a run going in this
-  process, which is how a turn the person is waiting on is seen before it is stored.
-- work_update_gate is a tool hook of Super Agent. In a work update it lets a tool that reads execute
-  and answers for every other tool with one sentence.
+  that read and no member, and puts work_update_gate on that run's own copy of the Team. For every
+  run it records that the conversation has a run going in this process, which is how a turn the
+  person is waiting on is seen before it is stored.
+- work_update_gate is a tool hook. In a work update it lets a tool that reads execute and answers
+  for every other tool with one sentence. It is never on the Team that serves the person's turns:
+  a Team's hooks replace each tool's own.
+- WorkUpdateState is a post-hook of Super Agent. A work update saves the conversation's state as it
+  is stored when the update ends, with its own marks, so it does not undo what a turn of the person
+  stored while it ran.
 """
 
 import asyncio
@@ -46,6 +51,11 @@ SETTLE_SECONDS = 3.0
 # A stored run still queued or running after this long was lost by its server. It does not keep the
 # conversation busy for ever.
 _LOST_AFTER_SECONDS = 3600
+
+# How long a notice waits for a work update that is going, and how often it looks. A work update
+# takes seconds; one still stored as going after this long is not waited for.
+_UPDATE_WAIT_SECONDS = 120.0
+_UPDATE_POLL_SECONDS = 0.5
 
 # The newest stored runs of the conversation that are read to decide.
 _RUNS_READ = 30
@@ -89,9 +99,9 @@ READ_TOOLS = frozenset(
 
 _IN_FLIGHT = ("PENDING", "RUNNING", "PAUSED")
 
-# The run each conversation last started in this process, by session id. A run still registered with
-# the cancellation manager is going. Held in this process only.
-_latest_run: "OrderedDict[str, str]" = OrderedDict()
+# The run each conversation last started in this process, by session id, and whether it is a work
+# update. A run still registered with the cancellation manager is going. Held in this process only.
+_latest_run: "OrderedDict[str, Tuple[str, bool]]" = OrderedDict()
 _LATEST_KEPT = 4096
 
 
@@ -99,18 +109,20 @@ def _record_run(run_context: Any) -> None:
     session_id, run_id = getattr(run_context, "session_id", None), getattr(run_context, "run_id", None)
     if not isinstance(session_id, str) or not isinstance(run_id, str):
         return
-    _latest_run[session_id] = run_id
+    _latest_run[session_id] = (run_id, in_work_update(run_context))
     _latest_run.move_to_end(session_id)
     while len(_latest_run) > _LATEST_KEPT:
         _latest_run.popitem(last=False)
 
 
-async def _going_here(session_id: str) -> bool:
-    """Whether a run of this conversation is executing in this process."""
+async def _going_here(session_id: str) -> Optional[str]:
+    """The run of this conversation executing in this process: "turn", "update" or None."""
     from agno.run.cancel import aget_active_runs
 
-    run_id = _latest_run.get(session_id)
-    return run_id is not None and run_id in await aget_active_runs()
+    latest = _latest_run.get(session_id)
+    if latest is None or latest[0] not in await aget_active_runs():
+        return None
+    return "update" if latest[1] else "turn"
 
 
 def work_update_gate(function_name: str, function_call: Callable, arguments: Dict[str, Any], run_context: Any = None):
@@ -125,8 +137,19 @@ class WorkUpdateBoundary(BaseGuardrail):
 
     A pre-hook. It refuses nothing itself. A work update is offered the tools named in READ_TOOLS and
     no member, so no tool that asks for a confirmation and no delegation can be called in it:
-    nobody is there to confirm. work_update_gate refuses whatever else could still execute.
+    nobody is there to confirm. work_update_gate refuses whatever else could still execute, such as
+    the memory tools a Team adds by itself.
+
+    The gate is put on the Team object of the work update's own run. AgentOS runs each request and
+    each queued run on a copy of the served Team, and a work update is only ever started that way.
+    The served Team itself never gets it: a Team's tool hooks replace the hooks of every tool it
+    holds, so on the served Team the gate would switch off the hooks an application put on its tools.
     """
+
+    def __init__(self) -> None:
+        # The Team AgentOS serves, set once it is built. Kept weakly, so a copy of this hook made
+        # with a copy of the Team still names the served one.
+        self.served: Optional[ReferenceType[Any]] = None
 
     @staticmethod
     def _reads(team: Any, async_mode: bool) -> List[Any]:
@@ -150,12 +173,70 @@ class WorkUpdateBoundary(BaseGuardrail):
         if in_work_update(run_context):
             run_context.tools = self._reads(team, async_mode)
             run_context.members = []
+            if team is not None and (self.served is None or self.served() is not team):
+                team.tool_hooks = [work_update_gate]
 
     def check(self, run_input: Any = None, run_context: Any = None, team: Any = None) -> None:
         self._enter(run_context, team, False)
 
     async def async_check(self, run_input: Any = None, run_context: Any = None, team: Any = None) -> None:
         self._enter(run_context, team, True)
+
+
+class WorkUpdateState(BaseGuardrail):
+    """After a work update: save the conversation's state as it is stored now, with this run's marks.
+
+    A post-hook. A run saves the whole session state it loaded when it started. The person cannot see
+    that a work update is going, so they may send a message while it runs, and that turn may store
+    work it started. Saved as loaded, the work update would undo that. So it reads the stored state
+    again and carries over only what it changed itself: what it showed of each piece of work.
+    What is stored between this read and the save a moment later can still be lost.
+    """
+
+    @staticmethod
+    def _merge(run_context: Any, stored: Any) -> None:
+        state = (stored.get("session_data") or {}).get("session_state") if isinstance(stored, dict) else None
+        if not isinstance(state, dict) or not isinstance(getattr(run_context, "session_state", None), dict):
+            return
+        mine = {
+            (entry.get("kind"), entry.get("id")): entry
+            for entry in run_context.session_state.get(LINKED_WORK_KEY) or []
+        }
+        listed = []
+        for entry in state.get(LINKED_WORK_KEY) or []:
+            own = mine.get((entry.get("kind"), entry.get("id"))) if isinstance(entry, dict) else None
+            if own is not None:
+                entry = {**entry, **{key: own[key] for key in ("shown", "changed_in", "ended") if key in own}}
+            listed.append(entry)
+        # Changed in place: the session object the run saves holds this same dictionary.
+        merged = {**state, LINKED_WORK_KEY: listed}
+        run_context.session_state.clear()
+        run_context.session_state.update(merged)
+
+    def check(self, run_context: Any = None, team: Any = None) -> None:  # type: ignore[override]
+        if not in_work_update(run_context) or team is None or isinstance(team.db, AsyncBaseDb):
+            return
+        try:
+            stored = team.db.get_session(run_context.session_id, session_type=SessionType.TEAM, deserialize=False)
+            self._merge(run_context, stored)
+        except Exception as exc:
+            log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
+
+    async def async_check(self, run_context: Any = None, team: Any = None) -> None:  # type: ignore[override]
+        if not in_work_update(run_context) or team is None:
+            return
+        try:
+            if isinstance(team.db, AsyncBaseDb):
+                stored = await team.db.get_session(
+                    run_context.session_id, session_type=SessionType.TEAM, deserialize=False
+                )
+            else:
+                stored = await asyncio.to_thread(
+                    team.db.get_session, run_context.session_id, session_type=SessionType.TEAM, deserialize=False
+                )
+            self._merge(run_context, stored)
+        except Exception as exc:
+            log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
 
 
 def _status(row: Dict[str, Any]) -> str:
@@ -178,17 +259,23 @@ def _is_work_update(row: Dict[str, Any]) -> bool:
     return isinstance(content, str) and content.startswith(WORK_UPDATE_LABEL)
 
 
-def _busy(rows: List[Dict[str, Any]], now: float) -> bool:
-    """Whether a stored run of the conversation is queued, running or paused for a person."""
+def _going(rows: List[Dict[str, Any]], now: float) -> List[Dict[str, Any]]:
+    """The stored runs of the conversation that are queued, running or paused for a person."""
+    going = []
     for row in rows:
         status = _status(row)
         if status == "PAUSED":
-            return True
-        if status in ("PENDING", "RUNNING"):
+            going.append(row)
+        elif status in ("PENDING", "RUNNING"):
             at = row.get("updated_at") or row.get("created_at")
             if not isinstance(at, (int, float)) or now - at < _LOST_AFTER_SECONDS:
-                return True
-    return False
+                going.append(row)
+    return going
+
+
+def _busy(rows: List[Dict[str, Any]], now: float) -> bool:
+    """Whether a stored run of the conversation is queued, running or paused for a person."""
+    return bool(_going(rows, now))
 
 
 def _given(rows: List[Dict[str, Any]]) -> Tuple[int, str]:
@@ -253,10 +340,10 @@ class WorkUpdates:
             return
         if requested_from.get("team_id") != manager.config.id:
             return
-        # A run going in the conversation when the work ends means no work update, also when that run
-        # ends a moment later: the person's next message shows what changed.
-        if await self._run_going(manager.team, session_id):
-            log_debug(f"No work update for conversation {session_id}: a run was going in it when the work ended")
+        # A turn of the person going in the conversation when the work ends means no work update, also
+        # when that turn ends a moment later: the person's next message shows what changed.
+        if await self._run_going(manager.team, session_id) == "turn":
+            log_debug(f"No work update for conversation {session_id}: a turn was going in it when the work ended")
             return
         # Work that ends together waits together, then one notice at a time decides: the first starts
         # the work update and the others find it stored.
@@ -265,14 +352,33 @@ class WorkUpdates:
         if turn is None:
             turn = self._turns[session_id] = asyncio.Lock()
         async with turn:
+            # A work update that is going read the work before this piece ended, and has told the
+            # person it is still running. Wait for it to end. What it did show is then stored, and
+            # an end it did not show gets a work update of its own.
+            waited = 0.0
+            while (going := await self._run_going(manager.team, session_id)) == "update":
+                if waited >= _UPDATE_WAIT_SECONDS:
+                    return
+                await asyncio.sleep(_UPDATE_POLL_SECONDS)
+                waited += _UPDATE_POLL_SECONDS
+            if going == "turn":
+                return
             await self._start(agent_os, manager.team, requested_from, work, authority)
 
-    async def _run_going(self, team: Any, session_id: str) -> bool:
-        """Whether the conversation has a run stored as going, or one going in this process."""
-        if await _going_here(session_id):
-            return True
+    async def _run_going(self, team: Any, session_id: str) -> Optional[str]:
+        """What is going in the conversation: "turn", "update" when only work updates are, or None.
+
+        Read from this process, where a turn the person is waiting on is known before it is stored,
+        and from the conversation's stored runs.
+        """
+        here = await _going_here(session_id)
+        if here == "turn":
+            return "turn"
         _, rows = await self._read(team.db, session_id)
-        return _busy(rows, time.time())
+        stored = _going(rows, time.time())
+        if any(not _is_work_update(row) for row in stored):
+            return "turn"
+        return "update" if stored or here == "update" else None
 
     @staticmethod
     async def _read(db: Any, session_id: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -363,7 +469,7 @@ class WorkUpdates:
         if asked_by is not None and asked_by != user_id:
             return
         # Only when the conversation is idle: a run stored as going, or one going in this process.
-        if _busy(rows, time.time()) or await _going_here(session_id):
+        if _busy(rows, time.time()) or await _going_here(session_id) is not None:
             log_debug(f"No work update for conversation {session_id}: a run is going in it")
             return
         given, since = _given(rows)
