@@ -744,7 +744,7 @@ What Mini Agent may do follows the kind of run:
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
 Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
-scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
+scheduler, shell, file or web tools, and stops after 96 tool calls in a run. It takes Super Agent's limit, `OSManager(tool_call_limit=...)`; `None` removes it. The
 run tools check the run themselves: called in a Routine run they return an error.
 A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.
