@@ -680,14 +680,19 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The reviewer's reason when the last review sent the Task back, until an attempt reaches review again."""
+    """The person's reason when the Task was last returned to Ready after an attempt, until an attempt
+    reaches review again. A return from review answers a finished result; a return from In progress
+    answers a run that failed or was cancelled."""
+    returned = ("in_review", "in_progress")
     reviews = [
         entry
         for entry in task.get("transitions") or []
-        if entry.get("from") == "in_review" or entry.get("target") == "in_review"
+        if entry.get("from") == "in_review"
+        or entry.get("target") == "in_review"
+        or (entry.get("from") == "in_progress" and entry.get("target") == "ready")
     ]
     last = reviews[-1] if reviews else {}
-    return last.get("reason") if last.get("from") == "in_review" and last.get("target") == "ready" else None
+    return last.get("reason") if last.get("from") in returned and last.get("target") == "ready" else None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
