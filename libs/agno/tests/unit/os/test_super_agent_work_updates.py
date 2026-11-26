@@ -583,6 +583,31 @@ def test_two_runs_ending_together_get_one_work_update_that_shows_both(system):
     assert note.startswith(WORK_UPDATE_LABEL)
 
 
+def test_work_that_ends_a_moment_later_is_reported_by_the_same_work_update(system, monkeypatch):
+    monkeypatch.setattr(work_update, "SETTLE_SECONDS", 0.6)
+
+    async def steps():
+        first = await system.start()
+        await system.start("workflow", "investigator")
+        GATES["writer"].set()
+        for _ in range(300):
+            await system.work()
+            if system.row(first)["status"] == "COMPLETED":
+                break
+            await asyncio.sleep(0.01)
+        # The second ends after the first was told, inside the wait for other work.
+        await asyncio.sleep(0.15)
+        GATES["investigator"].set()
+        await system.settle()
+        await asyncio.sleep(1.0)
+        await system.settle()
+        return system.updates_stored(), system.chat.runs[-1]["sent"]
+
+    updates, shown = scenario(steps)
+    assert len(updates) == 1
+    assert shown[0].count("Changed since your last turn.") == 2
+
+
 def test_a_work_update_ending_starts_no_other(system):
     async def steps():
         await system.start()
