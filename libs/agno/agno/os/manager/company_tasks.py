@@ -1,13 +1,16 @@
-"""Super Agent tools for Company Tasks: start accepted work, read its state, and record a person's decisions.
+"""Super Agent tools for Company Tasks: add work a person asked for, start accepted work, read its
+state, and record a person's decisions.
 
-Starting reuses the Company start route's checks, duplicate handling and queue path, under
-the calling user's own authority. The decision tools approve a Project, accept Tasks and
-review a finished one. Each decision pauses the run until the chatting person confirms it,
-runs under that person's permissions, and records that person on the transition. Two more
-tools turn a Routine's auto-accept on, with the same confirmation, or off.
+Work a person asks for in chat is created accepted, with that person recorded as the accepter:
+the ask is the acceptance. Starting reuses the Company start route's checks, duplicate handling
+and queue path, under the calling user's own authority. The decision tools approve a Project,
+accept Tasks and review a finished one. Each decision pauses the run until the chatting person
+confirms it, runs under that person's permissions, and records that person on the transition.
+Two more tools turn a Routine's auto-accept on, with the same confirmation, or off.
 """
 
 import json
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
@@ -131,12 +134,43 @@ def _requested_from(run_context: Any) -> Dict[str, str]:
     return {key: item for key, item in conversation.items() if isinstance(item, str)}
 
 
+# The most Tasks one chat run creates already accepted. Past it a Task is recorded as a proposal,
+# which the person accepts through accept_company_task and its confirmation.
+ACCEPTED_TASKS_PER_RUN = 5
+
+# Accepted Tasks created by each recent chat run, by run id. A continued run keeps its id, so a
+# confirmation pause does not reset its count. Held in this process only.
+_accepted_in_run: "OrderedDict[str, int]" = OrderedDict()
+
+
+def _take_acceptance(run_id: Any) -> bool:
+    """Take one of a run's places for accepted work. False once the run has used them all."""
+    key = run_id if isinstance(run_id, str) else ""
+    used = _accepted_in_run.get(key, 0)
+    if used >= ACCEPTED_TASKS_PER_RUN:
+        return False
+    _accepted_in_run[key] = used + 1
+    _accepted_in_run.move_to_end(key)
+    while len(_accepted_in_run) > 1024:
+        _accepted_in_run.popitem(last=False)
+    return True
+
+
+def _return_acceptance(run_id: Any) -> None:
+    """Give back a place taken for a Task that was not created."""
+    key = run_id if isinstance(run_id, str) else ""
+    if _accepted_in_run.get(key, 0) > 0:
+        _accepted_in_run[key] -= 1
+
+
 class CompanyTaskTools(Toolkit):
-    """Start an accepted Task in the background, check on it later, and record a person's decisions."""
+    """Add work a person asked for, start an accepted Task in the background, check on it later, and
+    record a person's decisions."""
 
     def __init__(self, agent_os: Any):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
         names = [
+            "add_company_task",
             "start_company_task",
             "get_company_task_status",
             "approve_company_project",
@@ -174,6 +208,157 @@ class CompanyTaskTools(Toolkit):
             refusal = "A signed-in person is required."
         return agent_os, app, authority, user_id, refusal
 
+    def add_company_task(
+        self,
+        title: str,
+        brief: str,
+        start: bool,
+        project_id: _OptionalString = None,
+        goal_id: _OptionalString = None,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Add a Company Task the person asked for, already accepted, and start it when they asked for it to be done.
+
+        Args:
+            title: The Task's title.
+            brief: The Task brief, written for the executor.
+            start: True when the person asked for the work to be done; false when they asked to add it.
+            project_id: The active Project this Task is part of; null puts it in the Default Project.
+            goal_id: The Goal this Task belongs to; null for none.
+            executor_type: agent, team or workflow; null with a null executor_id uses Mini Agent.
+            executor_id: ID of that component; null with a null executor_type.
+        """
+        return "Adding accepted work needs an asynchronous run. Add the Task from AgentOS instead."
+
+    async def aadd_company_task(
+        self,
+        title: str,
+        brief: str,
+        start: bool,
+        project_id: _OptionalString = None,
+        goal_id: _OptionalString = None,
+        executor_type: _OptionalString = None,
+        executor_id: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Add a Company Task the person asked for, already accepted, and start it when they asked for it
+        to be done. The person's request is the acceptance: the Task is Ready, with that person recorded
+        as the one who accepted it, and the run does not pause.
+
+        Call this only for work the person asked for in this conversation, in their words: to add a
+        Task, or to do a task. When they ask you to do a task and no Task records it yet, call this
+        with start true instead of doing the work in the conversation or running a component. Work
+        you suggest yourself is a proposal: use propose_company_task.
+        When the work sends, publishes, pushes or spends, say what it involves and ask the person before
+        calling this. For work a Task already covers, start that Task instead of adding another.
+
+        Some Tasks are recorded as proposals instead, and the result says so: a Task for an executor
+        that pushes code, and every Task after the fifth accepted in one run. Call accept_company_task
+        for those in the same turn: it pauses for the person's confirmation.
+
+        Args:
+            title: The Task's title.
+            brief: The Task brief. A brief the person dictated is saved in their words. Otherwise write
+                it for the executor: the outcome, the deliverable, how it is checked and any restrictions
+                the person gave. An executor other than Mini Agent is given only this brief, so put in it
+                everything the work needs.
+            start: True when the person asked for the work to be done, which queues its run now. False
+                when they asked to add a Task: it stays Ready until someone starts it.
+            project_id: The active Project this Task is part of: check list_company_projects for the one
+                it serves. Null when none fits, which puts the Task in the Default Project. A proposed
+                Project cannot hold accepted work.
+            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
+                Project's Goal and another Goal is refused.
+            executor_type: agent, team or workflow, only when the person named a component. Null with a
+                null executor_id runs it on Mini Agent, which does the work itself or runs the components
+                the person may run.
+            executor_id: ID of the component the person named; null when they named none.
+        """
+        from dataclasses import replace
+
+        from agno.company.routines import _manager_call
+        from agno.company.sandbox import _is_sandboxed
+        from agno.db.schemas.projects import is_default_project
+        from agno.os.routers.company.runs import _StartCaller, _TaskStarter
+        from agno.registry._reserved import MINI_AGENT_ID
+        from agno.run.authorization import authorization_scope
+
+        async def call(agent_os: Any) -> str:
+            authority, user_id = self._person(agent_os, _agno_run_context, "add accepted Company work")
+            kind, name = _named(executor_type), _named(executor_id)
+            if (kind is None) != (name is None):
+                return "Not done: give executor_type and executor_id together, or neither to use Mini Agent."
+            if kind is None:
+                kind, name = "agent", MINI_AGENT_ID
+            if kind not in ("agent", "team", "workflow"):
+                return "Not done: executor_type is agent, team or workflow."
+            if authority is not None:
+                await authority.arequire("tasks", "write")
+            starter = _TaskStarter(agent_os)
+            project = _named(project_id)
+            if project is not None and not is_default_project(project):
+                stored = await _manager_call(starter.manager, "get_project", project)
+                if stored is None:
+                    return "Not done: Project not found"
+                if stored["status"] == "proposed":
+                    return (
+                        f"Not done: Project '{stored['name']}' is proposed, and accepted work needs an active "
+                        "Project. Approve the Project first, or leave the Project out to put this Task in the "
+                        "Default Project."
+                    )
+            # The acceptance route's decision: the person must be allowed to run the executor themselves.
+            app = getattr(agent_os, "_company_app", None)
+            caller = _StartCaller.for_authority(app, authority, user_id)
+            executor = {"executor_type": kind, "executor_id": name}
+            await caller.require_accept(starter.endpoint(executor))
+            # What the person confirms before it is accepted: an executor that pushes code, and more
+            # Tasks in one run than a person reads in one request.
+            run_id = getattr(_agno_run_context, "run_id", None)
+            waits = None
+            if _is_sandboxed(starter.executor(executor)):
+                waits = f"{kind} {name} runs in a sandbox and can push code"
+            elif not _take_acceptance(run_id):
+                waits = f"this run already added {ACCEPTED_TASKS_PER_RUN} accepted Tasks"
+            accepted: Dict[str, Any] = {} if waits else {"status": "ready", "accepted_by": user_id}
+            saved = replace(authority, enforce_tools=False) if authority is not None else None
+            try:
+                with authorization_scope(lambda: saved):
+                    task = await _manager_call(
+                        starter.manager,
+                        "create_task",
+                        title=title,
+                        brief=brief,
+                        goal_id=_named(goal_id),
+                        project_id=project,
+                        user_id=user_id,
+                        origin="human",
+                        **executor,
+                        **accepted,
+                    )
+            except BaseException:
+                if not waits:
+                    _return_acceptance(run_id)
+                raise
+            named = f"'{task['title']}' (Task {task['id']})"
+            if waits:
+                then = " Then start it with start_company_task." if start else ""
+                return (
+                    f"Recorded {named} as a proposal, not accepted: {waits}, so the person confirms it. "
+                    f"Now call accept_company_task with this Task, updated_at null, executor {kind} {name}, "
+                    f"which pauses for their confirmation; pass every waiting Task that takes this executor "
+                    f"in one call.{then}"
+                )
+            added = f"Added {named}, accepted for {kind} {name}."
+            if not start:
+                return f"{added} It is Ready and not started."
+            if app is None:
+                return f"{added} Not started: Company execution is not running here. Start it from AgentOS."
+            return f"{added} " + await self._start(agent_os, app, authority, user_id, _agno_run_context, task["id"])
+
+        return await self._decide(call)
+
     def start_company_task(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Start an accepted Company Task in the background and return its run.
 
@@ -192,14 +377,20 @@ class CompanyTaskTools(Toolkit):
         Args:
             task_id: The accepted (Ready) Task to start, or the Task to retry after a failed run.
         """
+        agent_os, app, authority, user_id, refusal = self._caller_context(_agno_run_context)
+        if refusal is not None:
+            return refusal
+        return await self._start(agent_os, app, authority, user_id, _agno_run_context, task_id)
+
+    async def _start(
+        self, agent_os: Any, app: Any, authority: Any, user_id: Any, run_context: Any, task_id: str
+    ) -> str:
+        """Queue an accepted Task's run through the start route's own path, as a caller already checked."""
         from fastapi import HTTPException
 
         from agno.company.execution import _pending_task_attempt, _TaskRunConflict, _TaskRunUnavailable
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
 
-        agent_os, app, authority, user_id, refusal = self._caller_context(_agno_run_context)
-        if refusal is not None:
-            return refusal
         starter = _TaskStarter(agent_os)
         try:
             value = await starter.task(task_id)
@@ -221,7 +412,7 @@ class CompanyTaskTools(Toolkit):
                 # The start route's own requirements, beyond running the executor.
                 await authority.arequire("tasks", "write")
                 await authority.arequire("wiki", "read")
-            caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(_agno_run_context))
+            caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(run_context))
             response = await starter.submit(task_id, caller, None, value, None)
         except PermissionError as exc:
             return f"Not started: {exc}"
@@ -284,33 +475,9 @@ class CompanyTaskTools(Toolkit):
 
     def _routine_request(self, agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
         """A Routine API request from the chatting person, as the API's middleware would describe it."""
-        from starlette.requests import Request
+        from agno.company.routines import _person_routine_request
 
-        app = getattr(agent_os, "_company_app", None)
-        if app is None or getattr(agent_os, "_routine_api_update", None) is None:
-            raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
-        context = authority.context if authority is not None else None
-        state = {
-            "user_id": user_id,
-            "authenticated": authority is not None,
-            "authorization_enabled": authority is not None,
-            "scopes": list(context.scopes or []) if context is not None else [],
-            "claims": dict(context.claims or {}) if context is not None else {},
-            "admin_scope": context.admin_scope if context is not None else None,
-            "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
-            "is_internal_service": False,
-        }
-        return Request(
-            {
-                "type": "http",
-                "method": method,
-                "path": f"/company/routines/{routine_id}",
-                "headers": [],
-                "query_string": b"",
-                "app": app,
-                "state": state,
-            }
-        )
+        return _person_routine_request(agent_os, authority, user_id, method, routine_id)
 
     async def _named_routine(
         self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, routine_name: str, goal_name: Any
@@ -353,18 +520,9 @@ class CompanyTaskTools(Toolkit):
         self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, auto_accept: Any
     ) -> Any:
         """Change a Routine's auto_accept through the Routine API's own PATCH handler, as the chatting person."""
-        from dataclasses import replace
+        from agno.company.routines import _set_auto_accept_as
 
-        from agno.os.routers.company.heartbeat import RoutineUpdate
-        from agno.run.authorization import authorization_scope
-
-        request = self._routine_request(agent_os, authority, user_id, "PATCH", routine_id)
-        if authority is not None:
-            # The route's own scope, checked by the API before its handler runs.
-            await authority.arequire("routines", "write")
-        saved = replace(authority, enforce_tools=False) if authority is not None else None
-        with authorization_scope(lambda: saved):
-            return await agent_os._routine_api_update(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
+        return await _set_auto_accept_as(agent_os, authority, user_id, routine_id, auto_accept)
 
     async def _decide(self, call: Any) -> str:
         """Run one decision, returning each refusal as text and leaving the record as it was."""

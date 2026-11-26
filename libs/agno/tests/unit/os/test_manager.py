@@ -466,6 +466,7 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         assert not {"summarize_company_goal", "refresh_company_goal"} & set(company.functions)
         task_runs = rest.pop(0)
         assert set(task_runs.functions) == {
+            "add_company_task",
             "start_company_task",
             "get_company_task_status",
             "approve_company_project",
