@@ -193,10 +193,103 @@ def test_external_string_is_used_as_file_id_without_upload():
     client.files.create.assert_not_called()
 
 
-def test_upload_failure_drops_the_file_part():
+def test_upload_failure_raises_instead_of_dropping_the_file():
+    """A failed upload must fail the run, not send the request without the document."""
+    from agno.exceptions import ModelProviderError
     from agno.media import File
 
     model, client = _uploading_model()
-    client.files.create.side_effect = RuntimeError("boom")
+    client.files.create.side_effect = RuntimeError("Failed to recognize the file")
 
-    assert model._format_file_part(File(content=b"%PDF", mime_type="application/pdf")) is None
+    with pytest.raises(ModelProviderError, match="Failed to recognize the file"):
+        model._format_file_part(File(content=b"%PDF", mime_type="application/pdf", filename="a.pdf"))
+
+
+def test_unreadable_file_raises():
+    from agno.exceptions import ModelProviderError
+    from agno.media import File
+
+    model, client = _uploading_model()
+
+    with pytest.raises(ModelProviderError, match="missing.pdf"):
+        model._format_file_part(File(filepath="does/not/exist/missing.pdf"))
+    client.files.create.assert_not_called()
+
+
+def test_file_only_message_keeps_the_file_part():
+    """A message with files and no text must still carry its file parts."""
+    from agno.media import File
+    from agno.models.message import Message
+
+    model, _ = _uploading_model()
+    message = Message(role="user", content=None, files=[File(content=b"%PDF", mime_type="application/pdf")])
+
+    formatted = model._format_message(message)
+
+    assert formatted["content"] == [{"type": "file", "file_id": "file-api-1"}]
+
+
+def test_storage_backed_file_is_read_through_get_content_bytes():
+    """Files that only carry a media_reference (offloaded media) are resolved, not dropped."""
+    from agno.media import File
+    from agno.media.reference import MediaReference
+
+    model, client = _uploading_model()
+    file = File(
+        media_reference=MediaReference(
+            media_id="m1", storage_key="k/report.pdf", storage_backend="s3", filename="report.pdf"
+        )
+    )
+
+    with patch.object(File, "get_content_bytes", return_value=b"%PDF-stored"):
+        part = model._format_file_part(file)
+
+    assert part == {"type": "file", "file_id": "file-api-1"}
+    kwargs = client.files.create.call_args.kwargs
+    assert kwargs["file"] == ("report.pdf", b"%PDF-stored")
+    assert kwargs["purpose"] == "text_recognition"
+
+
+def test_uploaded_file_id_is_persisted_on_the_file():
+    """The DeepSeek id travels with File.id, so a reloaded session does not re-upload the file."""
+    from agno.media import File
+
+    model, client = _uploading_model()
+    file = File(content=b"%PDF", mime_type="application/pdf")
+    model._format_file_part(file)
+    assert file.id == "deepseek://file-api-1"
+
+    # Simulate a new process: a fresh model instance and a File rebuilt from stored session data.
+    restored = File.model_validate(file.model_dump())
+    fresh_model, fresh_client = _uploading_model()
+
+    assert fresh_model._format_file_part(restored) == {"type": "file", "file_id": "file-api-1"}
+    fresh_client.files.create.assert_not_called()
+
+
+async def test_ainvoke_uploads_files_with_the_async_client():
+    """arun must not block the event loop on a (slow, parsing) sync upload."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.media import File
+    from agno.models.message import Message
+    from agno.models.openai.chat import OpenAIChat
+
+    model, sync_client = _uploading_model()
+    async_client = MagicMock()
+    async_client.files.create = AsyncMock(return_value=SimpleNamespace(id="file-api-async"))
+    model.get_async_client = lambda: async_client  # type: ignore[method-assign]
+    file = File(content=b"%PDF", mime_type="application/pdf")
+    messages = [Message(role="user", content="Summarise", files=[file])]
+
+    async def fake_ainvoke(self, messages, **kwargs):
+        # Formatting inside the parent call must reuse the async upload.
+        return self._format_message(messages[0])
+
+    with patch.object(OpenAIChat, "ainvoke", fake_ainvoke):
+        formatted = await model.ainvoke(messages=messages, assistant_message=Message(role="assistant"))
+
+    assert formatted["content"][0] == {"type": "file", "file_id": "file-api-async"}
+    async_client.files.create.assert_awaited_once()
+    sync_client.files.create.assert_not_called()
