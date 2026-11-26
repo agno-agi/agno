@@ -234,21 +234,21 @@ methods retain explicit owner filters for direct callers.
 
 | File | Demonstrates |
 | --- | --- |
-| `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
+| `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
 | `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
 
-Each Goal has a durable wiki namespace with `brief.md` (human direction) and
-`status.md` (current work). A second namespace holds company context. Default
+Each Goal has a durable wiki folder with `brief.md` (human direction) and
+`status.md` (current work). A second folder holds company context. Default
 pages are created on first access and never reset. GET `/company/goals/{id}/wiki`
 lists pages; GET and PUT `/company/goals/{id}/wiki/{path}` read and write them.
-The company namespace has the same surface at `/company/wiki`. Writes require the
+The company wiki has the same surface at `/company/wiki`. Writes require the
 filesystem `expected_version` read with the page; zero means create only. Conflicts
 return 409. Pages are Markdown and paths must be relative and normalized.
 
 Wiki reads require `wiki:read`; writes require `wiki:write`. Goal and company
 pages are shared documents, so any caller with `wiki:write` can change them, and
-every caller with read permission can read both namespaces. Company services use FileSystem;
+every caller with read permission can read both. Company services use FileSystem;
 its existing backend owns storage and version checks.
 
 GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
@@ -284,12 +284,39 @@ in `wiki/`. Each is created when there is something to put in it. A Goal is
 addressed by ID, and listing `goals/` shows each name beside its ID. Pages in
 `wiki/` and `goals/` are Markdown; `tasks/` and `notes/` take any text file.
 
-**Where it is stored.** `wiki/`, `goals/` and `tasks/` are in the Company
-database. `notes/` is in the AgentOS database, so it exists with Super Agent on
-whether or not Company is on. The two are the same database unless
-`CompanyConfig(db=...)` names another. The stored namespaces of the wiki and of
-each Goal are the ones 3.1 created, so existing pages are read where they are,
-and the wiki API above serves the same pages.
+**Where it is stored.** Every Company file is in the Company file system: one
+store in the Company database, the namespace `company`, with each file at its
+path in the tree. `notes/` is a folder of it. Without Company, Super Agent still
+has `notes/`: the same store in the AgentOS database holds it. The wiki API above
+serves the same pages.
+
+The folder of a Goal or a Task is its ID written as one path segment. An ID made
+of letters, digits and `. - _ @ +` is its own folder name. Any other character
+is escaped, so `Docs Team` is stored under `goals/Docs%20Team/` and no two IDs
+share a folder. The tools and the routes still name a Goal by its ID.
+
+**Upgrading from 3.2.** The 3.3.0 migration above also moves the files: each
+one to its tree path with its content, version and timestamps. AgentOS does not
+move them as it starts.
+
+- Until the migration has run, AgentOS starts and the Company file system
+  refuses each use with an error that names what to run:
+  `MigrationManager(db).up()` or `POST /databases/all/migrate`. It also stays
+  refused when a different file is already stored at a path a file moves to.
+- With a separate Company database, the notes move into it from the AgentOS
+  database. `POST /databases/all/migrate` does this once both databases are
+  migrated. After `MigrationManager(db).up()` on each, call
+  `move_company_notes(agent_os_db, company_db)` from
+  `agno.db.migrations.versions.v3_3_0`. Until then `notes/` is refused.
+- The migration never guesses where a file belongs. Files of a Goal or Task it
+  cannot be sure of stay where they are and are reported in the log.
+  `company_files_left(db)` lists them, and
+  `move_company_files(db, owners={namespace: id})` moves a namespace to the
+  owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
+- The namespace `company` belongs to the Company file system. On an AgentOS
+  with Company, an agent whose own `FileSystem` uses the shared partition of
+  that namespace in the same database is refused when its run starts. Give that
+  filesystem another namespace, and move its files there.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
@@ -381,12 +408,13 @@ of the whole tree, of `goals/` or of `tasks/` opens the 50 newest Goals and
 the 50 newest Tasks. When there are more, the reply says how many it searched;
 name a folder, `goals/<goal-id>` or `tasks/<task-id>`, to search another.
 
-A file holds at most 1 MB. `wiki/`, each Goal, each Task and `notes/` hold
-20 MB each. A Task's folder is its own space: a Task that fills its folder does not
-stop another Task's writes. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. There are no API
-routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
-outside `notes/`.
+A file holds at most 1 MB. The Company file system holds 1 GB in total, across
+every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. Each
+Task's folder also holds at most 20 MB, so a Task that fills its folder does not
+stop the writes of the wiki, a Goal, the notes or another Task. Nothing removes a
+Task's files, not even archiving the Task, because an archived Task can be
+restored. There are no API routes for `tasks/` and `notes/`, and no tool appends
+to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company

@@ -19,6 +19,7 @@ import httpx
 import pytest
 from sqlalchemy import BigInteger, String, Text, create_engine, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import JSON
 
@@ -26,6 +27,7 @@ import agno.db.postgres.schemas as postgres_schemas
 import agno.db.sqlite.schemas as sqlite_schemas
 from agno.company import AsyncCompanyManager, CompanyManager
 from agno.company.automation_history import _task_state, aautomation_failures
+from agno.company.filesystem import company_filesystem
 from agno.company.routines import _check_automatic_policy, _require_routine_goal
 from agno.company.scheduler import CompanyScheduleExecutor
 from agno.company.summary import _summary_state_filesystem
@@ -169,15 +171,21 @@ class _Database:
         self.postgres = "postgres" in kind
         self.location = location
         self.schema = location if self.postgres else None
-        self.url = POSTGRES_URL if self.postgres else "sqlite:///" + location
-        # PostgreSQL keeps every database's files in one shared schema, so the Goal that owns this
-        # database's files has an id no other test uses.
+        self.url = "sqlite:///" + location
+        if self.postgres:
+            # A database of its own: PostgreSQL keeps the files of every schema in one file table, and
+            # the migration moves every Company file of that table.
+            self.url = make_url(POSTGRES_URL).set(database=location).render_as_string(hide_password=False)
+            admin = create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+            with admin.connect() as conn:
+                conn.execute(text(f'CREATE DATABASE "{location}"'))
+            admin.dispose()
         self.files_goal = f"docs-{uuid.uuid4().hex[:10]}"
         self._opened: List[Any] = []
         self._patch = pytest.MonkeyPatch()
 
     def _open(self, cls: Any, **tables: Any) -> Any:
-        where = {"db_url": POSTGRES_URL, "db_schema": self.location} if self.postgres else {"db_file": self.location}
+        where = {"db_url": self.url, "db_schema": self.location} if self.postgres else {"db_file": self.location}
         db = cls(**where, **tables)
         self._opened.append(db)
         return db
@@ -197,13 +205,10 @@ class _Database:
             await _call(db.close)
         self._opened.clear()
         if self.postgres:
-            engine = create_engine(POSTGRES_URL)
-            with engine.begin() as conn:
-                conn.execute(text(f'DROP SCHEMA IF EXISTS "{self.location}" CASCADE'))
-                if inspect(conn).has_table("agno_fs", schema="fs"):
-                    files = {"namespace": f"company/products/{self.files_goal}/%"}
-                    conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE :namespace"), files)
-            engine.dispose()
+            admin = create_engine(POSTGRES_URL, isolation_level="AUTOCOMMIT")
+            with admin.connect() as conn:
+                conn.execute(text(f'DROP DATABASE "{self.location}" WITH (FORCE)'))
+            admin.dispose()
 
     def _ref(self, name: str) -> str:
         return f'"{self.schema}"."{name}"' if self.schema else f'"{name}"'
@@ -759,9 +764,11 @@ async def test_stored_files_read_through_the_goal(database):
 
     assert page.content == "# Research\n\nFound on 3.2.0.\n"
     assert "research.md" in [row.path for row in listed]
-    # The files stay in the namespaces 3.2.0 wrote them to.
+    # The page moved into the Company file system, at its path in the tree.
     sync_db = database.sync_db()
-    assert FileSystem(sync_db, namespace=f"company/products/{goal}/wiki", user_scoped=False).read("research.md")
+    assert company_filesystem(sync_db).read(f"goals/{goal}/research.md") == "# Research\n\nFound on 3.2.0.\n"
+    assert FileSystem(sync_db, namespace=f"company/products/{goal}/wiki", user_scoped=False).list() == []
+    # The summary delivery state is not a file of the tree: it stays in its own namespace.
     assert _summary_state_filesystem(sync_db, goal).read("baseline.md") == "delivered on 3.2.0\n"
 
 

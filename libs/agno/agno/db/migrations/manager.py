@@ -104,11 +104,12 @@ class MigrationManager:
                 continue
             current_version = packaging_version.parse(raw_version)
 
-            # A Company table created before the rename is stamped current, so its stamp cannot be trusted.
+            # A Company table is stamped current when it is created, so its stamp cannot be trusted while
+            # a table waits to be renamed or a Company file waits to be moved.
             if (
                 table_type in _COMPANY_TABLE_ATTRS
                 and current_version >= _COMPANY_RENAME_VERSION <= _target_version
-                and await self._company_rename_pending()
+                and (await self._company_rename_pending() or await self._company_files_pending())
             ):
                 current_version = _BEFORE_COMPANY_RENAME
 
@@ -165,6 +166,12 @@ class MigrationManager:
         if isinstance(self.db, AsyncBaseDb):
             return await v3_3_0.acompany_rename_pending(self.db)
         return v3_3_0.company_rename_pending(self.db)
+
+    async def _company_files_pending(self) -> bool:
+        """Whether Company files still wait in their namespaces from before 3.3.0."""
+        from agno.db.migrations.versions import v3_3_0
+
+        return await v3_3_0.acompany_files_pending(self.db)
 
     async def _up_migration(self, version: str, table_type: str, table_name: str) -> bool:
         """Run the database-specific logic to handle an up migration.
