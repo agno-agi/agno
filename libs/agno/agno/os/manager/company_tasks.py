@@ -224,7 +224,8 @@ class CompanyTaskTools(Toolkit):
 
         Args:
             title: The Task's title.
-            brief: The Task brief, written for the executor.
+            brief: The Task brief, written for the executor. An executor other than Mini Agent receives
+                only the brief and the evidence, so the brief must carry what it needs.
             start: True when the person asked for the work to be done; false when they asked to add it.
             project_id: The active Project this Task is part of; null puts it in the Default Project.
             goal_id: The Goal this Task belongs to; null for none.
@@ -263,8 +264,8 @@ class CompanyTaskTools(Toolkit):
             title: The Task's title.
             brief: The Task brief. A brief the person dictated is saved in their words. Otherwise write
                 it for the executor: the outcome, the deliverable, how it is checked and any restrictions
-                the person gave. An executor other than Mini Agent is given only this brief, so put in it
-                everything the work needs.
+                the person gave. An executor other than Mini Agent receives only the brief and the
+                evidence, so the brief must carry what it needs.
             start: True when the person asked for the work to be done, which queues its run now. False
                 when they asked to add a Task: it stays Ready until someone starts it.
             project_id: The active Project this Task is part of: check list_company_projects for the one
