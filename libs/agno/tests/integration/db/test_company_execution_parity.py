@@ -356,7 +356,7 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
     run_id = starts[0].json()["run_id"]
     job = await worker.store.get_job(run_id)
     payload = json.loads(job["payload"]["input"])
-    # An executor other than Mini Agent receives no wiki page and no Goal page.
+    # No executor receives a wiki page or a Goal page that was not attached to the Task.
     assert set(payload) == {"brief", "evidence", "execution_context"}
     assert payload["execution_context"]["stage"] == "accepted_task_execution"
     assert payload["evidence"][0]["hash"] == "abc"

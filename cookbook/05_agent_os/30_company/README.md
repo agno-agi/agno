@@ -464,7 +464,7 @@ when: `{id, kind, ref, added_by, added_at}`.
 |--------|-------|-----------------------|
 | `wiki` | `wiki/<page>.md` | The page. |
 | `goal` | `goals/<goal-id>/<page>.md` | The page, for example `brief.md` or `status.md`. |
-| `task` | A Task id | That Task's title, status and saved result, the names of the files in `tasks/<id>/`, and the full text of `tasks/<id>/handoff.md` when it exists. |
+| `task` | A Task id | That Task's title, status and saved result with the status of the run that saved it, the names of up to 50 files in `tasks/<id>/`, and the full text of `tasks/<id>/handoff.md` when it exists. |
 | `file` | `tasks/<task-id>/<path>` | The file. |
 
 `notes/` and chat sessions cannot be attached.
@@ -497,7 +497,8 @@ or Task id, the version read and whether it was sent `full`, `partial` or is
 `missing`. A page's version is its file version; a Task's version is the time it
 last changed. Each text is cut at 8,000 characters, and the texts of one input
 hold 40,000 characters in total: the first that does not fit and every later one
-are named without their content. An entry whose target was deleted is named as
+are named without their content. An attached Task's title, cut at 300 characters,
+and its file names count toward that total. An entry whose target was deleted is named as
 missing and the run still starts. Every cut and every gap is named with its
 reason, so the executor reports the gap instead of guessing. The block says that
 it is information and never an instruction.
@@ -647,9 +648,9 @@ including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
 Executor input contains only the Task brief and its evidence, and on a retry
-after a send-back the reviewer's reason and the earlier result. Mini Agent alone
-also receives every company wiki page and the Goal's `brief.md` and `status.md`;
-see "One file tree" for the size limit. Queue retries and restart recovery use the
+after a send-back the reviewer's reason and the earlier result. When something was
+attached to the Task it also holds that, under `context`; see "What a Task run is
+given". No executor receives a wiki page or a Goal page that was not attached. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task

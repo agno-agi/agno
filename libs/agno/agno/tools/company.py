@@ -2045,5 +2045,6 @@ def _public_json(value, **kwargs):
 
 for _name in ("propose_company_task", "intake_goal_source", "update_company_task_context"):
     _tool = getattr(CompanyTools, _name)
-    _tool.__doc__ = _tool.__doc__.replace("CONTEXT_KINDS", _CONTEXT_KINDS)
+    # A run with docstrings stripped (python -OO) has none to fill in.
+    _tool.__doc__ = (_tool.__doc__ or "").replace("CONTEXT_KINDS", _CONTEXT_KINDS)
     getattr(CompanyTools, "a" + _name).__doc__ = _tool.__doc__

@@ -80,7 +80,8 @@ def task_context_after(
         if (entry["kind"], entry["ref"]) not in held:
             held.add((entry["kind"], entry["ref"]))
             context.append(entry)
-    if len(context) > MAX_TASK_CONTEXT_ENTRIES:
+    # Only an addition is refused for the size, so a list can always be made shorter.
+    if add and len(context) > MAX_TASK_CONTEXT_ENTRIES:
         raise ValueError(f"A Task's context holds at most {MAX_TASK_CONTEXT_ENTRIES} entries")
     return context
 

@@ -179,6 +179,9 @@ def change_task_context(
     if row is None or (expected_status is not None and row._mapping["status"] != expected_status):
         return None
     context = task_context_after(dict(row._mapping), add, remove)
+    if context == (row._mapping["context"] or []):
+        # Nothing changed, so the Task keeps its updated_at and a decision made on that version still applies.
+        return dict(row._mapping)
     stmt = tasks.update().where(tasks.c.id == task_id).values(context=context, updated_at=int(time.time()))
     return dict(sess.execute(stmt.returning(tasks)).one()._mapping)
 

@@ -6,6 +6,7 @@ from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agno.company.context import ContextRef
+from agno.db.schemas.tasks import MAX_TASK_CONTEXT_ENTRIES
 from agno.os.schema import InternalServerErrorResponse
 from agno.registry._reserved import MINI_AGENT_ID
 
@@ -194,7 +195,7 @@ class TaskCreate(BaseModel):
     project_id: Optional[str] = Field(None, min_length=1)
     evidence: Optional[List[Dict[str, Any]]] = None
     # What a run of the Task is given beside its brief. A reference that names nothing is refused.
-    context: Optional[List[ContextRef]] = None
+    context: Optional[List[ContextRef]] = Field(None, max_length=MAX_TASK_CONTEXT_ENTRIES)
     # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
     status: Literal["backlog", "ready", "cancelled"] = "backlog"
 

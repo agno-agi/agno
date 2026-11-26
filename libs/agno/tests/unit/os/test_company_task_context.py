@@ -12,7 +12,13 @@ import json
 import pytest
 
 from agno.company import AsyncCompanyManager, CompanyManager
-from agno.company.context import CONTEXT_ITEM_CHARS, CONTEXT_TOTAL_CHARS, context_sent
+from agno.company.context import (
+    CONTEXT_FILE_NAMES,
+    CONTEXT_ITEM_CHARS,
+    CONTEXT_TITLE_CHARS,
+    CONTEXT_TOTAL_CHARS,
+    context_sent,
+)
 from agno.company.execution import _ExecutorAuthorization, _task_input
 from agno.company.files import CompanyFiles
 from agno.company.mini_agent import TASK_COMPANY_TOOLS, TASK_INSTRUCTIONS
@@ -615,3 +621,123 @@ def test_two_changes_at_once_lose_neither(tmp_path):
         assert sorted(entry["ref"] for entry in stored) == [f"wiki/page-{index}.md" for index in range(8)]
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------- found in review of the change
+
+
+def test_a_task_is_created_with_each_reference_once_and_within_the_limit(system):
+    seed(system)
+    wiki = {"kind": "wiki", "ref": "wiki/glossary.md"}
+
+    twice = api(system, "POST", "/company/tasks", {"title": "Twice", "context": [wiki, wiki]})
+    assert twice.status_code == 201 and [item["ref"] for item in twice.json()["context"]] == ["wiki/glossary.md"]
+    over = api(system, "POST", "/company/tasks", {"title": "Sixty", "context": [wiki] * 60})
+    assert over.status_code == 422, over.text
+    with pytest.raises(ValueError, match=f"at most {MAX_TASK_CONTEXT_ENTRIES} entries"):
+        system.manager.create_task(title="Sixty", context=[wiki] * 60)
+    # The limit is on the list, so the same reference many times within it is still one entry.
+    made = system.manager.create_task(title="Many", context=[wiki] * MAX_TASK_CONTEXT_ENTRIES)
+    assert len(made["context"]) == 1
+    assert system.manager.list_tasks(limit=100)[1] == 5
+
+
+def test_a_list_over_the_limit_can_still_be_made_shorter(system):
+    ids = seed(system)
+    # A row written before the limit was applied at creation.
+    entries = [{"id": f"e{n}", "kind": "wiki", "ref": f"wiki/p{n}.md"} for n in range(MAX_TASK_CONTEXT_ENTRIES + 5)]
+    table = system.db._get_table("tasks")
+    with system.db.Session() as sess, sess.begin():
+        sess.execute(table.update().where(table.c.id == ids["task"]).values(context=entries))
+
+    shorter = system.manager.change_task_context(ids["task"], remove=["e0"])
+
+    assert len(shorter["context"]) == MAX_TASK_CONTEXT_ENTRIES + 4
+    with pytest.raises(ValueError, match="at most"):
+        system.manager.change_task_context(ids["task"], add=[{"kind": "task", "ref": ids["earlier"]}])
+
+
+@pytest.mark.parametrize("ref", ["wiki/glossary.md/", "wiki/../glossary.md", "tasks/x/a\\b.md"])
+def test_a_malformed_path_is_refused_as_a_bad_request(system, ref):
+    ids = seed(system)
+    kind = "wiki" if ref.startswith("wiki") else "file"
+
+    added = api(system, "POST", f"/company/tasks/{ids['task']}/context", {"kind": kind, "ref": ref})
+    created = api(system, "POST", "/company/tasks", {"title": "Next", "context": [{"kind": kind, "ref": ref}]})
+
+    assert added.status_code == 422 and "invalid path" in added.text, added.text
+    assert created.status_code == 422 and "invalid path" in created.text, created.text
+    assert system.db.get_task(ids["task"])["context"] is None
+
+
+def test_an_attached_tasks_title_and_file_names_count_toward_the_total(system):
+    ids = seed(system)
+    files = CompanyFiles(system.db)
+    folder = f"tasks/{ids['stray']}"
+    for index in range(CONTEXT_FILE_NAMES + 10):
+        files.write(f"{folder}/{'d' * 100}/{'n' * 100}-{index:03d}.md", "x")
+    system.manager.update_task(ids["stray"], title="T" * (CONTEXT_TITLE_CHARS + 50))
+    system.manager.change_task_context(ids["task"], add=[{"kind": "task", "ref": ids["stray"]}])
+
+    (item,) = task_input(system, ids["task"])["context"]["items"]
+
+    assert len(item["title"]) == CONTEXT_TITLE_CHARS and len(item["files"]) == CONTEXT_FILE_NAMES
+    assert item["sent"] == "partial"
+    assert item["note"] == f"files names {CONTEXT_FILE_NAMES} of {CONTEXT_FILE_NAMES + 11} files."
+
+    # Many attached Tasks cannot pass the total through their names alone.
+    others = []
+    for number in range(8):
+        other = system.manager.create_task(goal_id=ids["other"], title=f"Other {number}")
+        for index in range(CONTEXT_FILE_NAMES):
+            files.write(f"tasks/{other['id']}/{'d' * 100}/{'m' * 100}-{index:03d}.md", "x")
+        others.append({"kind": "task", "ref": other["id"]})
+    system.manager.change_task_context(ids["task"], add=others)
+    items = task_input(system, ids["task"])["context"]["items"]
+    named = sum(len(name) for item in items for name in item["files"]) + sum(len(item["title"]) for item in items)
+    assert named <= CONTEXT_TOTAL_CHARS
+    assert items[-1]["files"] == [] and "files names 0 of" in items[-1]["note"]
+
+
+def test_an_attached_task_says_whether_its_result_is_a_failed_runs_error(system):
+    ids = seed(system)
+    table = system.db._get_table("tasks")
+    failed = {"run_id": "r", "status": "ERROR", "content": "Rate limit exceeded"}
+    with system.db.Session() as sess, sess.begin():
+        sess.execute(table.update().where(table.c.id == ids["stray"]).values(result=failed))
+    system.manager.change_task_context(
+        ids["task"], add=[{"kind": "task", "ref": ids["stray"]}, {"kind": "task", "ref": ids["earlier"]}]
+    )
+
+    errored, finished = task_input(system, ids["task"])["context"]["items"]
+
+    assert (errored["run_status"], errored["result"]) == ("ERROR", "Rate limit exceeded")
+    assert finished["run_status"] == "COMPLETED"
+
+
+def test_attaching_what_is_already_attached_leaves_the_task_as_it_was(system, monkeypatch):
+    import time
+
+    ids = seed(system)
+    first = system.manager.change_task_context(ids["task"], add=[{"kind": "wiki", "ref": "wiki/glossary.md"}])
+    later = time.time() + 60
+    monkeypatch.setattr(time, "time", lambda: later)
+
+    again = system.manager.change_task_context(ids["task"], add=[{"kind": "wiki", "ref": "wiki/glossary.md"}])
+
+    assert again["updated_at"] == first["updated_at"] and again["context"] == first["context"]
+    # A real change still moves it.
+    changed = system.manager.change_task_context(ids["task"], add=[{"kind": "task", "ref": ids["earlier"]}])
+    assert changed["updated_at"] > first["updated_at"]
+
+
+def test_the_company_tools_import_with_docstrings_stripped():
+    import subprocess
+    import sys
+
+    done = subprocess.run(
+        [sys.executable, "-OO", "-c", "import agno.tools.company, agno.os.manager.company_tasks"],
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr[-400:]
