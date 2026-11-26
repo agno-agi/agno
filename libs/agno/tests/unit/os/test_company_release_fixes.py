@@ -1179,34 +1179,34 @@ def test_listing_tasks_names_each_tasks_folder(system, use_async):
 
 
 def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypatch):
+    from agno.company.context import CONTEXT_ITEM_CHARS, CONTEXT_TOTAL_CHARS
     from agno.company.execution import _task_input
-    from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS
+    from agno.company.files import CompanyFiles
     from agno.company.manager import CompanyManager
-    from agno.registry._reserved import MINI_AGENT_ID
 
     task = system.proposal()
     manager = CompanyManager(system.db, system.os.registry)
     for index in range(12):
         manager.write_wiki(
-            goal_id=None, path=f"page-{index:02d}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
+            goal_id=None, path=f"page-{index:02d}.md", content="p" * CONTEXT_ITEM_CHARS, expected_version=0
         )
+    attached = [{"kind": "wiki", "ref": f"wiki/page-{index:02d}.md"} for index in range(12)]
+    task = manager.change_task_context(task["id"], add=attached)
     read = []
-    original = CompanyManager.read_wiki
+    original = CompanyFiles.aread
 
-    def counted(self, goal_id, path):
+    async def counted(self, path, offset=0):
         read.append(path)
-        return original(self, goal_id, path)
+        return await original(self, path, offset)
 
-    monkeypatch.setattr(CompanyManager, "read_wiki", counted)
-    # Only Mini Agent's input carries pages.
-    task = {**task, "executor_type": "agent", "executor_id": MINI_AGENT_ID}
-    pages = json.loads(asyncio.run(_task_input(manager, task)))["wiki"]
-    loaded = [page for page in pages if "content" in page]
-    named = [page for page in pages if "content" not in page]
-    assert sum(len(page["content"]) for page in loaded) <= ALWAYS_LOADED_TOTAL_CHARS
-    # Every page is still named with the file to read. Only the pages that fit, and the first that did not, were read.
-    assert len(pages) == 2 + len(manager.list_wiki(None, limit=100)[0])
-    assert named and all("Not loaded" in page["note"] and page["file"] in page["note"] for page in named)
+    monkeypatch.setattr(CompanyFiles, "aread", counted)
+    pages = json.loads(asyncio.run(_task_input(manager, task)))["context"]["items"]
+    loaded = [page for page in pages if page["content"] is not None]
+    named = [page for page in pages if page["content"] is None]
+    assert sum(len(page["content"]) for page in loaded) <= CONTEXT_TOTAL_CHARS
+    # Every attached page is still named. Only the pages that fit, and the first that did not, were read.
+    assert [page["ref"] for page in pages] == [entry["ref"] for entry in attached]
+    assert named and all("was not sent" in page["note"] and page["ref"] in page["note"] for page in named)
     assert len(read) == len(loaded) + 1, (len(read), len(loaded), len(named))
 
 
