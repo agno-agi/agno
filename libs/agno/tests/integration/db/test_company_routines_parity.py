@@ -1,6 +1,7 @@
 """Routine HTTP controls and Project-required proposals across the SQL adapters."""
 
 import asyncio
+import json
 import time
 from unittest.mock import AsyncMock
 
@@ -289,30 +290,30 @@ async def test_on_demand_never_polled_restart_and_cron_changes(system):
 
 
 @pytest.mark.asyncio
-async def test_task_and_intake_require_project(system):
+async def test_a_task_with_no_project_goes_to_the_default_project(system):
     client, db, _, os, _ = system
-    goal = (await client.post("/company/goals", json={"name": "Project required"})).json()
-    for missing in ({}, {"project_id": None}, {"project_id": ""}):
-        refused = await client.post("/company/tasks", json={"goal_id": goal["id"], "title": "Work", **missing})
-        assert refused.status_code == 422, refused.text
+    goal = (await client.post("/company/goals", json={"name": "No Project named"})).json()
+    for missing in ({}, {"project_id": None}):
+        created = await client.post("/company/tasks", json={"goal_id": goal["id"], "title": "Work", **missing})
+        assert created.status_code == 201, created.text
+        assert (created.json()["project_id"], created.json()["goal_id"]) == ("default", goal["id"])
+    # An empty id names no Project.
+    empty = await client.post("/company/tasks", json={"goal_id": goal["id"], "title": "Work", "project_id": ""})
+    assert empty.status_code == 422, empty.text
     manager = AsyncCompanyManager(db, os.registry) if isinstance(db, AsyncBaseDb) else CompanyManager(db, os.registry)
-    with pytest.raises(ValueError, match="requires a Project"):
-        await _manager_call(manager, "create_task", goal_id=goal["id"], title="Work")
-    with pytest.raises(ValueError, match="requires a Project"):
+    stored = await _manager_call(manager, "create_task", goal_id=goal["id"], title="Work")
+    assert stored["project_id"] == "default"
+    loose = await _manager_call(manager, "create_task", title="Work with no Goal")
+    assert (loose["project_id"], loose["goal_id"]) == ("default", None)
+    with pytest.raises(LookupError, match="Source not found"):
         await _manager_call(manager, "intake", source_id="source", run_id="run", proposal={})
     tools = CompanyTools(db)
     for async_tools in (False, True):
         if not async_tools and isinstance(db, AsyncBaseDb):
             continue
-        prefix = "a" if async_tools else ""
-        for name, args in (
-            ("propose_company_task", (goal["id"], "Work")),
-            ("intake_goal_source", ("source", "Work", "Brief", "key", ["link"], {"link": "hash"})),
-        ):
-            with pytest.raises(ValueError, match="requires a Project"):
-                result = getattr(tools, prefix + name)(*args)
-                if asyncio.iscoroutine(result):
-                    await result
+        result = getattr(tools, ("a" if async_tools else "") + "propose_company_task")(goal["id"], "Work")
+        proposed = json.loads(await result if asyncio.iscoroutine(result) else result)
+        assert (proposed["project_id"], proposed["goal_id"]) == ("default", goal["id"])
     project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
@@ -320,7 +321,12 @@ async def test_task_and_intake_require_project(system):
         "/company/tasks", json={"goal_id": goal["id"], "project_id": project["id"], "title": "Work"}
     )
     assert task.status_code == 201, task.text
-    assert (await client.patch("/company/tasks/" + task.json()["id"], json={"project_id": None})).status_code == 422
+    # Taken out of its Project, a Task goes to the Default Project and keeps its Goal.
+    moved = await client.patch("/company/tasks/" + task.json()["id"], json={"project_id": None})
+    assert moved.status_code == 200, moved.text
+    assert (moved.json()["project_id"], moved.json()["goal_id"]) == ("default", goal["id"])
+    default = (await client.get("/company/projects/default")).json()
+    assert default["is_default"] is True and default["status"] == "active"
 
 
 @pytest.mark.asyncio
