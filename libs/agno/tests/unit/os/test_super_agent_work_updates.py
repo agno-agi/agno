@@ -424,7 +424,15 @@ def test_work_that_names_no_conversation_tells_nobody(system, monkeypatch):
 
     async def steps():
         # A run a client started through the route, as any background run is.
-        form = {"message": "Go", "stream": "false", "background": "true", "session_id": "elsewhere"}
+        # It carries metadata of its own, and tries to name a conversation: the route strips that key.
+        metadata = json.dumps({"ticket": 7, REQUESTED_FROM_METADATA_KEY: {"session_id": CHAT, "team_id": "superagent"}})
+        form = {
+            "message": "Go",
+            "stream": "false",
+            "background": "true",
+            "session_id": "elsewhere",
+            "metadata": metadata,
+        }
         transport = httpx.ASGITransport(app=system.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://agentos") as client:
             response = await client.post("/agents/writer/runs", data=form)
@@ -434,7 +442,7 @@ def test_work_that_names_no_conversation_tells_nobody(system, monkeypatch):
         return system.row(response.json()["run_id"])
 
     work = scenario(steps)
-    assert work["status"] == "COMPLETED"
+    assert work["status"] == "COMPLETED" and work["run_data"]["metadata"] == {"ticket": 7}
     assert told == [] and not run_background._requester_notices
     # The ticket of such a run is not read again to find out how it ended.
     assert reads == []
