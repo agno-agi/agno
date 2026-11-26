@@ -34,29 +34,29 @@ MOVED_TOOLS = {
     "read_file": ({"path": "example.py"}, "filesystem:read"),
     "search_content": ({"query": "SENTINEL"}, "filesystem:read"),
     "update_company_details": ({"description": "Makes robots"}, "company:write"),
-    "list_company_products": ({}, "products:read"),
-    "get_company_product": ({"product_id": "{product}"}, "products:read"),
-    "create_company_product": ({"name": "Second"}, "products:write"),
-    "create_product_routine": (
+    "list_company_goals": ({}, "goals:read"),
+    "get_company_goal": ({"goal_id": "{goal}"}, "goals:read"),
+    "create_company_goal": ({"name": "Second"}, "goals:write"),
+    "create_goal_routine": (
         {
-            "product_id": "{product}",
+            "goal_id": "{goal}",
             "name": "review",
             "executor_type": "agent",
             "executor_id": "reader",
-            "instructions": "Review the Product.",
+            "instructions": "Review the Goal.",
         },
-        "products:write",
+        "goals:write",
     ),
     "list_company_projects": ({}, "projects:read"),
-    "propose_company_project": ({"product_id": "{product}", "name": "Second project"}, "projects:write"),
+    "propose_company_project": ({"goal_id": "{goal}", "name": "Second project"}, "projects:write"),
     "edit_company_project": ({"project_id": "{project}", "name": "Renamed", "outcome": "Done"}, "projects:write"),
     "list_company_tasks": ({}, "tasks:read"),
-    "propose_company_task": ({"product_id": "{product}", "title": "Second", "project_id": "{project}"}, "tasks:write"),
+    "propose_company_task": ({"goal_id": "{goal}", "title": "Second", "project_id": "{project}"}, "tasks:write"),
     "edit_company_task": ({"task_id": "{task}", "title": "Renamed", "brief": "New brief"}, "tasks:write"),
-    "list_product_sources": ({"product_id": "{product}"}, "sources:read"),
-    "add_product_source": ({"product_id": "{product}", "reference": "https://example.com/docs"}, "sources:write"),
-    "read_product_source": ({"source_id": "{source}"}, "sources:read"),
-    "intake_product_source": (
+    "list_goal_sources": ({"goal_id": "{goal}"}, "sources:read"),
+    "add_goal_source": ({"goal_id": "{goal}", "reference": "https://example.com/docs"}, "sources:write"),
+    "read_goal_source": ({"source_id": "{source}"}, "sources:read"),
+    "intake_goal_source": (
         {
             "source_id": "{source}",
             "title": "From source",
@@ -69,10 +69,10 @@ MOVED_TOOLS = {
         "sources:read",
     ),
     "list_company_files": ({"folder": "wiki"}, "wiki:read"),
-    "read_company_file": ({"path": "products/{product}/brief.md"}, "wiki:read"),
+    "read_company_file": ({"path": "goals/{goal}/brief.md"}, "wiki:read"),
     "search_company_files": ({"query": "Company"}, "wiki:read"),
     "write_company_file": (
-        {"path": "products/{product}/research.md", "content": "Research", "expected_version": 0},
+        {"path": "goals/{goal}/research.md", "content": "Research", "expected_version": 0},
         "wiki:write",
     ),
 }
@@ -155,11 +155,11 @@ def platform(tmp_path):
     )
     db.initialize_company("Acme", "Makes things")
     company = CompanyManager(db)
-    product = company.create(name="SDK")
-    project = company.create_project(product_id=product["id"], name="Release")
-    task = company.create_task(product_id=product["id"], title="First", project_id=project["id"])
-    source = company.create_source(product_id=product["id"], type="markdown", reference=str(notes))
-    ids = {"product": product["id"], "project": project["id"], "task": task["id"], "source": source["id"]}
+    goal = company.create(name="SDK")
+    project = company.create_project(goal_id=goal["id"], name="Release")
+    task = company.create_task(goal_id=goal["id"], title="First", project_id=project["id"])
+    source = company.create_source(goal_id=goal["id"], type="markdown", reference=str(notes))
+    ids = {"goal": goal["id"], "project": project["id"], "task": task["id"], "source": source["id"]}
     return os, ids
 
 
@@ -186,12 +186,12 @@ def run_tool(os, ids, tool, arguments, scopes, use_async):
 
 def company_records(os):
     company = CompanyManager(os.db)
-    products, product_count = company.list()
+    goals, goal_count = company.list()
     return (
-        product_count,
+        goal_count,
         company.list_projects()[1],
         company.list_tasks()[1],
-        sum(company.list_sources(product_id=product["id"])[1] for product in products),
+        sum(company.list_sources(goal_id=goal["id"])[1] for goal in goals),
         os.db.get_company()["description"],
     )
 
@@ -211,7 +211,7 @@ def test_matrix_covers_every_tool_super_agent_holds(platform):
         "list_pending_approvals",
     }
     company = next(tool for tool in os.manager.tools if isinstance(tool, CompanyTools))
-    assert not {"refresh_company_product", "summarize_company_product"} & set(company.functions)
+    assert not {"refresh_company_goal", "summarize_company_goal"} & set(company.functions)
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -252,13 +252,13 @@ def test_confirmed_company_edit_is_refused_without_its_permission(platform, use_
     assert company_records(os) == before
 
 
-ROUTINE_WRITE = ["products:write", "schedules:write", "routines:write"]
+ROUTINE_WRITE = ["goals:write", "schedules:write", "routines:write"]
 MINI_AGENT_ROUTINE = {
-    "product_id": "{product}",
+    "goal_id": "{goal}",
     "name": "review",
     "executor_type": "agent",
     "executor_id": MINI_AGENT_ID,
-    "instructions": "Review the Product.",
+    "instructions": "Review the Goal.",
 }
 
 
@@ -272,9 +272,9 @@ def test_routine_tool_needs_run_permission_on_mini_agent(platform, use_async):
     os, ids = platform
     before = routine_names(os)
     scopes = [*ROUTINE_WRITE, f"agents:{MINI_AGENT_ID}:run"]
-    result = run_tool(os, ids, "create_product_routine", MINI_AGENT_ROUTINE, scopes, use_async)
+    result = run_tool(os, ids, "create_goal_routine", MINI_AGENT_ROUTINE, scopes, use_async)
     assert "Permission required" not in str(result.content), result.content
-    assert routine_names(os) == sorted([*before, ids["product"] + ".review"])
+    assert routine_names(os) == sorted([*before, ids["goal"] + ".review"])
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -282,6 +282,6 @@ def test_routine_tool_is_refused_without_run_permission_on_mini_agent(platform, 
     os, ids = platform
     before = routine_names(os)
     scopes = [*ROUTINE_WRITE, *RUN_ONLY]
-    result = run_tool(os, ids, "create_product_routine", MINI_AGENT_ROUTINE, scopes, use_async)
+    result = run_tool(os, ids, "create_goal_routine", MINI_AGENT_ROUTINE, scopes, use_async)
     assert f"Permission required: agents:{MINI_AGENT_ID}:run" in str(result.content), result.content
     assert routine_names(os) == before

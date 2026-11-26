@@ -1,0 +1,1088 @@
+"""The Company file system on the File System page, and the route that lists every file system."""
+
+import logging
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agno.agent import Agent
+from agno.agent.factory import AgentFactory
+from agno.company.filesystem import company_filesystem
+from agno.company.manager import CompanyManager
+from agno.db.sqlite import SqliteDb
+from agno.fs import FileSystem
+from agno.os import AgentOS, CompanyConfig, OSManager
+from agno.registry import Registry
+from tests.unit.db.test_v3_3_0_company_files_migration import used_by_company
+from tests.unit.os.test_company_file_tree import call, records, tree
+from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
+
+pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
+
+FILES_ONLY = ["filesystem:read"]
+# What the Company routes ask for, beside filesystem:read.
+COMPANY_READ = [*FILES_ONLY, "wiki:read", "tasks:read"]
+COUNTS = ("file_count", "folder_count", "total_bytes")
+COMPANY_ENTRY = {
+    "backend_type": "db",
+    "table_name": "agno_fs",
+    "namespace": "company",
+    "user_isolation": False,
+    "max_file_bytes": 1_000_000,
+    "max_namespace_bytes": 1_000_000_000,
+    "id": "company",
+    "declared": False,
+    "company": True,
+    "agents": [],
+}
+
+
+@pytest.fixture
+def system(tmp_path):
+    value = System(tmp_path)
+    yield value
+    value.db.close()
+
+
+def written(system) -> dict:
+    """Company records, and one file in each folder of the tree, written as agents and people write them."""
+    ids = records(system)
+    files = tree(system.os)
+    call(files, "write_company_file", path=f"tasks/{ids['task']}/report.md", content="The report needle")
+    page = f"goals/{ids['goal']}/research.md"
+    call(files, "write_company_file", path=page, content="Research needle", expected_version=0)
+    call(files, "write_company_file", path="notes/ideas.md", content="A note needle")
+    CompanyManager(system.db).write_wiki(goal_id=None, path="people.md", content="Ada needle\n", expected_version=0)
+    return ids
+
+
+def without_counts(entry: dict) -> dict:
+    return {key: value for key, value in entry.items() if key not in COUNTS}
+
+
+def entry_of(entries: list, namespace: str) -> dict:
+    found = [entry for entry in entries if entry["namespace"] == namespace]
+    assert len(found) == 1, entries
+    return {key: value for key, value in without_counts(found[0]).items() if key != "db_id"}
+
+
+# ------------------------------------------------------------------ the Company file system
+
+
+def test_the_company_filesystem_is_listed_and_read_with_the_company_read_scopes(system):
+    ids = written(system)
+    caller = headers(COMPANY_READ)
+
+    config = system.client.get("/config", headers=headers(["config:read"]))
+    assert config.status_code == 200
+    assert entry_of(config.json()["filesystem"]["namespaces"], "company") == COMPANY_ENTRY
+    listed = system.client.get("/filesystem/namespaces", headers=caller)
+    assert listed.status_code == 200
+    assert entry_of(listed.json()["namespaces"], "company") == COMPANY_ENTRY
+
+    # The tree is under the namespace: one entry, with the four folders in it.
+    by_id = {"filesystem_id": "company"}
+    top = system.client.get("/filesystem/entries", params=by_id, headers=caller)
+    assert top.status_code == 200
+    assert (top.json()["filesystem_id"], top.json()["namespace"], top.json()["agent_ids"]) == ("company", "company", [])
+    assert [(entry["path"], entry["type"]) for entry in top.json()["entries"]] == [
+        ("goals", "directory"),
+        ("notes", "directory"),
+        ("tasks", "directory"),
+        ("wiki", "directory"),
+    ]
+    goals = system.client.get("/filesystem/entries", params={**by_id, "directory": "goals"}, headers=caller)
+    # A Goal is a folder once it holds a page.
+    assert [(entry["path"], entry["type"]) for entry in goals.json()["entries"]] == [
+        (f"goals/{ids['goal']}", "directory")
+    ]
+    goal = system.client.get(
+        "/filesystem/entries", params={**by_id, "directory": f"goals/{ids['goal']}"}, headers=caller
+    )
+    assert [entry["path"].rsplit("/", 1)[1] for entry in goal.json()["entries"]] == [
+        "brief.md",
+        "research.md",
+        "status.md",
+    ]
+
+    # A file an agent wrote is read here by a caller who may read it on the Company routes.
+    for path, content in (
+        (f"tasks/{ids['task']}/report.md", "The report needle"),
+        (f"goals/{ids['goal']}/research.md", "Research needle"),
+        ("notes/ideas.md", "A note needle"),
+        ("wiki/people.md", "Ada needle\n"),
+    ):
+        read = system.client.get("/filesystem/content", params={**by_id, "path": path}, headers=caller)
+        assert read.status_code == 200, path
+        assert read.json()["content"] == content
+    search = system.client.get("/filesystem/search", params={**by_id, "query": "needle"}, headers=caller)
+    assert sorted(entry["path"] for entry in search.json()["entries"]) == sorted(
+        [f"tasks/{ids['task']}/report.md", f"goals/{ids['goal']}/research.md", "notes/ideas.md", "wiki/people.md"]
+    )
+    rows = system.client.get("/filesystem/files", params={**by_id, "limit": 100}, headers=caller).json()["entries"]
+    assert {row["filesystem_id"] for row in rows} == {"company"}
+    assert f"tasks/{ids['task']}/report.md" in [row["path"] for row in rows]
+
+    # The same caller reads them on the Company routes.
+    for url in ("/company/wiki", "/company/notes", f"/company/tasks/{ids['task']}/files"):
+        assert system.client.get(url, headers=caller).status_code == 200, url
+
+
+@pytest.mark.parametrize("scopes", [FILES_ONLY, [*FILES_ONLY, "tasks:read"]])
+def test_without_wiki_read_the_company_filesystem_is_not_listed_and_not_read(system, scopes):
+    ids = written(system)
+    caller = headers(scopes)
+
+    assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
+    assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+    for address in ({"filesystem_id": "company"}, {"namespace": "company"}):
+        for path, params in (
+            ("/filesystem/entries", {}),
+            ("/filesystem/content", {"path": f"tasks/{ids['task']}/report.md"}),
+            ("/filesystem/search", {"query": "needle"}),
+            ("/filesystem/files", {}),
+        ):
+            refused = system.client.get(path, params={**address, **params}, headers=caller)
+            assert refused.status_code == 403, (address, path)
+            assert "wiki:read" in refused.json()["detail"] and "The report" not in refused.text
+
+
+def test_without_tasks_read_the_files_of_tasks_are_left_out_and_refused(system):
+    ids = written(system)
+    caller, full = headers([*FILES_ONLY, "wiki:read"]), headers(COMPANY_READ)
+    by_id = {"filesystem_id": "company"}
+
+    top = system.client.get("/filesystem/entries", params=by_id, headers=caller).json()
+    assert [entry["path"] for entry in top["entries"]] == ["goals", "notes", "wiki"]
+    search = system.client.get("/filesystem/search", params={**by_id, "query": "needle", "limit": 100}, headers=caller)
+    assert search.json()["entries"] and not [e for e in search.json()["entries"] if e["path"].startswith("tasks/")]
+    rows = system.client.get("/filesystem/files", params={"limit": 100}, headers=caller).json()["entries"]
+    assert rows and not [row for row in rows if row["path"].startswith("tasks/")]
+    report = f"tasks/{ids['task']}/report.md"
+    for path, params in (
+        ("/filesystem/content", {"path": report}),
+        ("/filesystem/content", {"path": "/" + report, "user_id": "alice"}),
+        ("/filesystem/entries", {"directory": "tasks"}),
+        ("/filesystem/search", {"query": "needle", "directory": "tasks"}),
+    ):
+        refused = system.client.get(path, params={**by_id, **params}, headers=caller)
+        assert refused.status_code == 403 and "tasks:read" in refused.json()["detail"], (path, params)
+        if "user_id" not in params:
+            assert system.client.get(path, params={**by_id, **params}, headers=full).status_code == 200, path
+
+    # The counts cover what the caller can read, and agree with the usage of the store.
+    def counted(who) -> tuple:
+        listed = system.client.get("/filesystem/namespaces", headers=who).json()["namespaces"][0]
+        usage = system.client.get("/filesystem/entries", params=by_id, headers=who).json()["usage"]
+        assert (listed["file_count"], listed["total_bytes"]) == (usage["file_count"], usage["total_bytes"])
+        return listed["file_count"], listed["folder_count"]
+
+    assert (counted(full)[0] - counted(caller)[0], counted(full)[1] - counted(caller)[1]) == (1, 2)
+
+
+def test_an_agent_that_holds_the_company_filesystem_is_read_within_the_callers_company_access(system):
+    ids = written(system)
+    system.writer.filesystem = company_filesystem(system.db)
+    # The writer was initialized before it was given a filesystem.
+    system.os.resync(system.client.app)
+    agent, report = {"agent_id": "writer"}, f"tasks/{ids['task']}/report.md"
+    routes = (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": "wiki/people.md"}),
+        ("/filesystem/search", {"query": "needle"}),
+        ("/filesystem/files", {}),
+        ("/filesystem/files", {"query": "needle"}),
+    )
+
+    # Without wiki:read the agent's handle opens nothing of the Company filesystem.
+    for scopes in ([*FILES_ONLY, "agents:read"], [*FILES_ONLY, "agents:read", "tasks:read"]):
+        caller = headers(scopes)
+        for path, params in routes:
+            for address in (agent, {**agent, "namespace": "company"}, {**agent, "filesystem_id": "company"}):
+                refused = system.client.get(path, params={**address, **params}, headers=caller)
+                assert refused.status_code == 403, (scopes, path, address, refused.text)
+                assert "wiki:read" in refused.json()["detail"] and "needle" not in refused.text
+        assert system.client.get("/filesystem/namespaces", params=agent, headers=caller).status_code == 403
+        # Every agent's files, with none named, leave the Company files out.
+        assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
+        assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+
+    # With wiki:read and not tasks:read, the files of Tasks are left out and refused.
+    caller = headers([*FILES_ONLY, "agents:read", "wiki:read"])
+    rows = system.client.get("/filesystem/files", params=agent, headers=caller).json()["entries"]
+    assert rows and {row["agent_ids"][0] for row in rows} == {"writer"}
+    assert not [row["path"] for row in rows if row["path"].startswith("tasks/")]
+    found = system.client.get("/filesystem/search", params={**agent, "query": "needle"}, headers=caller)
+    assert report not in [entry["path"] for entry in found.json()["entries"]]
+    assert system.client.get("/filesystem/content", params={**agent, "path": report}, headers=caller).status_code == 403
+    full = headers([*COMPANY_READ, "agents:read"])
+    counted = system.client.get("/filesystem/namespaces", params=agent, headers=caller).json()["namespaces"]
+    whole = system.client.get("/filesystem/namespaces", params=agent, headers=full).json()["namespaces"]
+    assert [entry["id"] for entry in counted] == [entry["id"] for entry in whole] == ["company"]
+    assert counted[0]["file_count"] == whole[0]["file_count"] - 1
+    read = system.client.get("/filesystem/content", params={**agent, "path": report}, headers=full)
+    assert read.status_code == 200 and read.json()["content"] == "The report needle"
+
+
+def test_a_declared_filesystem_on_the_company_store_asks_for_the_company_scopes(tmp_path):
+    system = System(tmp_path)
+    try:
+        written(system)
+        handle = SqliteDb(id="handle", db_file=system.db.db_file)
+        system.os.filesystems.append(FileSystem(handle, namespace="company"))
+        caller = headers(FILES_ONLY)
+        assert system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"] == []
+        assert system.client.get("/filesystem/files", headers=caller).json()["entries"] == []
+        handle.close()
+    finally:
+        system.db.close()
+
+
+def test_a_request_by_namespace_alone_reads_the_company_filesystem(system):
+    ids = written(system)
+    caller = headers(COMPANY_READ)
+    by_namespace = {"namespace": "company"}
+
+    top = system.client.get("/filesystem/entries", params=by_namespace, headers=caller)
+    assert top.status_code == 200
+    assert [entry["path"] for entry in top.json()["entries"]] == ["goals", "notes", "tasks", "wiki"]
+    read = system.client.get(
+        "/filesystem/content", params={**by_namespace, "path": f"tasks/{ids['task']}/report.md"}, headers=caller
+    )
+    assert read.status_code == 200 and read.json()["content"] == "The report needle"
+    assert read.json()["filesystem_id"] == "company"
+    # The namespace filters the list and the table of files.
+    only = system.client.get("/filesystem/namespaces", params=by_namespace, headers=caller)
+    assert [entry["namespace"] for entry in only.json()["namespaces"]] == ["company"]
+    rows = system.client.get("/filesystem/files", params={**by_namespace, "limit": 100}, headers=caller).json()
+    assert rows["entries"] and {row["namespace"] for row in rows["entries"]} == {"company"}
+    assert (
+        system.client.get("/filesystem/namespaces", params={"namespace": "missing"}, headers=caller).json()[
+            "namespaces"
+        ]
+        == []
+    )
+
+
+def test_reading_the_company_filesystem_needs_filesystem_read(system):
+    ids = written(system)
+
+    for scopes in (["wiki:read", "tasks:read"], ["config:read"], ["agents:read"], []):
+        refused = headers(scopes)
+        assert system.client.get("/filesystem/namespaces", headers=refused).status_code == 403, scopes
+        content = system.client.get(
+            "/filesystem/content",
+            params={"filesystem_id": "company", "path": f"tasks/{ids['task']}/report.md"},
+            headers=refused,
+        )
+        assert content.status_code == 403, scopes
+        assert "needle" not in content.text
+
+
+def test_a_request_for_the_company_filesystem_loads_no_agent(system, monkeypatch):
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    ids = written(system)
+    resolved: list = []
+    resolve_agent = filesystem_router.resolve_agent
+
+    async def spy(agent_id, *args, **kwargs):
+        resolved.append(agent_id)
+        return await resolve_agent(agent_id, *args, **kwargs)
+
+    monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
+
+    for path, params in (
+        ("/filesystem/entries", {}),
+        ("/filesystem/content", {"path": f"tasks/{ids['task']}/report.md"}),
+        ("/filesystem/search", {"query": "needle"}),
+        ("/filesystem/files", {}),
+    ):
+        response = system.client.get(path, params={"filesystem_id": "company", **params}, headers=headers(COMPANY_READ))
+        assert response.status_code == 200, path
+    assert resolved == []
+
+
+def test_the_company_filesystem_is_shared_under_user_isolation(tmp_path):
+    system = System(tmp_path, user_isolation=True)
+    try:
+        written(system)
+        for user in ("alice", "bob"):
+            caller = headers(COMPANY_READ, user=user)
+            entry = entry_of(
+                system.client.get("/filesystem/namespaces", headers=caller).json()["namespaces"], "company"
+            )
+            assert entry["user_isolation"] is False
+            read = system.client.get(
+                "/filesystem/content", params={"filesystem_id": "company", "path": "notes/ideas.md"}, headers=caller
+            )
+            assert (read.json()["content"], read.json()["user_id"]) == ("A note needle", None)
+    finally:
+        system.db.close()
+
+
+def test_without_company_the_notes_store_is_not_listed(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    agent_os = AgentOS(db=db, manager=OSManager(model=ScriptedModel()), telemetry=False)
+    try:
+        call(tree(agent_os), "write_company_file", path="notes/ideas.md", content="A note")
+        assert company_filesystem(db).read("notes/ideas.md") == "A note"
+        with TestClient(agent_os.get_app()) as client:
+            assert client.get("/config").json()["filesystem"]["namespaces"] == []
+            assert client.get("/filesystem/namespaces").json()["namespaces"] == []
+            by_id = client.get("/filesystem/content", params={"filesystem_id": "company", "path": "notes/ideas.md"})
+            assert by_id.status_code == 404
+            assert "A note" not in by_id.text
+    finally:
+        db.close()
+
+
+def test_a_database_that_cannot_hold_files_has_no_company_entry():
+    from agno.db.in_memory import InMemoryDb
+
+    with TestClient(AgentOS(db=InMemoryDb(), company=CompanyConfig(), telemetry=False).get_app()) as client:
+        assert client.get("/config").json()["filesystem"]["namespaces"] == []
+        assert client.get("/filesystem/namespaces").json()["namespaces"] == []
+
+
+def test_the_company_store_declared_is_one_entry_and_an_agent_is_refused_it(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    declared = FileSystem(db, namespace="company", user_scoped=False)
+    reader = Agent(
+        id="reader", db=db, filesystem=FileSystem(db, namespace="company", user_scoped=False, read_only=True)
+    )
+    agent_os = AgentOS(db=db, agents=[reader], company=CompanyConfig(), filesystem=declared, telemetry=False)
+    try:
+        company_filesystem(db).write("wiki/people.md", "Ada")
+        with TestClient(agent_os.get_app()) as client:
+            for entries in (
+                client.get("/config").json()["filesystem"]["namespaces"],
+                client.get("/filesystem/namespaces").json()["namespaces"],
+            ):
+                assert [(e["id"], e["declared"], e["company"], e["agents"]) for e in entries] == [
+                    ("company", True, True, [])
+                ]
+            read = client.get("/filesystem/content", params={"filesystem_id": "company", "path": "wiki/people.md"})
+            assert read.json()["content"] == "Ada"
+            # The agent is refused the namespace, a read-only one too.
+            assert client.get("/filesystem/entries", params={"agent_id": "reader"}).status_code == 400
+    finally:
+        db.close()
+
+
+# ------------------------------------------------------------------ the list of file systems
+
+
+def test_the_list_is_sorted_by_id_paged_and_searched_and_counts_only_the_page(tmp_path, monkeypatch):
+    from agno.os.routers.filesystem import router as filesystem_router
+
+    db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    names = ["zeta", "Alpha", "beta-notes", "gamma", "notes/delta"]
+    stores = [FileSystem(db, namespace=name) for name in names]
+    for filesystem in stores:
+        filesystem.write("page.md", "x")
+    agent_os = AgentOS(db=db, filesystem=stores, telemetry=False)
+    counted: list = []
+    set_counts = filesystem_router._set_counts
+
+    async def spy(entry, filesystem, request):
+        counted.append(entry.id)
+        await set_counts(entry, filesystem, request)
+
+    monkeypatch.setattr(filesystem_router, "_set_counts", spy)
+    try:
+        with TestClient(agent_os.get_app()) as client:
+
+            def listed(**params) -> tuple:
+                response = client.get("/filesystem/namespaces", params=params)
+                assert response.status_code == 200, response.text
+                body = response.json()
+                meta = body["meta"]
+                page = (meta["page"], meta["limit"], meta["total_pages"], meta["total_count"])
+                return [entry["id"] for entry in body["namespaces"]], page
+
+            # Namespaces are stored lower-cased, and the list is sorted by id.
+            ordered = ["alpha", "beta-notes", "gamma", "notes/delta", "zeta"]
+            assert listed() == (ordered, (1, 50, 1, 5))
+            counted.clear()
+            assert listed(limit=2) == (ordered[:2], (1, 2, 3, 5))
+            # Only the page that is returned is counted.
+            assert counted == ordered[:2]
+            assert listed(limit=2, page=3) == (ordered[4:], (3, 2, 3, 5))
+            assert listed(limit=2, page=4) == ([], (4, 2, 3, 5))
+            # The search matches the id or the namespace, in any case, and the pages are of what it keeps.
+            assert listed(query="NOTES") == (["beta-notes", "notes/delta"], (1, 50, 1, 2))
+            assert listed(query="notes", limit=1, page=2) == (["notes/delta"], (2, 1, 2, 2))
+            assert listed(query="nothing") == ([], (1, 50, 0, 0))
+            # It narrows the exact namespace filter, never widens it.
+            assert listed(query="a", namespace="gamma") == (["gamma"], (1, 50, 1, 1))
+            # Sorted by namespace, either way, and paged in that order.
+            assert listed(sort_order="desc", limit=2) == (ordered[::-1][:2], (1, 2, 3, 5))
+            assert listed(sort_by="namespace", sort_order="desc", limit=2, page=2) == (ordered[::-1][2:4], (2, 2, 3, 5))
+            for params in (
+                {"limit": 0},
+                {"limit": 101},
+                {"page": 0},
+                {"query": ""},
+                {"sort_by": "file_count"},
+                {"sort_order": "up"},
+            ):
+                assert client.get("/filesystem/namespaces", params=params).status_code == 422, params
+            entry = client.get("/filesystem/namespaces", params={"query": "zeta"}).json()["namespaces"][0]
+            assert (entry["file_count"], entry["folder_count"], entry["total_bytes"]) == (1, 0, 1)
+    finally:
+        db.close()
+
+
+def test_the_list_sorts_by_namespace_where_it_differs_from_the_id(tmp_path):
+    main = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    # The namespace "a" is in two databases, so its ids add the database and sort after "a-b".
+    stores = [FileSystem(main, namespace="a"), FileSystem(archive, namespace="a"), FileSystem(main, namespace="a-b")]
+    try:
+        with TestClient(AgentOS(db=main, filesystem=stores, telemetry=False).get_app()) as client:
+
+            def listed(**params) -> list:
+                entries = client.get("/filesystem/namespaces", params=params).json()["namespaces"]
+                return [(entry["namespace"], entry["id"]) for entry in entries]
+
+            by_id = [("a-b", "a-b"), ("a", "a:archive-db"), ("a", "a:main-db")]
+            by_namespace = [("a", "a:archive-db"), ("a", "a:main-db"), ("a-b", "a-b")]
+            assert listed() == by_id
+            assert listed(sort_by="namespace") == by_namespace
+            assert listed(sort_by="namespace", sort_order="desc") == by_namespace[::-1]
+            assert listed(sort_by="namespace", limit=1, page=3) == by_namespace[2:]
+    finally:
+        main.close()
+        archive.close()
+
+
+def test_the_list_counts_files_and_folders_at_every_depth(tmp_path):
+    from agno.fs.db import DbFileSystem
+
+    class Down(DbFileSystem):
+        def list(self, *args, **kwargs):
+            raise RuntimeError("down")
+
+    db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    handbook, empty = FileSystem(db, namespace="handbook"), FileSystem(db, namespace="empty")
+    for path in ("readme.md", "notes/a.md", "notes/2026/b.md"):
+        handbook.write(path, "abc")
+    down = FileSystem(Down(db=db, table_name="other_fs"), namespace="down")
+    agent_os = AgentOS(db=db, filesystem=[handbook, empty, down], telemetry=False)
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            listed = client.get("/filesystem/namespaces")
+            assert listed.status_code == 200
+            counts = {e["id"]: tuple(e.get(key) for key in COUNTS) for e in listed.json()["namespaces"]}
+            # A filesystem that cannot be read is left uncounted, and the others are still counted.
+            assert counts == {"handbook": (3, 2, 9), "empty": (0, 0, 0), "down": (None, None, None)}
+    finally:
+        db.close()
+
+
+def test_the_list_counts_the_partition_of_the_caller_and_every_partition_for_an_admin(tmp_path):
+    system = System(tmp_path, user_isolation=True)
+    try:
+        diary = FileSystem(system.db, namespace="diary", user_scoped=True)
+        diary.resolve(user_id="alice").write("notes/a.md", "12")
+        diary.resolve(user_id="bob").write("notes/b.md", "345")
+        system.os.filesystems.append(diary)
+
+        def counts(scopes, user) -> tuple:
+            listed = system.client.get("/filesystem/namespaces", headers=headers(scopes, user=user)).json()
+            return tuple(next(e for e in listed["namespaces"] if e["namespace"] == "diary")[key] for key in COUNTS)
+
+        assert counts(FILES_ONLY, "alice") == (1, 1, 2)
+        assert counts(FILES_ONLY, "bob") == (1, 1, 3)
+        # A folder two users have is one folder.
+        assert counts(["agent_os:admin"], "root") == (2, 1, 5)
+    finally:
+        system.db.close()
+
+
+def test_notes_that_wait_to_be_moved_are_refused_and_not_counted_as_none(tmp_path):
+    os_db = SqliteDb(id="os-db", db_file=str(tmp_path / "os.db"))
+    company_db = SqliteDb(id="company-db", db_file=str(tmp_path / "company.db"))
+    FileSystem(os_db, namespace="company/notes", user_scoped=False).write("ideas.md", "A note")
+    agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False, auto_provision_dbs=False)
+    by_id = {"filesystem_id": "company"}
+    try:
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            entry = next(e for e in client.get("/filesystem/namespaces").json()["namespaces"] if e["company"])
+            assert not [key for key in COUNTS if key in entry]
+            refused = client.get("/filesystem/entries", params={**by_id, "directory": "notes"})
+            assert refused.status_code == 500 and refused.json()["error_id"] == "migration_required_error"
+            assert client.get("/filesystem/entries", params=by_id).status_code == 200
+            assert client.post("/databases/all/migrate").status_code == 200
+            read = client.get("/filesystem/content", params={**by_id, "path": "notes/ideas.md"})
+            assert read.json()["content"] == "A note"
+    finally:
+        os_db.close()
+        company_db.close()
+
+
+def test_the_list_sees_the_agents_the_browse_routes_see(tmp_path):
+    catalog_db = SqliteDb(id="catalog-db", db_file=str(tmp_path / "catalog.db"))
+    files_db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    stored_store = FileSystem(files_db, namespace="stored-notes")
+    stored_store.write("state.md", "from a stored agent")
+    Agent(id="stored-agent", db=catalog_db, filesystem=stored_store).save()
+    factory_store = FileSystem(catalog_db, namespace="factories/{agent_id}")
+    factory_store.resolve(agent_id="factory-agent").write("state.md", "from a factory agent")
+    factory = AgentFactory(
+        id="factory-agent",
+        db=catalog_db,
+        factory=lambda ctx: Agent(id="factory-agent", db=catalog_db, filesystem=factory_store),
+    )
+    code_agent = Agent(
+        id="code-agent", db=catalog_db, filesystem=FileSystem(catalog_db, namespace="code", read_only=True)
+    )
+    handbook = FileSystem(catalog_db, namespace="handbook")
+    agent_os = AgentOS(
+        db=catalog_db,
+        agents=[code_agent, factory],
+        registry=Registry(dbs=[files_db]),
+        filesystem=handbook,
+        telemetry=False,
+    )
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            # /config describes the agents declared in code, and not a stored or a factory agent.
+            config = client.get("/config").json()["filesystem"]["namespaces"]
+            assert sorted(entry["id"] for entry in config) == ["code", "handbook"]
+
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            assert [(e["id"], e["namespace"], e["declared"], e["company"], e["agents"]) for e in listed] == [
+                ("code", "code", False, False, [{"id": "code-agent", "access": "read_only"}]),
+                ("factories/factory-agent", "factories/factory-agent", False, False, [{"id": "factory-agent"}]),
+                ("handbook", "handbook", True, False, []),
+                ("stored-notes", "stored-notes", False, False, [{"id": "stored-agent"}]),
+            ]
+            assert {entry["id"]: entry["db_id"] for entry in listed}["stored-notes"] == "files-db"
+            # Every id the list gives is one the browse routes take.
+            for entry, content in (
+                ("stored-notes", "from a stored agent"),
+                ("factories/factory-agent", "from a factory agent"),
+            ):
+                read = client.get("/filesystem/content", params={"filesystem_id": entry, "path": "state.md"})
+                assert read.status_code == 200 and read.json()["content"] == content
+            # The list narrows to one agent, as the other routes do.
+            of_agent = client.get("/filesystem/namespaces", params={"agent_id": "stored-agent"}).json()["namespaces"]
+            assert [entry["id"] for entry in of_agent] == ["stored-notes"]
+            for params in ({}, {"agent_id": ""}):
+                assert len(client.get("/filesystem/namespaces", params=params).json()["namespaces"]) == 4
+            assert client.get("/filesystem/namespaces", params={"agent_id": "missing"}).status_code == 404
+    finally:
+        catalog_db.close()
+        files_db.close()
+
+
+def test_an_id_from_config_names_the_same_store_on_the_routes(tmp_path):
+    main = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    code_store, factory_store = FileSystem(main, namespace="notes"), FileSystem(archive, namespace="notes")
+    code_store.write("state.md", "the code agent's")
+    factory_store.write("state.md", "the factory agent's")
+    factory = AgentFactory(
+        id="factory-agent",
+        db=main,
+        factory=lambda ctx: Agent(id="factory-agent", db=main, filesystem=factory_store),
+    )
+    agent_os = AgentOS(
+        db=main, agents=[Agent(id="code-agent", db=main, filesystem=code_store), factory], telemetry=False
+    )
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            # /config describes the agent declared in code alone, so its store is named by the namespace.
+            config = client.get("/config").json()["filesystem"]["namespaces"]
+            assert [entry["id"] for entry in config] == ["notes"]
+            # The routes also see the factory agent's store, which takes a longer id.
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            assert sorted((entry["id"], entry["agents"][0]["id"]) for entry in listed) == [
+                ("notes", "code-agent"),
+                ("notes:archive-db", "factory-agent"),
+            ]
+            for filesystem_id, content in (
+                ("notes", "the code agent's"),
+                ("notes:archive-db", "the factory agent's"),
+            ):
+                read = client.get("/filesystem/content", params={"filesystem_id": filesystem_id, "path": "state.md"})
+                assert read.status_code == 200 and read.json()["content"] == content
+            # A store has the same id when the list or a listing of files is narrowed to one agent.
+            for agent_id, filesystem_id in (("code-agent", "notes"), ("factory-agent", "notes:archive-db")):
+                of_agent = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
+                assert [(entry["id"], entry["agents"]) for entry in of_agent] == [(filesystem_id, [{"id": agent_id}])]
+                rows = client.get("/filesystem/files", params={"agent_id": agent_id}).json()["entries"]
+                assert [(row["filesystem_id"], row["path"]) for row in rows] == [(filesystem_id, "state.md")]
+    finally:
+        main.close()
+        archive.close()
+
+
+def test_the_company_id_with_an_agent_names_nothing(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    holder = Agent(
+        id="holder", db=db, filesystem=FileSystem(db, namespace="company", user_scoped=False, read_only=True)
+    )
+    other = Agent(id="other", db=db, filesystem=FileSystem(db, namespace="other-notes"))
+    agent_os = AgentOS(db=db, agents=[holder, other], company=CompanyConfig(), telemetry=False)
+    try:
+        company_filesystem(db).write("wiki/people.md", "Ada")
+        with TestClient(agent_os.get_app()) as client:
+
+            def opened(**params) -> tuple:
+                response = client.get("/filesystem/entries", params=params)
+                return response.status_code, response.json().get("filesystem_id")
+
+            assert opened(filesystem_id="company") == (200, "company")
+            # An agent that names the Company namespace is refused it.
+            assert opened(filesystem_id="company", agent_id="holder") == (400, None)
+            # The other agent does not hold the Company filesystem, so the two name nothing.
+            assert opened(filesystem_id="company", agent_id="other") == (404, None)
+            assert opened(agent_id="other") == (200, "other-notes")
+
+            def listed(agent_id: str) -> list:
+                entries = client.get("/filesystem/namespaces", params={"agent_id": agent_id}).json()["namespaces"]
+                return [(entry["id"], entry["company"], entry["agents"]) for entry in entries]
+
+            assert client.get("/filesystem/namespaces", params={"agent_id": "holder"}).status_code == 400
+            assert listed("other") == [("other-notes", False, [{"id": "other"}])]
+    finally:
+        db.close()
+
+
+def test_every_id_the_list_gives_opens_on_every_route(tmp_path):
+    db = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain needle")
+    held = FileSystem(db, namespace="held")
+    held.write("draft.md", "held needle")
+    # Two stores under one namespace, one of them only a factory agent holds: each needs a longer id.
+    notes_here, notes_there = FileSystem(db, namespace="notes"), FileSystem(archive, namespace="notes")
+    notes_here.write("a.md", "here needle")
+    notes_there.write("b.md", "there needle")
+    factory = AgentFactory(
+        id="factory-agent", db=db, factory=lambda ctx: Agent(id="factory-agent", db=db, filesystem=notes_there)
+    )
+    agents = [Agent(id="keeper", db=db, filesystem=held), Agent(id="noter", db=db, filesystem=notes_here), factory]
+    agent_os = AgentOS(db=db, agents=agents, company=CompanyConfig(), filesystem=handbook, telemetry=False)
+    # Goals whose ids are not plain names: each folder of the Company file system is the id as one segment.
+    manager = CompanyManager(db)
+    for goal_id in ("Docs Team", "team/growth", "launch"):
+        manager.create(name=goal_id, id=goal_id)
+        manager.write_wiki(goal_id=goal_id, path="status.md", content=f"{goal_id} needle", expected_version=1)
+    company_filesystem(db).write("notes/ideas.md", "a note needle")
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            ids = [entry["id"] for entry in listed]
+            # The store of the agent declared in code is named as /config names it.
+            assert sorted(ids) == ["company", "handbook", "held", "notes", "notes:archive-db"]
+            assert [entry["id"] for entry in listed if entry["company"]] == ["company"]
+
+            for filesystem_id in ids:
+                by_id = {"filesystem_id": filesystem_id}
+                rows = client.get("/filesystem/files", params=by_id)
+                assert rows.status_code == 200, filesystem_id
+                paths = [row["path"] for row in rows.json()["entries"]]
+                assert paths and {row["filesystem_id"] for row in rows.json()["entries"]} == {filesystem_id}
+                opened = client.get("/filesystem/entries", params=by_id)
+                assert (opened.status_code, opened.json()["filesystem_id"]) == (200, filesystem_id)
+                found = client.get("/filesystem/search", params={**by_id, "query": "needle"})
+                assert found.status_code == 200 and found.json()["filesystem_id"] == filesystem_id
+                matched = {entry["path"] for entry in found.json()["entries"]}
+                assert matched and matched <= set(paths)
+                # Every path a listing gives is read back under the same id.
+                for path in paths:
+                    read = client.get("/filesystem/content", params={**by_id, "path": path})
+                    assert read.status_code == 200, (filesystem_id, path)
+                    assert read.json()["filesystem_id"] == filesystem_id
+                    assert ("needle" in read.json()["content"]) is (path in matched)
+
+            # In the Company entry a Goal's folder is its id as one segment, and the pages under it open.
+            goals = client.get("/filesystem/entries", params={"filesystem_id": "company", "directory": "goals"})
+            assert sorted(entry["path"] for entry in goals.json()["entries"]) == [
+                "goals/Docs%20Team",
+                "goals/launch",
+                "goals/team%2fgrowth",
+            ]
+            for folder, goal_id in (("goals/Docs%20Team", "Docs Team"), ("goals/team%2fgrowth", "team/growth")):
+                pages = client.get("/filesystem/entries", params={"filesystem_id": "company", "directory": folder})
+                assert sorted(entry["path"] for entry in pages.json()["entries"]) == [
+                    f"{folder}/brief.md",
+                    f"{folder}/status.md",
+                ]
+                page = client.get(
+                    "/filesystem/content", params={"filesystem_id": "company", "path": f"{folder}/status.md"}
+                )
+                assert page.status_code == 200 and page.json()["content"] == f"{goal_id} needle"
+    finally:
+        db.close()
+        archive.close()
+
+
+def test_while_company_files_wait_the_list_still_names_the_company_entry_and_other_stores_open(tmp_path):
+    db = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    handbook = FileSystem(db, namespace="handbook")
+    handbook.write("style.md", "plain words")
+    # A Company page where 3.2.0 kept it: the Company file system refuses every use until the migration moves it.
+    FileSystem(db, namespace="company/wiki", user_scoped=False).write("people.md", "Ada")
+    agent_os = AgentOS(db=db, company=CompanyConfig(), filesystem=handbook, telemetry=False, auto_provision_dbs=False)
+    try:
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            # The list reads no file, so it names every file system, the Company one included.
+            listed = client.get("/filesystem/namespaces")
+            assert listed.status_code == 200
+            assert sorted(entry["id"] for entry in listed.json()["namespaces"]) == ["company", "handbook"]
+            # Another file system opens by its id.
+            assert client.get("/filesystem/entries", params={"filesystem_id": "handbook"}).status_code == 200
+            rows = client.get("/filesystem/files", params={"filesystem_id": "handbook"})
+            assert [row["path"] for row in rows.json()["entries"]] == ["style.md"]
+            # A listing of every file leaves the Company file system out and gives the others.
+            every = client.get("/filesystem/files")
+            assert every.status_code == 200
+            assert [(row["filesystem_id"], row["path"]) for row in every.json()["entries"]] == [
+                ("handbook", "style.md")
+            ]
+            # The Company file system itself answers with the migration to run.
+            for params in ({"filesystem_id": "company"}, {"namespace": "company"}):
+                refused = client.get("/filesystem/files", params=params)
+                assert refused.status_code == 500, params
+                assert refused.json()["error_id"] == "migration_required_error"
+                assert "POST /databases/all/migrate" in refused.json()["detail"]
+            # The route the error names moves the page, and the same AgentOS then lists it.
+            assert client.post("/databases/all/migrate").status_code == 200
+            rows = client.get("/filesystem/files").json()["entries"]
+            assert sorted((row["filesystem_id"], row["path"]) for row in rows) == [
+                ("company", "wiki/people.md"),
+                ("handbook", "style.md"),
+            ]
+    finally:
+        db.close()
+
+
+def test_the_list_describes_each_filesystem_as_config_does(tmp_path):
+    db = SqliteDb(id="files-db", db_file=str(tmp_path / "files.db"))
+    shared = FileSystem(db, namespace="shared")
+    analyst = Agent(id="analyst", db=db, filesystem=[FileSystem(db, namespace="shared", read_only=True), shared])
+    reader = Agent(id="reader", db=db, filesystem=FileSystem(db, namespace="shared", read_only=True))
+    # Declared, and partitioned by user: a caller with no identity cannot read it, and it is still listed.
+    scoped = FileSystem(db, namespace="diary", user_scoped=True)
+    journals = FileSystem(db, namespace="journals/{user_id}")
+    agent_os = AgentOS(db=db, agents=[analyst, reader], filesystem=[scoped, journals], telemetry=False)
+    try:
+        with TestClient(agent_os.get_app()) as client:
+            listed = client.get("/filesystem/namespaces").json()["namespaces"]
+            # The list adds the counts of what can be read. /config reads no file.
+            config = client.get("/config").json()["filesystem"]["namespaces"]
+            assert [without_counts(entry) for entry in listed] == config
+            assert not [key for entry in config for key in entry if key in COUNTS]
+            assert [tuple(entry.get(key) for key in COUNTS) for entry in listed] == [
+                (None, None, None),
+                (None, None, None),
+                (0, 0, 0),
+            ]
+            assert [(e["id"], e["declared"], e["user_isolation"], e["agents"]) for e in listed] == [
+                ("diary", True, True, []),
+                ("journals/{user_id}", True, True, []),
+                # A writable attachment takes precedence over a read-only one of the same agent.
+                ("shared", False, False, [{"id": "analyst"}, {"id": "reader", "access": "read_only"}]),
+            ]
+    finally:
+        db.close()
+
+
+def test_the_list_shows_only_what_the_caller_can_reach(system_with_stores):
+    system, _ = system_with_stores
+
+    def ids(scopes) -> list:
+        response = system.client.get("/filesystem/namespaces", headers=headers(scopes))
+        assert response.status_code == 200, (scopes, response.text)
+        return sorted((entry["id"], entry["agents"]) for entry in response.json()["namespaces"])
+
+    # filesystem:read alone: what the AgentOS declares. The Company filesystem asks for wiki:read too.
+    assert ids(FILES_ONLY) == [("handbook", [])]
+    assert ids([*FILES_ONLY, "wiki:read"]) == [("company", []), ("handbook", [])]
+    # With access to the agent that holds one, that filesystem too, and the agent is named.
+    assert ids([*FILES_ONLY, "agents:writer:read"]) == [
+        ("handbook", []),
+        ("writer-notes", [{"id": "writer"}]),
+    ]
+
+
+def test_an_agent_that_cannot_be_loaded_is_left_out_of_the_list(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "files.db"))
+
+    def build(ctx):
+        raise RuntimeError("this agent cannot be built")
+
+    broken = AgentFactory(id="broken", db=db, factory=build)
+    notes = Agent(id="notes", db=db, filesystem=True)
+    agent_os = AgentOS(db=db, agents=[broken, notes], filesystem=FileSystem(db, namespace="handbook"), telemetry=False)
+    try:
+        with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+            listed = client.get("/filesystem/namespaces")
+            assert listed.status_code == 200
+            assert [entry["id"] for entry in listed.json()["namespaces"]] == ["handbook", "notes"]
+            # What the list names opens, and the table of files leaves the broken agent out.
+            assert client.get("/filesystem/files").status_code == 200
+            for filesystem_id in ("handbook", "notes"):
+                opened = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id})
+                assert opened.status_code == 200, filesystem_id
+            # An id nothing has may be the broken agent's, so its failure is reported.
+            assert client.get("/filesystem/entries", params={"filesystem_id": "gone"}).status_code == 500
+            # Naming the agent that cannot be built still says so.
+            assert client.get("/filesystem/namespaces", params={"agent_id": "broken"}).status_code == 500
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_a_numbered_id_is_marked_unavailable_while_an_agent_cannot_be_loaded(declared):
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    def store(name: str) -> FileSystem:
+        # A database in memory has no place to name, so stores with the same names are numbered.
+        engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        filesystem = FileSystem(SqliteDb(id="main", db_engine=engine), namespace="notes")
+        filesystem.write(f"{name}.md", name)
+        return filesystem
+
+    state = {"broken": True}
+    stores = {name: store(name) for name in ("a", "b", "c")}
+
+    def build(ctx):
+        if state["broken"]:
+            raise RuntimeError("this agent cannot be built")
+        return Agent(id="a", filesystem=stores["a"])
+
+    plain = FileSystem(SqliteDb(id="plain", db_engine=stores["b"].backend.db_engine), namespace="plain")
+    agents = [AgentFactory(id="a", db=stores["a"].backend.db, factory=build), Agent(id="p", filesystem=plain)]
+
+    def holder(name: str) -> AgentFactory:
+        return AgentFactory(
+            id=name, db=stores[name].backend.db, factory=lambda ctx: Agent(id=name, filesystem=stores[name])
+        )
+
+    # Without a declaration the stores are held by agents built for a request, which /config does not describe.
+    held = [] if declared else [holder(name) for name in ("b", "c")]
+    agent_os = AgentOS(
+        agents=[*agents, *held], filesystem=[stores["b"], stores["c"]] if declared else None, telemetry=False
+    )
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+
+        def listed(**params) -> dict:
+            entries = client.get("/filesystem/namespaces", params=params).json()["namespaces"]
+            return {entry["id"]: (entry.get("available"), entry.get("file_count")) for entry in entries}
+
+        def opens(filesystem_id: str, **params) -> tuple:
+            response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id, **params})
+            return response.status_code, [entry["path"] for entry in response.json().get("entries", [])]
+
+        first, second = (
+            ("notes:main:agno_fs", "notes:main:agno_fs:2")
+            if declared
+            else ("notes:main:agno_fs:1", "notes:main:agno_fs:2")
+        )
+        assert opens("plain") == (200, [])
+        if declared:
+            # The ids of declared stores depend on the declarations alone.
+            assert listed() == {first: (None, 1), second: (None, 1), "plain": (None, 0)}
+            assert (opens(first), opens(second)) == ((200, ["b.md"]), (200, ["c.md"]))
+            return
+        # The first number depends on every agent as the others do: agent "a" takes it once it loads.
+        assert listed() == {first: (False, None), second: (False, None), "plain": (None, 0)}
+        assert (opens(first)[0], opens(second)[0]) == (500, 500)
+        # A request that names an agent loads that agent alone, so its store is named among that agent's own.
+        assert listed(agent_id="b") == {"notes": (None, 1)}
+        assert opens("notes", agent_id="b") == (200, ["b.md"])
+        alone = client.get("/filesystem/entries", params={"agent_id": "b"})
+        assert alone.status_code == 200 and [entry["path"] for entry in alone.json()["entries"]] == ["b.md"]
+
+        state["broken"] = False
+        third = "notes:main:agno_fs:3"
+        assert listed() == {first: (None, 1), second: (None, 1), third: (None, 1), "plain": (None, 0)}
+        assert [opens(i) for i in (first, second, third)] == [(200, ["a.md"]), (200, ["b.md"]), (200, ["c.md"])]
+
+
+@pytest.mark.parametrize("names", [("a", "b"), ("a", "b", "c")])
+def test_an_id_never_opens_another_store_when_agents_stop_loading(names):
+    from itertools import combinations
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    down: set = set()
+
+    def factory(name: str, filesystem: FileSystem) -> AgentFactory:
+        def build(ctx):
+            if name in down:
+                raise RuntimeError("this agent cannot be built")
+            return Agent(id=name, filesystem=filesystem)
+
+        return AgentFactory(id=name, db=filesystem.backend.db, factory=build)
+
+    def store(name: str, db_id: str = "main", table_name: str = "files") -> FileSystem:
+        from agno.fs.db import DbFileSystem
+
+        engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+        backend = DbFileSystem(db=SqliteDb(id=db_id, db_engine=engine), table_name=table_name)
+        filesystem = FileSystem(backend, namespace="notes")
+        filesystem.write(f"{name}.md", name)
+        return filesystem
+
+    stores = {name: store(name) for name in names}
+    # Stores whose own names are what a number or a longer name of the others could be.
+    stores["x"] = store("x", table_name="files:1")
+    stores["y"] = store("y", db_id="main:files", table_name="t")
+    agent_os = AgentOS(agents=[factory(name, filesystem) for name, filesystem in stores.items()], telemetry=False)
+    with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
+
+        def opens(filesystem_id: str, **params) -> tuple:
+            response = client.get("/filesystem/entries", params={"filesystem_id": filesystem_id, **params})
+            return response.status_code, [entry["path"] for entry in response.json().get("entries", [])]
+
+        saved = {}
+        for entry in client.get("/filesystem/namespaces").json()["namespaces"]:
+            status, paths = opens(entry["id"])
+            assert status == 200
+            saved[entry["id"]] = paths
+        assert sorted(saved.values()) == [[f"{name}.md"] for name in sorted(stores)]
+        # A name several stores answer to names none of them, whichever of them load.
+        assert opens("notes:main:files")[0] == 409
+
+        for size in range(1, len(stores)):
+            for failing in combinations(stores, size):
+                down.clear()
+                down.update(failing)
+                for filesystem_id, paths in saved.items():
+                    status, found = opens(filesystem_id)
+                    assert status != 200 or found == paths, (failing, filesystem_id)
+                # It may become the own name of the one store that is not numbered, and never opens a numbered one.
+                status, found = opens("notes:main:files")
+                assert status != 200 or found == ["y.md"], failing
+                # What the list advertises as available opens.
+                for entry in client.get("/filesystem/namespaces").json()["namespaces"]:
+                    expected = 500 if entry.get("available") is False else 200
+                    assert opens(entry["id"])[0] == expected, (failing, entry["id"])
+
+
+def test_the_list_gives_two_stores_with_one_namespace_two_ids(tmp_path):
+    main, archive = (
+        SqliteDb(id="main-db", db_file=str(tmp_path / "main.db")),
+        SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db")),
+    )
+    stores = [FileSystem(main, namespace="handbook"), FileSystem(archive, namespace="handbook")]
+    stores[0].write("style.md", "main")
+    stores[1].write("style.md", "archive")
+    try:
+        with TestClient(AgentOS(db=main, filesystem=stores, telemetry=False).get_app()) as client:
+            listed = client.get("/filesystem/namespaces", params={"namespace": "handbook"}).json()["namespaces"]
+            assert [(e["id"], e["namespace"], e["db_id"]) for e in listed] == [
+                ("handbook:archive-db", "handbook", "archive-db"),
+                ("handbook:main-db", "handbook", "main-db"),
+            ]
+            for entry, content in (("handbook:main-db", "main"), ("handbook:archive-db", "archive")):
+                read = client.get("/filesystem/content", params={"filesystem_id": entry, "path": "style.md"})
+                assert read.json()["content"] == content
+    finally:
+        main.close()
+        archive.close()
+
+
+@pytest.fixture
+def system_with_stores(tmp_path):
+    """Company on, one declared filesystem, and one filesystem only the writer agent holds."""
+    db = SqliteDb(db_file=str(tmp_path / "stores.db"))
+    handbook = FileSystem(db, namespace="handbook", user_scoped=False)
+    value = System(tmp_path, filesystem=handbook)
+    value.writer.filesystem = FileSystem(value.db, namespace="writer-notes")
+    # The writer was initialized before it was given a filesystem.
+    value.os.resync(value.client.app)
+    yield value, db
+    value.db.close()
+    db.close()
+
+
+# ------------------------------------------------------------------ a stored path longer than a write accepts
+
+
+DEEP_PAGE = "/".join(f"d{index}" for index in range(15)) + "/page.md"  # 16 names: as deep as the wiki API allows
+
+
+def test_a_wiki_page_as_deep_as_3_2_0_allows_is_listed_and_read_after_the_migration(tmp_path, caplog):
+    from agno.db.migrations.versions.v3_3_0 import move_company_files
+    from agno.fs._paths import MAX_SEGMENTS
+
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    used_by_company(db)
+    # As 3.2.0 stores it: a page of the company wiki, in the wiki's own namespace.
+    assert len(DEEP_PAGE.split("/")) == MAX_SEGMENTS
+    wiki = FileSystem(db, namespace="company/wiki", user_scoped=False)
+    wiki.write(DEEP_PAGE, "Deep page needle")
+    wiki.write("brief.md", "# Company\n")
+
+    # agno logs through one of three loggers that do not propagate, and an earlier test can leave any of them active.
+    loggers = [logging.getLogger(name) for name in ("agno", "agno-team", "agno-workflow")]
+    for logger in loggers:
+        logger.addHandler(caplog.handler)
+    try:
+        assert move_company_files(db) is True
+    finally:
+        for logger in loggers:
+            logger.removeHandler(caplog.handler)
+    stored = f"wiki/{DEEP_PAGE}"
+    assert len(stored.split("/")) > MAX_SEGMENTS
+    # The migration names each path that is now longer than a write accepts, and only those.
+    reports = [record.getMessage() for record in caplog.records if "longer than a write accepts" in record.getMessage()]
+    assert len(reports) == 1 and stored in reports[0] and "wiki/brief.md" not in reports[0]
+    assert reports[0].startswith("1 Company files")
+
+    try:
+        with TestClient(AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()) as client:
+            by_id = {"filesystem_id": "company"}
+            # Listed at every level, read, searched and shown in the table of files.
+            folder = stored.rsplit("/", 1)[0]
+            listed = client.get("/filesystem/entries", params={**by_id, "directory": folder})
+            assert listed.status_code == 200, listed.text
+            assert [(entry["path"], entry["type"]) for entry in listed.json()["entries"]] == [(stored, "file")]
+            top = client.get("/filesystem/entries", params={**by_id, "directory": "wiki"})
+            assert [entry["path"] for entry in top.json()["entries"]] == ["wiki/d0", "wiki/brief.md"]
+            read = client.get("/filesystem/content", params={**by_id, "path": stored})
+            assert read.status_code == 200, read.text
+            assert (read.json()["content"], read.json()["path"]) == ("Deep page needle", stored)
+            search = client.get("/filesystem/search", params={**by_id, "query": "needle", "directory": folder})
+            assert [entry["path"] for entry in search.json()["entries"]] == [stored]
+            rows = client.get("/filesystem/files", params=by_id).json()["entries"]
+            assert stored in [row["path"] for row in rows]
+            # The wiki API reads it too, by its path inside the wiki.
+            assert client.get(f"/company/wiki/{DEEP_PAGE}").json()["content"] == "Deep page needle"
+            # A path that is not a path is still refused, and a file that is not stored is not found.
+            assert client.get("/filesystem/content", params={**by_id, "path": "wiki/../notes/x.md"}).status_code == 400
+            assert client.get("/filesystem/content", params={**by_id, "path": stored + ".gone"}).status_code == 404
+    finally:
+        db.close()
+
+    # The whole store still refuses to write a path that long.
+    from agno.fs.errors import InvalidPathError
+
+    with pytest.raises(InvalidPathError):
+        company_filesystem(db).write(stored + "x", "new")
+
+
+def test_the_migration_reports_nothing_when_every_path_fits(tmp_path, caplog):
+    from agno.db.migrations.versions.v3_3_0 import move_company_files
+
+    db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    used_by_company(db)
+    FileSystem(db, namespace="company/wiki", user_scoped=False).write("a/b/c.md", "Fits")
+    FileSystem(db, namespace="company/notes", user_scoped=False).write("ideas.md", "Fits")
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert move_company_files(db) is True
+        assert not [record for record in caplog.records if "longer than a write accepts" in record.getMessage()]
+    finally:
+        db.close()

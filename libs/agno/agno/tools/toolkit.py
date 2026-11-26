@@ -112,6 +112,17 @@ class Toolkit:
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
 
+    # Names this toolkit's tools and their arguments had in an earlier release, with the current ones.
+    # A component saved under the old names loads with the current tools. A subclass that sets these
+    # passes include_tools and exclude_tools through current_tool_names.
+    renamed_tools: Dict[str, str] = {}
+    renamed_arguments: Dict[str, str] = {}
+
+    @classmethod
+    def current_tool_names(cls, names: Optional[List[str]]) -> Optional[List[str]]:
+        """``names`` with each earlier tool name replaced by the current one."""
+        return None if names is None else [cls.renamed_tools.get(name, name) for name in names]
+
     def __init__(
         self,
         name: str = "toolkit",

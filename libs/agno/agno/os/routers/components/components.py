@@ -18,7 +18,7 @@ from agno.db.base import (
     project_config_identity,
 )
 from agno.db.base import ComponentType as DbComponentType
-from agno.db.utils import TABLE_NAME_KEYS
+from agno.db.utils import TABLE_NAME_KEYS, with_current_goals_table
 from agno.exceptions import AgnoError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -202,6 +202,7 @@ def _resolve_db_in_config(
             # whitelisted table-name keys are taken from the caller.
             if resolved_db is not None:
                 resolved_dict = resolved_db.to_dict()
+                component_db = with_current_goals_table(component_db)
                 table_overrides = {key: component_db[key] for key in TABLE_NAME_KEYS if key in component_db}
                 config["db"] = {**resolved_dict, **table_overrides}
             else:

@@ -2,7 +2,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
-from agno.os.schema import PaginationInfo
+from agno.os.schema import FileSystemNamespace, PaginationInfo
 
 
 class FileSystemEntry(BaseModel):
@@ -21,6 +21,7 @@ class FileSystemUsage(BaseModel):
 
 
 class FileSystemListResponse(BaseModel):
+    filesystem_id: str
     namespace: str
     agent_ids: List[str]
     directory: str
@@ -30,6 +31,7 @@ class FileSystemListResponse(BaseModel):
 
 
 class FileSystemContentResponse(BaseModel):
+    filesystem_id: str
     namespace: str
     agent_ids: List[str]
     path: str
@@ -55,6 +57,7 @@ class FileSystemSearchEntry(BaseModel):
 
 
 class FileSystemSearchResponse(BaseModel):
+    filesystem_id: str
     namespace: str
     agent_ids: List[str]
     query: str
@@ -64,6 +67,7 @@ class FileSystemSearchResponse(BaseModel):
 
 
 class FileSystemTableEntry(BaseModel):
+    filesystem_id: str
     namespace: str
     path: str
     agent_ids: List[str]
@@ -74,6 +78,11 @@ class FileSystemTableEntry(BaseModel):
     snippet: Optional[str] = None
     line: Optional[int] = None
     match_count: Optional[int] = None
+
+
+class FileSystemNamespacesResponse(BaseModel):
+    namespaces: List[FileSystemNamespace]
+    meta: PaginationInfo
 
 
 class FileSystemTableResponse(BaseModel):

@@ -1,3 +1,59 @@
+# Upgrade from agno 3.2.0, started with defaults — November 25, 2026
+
+Branch: `refactor/company-goals`. agno 3.2.0 came from PyPI, in an environment of its own.
+
+### Upgrade run: a database built by agno 3.2.0, then this branch started on it
+
+**Status:** PASS
+
+**Description:** One application file, written for agno 3.2.0, ran on both
+versions with no edit. Its Company definition follows `app/company.py` of the
+`agentos-render` template at its `agno==3.2.0` pin: `Product(...)` with a
+`purpose`, Sources, the template's maintenance Routine on the default executor,
+and `CompanyConfig(products=...)`. It has two Products.
+
+1. Under agno 3.2.0 the application started and its API was used, with the
+   3.2.0 routes and field names, to add: a Project and a Task for each Product,
+   a wiki page for each Product, and a second Routine created at run time from
+   the packaged `intake` template. A role `goal-reader` was stored with
+   `products:read` and given to one person. 3.2.0 left the tables
+   `agno_company_products` and `agno_company_products_details`, every stamp at
+   3.0.0, the role row `products/*`, and Routines whose payload names the
+   Product under `product_id`.
+2. Under this branch the same file was started with defaults, and nothing else
+   was run. No migration command.
+3. The checks then ran against the live server, and both Routines were resumed
+   and fired with `gpt-5.6-luna`.
+4. The server was stopped and started a second time.
+
+Done once on SQLite and once on PostgreSQL.
+
+**Result:** 26 of 26 checks pass on each database.
+
+- The server starts. The migration ran at that start and changed two table
+  types, the Company tables and the schedules. No error is logged.
+- The tables and columns have their new names, and the stamp is 3.3.0.
+- Both Goals, both Projects, both Tasks, both Sources and both Routines are
+  there with the ids 3.2.0 gave them. The wiki pages are there, and a page reads
+  as it was written on 3.2.0.
+- `/company/products` answers 404, and `product_id` as a filter answers 422.
+- The role row is still the one 3.2.0 wrote, `products/*`. Its holder reads
+  Goals and cannot write them. A caller with no role is refused.
+- Both Routines fire and succeed. The stored messages still say "Product", and
+  the intake message names `read_product_source` and `intake_product_source`.
+  The model called the tools under their current names every time, with no tool
+  error: `list_goal_sources`, `read_goal_source` (3 times), `intake_goal_source`
+  and, for the maintenance Routine, `update_goal_status`. Each run proposed one
+  Backlog Task from the evidence in its Source.
+- The second start runs no migration, logs no error, and changes no table,
+  stamp or row count.
+- The Python names a 3.2.0 deployment uses import and work: `Product`,
+  `purpose=`, `CompanyConfig(products=...)`, `dataclasses.replace(config,
+  products=...)`, `AcceptanceScope(product_ids=...)`, `products_table=`,
+  `rehydrate_product` and `model_copy(update={"purpose": ...})`.
+
+---
+
 # Company chat Product creation hardening — October 19, 2026
 
 Branch: `fix/company-chat-products-hardening`, based on `codex/company-chat-products`.
@@ -651,3 +707,282 @@ Three controls, two runs each:
 **Result:** Exit 0 and all assertions passed. The script runs with authorization off, so it does not show the scopes; `tests/unit/os/routers/test_company_files_router.py` checks them.
 
 ---
+
+## Product renamed to Goal — 2026-11-24
+
+Branch: `refactor/company-goals`. Company's Product is now a Goal and its `purpose` is its
+`objective`. `01_manage_products.py` is now `01_manage_goals.py` and
+`10_weekly_product_review.py` is now `10_weekly_goal_review.py`. Earlier entries in this log
+keep the names the files and the tools had when they were written.
+
+Each file below was run once with the worktree's `.venv/bin/python` (`agno[demo]`), on SQLite
+unless the entry names PostgreSQL (the `pgvector` container on port 5532).
+
+### 01_manage_goals.py
+
+**Status:** PASS
+
+**Description:** Create two owners' Goals with `objective=`, list them unscoped and by owner, soft-delete one, read it with `include_deleted` and restore it.
+
+**Result:** Exit 0. Printed "Soft delete, include_deleted and restore passed". No model call.
+
+---
+
+### 02_manage_projects.py
+
+**Status:** PASS
+
+**Description:** Projects inside a Goal (`goal_id`): owner filtering, transitions, soft delete and restore.
+
+**Result:** Exit 0. Printed "Company projects lifecycle passed". No model call.
+
+---
+
+### 03_manage_tasks.py
+
+**Status:** PASS
+
+**Description:** Backlog proposals under a Goal, executor acceptance, rescoping, review and completion.
+
+**Result:** Exit 0. Printed "Company tasks lifecycle passed". No model call.
+
+---
+
+### 04_manage_playbook.py
+
+**Status:** PASS
+
+**Description:** The company wiki and a Goal's pages through the sync and the async manager, and the decision log.
+
+**Result:** Exit 0. Printed "Company playbook sync and async examples passed". No model call.
+
+---
+
+### 05_super_agent_company.py
+
+**Status:** PASS
+
+**Description:** Super Agent's Company tools under their Goal names: `create_company_goal` with a Source and an intake Routine, a proposal with `intake_goal_source`, status and a decision.
+
+**Result:** Exit 0. Printed "Super Agent saved company details, a Goal, a Routine and a proposal" and "No model call was made".
+
+---
+
+### 06_execute_tasks.py
+
+**Status:** PASS
+
+**Description:** Start an accepted Task through the durable queue and repeat the start.
+
+**Result:** Exit 0. The duplicate start returned the first run. No model call.
+
+---
+
+### 07_cascading_archive.py
+
+**Status:** PASS
+
+**Description:** Archive a Goal with its Projects and Tasks and restore them, with the sync and the async manager. Run on SQLite and with `--postgres`.
+
+**Result:** Exit 0 on both. Printed "Company cascading archive passed for sync and async". No model call.
+
+---
+
+### 07_heartbeat.py
+
+**Status:** PASS
+
+**Description:** Goals declared in code with `CompanyConfig(goals=[...])`, a reader Source, the Intake skill, the Routines' schedule rows and repeated scans without duplicates.
+
+**Result:** Exit 0. Refresh proposed completion, archived old work and kept restore working. No model call.
+
+---
+
+### 08_custom_routines.py
+
+**Status:** PASS
+
+**Description:** A Routine with its own instructions and a website Source an agent found, added with `add_goal_source`.
+
+**Result:** Exit 0. The person archived the discovered Source. No model call, website request or delivery.
+
+---
+
+### 09_sandboxed_engineers.py
+
+**Status:** PASS
+
+**Description:** Run with `--config-only`: build the Claude and the Codex engineer with a public repository, Docker and explicit checkpoints.
+
+**Result:** Exit 0. Running a Task with `--executor claude` or `--executor codex` needs Docker sandboxes and live models and was NOT RUN.
+
+---
+
+### 09_task_session_ownership.py
+
+**Status:** PASS
+
+**Description:** Two collaborators revise one Task through its owner's session. Run on SQLite and with `COMPANY_DB=postgres`.
+
+**Result:** Exit 0 on both. Both results are durable and the Task waits for review. No model call.
+
+---
+
+### 10_weekly_goal_review.py
+
+**Status:** PASS
+
+**Description:** Renamed from `10_weekly_product_review.py`. Run with `--check` and with `--check --with-os-manager`: declare the Goal and its weekly Routine with `rehydrate_goal` and read the stored schedule.
+
+**Result:** Exit 0 on both. Printed "Weekly Mini Agent review configured; no model calls made." `--enable-weekly-review` serves the app and runs scheduled reviews with model calls; it was NOT RUN.
+
+---
+
+### 11_disabled_routine.py
+
+**Status:** PASS
+
+**Description:** A Routine declared disabled stays visible, and stays enabled after a person turns it on and the app restarts.
+
+**Result:** Exit 0. No model call.
+
+---
+
+### 12_task_board.py
+
+**Status:** FAIL
+
+**Description:** Start a Backlog Task by naming its workflow executor, then read the board by status.
+
+**Result:** Exit 1 at line 87: `AssertionError: {"detail":"Approve the Project before starting Task work"}`. The same run fails the same way on `main` at `471f930b2e`, before the rename, so the rename did not cause it. The example creates its Task under a Project it never approves. Not fixed here.
+
+---
+
+### 13_start_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a person asks Super Agent to start an accepted Task and keeps talking while it runs.
+
+**Result:** Exit 0 in 59 seconds. The Task's run finished and its result was read back in the chat. `--serve` was NOT RUN.
+
+---
+
+### 14_work_to_done_in_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a Goal, a proposed Project and a Task go from proposal to Done in one chat, with Mini Agent doing the Task.
+
+**Result:** Exit 0 in 51 seconds. The last transition was `in_review -> done`.
+
+---
+
+### 15_policy_source_to_done.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: a Routine declared with `auto_accept` takes work from a Source to In review with no person.
+
+**Result:** Exit 0 in 60 seconds. The Routine approved the Project "Docs fixes" and accepted one Task, which reached In review. `--authorization` was NOT RUN.
+
+---
+
+### 16_company_file_tree.py
+
+**Status:** PASS
+
+**Description:** The file tree through Super Agent's tools with the new path `goals/<goal-id>/`: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads.
+
+**Result:** Exit 0. Listing `goals` returned the Goal's folder. No model call.
+
+---
+
+### 17_continue_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Live run on PostgreSQL with `gpt-5.6-luna`: read a Task's result and what its run did, answer its question and continue the same work.
+
+**Result:** Exit 0 in 35 seconds. Printed "Same worker session across attempts: True". `--serve` was NOT RUN.
+
+### 16_company_file_tree.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after Company files moved into one store: the namespace `company` of the Company database, each file at its tree path, with `notes/` a folder of it. No model call. The script saves a company page and a Goal brief with confirmation, writes a Goal page, a Task file and a note, and reads the Task file and the note back through the API.
+
+**Result:** The script printed the same tree as before the change: top folders `wiki/`, `goals/`, `tasks/`, `notes/`; the wiki pages, the Goal's pages, the Task's `changes.md` and the note `follow-ups.md`; the Task files and the notes over the API; and the pages a Task's input loads. A stale save and an unconfirmed wiki write were refused. It ended with "Company file tree example passed".
+
+---
+
+### 04_manage_playbook.py (one Company file system)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/04_manage_playbook.py` on the same change. No model call. Sync and async wiki pages, creation with version 0, a version conflict and the decision log.
+
+**Result:** "Stale wiki edit refused" and "Company playbook sync and async examples passed". The cookbooks that run a model were not run for this change.
+
+---
+
+### Upgrade from agno 3.2.0: the Company files move as AgentOS starts
+
+**Status:** PASS
+
+**Note (2026-11-25):** This run was made while AgentOS migrated a database as it started. It no longer does: the files move when `MigrationManager(db).up()` or a migrate endpoint runs. The `start` and `concurrent` scenarios below describe the earlier behaviour and were not run again after that change.
+
+**Description:** Run on 2026-11-25, with no model call. The starting databases were written by agno 3.2.0 from PyPI in an environment of its own (`uv venv`, then `uv pip install agno==3.2.0 "sqlalchemy[asyncio]" "psycopg[binary]" fastapi httpx aiosqlite pyyaml openai python-multipart`). There, a 3.2.0 AgentOS with Company started once, and 3.2.0's own `CompanyManager` and `CompanyFiles` wrote four Goals (`this-agentos`, `Docs Team`, `team`, `team/growth`), a Project, a Task and 19 files: 3 wiki pages, 3 pages for each Goal, 2 Task files and 2 notes, several of them written more than once. 3.2.0 stamped every table 3.0.0 and kept the slash of `team/growth` in its namespace (`company/products/team/growth/wiki`).
+
+This branch was then started on a copy of that database with `AgentOS(db=db, company=CompanyConfig())` and nothing else, or `CompanyConfig(db=company_db)` for Company in a database of its own. Each scenario ran on SQLite and on PostgreSQL 18 (`agnohq/pgvector:18`), with one database and with two. The two scripts are session files and are not in the repository:
+
+```bash
+venv320/bin/python write_on_3_2_0.py <agentos database> <company database> facts.json
+.venv/bin/python upgrade_check.py <sqlite|postgres> <one|two> <start|concurrent|blocked|no-provision>
+```
+
+**Result:** 16 of 16 scenarios passed.
+
+| Scenario | SQLite, one database | SQLite, two | PostgreSQL, one | PostgreSQL, two |
+| --- | --- | --- | --- | --- |
+| `start`: it starts; 19 files under the `company` store with the content, version and both timestamps 3.2.0 wrote; nothing left in an old namespace; each read through `CompanyFileTools`; a second start moves nothing | PASS | PASS | PASS | PASS |
+| `concurrent`: two processes started at the same moment; each file moved once, by one of them; neither logged an error | PASS | PASS | PASS | PASS |
+| `blocked`: a different page already stored where a 3.2.0 page moves to; AgentOS starts and says why once; the Company file system answers 500 `migration_required_error` naming `MigrationManager(db).up()` and `POST /databases/all/migrate`; with the page removed, that route finishes the move with no restart | PASS | PASS | PASS | PASS |
+| `no-provision`: `auto_provision_dbs=False`; it starts, nothing moves, the Company file system refuses | PASS | PASS | PASS | PASS |
+
+With two databases the log of the first start reads "Moved 2 Company files" for the AgentOS database, "Moved 17 Company files" for the Company database, and "Moved 2 notes from the AgentOS database to the Company database". In the `blocked` scenario with two databases, the notes are not moved at that start, because the Company database was not migrated. After the route finishes the migration it moves the notes too, and `notes/` is served with no restart. (Run again on 2026-11-25 on SQLite with two databases: `GET /company/notes/ideas.md` answered 500 before `POST /databases/all/migrate` and 200 with the note after it.)
+
+The Goal `team/growth` cannot be named in a tree path, so its pages were read through the wiki of that Goal. Its folder in the store is `goals/team%2fgrowth/`.
+
+---
+
+### 16_company_file_tree.py and 04_manage_playbook.py (after the review of the file move)
+
+**Status:** PASS
+
+**Description:** Run again on 2026-11-25 with `.venv/bin/python cookbook/05_agent_os/30_company/<file>`, after the review fixes to the file move: folders named by `folder_name`, the Company file system refusing at first use while files wait, and path limits checked on the stored path. No model call.
+
+**Result:** `16_company_file_tree.py` ended with "Company file tree example passed" and "No model call was made". `04_manage_playbook.py` ended with "Company playbook sync and async examples passed". The cookbooks that run a model were not run.
+
+---
+
+### 16_company_file_tree.py (the Company file system on the File System page)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after the script gained a look at the File System page: it lists the file systems, finds the Company one and reads a Task file through it. No model call.
+
+**Result:** `/filesystem/namespaces` held one entry marked `company`, namespace `company` with id `company`. `/filesystem/entries?filesystem_id=company` listed `goals/`, `notes/`, `tasks/` and `wiki/`, and `/filesystem/content` returned the Task's `changes.md` with the content the Company route returns. The rest of the script printed what it printed before, and it ended with "Company file tree example passed".
+
+---
+
+### Upgrade from agno 3.2.0, read through the File System page's routes
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25, with no model call. The 16 scenarios of "Upgrade from agno 3.2.0: the Company files move as AgentOS starts" above were run again on this branch, which adds the Company file system to the `/filesystem` routes. After each start that moved the files, the run also asked `GET /filesystem/namespaces` for the Company entry, listed it with `GET /filesystem/files?filesystem_id=company`, and read each file with `GET /filesystem/content?filesystem_id=company&path=<stored path>`.
+
+**Result:** 16 of 16 scenarios passed, on SQLite and PostgreSQL 18, with one database and with two. The list route gave one entry marked `company`, with the id `company`. `/filesystem/files` listed the 19 stored paths and nothing else, with the folders `goals/Docs%20Team/` and `goals/team%2fgrowth/` for the two Goals whose ids are not plain names. `/filesystem/content` returned each of the 19 files with the content, version and `updated_at` that agno 3.2.0 read back before the upgrade.
+
+---
+

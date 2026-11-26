@@ -1,10 +1,10 @@
-"""Opt in to a weekly Product review by Mini Agent.
+"""Opt in to a weekly Goal review by Mini Agent.
 
 Check configuration without model calls:
-    .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check
+    .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_goal_review.py --check
 
 Serve locally and enable Monday reviews at 09:00 Europe/London:
-    .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --enable-weekly-review
+    .venv/bin/python cookbook/05_agent_os/30_company/10_weekly_goal_review.py --enable-weekly-review
 
 The Routine names no executor, so it runs on Mini Agent, the restricted agent that
 runs Routines and can only propose work. It works with or without OS Manager. Add
@@ -17,8 +17,8 @@ import argparse
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from agno.company import Product, Routine, Source
-from agno.company.bootstrap import rehydrate_product
+from agno.company import Goal, Routine, Source
+from agno.company.bootstrap import rehydrate_goal
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, CompanyConfig, OSManager
@@ -26,14 +26,14 @@ from agno.os import AgentOS, CompanyConfig, OSManager
 # ---------------------------------------------------------------------------
 # Review instructions
 # ---------------------------------------------------------------------------
-REVIEW = """Review this Product without accepting or executing work.
-Read the company and Product playbooks and current status. List existing Projects
+REVIEW = """Review this Goal without accepting or executing work.
+Read the company and Goal playbooks and current status. List existing Projects
 and Tasks before proposing anything. Inspect configured Sources with
-read_product_source, first discovering paths and then reading useful evidence.
+read_goal_source, first discovering paths and then reading useful evidence.
 Propose work only when it addresses a concrete gap that existing work does not
 cover. Reuse a suitable Project; propose one only when necessary.
 For a proposed Project, create Backlog Task drafts for review and report that
-human approval is required before accepting or running them. Use intake_product_source
+human approval is required before accepting or running them. Use intake_goal_source
 with the Project id, observed evidence links and
 content hashes, and a stable proposal_key for the underlying issue. Reuse the
 key on later reviews. Never use propose_company_task during a Routine.
@@ -53,10 +53,10 @@ def build_os(
     enable_weekly_review: bool = False,
     with_os_manager: bool = False,
 ) -> AgentOS:
-    product = Product(
+    goal = Goal(
         id="documentation",
         name="Documentation",
-        purpose="Keep the documentation accurate and useful.",
+        objective="Keep the documentation accurate and useful.",
         sources=[Source(type="markdown", reference=str(source.resolve()))],
         routines=[
             Routine(
@@ -74,7 +74,7 @@ def build_os(
     model = OpenAIResponses(id="gpt-5.6-luna")
     return AgentOS(
         db=SqliteDb(db_file=db_file),
-        company=CompanyConfig(model=model, products=[product]),
+        company=CompanyConfig(model=model, goals=[goal]),
         manager=OSManager(model=model, access_docs=False) if with_os_manager else None,
         telemetry=False,
     )
@@ -100,10 +100,8 @@ if __name__ == "__main__":
                 enable_weekly_review=True,
                 with_os_manager=args.with_os_manager,
             )
-            product = agent_os.company.products[0]
-            rehydrate_product(
-                agent_os.db, product, agent_os.registry, agent_os=agent_os
-            )
+            goal = agent_os.company.goals[0]
+            rehydrate_goal(agent_os.db, goal, agent_os.registry, agent_os=agent_os)
             schedule = agent_os.db.get_schedule_by_name("documentation.weekly-review")
             assert schedule["endpoint"] == "/agents/miniagent/runs"
             assert schedule["payload"]["metadata"]["auto_accept"] is False
@@ -114,7 +112,7 @@ if __name__ == "__main__":
             agent_os.db.close()
     else:
         agent_os = build_os(
-            "tmp/weekly-product-review.db",
+            "tmp/weekly-goal-review.db",
             args.source,
             enable_weekly_review=args.enable_weekly_review,
             with_os_manager=args.with_os_manager,

@@ -45,7 +45,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "component_links_table",
         "learnings_table",
         "schedules_table",
-        "products_table",
+        "goals_table",
         "sources_table",
         "projects_table",
         "tasks_table",
@@ -60,6 +60,73 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "mcp_oauth_keys_table",
     }
 )
+
+# The default name of the Goals table in agno 3.2.0, when a Goal was a Product.
+LEGACY_GOALS_TABLE_NAME = "agno_company_products"
+DEFAULT_GOALS_TABLE_NAME = "agno_company_goals"
+
+
+def legacy_company_table(db: Any, table_type: str) -> Optional[str]:
+    """The agno 3.2.0 name of a Company table this db uses under its default name, else None."""
+    if table_type not in ("goals", "company") or db.goals_table_name != DEFAULT_GOALS_TABLE_NAME:
+        return None
+    return LEGACY_GOALS_TABLE_NAME + ("_details" if table_type == "company" else "")
+
+
+def company_migration_required_error(legacy_table: str, table_name: str) -> MigrationRequiredError:
+    """The error for a Company table that is still stored under its agno 3.2.0 name."""
+    return MigrationRequiredError(
+        table_name=table_name,
+        message=(
+            f"Table {legacy_table} was written by an older version of Agno and must be renamed to {table_name}. "
+            "Apply the pending migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+            "`agno.db.migrations.manager`; await the call directly in async code), or via the AgentOS endpoint "
+            "`POST /databases/all/migrate`."
+        ),
+    )
+
+
+def goals_table_argument(goals_table: Optional[str], products_table: Optional[str]) -> Optional[str]:
+    """The Goals table name an adapter was constructed with; products_table is its agno 3.2.0 name.
+
+    The 3.2.0 default name there means the table was never named, as it does in a serialized db.
+    Both then name the default table, which is the one the migration renames the 3.2.0 table to.
+    """
+    if products_table is None:
+        return goals_table
+    if goals_table is not None:
+        raise ValueError("Give goals_table or products_table, not both")
+    return None if products_table == LEGACY_GOALS_TABLE_NAME else products_table
+
+
+def goals_table_from_dict(data: Dict[str, Any]) -> Optional[str]:
+    """The Goals table name in a serialized db.
+
+    agno 3.2.0 wrote the name under "products_table" and wrote it on every db, so its default
+    name there means the table was never named.
+    """
+    if data.get("goals_table") is not None:
+        return data["goals_table"]
+    legacy = data.get("products_table")
+    return None if legacy == LEGACY_GOALS_TABLE_NAME else legacy
+
+
+def with_current_goals_table(data: Dict[str, Any]) -> Dict[str, Any]:
+    """A serialized db with its Goals table named under "goals_table", not the agno 3.2.0 key.
+
+    The 3.2.0 default name becomes the current default name. It is kept as a name, so a db merged
+    with this one stays on the default table when the other names its own.
+    """
+    if "products_table" not in data:
+        return data
+    goals_table = goals_table_from_dict(data)
+    if goals_table is None and data.get("products_table") == LEGACY_GOALS_TABLE_NAME:
+        goals_table = DEFAULT_GOALS_TABLE_NAME
+    current = {key: value for key, value in data.items() if key not in ("goals_table", "products_table")}
+    if goals_table is not None:
+        current["goals_table"] = goals_table
+    return current
+
 
 # Table parameters only some adapters take, beyond BaseDb's. A stored config
 # that overrides one of these must clone the registered db with it too, or
@@ -636,6 +703,10 @@ MIGRATABLE_TABLE_TYPES = frozenset(
         "approvals",
         "components",
         "schedules",
+        "goals",
+        "sources",
+        "projects",
+        "tasks",
         "schedule_runs",
         "learnings",
     }
@@ -3086,6 +3157,7 @@ def resolve_db_from_config(
     Returns:
         A database instance, or ``None`` if reconstruction fails.
     """
+    db_data = with_current_goals_table(db_data)
     db_id = db_data.get("id")
     if registry is not None and db_id:
         registry_db = registry.get_db(db_id)

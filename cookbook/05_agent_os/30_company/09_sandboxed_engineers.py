@@ -75,15 +75,13 @@ agent_os = AgentOS(
 
 def run(executor: str) -> None:
     with TestClient(agent_os.get_app()) as client:
-        product_response = client.post(
-            "/company/products", json={"name": "Hello World"}
-        )
-        product_response.raise_for_status()
-        product = product_response.json()
+        goal_response = client.post("/company/goals", json={"name": "Hello World"})
+        goal_response.raise_for_status()
+        goal = goal_response.json()
         source_response = client.post(
             "/company/sources",
             json={
-                "product_id": product["id"],
+                "goal_id": goal["id"],
                 "type": "git",
                 "reference": repository.url,
                 "config": {"branch": repository.branch},
@@ -92,7 +90,7 @@ def run(executor: str) -> None:
         source_response.raise_for_status()
         project_response = client.post(
             "/company/projects",
-            json={"product_id": product["id"], "name": "Repository inspection"},
+            json={"goal_id": goal["id"], "name": "Repository inspection"},
         )
         project_response.raise_for_status()
         client.post(
@@ -102,7 +100,7 @@ def run(executor: str) -> None:
         task_response = client.post(
             "/company/tasks",
             json={
-                "product_id": product["id"],
+                "goal_id": goal["id"],
                 "project_id": project_response.json()["id"],
                 "title": "Inspect README",
                 "brief": "Read README and summarize its contents.",

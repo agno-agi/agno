@@ -16,12 +16,12 @@ from agno.fs.errors import VersionConflictError
 async def async_example(path: str) -> None:
     db = AsyncSqliteDb(db_file=path)
     manager = AsyncCompanyManager(db)
-    product = await manager.create(
-        name="Documentation", purpose="Help developers", user_id="alice"
+    goal = await manager.create(
+        name="Documentation", objective="Help developers", user_id="alice"
     )
-    page = await manager.read_wiki(product["id"], "status.md")
+    page = await manager.read_wiki(goal["id"], "status.md")
     await manager.write_wiki(
-        product_id=product["id"],
+        goal_id=goal["id"],
         path="status.md",
         content="# Status\n\nDraft ready for review.\n",
         expected_version=page.metadata.version,
@@ -38,12 +38,12 @@ if __name__ == "__main__":
     with TemporaryDirectory() as directory:
         db = SqliteDb(db_file=directory + "/company.db")
         manager = CompanyManager(db)
-        product = manager.create(
-            name="SDK", purpose="Build reliable agents", user_id="alice"
+        goal = manager.create(
+            name="SDK", objective="Build reliable agents", user_id="alice"
         )
-        page = manager.read_wiki(product["id"], "status.md")
+        page = manager.read_wiki(goal["id"], "status.md")
         manager.write_wiki(
-            product_id=product["id"],
+            goal_id=goal["id"],
             path="status.md",
             content="# Status\n\nRelease proposed.\n",
             expected_version=page.metadata.version,
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         )
         try:
             manager.write_wiki(
-                product_id=product["id"],
+                goal_id=goal["id"],
                 path="status.md",
                 content="Stale overwrite",
                 expected_version=page.metadata.version,

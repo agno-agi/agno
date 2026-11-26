@@ -45,7 +45,7 @@ def principal(payload):
 
 
 def test_turning_auto_accept_off_from_chat_leaves_a_waiting_declared_routine_with_no_run_authority(system):
-    product_id, routine_id = system.declare(auto_accept=True)
+    goal_id, routine_id = system.declare(auto_accept=True)
     assert AUTHORIZATION_KEY not in system.stored(routine_id)
 
     assert turn_off(system, routine_id).startswith("Auto-accept is off")
@@ -57,8 +57,8 @@ def test_turning_auto_accept_off_from_chat_leaves_a_waiting_declared_routine_wit
 
 @pytest.mark.parametrize("surface", ["chat", "api"])
 def test_turning_auto_accept_off_keeps_the_run_authority_of_the_person_who_authored_the_routine(system, surface):
-    product_id, _ = system.declare(auto_accept=False)
-    created = system.api_routine(product_id, {"default_executor": "writer"}, name="authored")
+    goal_id, _ = system.declare(auto_accept=False)
+    created = system.api_routine(goal_id, {"default_executor": "writer"}, name="authored")
     assert created.status_code == 201, created.text
     routine_id = created.json()["id"]
     before = system.stored(routine_id)
@@ -76,14 +76,14 @@ def test_turning_auto_accept_off_keeps_the_run_authority_of_the_person_who_autho
 
 
 def test_turning_auto_accept_off_twice_grants_nothing(system):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     before = system.stored(routine_id)
     assert turn_off(system, routine_id).startswith("Auto-accept is off")
     assert system.stored(routine_id) == before
 
 
 def test_a_person_who_may_not_run_the_executor_can_still_turn_auto_accept_off(system):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     assert turn_on(system, routine_id).startswith("Auto-accept is on")
     without = [scope for scope in SCOPES if not scope.startswith("agents:")]
     assert turn_off(system, routine_id, chat(scopes=without, user="bob")).startswith("Auto-accept is off")
@@ -92,7 +92,7 @@ def test_a_person_who_may_not_run_the_executor_can_still_turn_auto_accept_off(sy
 
 
 def test_turning_auto_accept_on_and_editing_instructions_still_take_the_editors_authority(system):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     assert turn_on(system, routine_id, chat(user="bob")).startswith("Auto-accept is on")
     assert principal(system.stored(routine_id)) == "bob"
     path = f"/company/routines/{routine_id}"
@@ -109,9 +109,9 @@ def test_turning_auto_accept_on_and_editing_instructions_still_take_the_editors_
 @pytest.mark.parametrize("edit", [{"instructions": "Read the Sources again."}, {"executor_id": "writer"}])
 def test_an_edit_that_does_not_set_auto_accept_leaves_a_declared_policy_waiting(system, edit):
     declared = AutoAccept(default_executor="writer", max_open=2)
-    product_id, routine_id = system.declare(auto_accept=declared)
+    goal_id, routine_id = system.declare(auto_accept=declared)
     version = _policy_fingerprint(system.db.get_schedule(routine_id))
-    project, task = system.proposes(product_id, routine_id)
+    project, task = system.proposes(goal_id, routine_id)
 
     path = f"/company/routines/{routine_id}"
     patched = system.client.patch(path, json=edit, headers=headers(SCOPES, user="bob"))
@@ -136,7 +136,7 @@ def test_an_edit_that_does_not_set_auto_accept_leaves_a_declared_policy_waiting(
 
 
 def test_editing_a_waiting_declared_routine_does_not_need_the_permissions_its_policy_would_use(system):
-    product_id, routine_id = system.declare(auto_accept=True)
+    goal_id, routine_id = system.declare(auto_accept=True)
     without = [scope for scope in SCOPES if scope not in ("tasks:write", "projects:write")]
     path = f"/company/routines/{routine_id}"
     patched = system.client.patch(path, json={"instructions": "Read again."}, headers=headers(without, user="bob"))
@@ -145,7 +145,7 @@ def test_editing_a_waiting_declared_routine_does_not_need_the_permissions_its_po
 
 
 def test_an_edit_of_a_policy_a_person_set_still_needs_the_editors_own_grant(system):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     assert turn_on(system, routine_id).startswith("Auto-accept is on")
     path = f"/company/routines/{routine_id}"
     without = [scope for scope in SCOPES if scope != "tasks:write"]
@@ -159,7 +159,7 @@ def test_an_edit_of_a_policy_a_person_set_still_needs_the_editors_own_grant(syst
 
 def test_setting_auto_accept_on_a_declared_routine_through_the_api_gives_it_the_persons_grant(system):
     declared = AutoAccept(default_executor="writer")
-    product_id, routine_id = system.declare(auto_accept=declared)
+    goal_id, routine_id = system.declare(auto_accept=declared)
     path = f"/company/routines/{routine_id}"
     # The stored policy sent back as it is turns it on under the sender.
     sent = system.client.patch(path, json={"auto_accept": declared.model_dump()}, headers=headers(SCOPES, user="bob"))
@@ -458,9 +458,9 @@ def test_a_stored_sandboxed_agent_does_not_run_in_a_task_run_at_any_version(
 
 
 def authored_routine(system):
-    """A Routine named 'nightly-intake' in Product 'Docs', with a policy alice set."""
-    product_id, _ = system.declare(auto_accept=False)
-    created = system.api_routine(product_id, {"default_executor": "writer", "max_open": 3}, name="nightly-intake")
+    """A Routine named 'nightly-intake' in Goal 'Docs', with a policy alice set."""
+    goal_id, _ = system.declare(auto_accept=False)
+    created = system.api_routine(goal_id, {"default_executor": "writer", "max_open": 3}, name="nightly-intake")
     assert created.status_code == 201, created.text
     return created.json()["id"]
 
@@ -468,16 +468,16 @@ def authored_routine(system):
 TOLD = ("nightly-intake", "Docs", "default executor writer", "at most 3 Tasks open")
 
 
-@pytest.mark.parametrize("missing", ["routines:write", "products:read"])
+@pytest.mark.parametrize("missing", ["routines:write", "goals:read"])
 def test_turning_auto_accept_on_tells_nothing_to_a_person_the_routine_api_would_refuse(system, missing):
     routine_id = authored_routine(system)
     before = system.db.get_schedule(routine_id)
     without = chat(scopes=[scope for scope in SCOPES if scope != missing], user="bob")
     # Wrong names and no kept policy: each of these made the tool reply with the stored value.
-    for routine, product in (("guess", "Guess"), ("nightly-intake", "Guess"), ("nightly-intake", "Docs")):
-        reply = turn_on(system, routine_id, without, routine=routine, product=product)
+    for routine, goal in (("guess", "Guess"), ("nightly-intake", "Guess"), ("nightly-intake", "Docs")):
+        reply = turn_on(system, routine_id, without, routine=routine, goal=goal)
         assert reply.startswith("Not done") and missing in reply, reply
-        told = [text for text in TOLD if text in reply and text not in (routine, product)]
+        told = [text for text in TOLD if text in reply and text not in (routine, goal)]
         assert not told, reply
     assert system.db.get_schedule(routine_id) == before
 
@@ -495,7 +495,7 @@ def test_a_person_the_routine_api_accepts_is_still_told_what_to_confirm(system):
     routine_id = authored_routine(system)
     bob = chat(user="bob")
     assert "is named 'nightly-intake'" in turn_on(system, routine_id, bob, routine="guess")
-    assert "belongs to Product 'Docs'" in turn_on(system, routine_id, bob, routine="nightly-intake", product="Guess")
+    assert "belongs to Goal 'Docs'" in turn_on(system, routine_id, bob, routine="nightly-intake", goal="Guess")
     kept = turn_on(system, routine_id, bob, routine="nightly-intake")
     assert "default executor writer" in kept and "at most 3 Tasks open" in kept
     assert "is named 'nightly-intake'" in turn_off(system, routine_id, bob, routine="guess")
@@ -528,35 +528,35 @@ MISMATCHED = [
 
 @pytest.mark.parametrize("sent", MISMATCHED)
 def test_a_policy_whose_executor_type_does_not_match_the_component_is_refused(system, sent):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     before = system.db.get_schedule(routine_id)
     patched = system.client.patch(
         f"/company/routines/{routine_id}", json={"auto_accept": sent}, headers=headers(SCOPES)
     )
     assert patched.status_code == 422, patched.text
     assert system.db.get_schedule(routine_id) == before
-    created = system.api_routine(product_id, sent, name="second")
+    created = system.api_routine(goal_id, sent, name="second")
     assert created.status_code == 422, created.text
 
 
 @pytest.mark.parametrize("typed", [False, True], ids=["dict", "AutoAccept-object"])
 def test_a_declared_policy_whose_executor_type_does_not_match_is_refused(system, typed):
-    from agno.company import Product, Routine
-    from agno.company.bootstrap import arehydrate_product
+    from agno.company import Goal, Routine
+    from agno.company.bootstrap import arehydrate_goal
 
     policy = AutoAccept(**MISMATCHED[0]) if typed else MISMATCHED[0]
     routine = Routine(name="intake", instructions="Read.", auto_accept=policy)
-    declaration = Product(id="docs", name="Docs", routines=[routine])
+    declaration = Goal(id="docs", name="Docs", routines=[routine])
     with pytest.raises(ValueError, match="executor_type"):
         asyncio.run(
-            arehydrate_product(
+            arehydrate_goal(
                 system.db, declaration, system.os.registry, schedule_db=system.db, agent_os=system.os, trusted=True
             )
         )
 
 
 def test_a_policy_whose_executor_type_matches_is_accepted_in_both_shapes(system):
-    product_id, routine_id = system.declare(auto_accept=False)
+    goal_id, routine_id = system.declare(auto_accept=False)
     path = f"/company/routines/{routine_id}"
     for sent in (
         {"executor_type": "agent", "executor_id": "writer"},
@@ -655,7 +655,7 @@ def test_the_schemas_accept_a_never_edited_record_and_refuse_what_is_not_a_task(
         },
         "turn_on_routine_auto_accept": {
             "routine_name": "intake",
-            "product_name": "Docs",
+            "goal_name": "Docs",
             "default_executor": None,
             "kept_policy": None,
             "routine_id": "r1",
@@ -691,7 +691,7 @@ def test_one_confirmation_approves_a_never_edited_project(system, version):
     task = system.proposal()
     project = system.client.post(
         "/company/projects",
-        json={"product_id": task["product_id"], "name": "Cut subscription churn"},
+        json={"goal_id": task["goal_id"], "name": "Cut subscription churn"},
         headers=headers(),
     ).json()
     assert project["updated_at"] is None and project["status"] == "proposed"
@@ -704,7 +704,7 @@ def test_one_confirmation_approves_a_never_edited_project(system, version):
 def test_a_version_of_zero_does_not_match_a_project_that_was_edited(system):
     task = system.proposal()
     project = system.client.post(
-        "/company/projects", json={"product_id": task["product_id"], "name": "Churn"}, headers=headers()
+        "/company/projects", json={"goal_id": task["goal_id"], "name": "Churn"}, headers=headers()
     ).json()
     edited = system.client.patch(f"/company/projects/{project['id']}", json={"outcome": "Less"}, headers=headers())
     assert edited.status_code == 200 and edited.json()["updated_at"] is not None
@@ -910,11 +910,11 @@ def test_a_task_a_policy_accepted_runs_no_other_component_on_a_named_executor(tm
     system = PolicySystem(tmp_path, authorization=authorization, pausing="agent")
     try:
         system.helper.model = ScriptedModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
-        product_id, routine_id = system.declare(auto_accept=AutoAccept(default_executor="helper"))
+        goal_id, routine_id = system.declare(auto_accept=AutoAccept(default_executor="helper"))
         if authorization:
             may_run = chat(scopes=[*SCOPES, "agents:helper:run", "agents:helper:read", "agents:writer:run"])
             assert turn_on(system, routine_id, may_run).startswith("Auto-accept is on")
-        _, task = system.proposes(product_id, routine_id)
+        _, task = system.proposes(goal_id, routine_id)
         system.tick()
         assert system.db.get_task(task["id"])["executor_id"] == "helper"
 
@@ -967,9 +967,9 @@ def test_max_open_is_not_exceeded_by_an_acceptance_that_lands_during_the_checks(
 
     system.os.company.acceptance_checks["gap"] = gap
     policy = AutoAccept(max_open=1, required_checks=["executor_registered", "gap"])
-    product_id, routine_id = system.declare(auto_accept=policy)
-    project, first = system.proposes(product_id, routine_id, title="First")
-    _, second = system.proposes(product_id, routine_id, title="Second")
+    goal_id, routine_id = system.declare(auto_accept=policy)
+    project, first = system.proposes(goal_id, routine_id, title="First")
+    _, second = system.proposes(goal_id, routine_id, title="Second")
     proposals = [first, second]
     system.manager.transition_project(project_id=project["id"], target="active", reason="Approved by a person")
 
@@ -982,15 +982,15 @@ def test_max_open_is_not_exceeded_by_an_acceptance_that_lands_during_the_checks(
     assert outcome["status"] == "skipped" and "1 Tasks open, its limit" in outcome["reason"], outcome
     open_now = [
         task
-        for task in system.db.get_tasks(product_id=product_id, limit=100)[0]
+        for task in system.db.get_tasks(goal_id=goal_id, limit=100)[0]
         if task["status"] in ("ready", "in_progress", "in_review")
     ]
     assert len(open_now) == 1
 
 
 def test_max_open_still_lets_a_routine_fill_its_places(open_system):
-    product_id, routine_id = open_system.declare(auto_accept=AutoAccept(max_open=2))
-    tasks = [open_system.proposes(product_id, routine_id, title=f"Task {n}")[1] for n in range(3)]
+    goal_id, routine_id = open_system.declare(auto_accept=AutoAccept(max_open=2))
+    tasks = [open_system.proposes(goal_id, routine_id, title=f"Task {n}")[1] for n in range(3)]
     open_system.tick()
     statuses = sorted(open_system.db.get_task(task["id"])["status"] for task in tasks)
     assert statuses == ["backlog", "in_progress", "in_progress"]
@@ -1005,31 +1005,31 @@ def test_routine_instructions_name_the_tools_a_routine_proposes_with(system):
     from agno.run.authorization import authorization_scope
     from agno.tools.company import CompanyTools
 
-    for name in ("propose_company_project", "intake_product_source", "evidence_links", "evidence_hashes"):
+    for name in ("propose_company_project", "intake_goal_source", "evidence_links", "evidence_hashes"):
         assert name in ROUTINE_INSTRUCTIONS, name
     # Mini Agent holds the two tools a Routine proposes with, and not the plain Task proposal.
     assert "propose_company_task" not in ROUTINE_INSTRUCTIONS
-    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
-    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    goal = system.client.post("/company/goals", json={"name": "Clinics"}, headers=headers()).json()
+    authority = _RoutineAuthorization(None, routine_id="routine", goal_id=goal["id"])
     with authorization_scope(lambda: authority):
         tools = {
             name: function for toolkit in system.mini.tools(None) for name, function in toolkit.get_functions().items()
         }
-        assert {"propose_company_project", "intake_product_source", "read_product_source"} <= set(tools)
+        assert {"propose_company_project", "intake_goal_source", "read_goal_source"} <= set(tools)
         assert "propose_company_task" not in tools
-        project = json.loads(tools["propose_company_project"].entrypoint(product_id=product["id"], name="Updates"))
+        project = json.loads(tools["propose_company_project"].entrypoint(goal_id=goal["id"], name="Updates"))
         assert project["status"] == "proposed"
         # A Routine that runs on a named agent with CompanyTools still holds the tool, and it is refused.
-        with pytest.raises(PermissionError, match="intake_product_source"):
+        with pytest.raises(PermissionError, match="intake_goal_source"):
             CompanyTools(system.db).propose_company_task(
-                product_id=product["id"], title="Draft the update", project_id=project["id"]
+                goal_id=goal["id"], title="Draft the update", project_id=project["id"]
             )
 
 
 def test_a_routine_run_on_mini_agent_is_not_offered_the_plain_task_proposal(open_system):
     routine_run(open_system, 1)
     offered = open_system.mini.model.offered
-    assert {"propose_company_project", "intake_product_source", "list_company_tasks"} <= offered
+    assert {"propose_company_project", "intake_goal_source", "list_company_tasks"} <= offered
     assert "propose_company_task" not in offered
 
 
@@ -1037,21 +1037,21 @@ def test_a_routine_run_on_mini_agent_is_not_offered_the_plain_task_proposal(open
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_creating_a_routine_on_a_product_with_no_source_says_a_source_is_needed(system, use_async):
+def test_creating_a_routine_on_a_goal_with_no_source_says_a_source_is_needed(system, use_async):
     from agno.tools.company import CompanyTools
 
     tools = CompanyTools(system.db, registry=system.os.registry)
     tools._agent_os_ref = __import__("weakref").ref(system.os)
-    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
+    goal = system.client.post("/company/goals", json={"name": "Clinics"}, headers=headers()).json()
     context = chat(scopes=[*SCOPES, "sources:write"])
 
     def create(name, **fields):
-        arguments = dict(product_id=product["id"], name=name, **fields, _agno_run_context=context)
+        arguments = dict(goal_id=goal["id"], name=name, **fields, _agno_run_context=context)
         if use_async:
-            return json.loads(asyncio.run(tools.acreate_product_routine(**arguments)))
-        return json.loads(tools.create_product_routine(**arguments))
+            return json.loads(asyncio.run(tools.acreate_goal_routine(**arguments)))
+        return json.loads(tools.create_goal_routine(**arguments))
 
-    # It is created. The reply says it can propose nothing until the Product has a Source.
+    # It is created. The reply says it can propose nothing until the Goal has a Source.
     weekly = create("weekly", instructions="Each run, propose one task to draft a short update.")
     assert weekly["id"] and system.db.get_schedule(weekly["id"]) is not None
     assert "no Source" in weekly["note"] and "add a Source" in weekly["note"], weekly
@@ -1061,7 +1061,7 @@ def test_creating_a_routine_on_a_product_with_no_source_says_a_source_is_needed(
 
     added = system.client.post(
         "/company/sources",
-        json={"product_id": product["id"], "type": "website", "reference": "https://example.com/changes"},
+        json={"goal_id": goal["id"], "type": "website", "reference": "https://example.com/changes"},
         headers=headers([*SCOPES, "sources:write"]),
     )
     assert added.status_code == 201, added.text
@@ -1072,7 +1072,7 @@ def test_creating_a_routine_on_a_product_with_no_source_says_a_source_is_needed(
 
 
 def task_files(system):
-    """Two Tasks in two Products, and the tree tools Super Agent holds."""
+    """Two Tasks in two Goals, and the tree tools Super Agent holds."""
     from tests.unit.os.test_company_file_tree import records, tree
 
     return records(system), tree(system.os)
@@ -1085,22 +1085,43 @@ def tree_call(*args, **kwargs):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_one_task_filling_its_folder_does_not_refuse_another_tasks_write(system, monkeypatch, use_async):
+def test_one_task_filling_its_folder_does_not_refuse_another_tasks_or_the_wikis_writes(system, monkeypatch, use_async):
     import agno.company.files as company_files
-    from agno.fs.errors import FileSystemError
+    from agno.company.manager import CompanyManager
+    from agno.fs.errors import QuotaExceededError
 
-    # The limit, small enough to reach in a test, under the name it has before and after the change.
-    monkeypatch.setattr(company_files, "TASKS_NAMESPACE_BYTES", 1500, raising=False)
-    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500, raising=False)
+    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500)
     ids, files = task_files(system)
     first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
     tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
-    with pytest.raises(FileSystemError):
+    with pytest.raises(QuotaExceededError, match="folder is full"):
         tree_call(files, "write_company_file", None, use_async, path=f"{first}/more.md", content="x" * 1000)
-    written = tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    # A write that does not grow the folder is not refused.
+    smaller = tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 10)
+    assert smaller["version"] == 2
+    assert tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    wiki = CompanyManager(system.db).write_wiki(goal_id=None, path="people.md", content="Ada\n", expected_version=0)
+    assert wiki.version == 1
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_store_limit_covers_every_task_folder(system, use_async):
+    from agno.company.filesystem import set_company_filesystem_bytes
+    from agno.fs.errors import QuotaExceededError
+
+    ids, files = task_files(system)
+    # One limit for the whole Company file system, small enough to reach in a test.
+    set_company_filesystem_bytes(system.db, 1500)
+    first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
+    tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
+    # What one Task wrote counts against every folder: the store is full for both Tasks.
+    for folder in (first, second):
+        with pytest.raises(QuotaExceededError, match="storage is full"):
+            tree_call(files, "write_company_file", None, use_async, path=f"{folder}/more.md", content="x" * 1000)
+    written = tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 100)
     assert written["version"] == 1
     read = tree_call(files, "read_company_file", None, use_async, path=f"{second}/report.md")
-    assert read["content"] == "y" * 1000
+    assert read["content"] == "y" * 100
 
 
 @pytest.mark.parametrize("use_async", [False, True])
@@ -1165,14 +1186,14 @@ def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypat
     manager = CompanyManager(system.db, system.os.registry)
     for index in range(12):
         manager.write_wiki(
-            product_id=None, path=f"page-{index:02d}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
+            goal_id=None, path=f"page-{index:02d}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
         )
     read = []
     original = CompanyManager.read_wiki
 
-    def counted(self, product_id, path):
+    def counted(self, goal_id, path):
         read.append(path)
-        return original(self, product_id, path)
+        return original(self, goal_id, path)
 
     monkeypatch.setattr(CompanyManager, "read_wiki", counted)
     pages = json.loads(asyncio.run(_task_input(manager, task)))["wiki"]
@@ -1189,19 +1210,19 @@ def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypat
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_a_whole_tree_search_opens_a_bounded_number_of_products_and_says_so(system, monkeypatch, use_async):
+def test_a_whole_tree_search_opens_a_bounded_number_of_goals_and_says_so(system, monkeypatch, use_async):
     import agno.company.files as company_files
     from agno.company.manager import AsyncCompanyManager, CompanyManager
 
     monkeypatch.setattr(company_files, "SEARCH_FOLDERS", 3, raising=False)
     manager = CompanyManager(system.db, system.os.registry)
-    # Each Product is created a second after the one before, so the newest three are the last three.
+    # Each Goal is created a second after the one before, so the newest three are the last three.
     clock = iter(range(1_794_000_000, 1_794_000_100))
     with monkeypatch.context() as patch:
         patch.setattr("agno.company.manager.time.time", lambda: next(clock))
-        created = [manager.create(name=f"Product {index}")["id"] for index in range(6)]
-    manager.write_wiki(product_id=created[-1], path="needle.md", content="recentneedle", expected_version=0)
-    manager.write_wiki(product_id=created[0], path="needle.md", content="oldneedle", expected_version=0)
+        created = [manager.create(name=f"Goal {index}")["id"] for index in range(6)]
+    manager.write_wiki(goal_id=created[-1], path="needle.md", content="recentneedle", expected_version=0)
+    manager.write_wiki(goal_id=created[0], path="needle.md", content="oldneedle", expected_version=0)
     from tests.unit.os.test_company_file_tree import tree
 
     files = tree(system.os)
@@ -1209,26 +1230,24 @@ def test_a_whole_tree_search_opens_a_bounded_number_of_products_and_says_so(syst
     for cls in (CompanyManager, AsyncCompanyManager):
         original = cls.get_wiki
 
-        def counted(self, product_id=None, _original=original):
-            opened.append(product_id)
-            return _original(self, product_id)
+        def counted(self, goal_id=None, _original=original):
+            opened.append(goal_id)
+            return _original(self, goal_id)
 
         monkeypatch.setattr(cls, "get_wiki", counted)
 
-    for folder in (None, "products"):
+    for folder in (None, "goals"):
         opened.clear()
         found = tree_call(files, "search_company_files", None, use_async, query="oldneedle", folder=folder)
-        assert len([product_id for product_id in opened if product_id is not None]) == 3, opened
-        # The Product it did not open is not searched, and the reply says how many were and what to do.
-        assert found["matches"] == [] and "3 of 6 Products" in found["note"], found
-        assert "products/<product-id>" in found["note"]
+        assert len([goal_id for goal_id in opened if goal_id is not None]) == 3, opened
+        # The Goal it did not open is not searched, and the reply says how many were and what to do.
+        assert found["matches"] == [] and "3 of 6 Goals" in found["note"], found
+        assert "goals/<goal-id>" in found["note"]
         recent = tree_call(files, "search_company_files", None, use_async, query="recentneedle", folder=folder)
-        assert [match["path"] for match in recent["matches"]] == [f"products/{created[-1]}/needle.md"]
-    # A named Product is always searched.
-    named = tree_call(
-        files, "search_company_files", None, use_async, query="oldneedle", folder=f"products/{created[0]}"
-    )
-    assert [match["path"] for match in named["matches"]] == [f"products/{created[0]}/needle.md"]
+        assert [match["path"] for match in recent["matches"]] == [f"goals/{created[-1]}/needle.md"]
+    # A named Goal is always searched.
+    named = tree_call(files, "search_company_files", None, use_async, query="oldneedle", folder=f"goals/{created[0]}")
+    assert [match["path"] for match in named["matches"]] == [f"goals/{created[0]}/needle.md"]
     assert "note" not in named
 
 
@@ -1320,11 +1339,11 @@ def routine_run(system, calls):
     from agno.run.authorization import authorization_scope
     from agno.scheduler.executor import terminal_run_status
 
-    product = system.client.post("/company/products", json={"name": "Clinics"}, headers=headers()).json()
-    system.mini.model = ScriptedModel([("list_company_projects", {"product_id": product["id"]})] * calls)
-    authority = _RoutineAuthorization(None, routine_id="routine", product_id=product["id"])
+    goal = system.client.post("/company/goals", json={"name": "Clinics"}, headers=headers()).json()
+    system.mini.model = ScriptedModel([("list_company_projects", {"goal_id": goal["id"]})] * calls)
+    authority = _RoutineAuthorization(None, routine_id="routine", goal_id=goal["id"])
     with authorization_scope(lambda: authority):
-        output = asyncio.run(system.mini.arun("Operate only on this Product.", session_id="routine-run"))
+        output = asyncio.run(system.mini.arun("Operate only on this Goal.", session_id="routine-run"))
     return output, terminal_run_status(output.to_dict(), company_routine=True)
 
 
@@ -1398,19 +1417,19 @@ def fire_owned_schedule(system, calls, message="Do the morning work"):
     return asyncio.run(fire())
 
 
-def test_a_scheduled_run_on_super_agent_cannot_create_products_or_routines(system):
-    before = system.db.get_products(limit=100)[1]
+def test_a_scheduled_run_on_super_agent_cannot_create_goals_or_routines(system):
+    before = system.db.get_goals(limit=100)[1]
     result = fire_owned_schedule(
         system,
         [
-            ("create_company_product", {"name": "Made with nobody present"}),
+            ("create_company_goal", {"name": "Made with nobody present"}),
             ("update_company_details", {"name": "Renamed with nobody present"}),
         ],
     )
     assert result["status"] in ("success", "failed"), result
     content = json.dumps(result.get("output"))
     assert content.count("scheduled run") >= 2, result
-    assert system.db.get_products(limit=100)[1] == before
+    assert system.db.get_goals(limit=100)[1] == before
     details = system.client.get("/company/details", headers=headers([*SCOPES, "company:read"]))
     assert details.status_code == 200 and details.json()["name"] != "Renamed with nobody present", details.text
 
@@ -1420,15 +1439,15 @@ def test_a_scheduled_run_on_super_agent_still_reads_and_proposes(system):
     result = fire_owned_schedule(
         system,
         [
-            ("list_company_products", {}),
+            ("list_company_goals", {}),
             (
                 "propose_company_task",
-                {"product_id": task["product_id"], "title": "Follow up", "project_id": task["project_id"]},
+                {"goal_id": task["goal_id"], "title": "Follow up", "project_id": task["project_id"]},
             ),
         ],
     )
     assert result["status"] == "success", result
-    assert system.db.get_tasks(product_id=task["product_id"], limit=100)[1] == 2
+    assert system.db.get_tasks(goal_id=task["goal_id"], limit=100)[1] == 2
 
 
 def test_the_mark_of_a_scheduled_run_survives_a_snapshot_and_a_person_carries_none(system):
@@ -1527,7 +1546,7 @@ def test_one_confirmation_accepts_a_never_edited_task_named_by_its_created_at(sy
     assert system.db.get_task(task["id"])["status"] == "ready"
 
     project = system.client.post(
-        "/company/projects", json={"product_id": task["product_id"], "name": "Sign-ups"}, headers=headers()
+        "/company/projects", json={"goal_id": task["goal_id"], "name": "Sign-ups"}, headers=headers()
     ).json()
     approved = decide(
         system,
@@ -1578,7 +1597,7 @@ def test_one_confirmation_turns_auto_accept_on_when_the_model_fills_an_empty_arg
     _, routine_id = system.declare(auto_accept=False)
     arguments = {
         "routine_name": name,
-        "product_name": "Docs",
+        "goal_name": "Docs",
         "default_executor": executor,
         "kept_policy": kept,
         "routine_id": routine_id,
@@ -1594,7 +1613,7 @@ def test_text_that_is_not_the_stored_policy_is_still_not_confirmed_as_kept(syste
     _, routine_id = system.declare(auto_accept=False)
     arguments = {
         "routine_name": "intake",
-        "product_name": "Docs",
+        "goal_name": "Docs",
         "default_executor": "writer",
         "kept_policy": "); DROP TABLE company_tasks; --",
         "routine_id": routine_id,

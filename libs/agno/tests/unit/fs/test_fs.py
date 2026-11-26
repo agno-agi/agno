@@ -468,3 +468,94 @@ class TestNamespaceCharset:
         # A separator makes resolution unique again.
         FileSystem(local_backend, namespace="{user_id}-{team_id}")
         FileSystem(local_backend, namespace="{user_id}/{team_id}")
+
+
+class TestLengthLimitsAreForWrites:
+    """A path's length is limited when it is written. A file that is stored is never refused for it."""
+
+    DEEP = "/".join(f"d{index}" for index in range(17)) + ".md"  # one name more than a write accepts
+    LONG = "long/" + "x" * 600 + ".md"  # more characters than a write accepts
+    WIDE = "wide/" + "w" * 200  # one name longer than a write accepts
+
+    @pytest.fixture(params=["local", "sqlite", "async-sqlite"])
+    def store(self, request, tmp_path):
+        if request.param == "local":
+            yield FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="radar"), False
+            return
+        from agno.db.sqlite import AsyncSqliteDb, SqliteDb
+
+        is_async = request.param.startswith("async")
+        db = (AsyncSqliteDb if is_async else SqliteDb)(db_file=str(tmp_path / "files.db"))
+        yield FileSystem(db, namespace="radar"), is_async
+        asyncio.run(db.close()) if is_async else db.close()
+
+    @staticmethod
+    def call(store, name, *args, **kwargs):
+        files, is_async = store
+        if not is_async:
+            return getattr(files, name)(*args, **kwargs)
+
+        async def run():
+            return await getattr(files, "a" + name)(*args, **kwargs)
+
+        return asyncio.run(run())
+
+    def put(self, store, path, content):
+        """Store a file below the FileSystem, as a store written before the path grew holds it."""
+        files, is_async = store
+        if is_async:
+            asyncio.run(files.backend.awrite(files.namespace, path, content))
+        else:
+            files.backend.write(files.namespace, path, content)
+
+    def test_a_write_refuses_a_path_over_the_limits(self, store):
+        for path in (self.DEEP, self.LONG, self.WIDE):
+            with pytest.raises(InvalidPathError):
+                self.call(store, "write", path, "x")
+            with pytest.raises(InvalidPathError):
+                self.call(store, "append", path, "x")
+        self.call(store, "write", "short.md", "x")
+        with pytest.raises(InvalidPathError):
+            self.call(store, "move", "short.md", self.DEEP)
+        assert self.call(store, "read", "short.md") == "x"
+
+    def test_a_stored_file_is_read_listed_and_searched_whatever_its_path(self, store):
+        if isinstance(store[0].backend, LocalFileSystem):
+            # A folder on disk has its own limit on the length of one name.
+            paths = (self.DEEP,)
+        else:
+            paths = (self.DEEP, self.LONG, self.WIDE)
+        for path in paths:
+            self.put(store, path, "stored needle")
+        for path in paths:
+            assert self.call(store, "read", path) == "stored needle", path
+            assert self.call(store, "read_with_meta", path).metadata.path == path
+            folder = path.rsplit("/", 1)[0]
+            assert [meta.path for meta in self.call(store, "list", folder)] == [path]
+            assert [match.path for match in self.call(store, "search", "needle", folder)] == [path]
+            assert self.call(store, "contains", ["stored needle"], folder).found == ["stored needle"]
+        assert sorted(meta.path for meta in self.call(store, "list")) == sorted(paths)
+        # A folder deeper than a write accepts is listed and searched too.
+        deeper = "below/" + self.DEEP
+        self.put(store, deeper, "deeper needle")
+        folder = deeper.rsplit("/", 1)[0]
+        assert len(folder.split("/")) > 16
+        assert [meta.path for meta in self.call(store, "list", folder)] == [deeper]
+        assert [match.path for match in self.call(store, "search", "deeper", folder)] == [deeper]
+
+    def test_a_stored_file_over_the_limits_can_be_moved_to_a_shorter_path_or_deleted(self, store):
+        self.put(store, self.DEEP, "stored")
+        self.put(store, "deep/" + self.DEEP, "also stored")
+
+        assert self.call(store, "move", self.DEEP, "short.md").path == "short.md"
+        assert self.call(store, "read", "short.md") == "stored"
+        assert self.call(store, "delete", "deep/" + self.DEEP) is True
+        assert [meta.path for meta in self.call(store, "list")] == ["short.md"]
+
+    def test_a_read_still_refuses_a_path_that_is_not_a_path(self, store):
+        for path in ("../escape.md", "a/../b.md", "a\\b.md", "", "folder/", "a/\x00b.md"):
+            with pytest.raises(InvalidPathError):
+                self.call(store, "read", path)
+        for directory in ("../escape", "a/../b", "a\\b"):
+            with pytest.raises(InvalidPathError):
+                self.call(store, "list", directory)

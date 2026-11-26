@@ -24,15 +24,15 @@ async def aload_routine_skills() -> Skills:
     return await asyncio.to_thread(load_routine_skills)
 
 
-def _routine_message(product_id: str, instructions: str) -> str:
+def _routine_message(goal_id: str, instructions: str) -> str:
     # Run metadata is not automatically visible in the model's messages.
     import json
 
-    return "Operate only on Product " + json.dumps(product_id) + ".\n\n" + instructions
+    return "Operate only on Goal " + json.dumps(goal_id) + ".\n\n" + instructions
 
 
 def _recovered_status_conflict(tool: Dict[str, Any], later_tools: List[Dict[str, Any]]) -> bool:
-    """Only a later confirmed write to the same Product can recover a status conflict."""
+    """Only a later confirmed write to the same Goal can recover a status conflict."""
     import json
     import re
 
@@ -44,15 +44,15 @@ def _recovered_status_conflict(tool: Dict[str, Any], later_tools: List[Dict[str,
         or result == "file already exists: status.md"
     ):
         return False
-    product_id = (tool.get("tool_args") or {}).get("product_id")
-    if not product_id:
+    goal_id = (tool.get("tool_args") or {}).get("goal_id")
+    if not goal_id:
         return False
     for later in later_tools:
         args = later.get("tool_args") or {}
         if (
-            later.get("tool_name") != "update_product_status"
+            later.get("tool_name") != "update_goal_status"
             or later.get("tool_call_error")
-            or args.get("product_id") != product_id
+            or args.get("goal_id") != goal_id
             or not isinstance(args.get("expected_version"), int)
         ):
             continue
@@ -82,20 +82,18 @@ def _routine_failure(output: Any) -> Optional[str]:
         tools = output.get("tools") or []
         for index, tool in enumerate(tools):
             if tool.get("tool_call_error") and tool.get("tool_name") in {
-                "create_company_product",
-                "create_product_routine",
-                "add_product_source",
-                "read_product_source",
-                "intake_product_source",
+                "create_company_goal",
+                "create_goal_routine",
+                "add_goal_source",
+                "read_goal_source",
+                "intake_goal_source",
                 "propose_company_task",
-                "update_product_status",
+                "update_goal_status",
                 "write_company_file",
-                "summarize_company_product",
-                "refresh_company_product",
+                "summarize_company_goal",
+                "refresh_company_goal",
             }:
-                if tool["tool_name"] == "update_product_status" and _recovered_status_conflict(
-                    tool, tools[index + 1 :]
-                ):
+                if tool["tool_name"] == "update_goal_status" and _recovered_status_conflict(tool, tools[index + 1 :]):
                     continue
                 return str(tool["tool_name"]) + " failed: " + str(tool.get("result") or "Company operation failed")
             if tool.get("tool_name") in {"run_agent", "run_team", "run_workflow"}:
@@ -198,13 +196,13 @@ class _RoutineBoundary(BaseGuardrail):
         self.check(run_input)
 
 
-def _failed_routines(db: Any, products: Any) -> int:
+def _failed_routines(db: Any, goals: Any) -> int:
     from agno.scheduler import ScheduleManager
 
     schedules = ScheduleManager(db)
     failed = 0
-    for product in products:
-        for routine_id in (product.get("metadata") or {}).get("routine_ids", []):
+    for goal in goals:
+        for routine_id in (goal.get("metadata") or {}).get("routine_ids", []):
             schedule = schedules.get(routine_id)
             # Archived Routines are hidden from counts.
             if (
@@ -218,13 +216,13 @@ def _failed_routines(db: Any, products: Any) -> int:
     return failed
 
 
-async def _afailed_routines(db: Any, products: Any) -> int:
+async def _afailed_routines(db: Any, goals: Any) -> int:
     from agno.scheduler import ScheduleManager
 
     schedules = ScheduleManager(db)
     failed = 0
-    for product in products:
-        for routine_id in (product.get("metadata") or {}).get("routine_ids", []):
+    for goal in goals:
+        for routine_id in (goal.get("metadata") or {}).get("routine_ids", []):
             schedule = await schedules.aget(routine_id)
             # Archived Routines are hidden from counts.
             if (
@@ -264,7 +262,7 @@ def _routine_executor_endpoint(executor_type: str, executor_id: str, registry: A
     return endpoint
 
 
-def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None) -> Dict[str, Any]:
+def _schedule_fields(goal_id: str, routine: Routine, registry: Any, *, agent_os: Any = None) -> Dict[str, Any]:
     endpoint = _routine_executor_endpoint(routine.executor_type, routine.executor_id, registry, agent_os=agent_os)
     instructions = routine.instructions
     if instructions is None and routine.template is not None:
@@ -275,13 +273,13 @@ def _schedule_fields(product_id: str, routine: Routine, registry: Any, *, agent_
     if not instructions or not instructions.strip():
         raise ValueError("Routine instructions are required")
     fields = dict(
-        name=product_id + "." + routine.name,
+        name=goal_id + "." + routine.name,
         cron_expr=routine.cron_expr or "",
         endpoint=endpoint,
         timezone=routine.timezone,
         payload={
-            "message": _routine_message(product_id, instructions),
-            "metadata": {"product_id": product_id, "template": routine.template, "auto_accept": False},
+            "message": _routine_message(goal_id, instructions),
+            "metadata": {"goal_id": goal_id, "template": routine.template, "auto_accept": False},
         },
     )
 
@@ -358,7 +356,7 @@ def _policy_executors(registry: Any, policy: Any) -> List[str]:
 
 
 def _declared_schedule_fields(
-    product_id: str, routine: Routine, registry: Any, *, agent_os: Any = None, trusted: bool = False
+    goal_id: str, routine: Routine, registry: Any, *, agent_os: Any = None, trusted: bool = False
 ) -> Dict[str, Any]:
     """Schedule fields for a declared Routine.
 
@@ -367,7 +365,7 @@ def _declared_schedule_fields(
     """
     if routine.auto_accept and not trusted:
         raise ValueError("Authorize automatic acceptance through the Routine API")
-    fields = _schedule_fields(product_id, routine, registry, agent_os=agent_os)
+    fields = _schedule_fields(goal_id, routine, registry, agent_os=agent_os)
     if routine.auto_accept:
         policy = routine.auto_accept
         _require_sent_executor_type(registry, policy)
@@ -381,10 +379,10 @@ def _declared_schedule_fields(
 class _RoutineAuthorization(_ExecutorAuthorization):
     """Routine authority permits proposals, never acceptance or schedule edits."""
 
-    def __init__(self, original: Any, routine_id: Optional[str] = None, product_id: Optional[str] = None):
+    def __init__(self, original: Any, routine_id: Optional[str] = None, goal_id: Optional[str] = None):
         super().__init__(original)
         self.routine_id = routine_id
-        self.product_id = product_id
+        self.goal_id = goal_id
 
     def snapshot(self) -> Dict[str, Any]:
         return {
@@ -392,7 +390,7 @@ class _RoutineAuthorization(_ExecutorAuthorization):
             "company_routine": True,
             "company_routine_unscoped": self.original is None,
             "company_routine_id": self.routine_id,
-            "company_product_id": self.product_id,
+            "company_goal_id": self.goal_id,
         }
 
 
@@ -508,6 +506,11 @@ def _policy_fingerprint(schedule):
     if policy:
         parsed, legacy = _stored_policy(policy)
         content = parsed.model_dump()
+        scope = content.get("work_scope")
+        if scope is not None:
+            # Acceptance receipts on Tasks store this fingerprint. The Goal ids are hashed under
+            # "product_ids", the key those receipts were computed with.
+            content["work_scope"] = {"product_ids": scope["goal_ids"], "project_ids": scope["project_ids"]}
         if legacy:
             # The version it was saved with, so its budget does not change.
             kept = ("source_ids", "work_scope", "required_checks", "limits", "complete_projects")
@@ -546,7 +549,7 @@ async def _check_automatic_policy(schedule_db, task):
         schedule is None
         or not schedule["enabled"]
         or schedule.get("managed_by") != "company"
-        or ((schedule.get("payload") or {}).get("metadata") or {}).get("product_id") != task["product_id"]
+        or ((schedule.get("payload") or {}).get("metadata") or {}).get("goal_id") != task["goal_id"]
         or _policy_fingerprint(schedule) != receipt["policy"]
         # A declared policy that a person has since replaced no longer runs as the deployment.
         or (receipt.get("declared") and schedule["payload"].get("_agno_company_acceptance") != _DECLARED)
@@ -570,7 +573,7 @@ async def _manager_call(manager, method, *args, **kwargs):
 
 async def _project_active(task, manager):
     project = await _manager_call(manager, "get_project", task["project_id"]) if task.get("project_id") else None
-    return bool(project and project["product_id"] == task["product_id"] and project["status"] == "active")
+    return bool(project and project["goal_id"] == task["goal_id"] and project["status"] == "active")
 
 
 async def _has_source_evidence(task, manager):
@@ -584,7 +587,7 @@ async def _has_source_evidence(task, manager):
         ):
             return False
         source = await _manager_call(manager, "get_source", item["source_id"])
-        if not source or source["product_id"] != task["product_id"]:
+        if not source or source["goal_id"] != task["goal_id"]:
             return False
         _check_automation_deadline()
         current = await _manager_call(manager, "read_source", item["source_id"], item["run_id"], links=[item["link"]])
@@ -917,8 +920,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             else CompanyManager(os._company_db, os.registry)
         )
         outcomes = []
-        for product in await _records(manager, "list"):
-            for routine_id in (product.get("metadata") or {}).get("routine_ids", []):
+        for goal in await _records(manager, "list"):
+            for routine_id in (goal.get("metadata") or {}).get("routine_ids", []):
                 schedule = await _call(os.db, "get_schedule", routine_id)
                 metadata = ((schedule or {}).get("payload") or {}).get("metadata") or {}
                 policy = metadata.get("auto_accept")
@@ -929,7 +932,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     or not policy.get("complete_projects")
                 ):
                     continue
-                for project in await _records(manager, "list_projects", product_id=product["id"], status="active"):
+                for project in await _records(manager, "list_projects", goal_id=goal["id"], status="active"):
                     _check_automation_deadline()
                     try:
                         proposal = await self._completion_candidate(manager, project, routine_id)
@@ -962,7 +965,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         ):
             return None
         path, content = _completion_proposal(project, tasks)
-        wiki = await _manager_call(manager, "get_wiki", project["product_id"])
+        wiki = await _manager_call(manager, "get_wiki", project["goal_id"])
         page = await wiki.backend.filesystem.aread_with_meta(path)
         if page is None or page.content != content:
             return None
@@ -1007,8 +1010,8 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         if completing and (not policy.complete_projects or metadata.get("template") != "refresh"):
             raise _AutomationSkip("Routine is not authorized to complete Projects")
         acceptance_resource = "projects" if completing else "tasks"
-        if metadata.get("product_id") != task["product_id"]:
-            raise _AutomationSkip("Proposal is outside the Routine Product")
+        if metadata.get("goal_id") != task["goal_id"]:
+            raise _AutomationSkip("Proposal is outside the Routine Goal")
         # A Task runs on the executor its proposal suggests, or on the default when it suggests none.
         suggested = (task.get("executor_type"), task.get("executor_id"))
 
@@ -1028,7 +1031,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             raise _AutomationSkip("Proposed executor is outside automatic acceptance authorization")
         scope = policy.work_scope
         if scope and (
-            (scope.product_ids is not None and task["product_id"] not in scope.product_ids)
+            (scope.goal_ids is not None and task["goal_id"] not in scope.goal_ids)
             or (scope.project_ids is not None and task.get("project_id") not in scope.project_ids)
         ):
             raise _AutomationSkip("Proposal is outside the authorized work scope")
@@ -1081,9 +1084,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             if project and project["status"] == "cancelled":
                 raise _AutomationSkip("Cannot accept Task work in a cancelled Project")
             if project and project["status"] == "proposed":
-                # A Routine's Project takes its id from the Product, the Routine and the name. A Project a
+                # A Routine's Project takes its id from the Goal, the Routine and the name. A Project a
                 # person or another Routine proposed, or one renamed since, waits for a person.
-                own = project["id"] == _routine_project_id(task["product_id"], schedule["id"], project["name"])
+                own = project["id"] == _routine_project_id(task["goal_id"], schedule["id"], project["name"])
                 if not (policy.approve_projects and own):
                     raise _AutomationSkip("Project approval is required before automatic Task acceptance")
                 if authority is not None:
@@ -1094,14 +1097,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 # The review queue is the brake: a person finishing a Task makes room for the next.
                 open_now = 0
                 for status in _OPEN_STATUSES:
-                    rows = await _records(manager, "list_tasks", product_id=task["product_id"], status=status)
+                    rows = await _records(manager, "list_tasks", goal_id=task["goal_id"], status=status)
                     open_now += _open_tasks(rows, schedule["id"])
                 if open_now >= policy.max_open:
                     raise _AutomationSkip(
                         f"Routine has {open_now} Tasks open, its limit. Complete or cancel one for it to accept more"
                     )
         # Avoid Source IO for exhausted policies. The transaction repeats this
-        # check under the Product lock, so concurrent acceptances remain bounded.
+        # check under the Goal lock, so concurrent acceptances remain bounded.
         elif (
             await _call(
                 os._company_db,
@@ -1146,7 +1149,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     await authority.arequire("projects", "write")
                 await authority.arequire("wiki", "read")
                 await authority.arequire(executor[0] + "s", "run", executor[1])
-            # Re-read after all checks and proposal IO. Product/template bindings
+            # Re-read after all checks and proposal IO. Goal/template bindings
             # are separate from the content-only policy fingerprint.
             current = await _call(os.db, "get_schedule", schedule["id"])
             current_metadata = ((current or {}).get("payload") or {}).get("metadata") or {}
@@ -1154,7 +1157,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                 not current
                 or not current["enabled"]
                 or current.get("managed_by") != "company"
-                or current_metadata.get("product_id") != task["product_id"]
+                or current_metadata.get("goal_id") != task["goal_id"]
                 or (completing and current_metadata.get("template") != "refresh")
                 or _policy_fingerprint(current) != _policy_fingerprint(schedule)
             ):
@@ -1169,7 +1172,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             # The record says whether the executor came from the Routine's proposal or the default.
             task_receipt = {**receipt, "executor_chosen_by": chosen_by}
             if policy.limits is None:
-                # The store enforces each bound in the acceptance's own transaction, under the Product lock.
+                # The store enforces each bound in the acceptance's own transaction, under the Goal lock.
                 task_receipt["max_open"] = policy.max_open
             _check_automation_deadline()
             if completing:
@@ -1313,22 +1316,39 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             _automatic_task.reset(token)
 
 
-def _require_routine_product(product_id: Optional[str], authority: Any = None) -> None:
+def _require_routine_goal(goal_id: Optional[str], authority: Any = None) -> None:
     from agno.run.authorization import current_authorization
 
     authority = authority or current_authorization()
-    if (
-        isinstance(authority, _ExecutorAuthorization)
-        and authority.product_id is not None
-        and authority.product_id != product_id
-    ):
+    if isinstance(authority, _ExecutorAuthorization) and authority.goal_id is not None and authority.goal_id != goal_id:
         if isinstance(authority, _RoutineAuthorization):
-            raise PermissionError("Routine authority is restricted to its configured Product")
-        raise PermissionError("A Task run is restricted to its Task's Product")
+            raise PermissionError("Routine authority is restricted to its configured Goal")
+        raise PermissionError("A Task run is restricted to its Task's Goal")
 
 
-async def _require_active_routine_product(db: Any, product_id: Optional[str]) -> None:
+def _require_migrated_routine(schedule_id: Any, payload: Any, table_name: str) -> None:
+    """Raise when a Routine still has the payload agno 3.2 saved, with its Goal under ``product_id``.
+
+    The Routine is then found by no Goal. Without this it looks like a schedule of another owner,
+    or like no Routine at all.
+    """
+    from agno.exceptions import MigrationRequiredError
+
+    metadata = (payload or {}).get("metadata") or {}
+    if "goal_id" not in metadata and "product_id" in metadata:
+        raise MigrationRequiredError(
+            table_name=table_name,
+            message=(
+                f"Routine {schedule_id} was saved by an older version of Agno and must be migrated before Company "
+                "can use it. Apply the pending migrations to the database that holds the schedules with "
+                "`asyncio.run(MigrationManager(db).up())` (import it from `agno.db.migrations.manager`; await the "
+                "call directly in async code), or via the AgentOS endpoint `POST /databases/all/migrate`."
+            ),
+        )
+
+
+async def _require_active_routine_goal(db: Any, goal_id: Optional[str]) -> None:
     from agno.company.execution import _call
 
-    if db is None or not product_id or await _call(db, "get_product", product_id) is None:
-        raise ValueError("Routine Product is missing or archived")
+    if db is None or not goal_id or await _call(db, "get_goal", goal_id) is None:
+        raise ValueError("Routine Goal is missing or archived")

@@ -306,7 +306,7 @@ def test_carried_roles_decide_for_the_member_and_survive_the_snapshot(tmp_path):
     member = RunAuthorization(provider, AuthorizationContext(principal_id="member@co", roles=["slack-member"]))
     member.require("tasks", "write")
     with pytest.raises(PermissionError):
-        member.require("products", "write")
+        member.require("goals", "write")
     # The same member without carried roles holds nothing
     with pytest.raises(PermissionError):
         RunAuthorization(provider, AuthorizationContext(principal_id="member@co")).require("tasks", "write")
