@@ -493,3 +493,21 @@ def test_run_eval_suite_from_body_strips_runtime_metadata_keys(client):
         resp = client.post("/eval-suites", json=_posted_suite(cases=[case]), headers=auth_header("alice"))
     assert resp.status_code == 200
     assert seen[0].metadata == {"team": "ok"}
+
+
+def test_run_eval_suite_from_body_does_not_store_case_dependencies(client, db):
+    """A run's dependencies are never stored, so they stay out of the eval_input GET /eval-runs returns."""
+    case = {
+        "name": "multiplies",
+        "agent_id": "assistant",
+        "input": "10 times 5",
+        "expected_tool_calls": ["multiply"],
+        "dependencies": {"api_key": "secret"},
+        "session_state": {"step": 1},
+    }
+    with patch.object(Agent, "arun", side_effect=_tool_run):
+        resp = client.post("/eval-suites", json=_posted_suite(cases=[case]), headers=auth_header("alice"))
+    assert resp.status_code == 200
+    stored_case = resp.json()["eval_input"]["cases"][0]
+    assert "dependencies" not in stored_case
+    assert stored_case["session_state"] == {"step": 1}

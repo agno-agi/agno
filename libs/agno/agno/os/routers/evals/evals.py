@@ -883,7 +883,8 @@ def attach_routes(
         summary="Execute Evaluation Suite From Body",
         description=(
             "Run the cases posted in the body against registered agents or teams and store the result as an "
-            "eval run of type 'suite'. The body is saved as eval_input, so posting it again reruns the suite."
+            "eval run of type 'suite'. The body, minus each case's dependencies, is saved as eval_input, so posting it "
+            "again reruns the suite."
         ),
         responses={
             200: {
@@ -1011,7 +1012,9 @@ def attach_routes(
             tag=eval_suite_input.tag,
             name=eval_suite_input.case_name,
             timeout=eval_suite_input.default_timeout,
-            eval_input=eval_suite_input.model_dump(),
+            # A run's dependencies are never stored, as on the run routes, so they stay out of the saved
+            # eval_input that GET /eval-runs returns to every evals:read caller.
+            eval_input=eval_suite_input.model_dump(exclude={"cases": {"__all__": {"dependencies"}}}),
         )
 
     return router
