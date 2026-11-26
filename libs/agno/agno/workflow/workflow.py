@@ -5116,7 +5116,11 @@ class Workflow:
             finally:
                 from agno.run.background import _notify_run_requester
 
-                _notify_run_requester(ended_run if isinstance(ended_run, WorkflowRunOutput) else workflow_run_response)
+                _notify_run_requester(
+                    ended_run if isinstance(ended_run, WorkflowRunOutput) else workflow_run_response,
+                    # A WorkflowAgent that runs its workflow stores a run without the starting metadata.
+                    started_with=workflow_run_response.metadata,
+                )
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()

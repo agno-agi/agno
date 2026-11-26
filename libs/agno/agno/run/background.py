@@ -79,22 +79,31 @@ def notify_requester(requested_from: Any, work: Dict[str, Any], authority: Optio
         log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
 
 
-def _notify_run_requester(run: Any) -> None:
-    """Tell the conversation that started this in-process run, if one did, how the run ended."""
+def _notify_run_requester(run: Any, started_with: Any = None, continued: bool = False) -> None:
+    """Tell the conversation that started this in-process run, if one did, how the run ended.
+
+    started_with is the metadata the run was started with, for a run object that holds none of its
+    own: a WorkflowAgent that runs its workflow stores such a run. continued says the run was paused
+    and has been continued, so a pause is a new one.
+    """
     try:
-        metadata = getattr(run, "metadata", None)
-        if not isinstance(metadata, dict) or not _requester_listeners:
+        if not _requester_listeners:
             return
         from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
 
-        requested_from = metadata.get(REQUESTED_FROM_METADATA_KEY)
+        requested_from = None
+        for metadata in (getattr(run, "metadata", None), started_with):
+            if isinstance(metadata, dict) and metadata.get(REQUESTED_FROM_METADATA_KEY):
+                requested_from = metadata[REQUESTED_FROM_METADATA_KEY]
+                break
         status = getattr(run.status, "value", run.status)
         if not requested_from or status not in ("COMPLETED", "ERROR", "CANCELLED", "PAUSED"):
             return
         from agno.run.authorization import authorization_snapshot
 
         # This task was started inside the request that started the run, so it holds that caller's authority.
-        notify_requester(requested_from, {"kind": "run", "id": run.run_id, "status": status}, authorization_snapshot())
+        work = {"kind": "run", "id": run.run_id, "status": status, **({"continued": True} if continued else {})}
+        notify_requester(requested_from, work, authorization_snapshot())
     except Exception:
         log_error("Could not tell a conversation that its background run ended", exc_info=True)
 
@@ -111,7 +120,7 @@ async def anotify_continued_run_requester(component: Any, run_id: str, session_i
     try:
         run = await component.aget_run_output(run_id=run_id, session_id=session_id)
         if run is not None:
-            _notify_run_requester(run)
+            _notify_run_requester(run, continued=True)
     except Exception:
         log_error(f"Could not tell a conversation that continued run {run_id} ended", exc_info=True)
 

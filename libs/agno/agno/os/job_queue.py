@@ -1387,6 +1387,9 @@ class QueueWorker:
             payload = job.get("payload") or {}
             task_id = payload.get("company_task_id")
             work = {"kind": "task" if task_id else "run", "id": task_id or job["id"], "run_id": job["id"]}
+            if payload.get("continue"):
+                # The run was paused and has been continued: a pause now is a new one.
+                work["continued"] = True
             # The authority saved when the work was started, not that of a later continue.
             authority = payload.get(AUTHORIZATION_KEY)
             states = {"completed": "COMPLETED", "failed": "ERROR", "cancelled": "CANCELLED", "paused": "PAUSED"}
