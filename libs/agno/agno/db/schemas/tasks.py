@@ -26,6 +26,8 @@ TASK_MOVE_REFUSAL = {
     "inactive": "An accepted Task moves only into an active Project",
     "policy": "A policy accepted this Task for its Project. Return it to Backlog, or accept it yourself, to move it",
     "automated": "Routine and Task runs cannot move an accepted Task; a person decides",
+    "goal": "Only the person who accepted this Task may move it into a Goal's Project while it is Ready: its run "
+    "would act for that Goal under their acceptance. Ask them, or return it to Backlog first",
 }
 
 
@@ -161,6 +163,10 @@ def task_transition_fields(
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
         fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
+        # A person asked for this Task to be added, not done, and it waited for their confirmation.
+        # Accepted now, it is held until someone starts it, like a Task that was added accepted.
+        if existing["status"] == "backlog" and (existing.get("metadata") or {}).get("start_on_request"):
+            fields["transitions"][-1]["start_on_request"] = True
     return fields
 
 

@@ -331,9 +331,10 @@ class CompanyTaskTools(Toolkit):
             elif not _take_acceptance(run_id):
                 waits = f"this run already added {ACCEPTED_TASKS_PER_RUN} accepted Tasks"
             # Asked only to add it, the Task is held for a person to start: the tick leaves it alone.
-            accepted: Dict[str, Any] = (
-                {} if waits else {"status": "ready", "accepted_by": user_id, "start_on_request": not start}
-            )
+            # A Task that waits for the person's confirmation keeps the hold for the acceptance that follows.
+            accepted: Dict[str, Any] = {"start_on_request": not start}
+            if not waits:
+                accepted.update(status="ready", accepted_by=user_id)
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             try:
                 with authorization_scope(lambda: saved):

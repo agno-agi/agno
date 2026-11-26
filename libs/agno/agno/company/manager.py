@@ -102,7 +102,14 @@ def _at_limit(goal: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], t
             continue
         open_now = _open_tasks(tasks, schedule["id"])
         if open_now >= max_open:
-            backlog = sum(1 for t in tasks if t.get("routine_id") == schedule["id"] and t["status"] == "backlog")
+            # A proposal in the Default Project waits for a person, not for room under the limit.
+            backlog = sum(
+                1
+                for t in tasks
+                if t.get("routine_id") == schedule["id"]
+                and t["status"] == "backlog"
+                and not is_default_project(t.get("project_id"))
+            )
             waiting.append(
                 {
                     "routine_id": schedule["id"],
@@ -168,6 +175,24 @@ def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]
     if goal_id is not None and project["goal_id"] != goal_id:
         raise ValueError("Task and Project must belong to the same Goal")
     return project["goal_id"]
+
+
+def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_by: Optional[str]) -> bool:
+    """Refuse a move that gives a Ready Task a Goal unless its accepter makes it.
+
+    A Ready Task runs under its accepter's saved authority, and its Goal decides what that run
+    reads and may write. Where the deployment checks no permissions every caller is trusted, as
+    for any other write there. Returns whether the move gives the Task a Goal: the caller then
+    writes only if the Task is still in the stage this check saw.
+    """
+    from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
+    from agno.run.authorization import current_authorization
+
+    gains_goal = task["goal_id"] is None and project.get("goal_id") is not None
+    if task["status"] == "ready" and gains_goal and current_authorization() is not None:
+        if moved_by is None or moved_by != task.get("accepted_by"):
+            raise PermissionError(TASK_MOVE_REFUSAL["goal"])
+    return gains_goal
 
 
 def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
@@ -550,7 +575,8 @@ class CompanyManager:
         """Create a Task. With no project_id it goes into the Default Project.
 
         start_on_request holds a Task created Ready until someone starts it: the automation tick
-        does not pick it up. It is recorded on the acceptance.
+        does not pick it up. It is recorded on the acceptance. A Task created in Backlog with it
+        keeps it for the acceptance that follows.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -609,6 +635,9 @@ class CompanyManager:
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
             if accepting and start_on_request:
                 task["transitions"][-1]["start_on_request"] = True
+        elif start_on_request:
+            # Recorded as a proposal for now. Its acceptance, when it comes, is held the same way.
+            task["metadata"] = {"start_on_request": True}
         return self.db.create_task(task)
 
     def get_task(
@@ -700,6 +729,9 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
         return self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )
@@ -1628,7 +1660,8 @@ class AsyncCompanyManager:
         """Create a Task. With no project_id it goes into the Default Project.
 
         start_on_request holds a Task created Ready until someone starts it: the automation tick
-        does not pick it up. It is recorded on the acceptance.
+        does not pick it up. It is recorded on the acceptance. A Task created in Backlog with it
+        keeps it for the acceptance that follows.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -1687,6 +1720,9 @@ class AsyncCompanyManager:
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
             if accepting and start_on_request:
                 task["transitions"][-1]["start_on_request"] = True
+        elif start_on_request:
+            # Recorded as a proposal for now. Its acceptance, when it comes, is held the same way.
+            task["metadata"] = {"start_on_request": True}
         return await self.db.create_task(task)
 
     async def get_task(
@@ -1778,6 +1814,9 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
         return await self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )
