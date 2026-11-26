@@ -313,6 +313,10 @@ move them as it starts.
   `company_files_left(db)` lists them, and
   `move_company_files(db, owners={namespace: id})` moves a namespace to the
   owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
+- The namespace `company` belongs to the Company file system. On an AgentOS
+  with Company, an agent whose own `FileSystem` uses the shared partition of
+  that namespace in the same database is refused when its run starts. Give that
+  filesystem another namespace, and move its files there.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
@@ -405,11 +409,12 @@ the 50 newest Tasks. When there are more, the reply says how many it searched;
 name a folder, `goals/<goal-id>` or `tasks/<task-id>`, to search another.
 
 A file holds at most 1 MB. The Company file system holds 1 GB in total, across
-every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. No
-folder has a limit of its own. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. There are no API
-routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
-outside `notes/`.
+every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. Each
+Task's folder also holds at most 20 MB, so a Task that fills its folder does not
+stop the writes of the wiki, a Goal, the notes or another Task. Nothing removes a
+Task's files, not even archiving the Task, because an archived Task can be
+restored. There are no API routes for `tasks/` and `notes/`, and no tool appends
+to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
