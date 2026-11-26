@@ -569,6 +569,40 @@ def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
         manager.transition_project(project_id=target["id"], target="done", reason="Finished")
 
 
+def test_a_move_into_a_project_with_a_goal_leaves_that_projects_row_to_the_goal_lock(system, monkeypatch):
+    from sqlalchemy import event
+
+    import agno.db.sql.company as company
+
+    manager = system.manager
+    goal = manager.create(name="Developer docs")
+    target = manager.create_project(goal_id=goal["id"], name="3.3 migration guide")
+    source = manager.create_project(name="Reach 50 customers by March")
+    task = manager.create_task(title="Fix the typo on the pricing page", project_id=source["id"])
+    rows, goals_locked = [], []
+    original_goal = company.lock_goal
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("UPDATE") and "agno_company_projects" in statement:
+            rows.extend(value for value in parameters if value in (source["id"], target["id"]))
+
+    def lock_goal(sess, goals, goal_id):
+        goals_locked.append(goal_id)
+        return original_goal(sess, goals, goal_id)
+
+    monkeypatch.setattr(company, "lock_goal", lock_goal)
+    event.listen(system.db.db_engine, "before_cursor_execute", record)
+    try:
+        moved = manager.update_task(task["id"], project_id=target["id"])
+    finally:
+        event.remove(system.db.db_engine, "before_cursor_execute", record)
+
+    assert (moved["project_id"], moved["goal_id"]) == (target["id"], goal["id"])
+    # A rename or an approval of the target holds its Goal and then writes its row. The move holds
+    # only its own Project's row and then the Goal, so the two cannot wait on each other.
+    assert set(rows) == {source["id"]} and goals_locked == [goal["id"]]
+
+
 def test_a_write_that_waited_behind_a_goal_taking_move_follows_the_task_to_its_goal(system, monkeypatch):
     import agno.db.sql.company as company
 
