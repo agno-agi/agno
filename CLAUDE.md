@@ -162,11 +162,12 @@ See `.cursorrules` for detailed patterns. Key rules:
 **Running tests:**
 ```bash
 source .venv/bin/activate
-pytest libs/agno/tests/
 
 # Run a specific test file
 pytest libs/agno/tests/unit/test_agent.py
 ```
+
+Before a push, run only the tests for what changed. See "Tests before a push, and CI after it" below.
 
 ---
 
@@ -201,7 +202,7 @@ Both scripts must pass with no errors before code review.
 - Run only the tests you added or touched, and the test files for the modules you changed. Do not run the whole `libs/agno/tests/unit` suite locally before a push. CI runs it, against PostgreSQL, in less time.
 - Push when those tests, `format.sh` and `validate.sh` pass. Do not hold a push for a long local run.
 - Do not wait for CI before you report. Report as soon as the push is done, and say that CI is still running. Check CI again only when you are asked to, or when you are told it failed.
-- A long local run is right in one case: the PR's base is not `main`, so CI runs no tests on it. Then run the test files for the areas the PR changes, in the background, and keep working while they run.
+- A long local run is right in one case: the PR's base is not one of the branches under `pull_request.branches` in `.github/workflows/test.yml`, so CI runs no tests on it. Then run the test files for the areas the PR changes, in the background, and keep working while they run.
 
 **PR Title Format:**
 
