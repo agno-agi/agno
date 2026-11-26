@@ -540,8 +540,10 @@ class CompanyFiles:
         return {"path": location.tree_path, "deleted": True}
 
 
-async def _always_loaded(manager: Any, goal_id: str) -> List[Dict[str, Any]]:
+async def _always_loaded(manager: Any, goal_id: Optional[str]) -> List[Dict[str, Any]]:
     """The pages a Task's input carries: the Goal's brief and status, then every company wiki page.
+
+    A Task with no Goal carries the company wiki pages only.
 
     A page longer than ALWAYS_LOADED_PAGE_CHARS is cut. The first page that would take the total past
     ALWAYS_LOADED_TOTAL_CHARS and every page after it are named without their content, and the pages
@@ -557,7 +559,8 @@ async def _always_loaded(manager: Any, goal_id: str) -> List[Dict[str, Any]]:
         page += 1
     first = [path for path in ("brief.md", "status.md") if path in listed]
     company = [*first, *(path for path in listed if path not in first)]
-    wanted = [(goal_id, "brief.md"), (goal_id, "status.md"), *((None, path) for path in company)]
+    goal_pages = [(goal_id, "brief.md"), (goal_id, "status.md")] if goal_id is not None else []
+    wanted = [*goal_pages, *((None, path) for path in company)]
     pages: List[Dict[str, Any]] = []
     used = 0
     spent = False

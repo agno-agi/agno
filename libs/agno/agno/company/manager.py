@@ -7,6 +7,13 @@ from uuid import uuid4
 from agno.company.summary import _serialized_summary
 from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
 from agno.db.schemas.goals import validate_goal_fields
+from agno.db.schemas.projects import (
+    DEFAULT_PROJECT_ID,
+    default_project_row,
+    is_default_project,
+    refuse_default_project,
+)
+from agno.db.utils import is_unique_violation
 
 
 def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
@@ -143,6 +150,24 @@ def _waiting_for_a_person(schedules: Any, goal_id: Optional[str]) -> List[Dict[s
             }
         )
     return waiting
+
+
+def _marked(project: Dict[str, Any]) -> Dict[str, Any]:
+    """A Project with is_default, the field a client keys on to show the Default Project apart."""
+    return {**project, "is_default": is_default_project(project["id"])}
+
+
+def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]:
+    """The Goal a Task in this Project carries.
+
+    A Task in an ordinary Project carries that Project's Goal, or none when the Project has none.
+    A Task in the Default Project carries the Goal it is given, or none.
+    """
+    if is_default_project(project["id"]):
+        return goal_id
+    if goal_id is not None and project["goal_id"] != goal_id:
+        raise ValueError("Task and Project must belong to the same Goal")
+    return project["goal_id"]
 
 
 def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
@@ -328,23 +353,26 @@ class CompanyManager:
     def create_project(
         self,
         *,
-        goal_id: str,
         name: str,
+        goal_id: Optional[str] = None,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create project work; scoped_user_id filters parents while user_id records the creator."""
+        """Propose a Project, under a Goal or under none.
+
+        scoped_user_id filters the Goal while user_id records the creator.
+        """
         from agno.company.routines import _require_routine_goal
         from agno.db.schemas.projects import validate_project_fields
 
         _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
-        if self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+        if goal_id is not None and self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
             raise LookupError("Goal not found")
-        proposal_id = _project_proposal_id(goal_id, name)
+        proposal_id = _project_proposal_id(goal_id, name) if goal_id is not None else None
         if proposal_id is not None:
             existing = self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -364,12 +392,37 @@ class CompanyManager:
             reuse=proposal_id is not None,
         )
 
+    def default_project(self) -> Dict[str, Any]:
+        """The Default Project. It is stored on first use, so every Company database has exactly one."""
+        project = self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            try:
+                project = self.db.create_project(default_project_row(), reuse=True)
+            except Exception as exc:
+                # Another process stored it first.
+                if not is_unique_violation(exc):
+                    raise
+                project = self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            raise RuntimeError("The Default Project could not be stored")
+        return _marked(project)
+
+    def _task_project(self, project_id: Optional[str], scoped_user_id: Optional[str]) -> Dict[str, Any]:
+        """The Project a Task goes into: the one named, or the Default Project when none is."""
+        if not project_id or is_default_project(project_id):
+            return self.default_project()
+        project = self.db.get_project(project_id, user_id=scoped_user_id)
+        if project is None:
+            raise LookupError("Project not found")
+        return project
+
     def get_project(
         self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
         """Get a visible project, optionally including deleted records."""
         record = self.db.get_project(project_id, user_id=user_id, include_deleted=include_deleted)
         if record is not None:
+            record = _marked(record)
             record["counts"] = (self.db.get_project_counts([project_id]))[project_id]
         return record
 
@@ -398,15 +451,16 @@ class CompanyManager:
             sort_order=sort_order,
         )
         counts = self.db.get_project_counts([row["id"] for row in rows])
-        return [{**row, "counts": counts[row["id"]]} for row in rows], total
+        return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
 
     def update_project(
         self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update the name, outcome or target date of a visible Project."""
+        """Update the name, outcome or target date of a visible Project. The Default Project is refused."""
         from agno.db.schemas.projects import validate_project_fields
 
         validate_project_fields(fields)
+        refuse_default_project(project_id, "edit")
         if expected_status is not None:
             fields["expected_status"] = expected_status
         return self.db.update_project(project_id, user_id=user_id, **fields)
@@ -414,9 +468,10 @@ class CompanyManager:
     def delete_project(
         self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
     ) -> bool:
-        """Archive a Project and its Tasks atomically; active Tasks raise ValueError."""
+        """Archive a Project and its Tasks atomically; active Tasks and the Default Project raise ValueError."""
         from agno.company.routines import _require_routine_goal
 
+        refuse_default_project(project_id, "archive")
         record = self.db.get_project(project_id)
         if record is not None:
             _require_routine_goal(record["goal_id"])
@@ -442,6 +497,7 @@ class CompanyManager:
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
+        refuse_default_project(project_id, "transition")
         if isinstance(current_authorization(), _ExecutorAuthorization):
             raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
@@ -465,8 +521,8 @@ class CompanyManager:
     def create_task(
         self,
         *,
-        goal_id: str,
         title: str,
+        goal_id: Optional[str] = None,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -479,7 +535,11 @@ class CompanyManager:
         status: str = "backlog",
         accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create task work; scoped_user_id filters parents while user_id records the creator."""
+        """Create a Task. With no project_id it goes into the Default Project, with the Goal given or none.
+
+        In any other Project the Task carries that Project's Goal. scoped_user_id filters the Goal
+        and the Project while user_id records the creator.
+        """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
 
@@ -498,16 +558,11 @@ class CompanyManager:
             "executor_id": executor_id,
         }
         validate_task_fields(fields)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
-        if self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+        if goal_id is not None and self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
             raise LookupError("Goal not found")
-        if project_id is not None:
-            project = self.db.get_project(project_id, user_id=scoped_user_id)
-            if project is None:
-                raise LookupError("Project not found")
-            if project["goal_id"] != goal_id:
-                raise ValueError("Task and Project must belong to the same Goal")
+        project = self._task_project(project_id, scoped_user_id)
+        goal_id = _task_goal(goal_id, project)
+        fields["project_id"] = project["id"]
         task = {
             **fields,
             "goal_id": goal_id,
@@ -572,7 +627,11 @@ class CompanyManager:
     def update_task(
         self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+
+        A project_id of None moves the Task to the Default Project. The Task keeps its Goal, so it
+        moves only to a Project of the same Goal or to the Default Project.
+        """
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
@@ -590,14 +649,11 @@ class CompanyManager:
         elif "brief" in fields and expected_status is None:
             # The write itself checks the stage, so an acceptance that lands first is not overwritten.
             expected_status = "backlog"
-        if "project_id" in fields and not fields["project_id"]:
-            raise ValueError("A Task requires a Project")
-        if fields.get("project_id") is not None:
-            project = self.db.get_project(fields["project_id"], user_id=None)
-            if project is None:
-                raise LookupError("Project not found")
-            if project["goal_id"] != existing["goal_id"]:
-                raise ValueError("Task and Project must belong to the same Goal")
+        if "project_id" in fields:
+            # A Task always has a Project: moved out of one, it goes to the Default Project.
+            project = self._task_project(fields["project_id"], None)
+            fields["project_id"] = project["id"]
+            _task_goal(existing["goal_id"], project)
         return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -618,7 +674,8 @@ class CompanyManager:
         if _is_sandboxed(component):
             sources = []
             page = 1
-            while True:
+            # A Task with no Goal has no Sources: an unfiltered read would return every Goal's.
+            while task["goal_id"] is not None:
                 rows, total = self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
                 sources.extend(rows)
                 if page * 100 >= total:
@@ -1014,13 +1071,15 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ):
-        """Persist an explicit proposal with verified evidence and a stable Source-local identity."""
+        """Persist an explicit proposal with verified evidence and a stable Source-local identity.
+
+        The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
+        the Default Project when none is named.
+        """
         from agno.company.declarations import IntakeProposal
         from agno.company.sources import _proposal_fields
         from agno.db.schemas.tasks import validate_task_fields
 
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
 
         source = self.get_source(source_id)
@@ -1030,10 +1089,10 @@ class CompanyManager:
             _require_routine_goal(source["goal_id"])
         if source is None:
             raise LookupError("Source not found")
-        if project_id is not None:
-            project = self.get_project(project_id)
-            if project is None or project["goal_id"] != source["goal_id"]:
-                raise ValueError("Task and Project must belong to the same Goal")
+        # With no Project named, the proposal goes to the Default Project, tagged with the Source's Goal.
+        project = self._task_project(project_id, None)
+        project_id = project["id"]
+        _task_goal(source["goal_id"], project)
         proposal = IntakeProposal.model_validate(proposal)
         evidence = self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)
@@ -1293,23 +1352,26 @@ class AsyncCompanyManager:
     async def create_project(
         self,
         *,
-        goal_id: str,
         name: str,
+        goal_id: Optional[str] = None,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create project work; scoped_user_id filters parents while user_id records the creator."""
+        """Propose a Project, under a Goal or under none.
+
+        scoped_user_id filters the Goal while user_id records the creator.
+        """
         from agno.company.routines import _require_routine_goal
         from agno.db.schemas.projects import validate_project_fields
 
         _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
-        if await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+        if goal_id is not None and await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
             raise LookupError("Goal not found")
-        proposal_id = _project_proposal_id(goal_id, name)
+        proposal_id = _project_proposal_id(goal_id, name) if goal_id is not None else None
         if proposal_id is not None:
             existing = await self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -1329,12 +1391,37 @@ class AsyncCompanyManager:
             reuse=proposal_id is not None,
         )
 
+    async def default_project(self) -> Dict[str, Any]:
+        """The Default Project. It is stored on first use, so every Company database has exactly one."""
+        project = await self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            try:
+                project = await self.db.create_project(default_project_row(), reuse=True)
+            except Exception as exc:
+                # Another process stored it first.
+                if not is_unique_violation(exc):
+                    raise
+                project = await self.db.get_project(DEFAULT_PROJECT_ID, include_deleted=True)
+        if project is None:
+            raise RuntimeError("The Default Project could not be stored")
+        return _marked(project)
+
+    async def _task_project(self, project_id: Optional[str], scoped_user_id: Optional[str]) -> Dict[str, Any]:
+        """The Project a Task goes into: the one named, or the Default Project when none is."""
+        if not project_id or is_default_project(project_id):
+            return await self.default_project()
+        project = await self.db.get_project(project_id, user_id=scoped_user_id)
+        if project is None:
+            raise LookupError("Project not found")
+        return project
+
     async def get_project(
         self, project_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
         """Get a visible project, optionally including deleted records."""
         record = await self.db.get_project(project_id, user_id=user_id, include_deleted=include_deleted)
         if record is not None:
+            record = _marked(record)
             record["counts"] = (await self.db.get_project_counts([project_id]))[project_id]
         return record
 
@@ -1363,15 +1450,16 @@ class AsyncCompanyManager:
             sort_order=sort_order,
         )
         counts = await self.db.get_project_counts([row["id"] for row in rows])
-        return [{**row, "counts": counts[row["id"]]} for row in rows], total
+        return [{**_marked(row), "counts": counts[row["id"]]} for row in rows], total
 
     async def update_project(
         self, project_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update the name, outcome or target date of a visible Project."""
+        """Update the name, outcome or target date of a visible Project. The Default Project is refused."""
         from agno.db.schemas.projects import validate_project_fields
 
         validate_project_fields(fields)
+        refuse_default_project(project_id, "edit")
         if expected_status is not None:
             fields["expected_status"] = expected_status
         return await self.db.update_project(project_id, user_id=user_id, **fields)
@@ -1379,9 +1467,10 @@ class AsyncCompanyManager:
     async def delete_project(
         self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
     ) -> bool:
-        """Archive a Project and its Tasks atomically; active Tasks raise ValueError."""
+        """Archive a Project and its Tasks atomically; active Tasks and the Default Project raise ValueError."""
         from agno.company.routines import _require_routine_goal
 
+        refuse_default_project(project_id, "archive")
         record = await self.db.get_project(project_id)
         if record is not None:
             _require_routine_goal(record["goal_id"])
@@ -1407,6 +1496,7 @@ class AsyncCompanyManager:
         from agno.db.schemas.projects import validate_project_completion
         from agno.run.authorization import current_authorization
 
+        refuse_default_project(project_id, "transition")
         if isinstance(current_authorization(), _ExecutorAuthorization):
             raise PermissionError("Routine and Task runs cannot approve, complete or cancel a Project; a human decides")
         if target == "done":
@@ -1430,8 +1520,8 @@ class AsyncCompanyManager:
     async def create_task(
         self,
         *,
-        goal_id: str,
         title: str,
+        goal_id: Optional[str] = None,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -1444,7 +1534,11 @@ class AsyncCompanyManager:
         status: str = "backlog",
         accepted_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create task work; scoped_user_id filters parents while user_id records the creator."""
+        """Create a Task. With no project_id it goes into the Default Project, with the Goal given or none.
+
+        In any other Project the Task carries that Project's Goal. scoped_user_id filters the Goal
+        and the Project while user_id records the creator.
+        """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
 
@@ -1463,16 +1557,11 @@ class AsyncCompanyManager:
             "executor_id": executor_id,
         }
         validate_task_fields(fields)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
-        if await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+        if goal_id is not None and await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
             raise LookupError("Goal not found")
-        if project_id is not None:
-            project = await self.db.get_project(project_id, user_id=scoped_user_id)
-            if project is None:
-                raise LookupError("Project not found")
-            if project["goal_id"] != goal_id:
-                raise ValueError("Task and Project must belong to the same Goal")
+        project = await self._task_project(project_id, scoped_user_id)
+        goal_id = _task_goal(goal_id, project)
+        fields["project_id"] = project["id"]
         task = {
             **fields,
             "goal_id": goal_id,
@@ -1537,7 +1626,11 @@ class AsyncCompanyManager:
     async def update_task(
         self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog."""
+        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+
+        A project_id of None moves the Task to the Default Project. The Task keeps its Goal, so it
+        moves only to a Project of the same Goal or to the Default Project.
+        """
         from agno.db.schemas.tasks import validate_task_fields
 
         validate_task_fields(fields)
@@ -1555,14 +1648,11 @@ class AsyncCompanyManager:
         elif "brief" in fields and expected_status is None:
             # The write itself checks the stage, so an acceptance that lands first is not overwritten.
             expected_status = "backlog"
-        if "project_id" in fields and not fields["project_id"]:
-            raise ValueError("A Task requires a Project")
-        if fields.get("project_id") is not None:
-            project = await self.db.get_project(fields["project_id"], user_id=None)
-            if project is None:
-                raise LookupError("Project not found")
-            if project["goal_id"] != existing["goal_id"]:
-                raise ValueError("Task and Project must belong to the same Goal")
+        if "project_id" in fields:
+            # A Task always has a Project: moved out of one, it goes to the Default Project.
+            project = await self._task_project(fields["project_id"], None)
+            fields["project_id"] = project["id"]
+            _task_goal(existing["goal_id"], project)
         return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     async def delete_task(
@@ -1587,7 +1677,8 @@ class AsyncCompanyManager:
         if _is_sandboxed(component):
             sources = []
             page = 1
-            while True:
+            # A Task with no Goal has no Sources: an unfiltered read would return every Goal's.
+            while task["goal_id"] is not None:
                 rows, total = await self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
                 sources.extend(rows)
                 if page * 100 >= total:
@@ -1987,13 +2078,15 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ):
-        """Persist an explicit proposal with verified evidence and a stable Source-local identity."""
+        """Persist an explicit proposal with verified evidence and a stable Source-local identity.
+
+        The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
+        the Default Project when none is named.
+        """
         from agno.company.declarations import IntakeProposal
         from agno.company.sources import _proposal_fields
         from agno.db.schemas.tasks import validate_task_fields
 
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
 
         source = await self.get_source(source_id)
@@ -2003,10 +2096,10 @@ class AsyncCompanyManager:
             _require_routine_goal(source["goal_id"])
         if source is None:
             raise LookupError("Source not found")
-        if project_id is not None:
-            project = await self.get_project(project_id)
-            if project is None or project["goal_id"] != source["goal_id"]:
-                raise ValueError("Task and Project must belong to the same Goal")
+        # With no Project named, the proposal goes to the Default Project, tagged with the Source's Goal.
+        project = await self._task_project(project_id, None)
+        project_id = project["id"]
+        _task_goal(source["goal_id"], project)
         proposal = IntakeProposal.model_validate(proposal)
         evidence = await self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)

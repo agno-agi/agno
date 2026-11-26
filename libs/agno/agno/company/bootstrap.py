@@ -214,6 +214,32 @@ def rehydrate_product(db: Any, product: Goal, *args: Any, **kwargs: Any):
     return rehydrate_goal(db, product, *args, **kwargs)
 
 
+async def _seed_default_project(db: Any) -> None:
+    """Store the Default Project at startup. Two processes starting at once store one.
+
+    Other than a pending migration, a failure is logged and Company starts: the Project is stored
+    again on its first use.
+    """
+    from agno.company.manager import AsyncCompanyManager, CompanyManager
+    from agno.db.base import AsyncBaseDb
+    from agno.exceptions import MigrationRequiredError
+    from agno.utils.log import log_warning
+
+    manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db)
+    try:
+        await _call(manager, "default_project")
+    except NotImplementedError:
+        return
+    except MigrationRequiredError:
+        raise
+    except Exception as exc:
+        log_warning(
+            f"The Default Project was not stored: {exc} If this database was created by an earlier 3.3.0 "
+            "build, apply the pending migrations with `asyncio.run(MigrationManager(db).up())` or "
+            "`POST /databases/all/migrate`."
+        )
+
+
 async def _start_company(agent_os: Any) -> bool:
     """Apply CompanyConfig and the Goals declared in code. False when a database must be migrated first.
 
@@ -227,6 +253,7 @@ async def _start_company(agent_os: Any) -> bool:
     try:
         if agent_os._company_db is not None:
             await _seed_company(agent_os)
+            await _seed_default_project(agent_os._company_db)
         for declaration in agent_os.company.goals:
             goal = declaration if isinstance(declaration, Goal) else Goal.model_validate(declaration)
             await arehydrate_goal(
