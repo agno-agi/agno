@@ -186,7 +186,7 @@ def lock_child(
         target_goal = sess.execute(select(projects.c.goal_id).where(projects.c.id == moving_to)).scalar()
         both_rows = target_goal is None
     if both_rows:
-        for project_id in sorted((own_project, moving_to)):
+        for project_id in sorted((str(own_project), str(moving_to))):
             lock_parent(sess, goals, projects, None, project_id)
     else:
         lock_parent(sess, goals, projects, record["goal_id"], own_project)
