@@ -106,7 +106,7 @@ class Message(BaseModel):
     tool_call_error: Optional[bool] = None
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
-    # When True, the message will be added to the agent's memory.
+    # TODO: Rename to `store_in_history` to clarify that this flag controls whether the run keeps the message.
     add_to_agent_memory: bool = True
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
