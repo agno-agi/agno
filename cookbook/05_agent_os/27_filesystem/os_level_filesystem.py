@@ -29,6 +29,7 @@ namespace, each id also names its backend, for example ``handbook:filesystem-db`
 Prerequisites: OPENAI_API_KEY is needed only for agent runs
 Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/os_level_filesystem.py
 Try: Connect Agno OS to http://localhost:7777 and open File System, or
+     curl http://localhost:7777/filesystem/namespaces
      curl http://localhost:7777/config | jq .filesystem
      curl "http://localhost:7777/filesystem/entries?filesystem_id=handbook"
      curl "http://localhost:7777/filesystem/content?filesystem_id=handbook&path=onboarding/welcome.md"

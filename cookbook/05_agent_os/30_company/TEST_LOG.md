@@ -966,3 +966,23 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 
 ---
 
+### 16_company_file_tree.py (the Company file system on the File System page)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-24 with `.venv/bin/python cookbook/05_agent_os/30_company/16_company_file_tree.py`, after the script gained a look at the File System page: it lists the file systems, finds the Company one and reads a Task file through it. No model call.
+
+**Result:** `/filesystem/namespaces` held one entry marked `company`, namespace `company` with id `company`. `/filesystem/entries?filesystem_id=company` listed `goals/`, `notes/`, `tasks/` and `wiki/`, and `/filesystem/content` returned the Task's `changes.md` with the content the Company route returns. The rest of the script printed what it printed before, and it ended with "Company file tree example passed".
+
+---
+
+### Upgrade from agno 3.2.0, read through the File System page's routes
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25, with no model call. The 16 scenarios of "Upgrade from agno 3.2.0: the Company files move as AgentOS starts" above were run again on this branch, which adds the Company file system to the `/filesystem` routes. After each start that moved the files, the run also asked `GET /filesystem/namespaces` for the Company entry, listed it with `GET /filesystem/files?filesystem_id=company`, and read each file with `GET /filesystem/content?filesystem_id=company&path=<stored path>`.
+
+**Result:** 16 of 16 scenarios passed, on SQLite and PostgreSQL 18, with one database and with two. The list route gave one entry marked `company`, with the id `company`. `/filesystem/files` listed the 19 stored paths and nothing else, with the folders `goals/Docs%20Team/` and `goals/team%2fgrowth/` for the two Goals whose ids are not plain names. `/filesystem/content` returned each of the 19 files with the content, version and `updated_at` that agno 3.2.0 read back before the upgrade.
+
+---
+

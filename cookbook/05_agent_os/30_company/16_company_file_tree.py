@@ -156,6 +156,33 @@ if __name__ == "__main__":
         note = client.get("/company/notes/follow-ups.md").json()
         assert note["content"] == "Ask about the docs search next week.\n"
 
+        # The File System page shows the same tree as one file system: namespace
+        # company, with the four folders under it. With authorization on,
+        # filesystem:read and wiki:read read it, and tasks/ needs tasks:read too.
+        listed = client.get("/filesystem/namespaces").json()["namespaces"]
+        company = next(entry for entry in listed if entry["company"])
+        print(
+            "On the File System page:", company["namespace"], "with id", company["id"]
+        )
+        top = client.get(
+            "/filesystem/entries", params={"filesystem_id": company["id"]}
+        ).json()
+        print("Under it:", [entry["path"] + "/" for entry in top["entries"]])
+        assert [entry["path"] for entry in top["entries"]] == [
+            "goals",
+            "notes",
+            "tasks",
+            "wiki",
+        ]
+        shown = client.get(
+            "/filesystem/content",
+            params={
+                "filesystem_id": company["id"],
+                "path": task_folder + "/changes.md",
+            },
+        ).json()
+        assert shown["content"] == page["content"]
+
         # A Task's input carries the Goal's brief and status and the company wiki.
         # The queue builds it when the Task starts. Everything else is read on request.
         payload = json.loads(asyncio.run(_task_input(manager, db.get_task(task["id"]))))

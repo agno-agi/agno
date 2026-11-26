@@ -318,6 +318,11 @@ move them as it starts.
   that namespace in the same database is refused when its run starts. Give that
   filesystem another namespace, and move its files there.
 
+**On the File System page.** With Company on, the Company file system is one entry
+of the page: namespace `company`, with `wiki/`, `goals/`, `tasks/` and `notes/` under
+it. `GET /filesystem/namespaces` lists it. Browsing it there needs `filesystem:read` and the
+scopes the Company routes ask for: `wiki:read`, and `tasks:read` too for `tasks/`.
+
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
 Super Agent saved in one person's chat can be read in another person's chat.

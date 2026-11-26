@@ -89,7 +89,8 @@ def _locate(path: str, *, folder: bool = False) -> _Location:
     if folder and isinstance(path, str) and len(path) > 1 and path.endswith("/"):
         # A listing names each folder with a trailing slash, and that name is accepted back.
         path = path[:-1]
-    value = normalize_directory(path) if folder else normalize_path(path)
+    # The tree limits the whole tree path, the folder's own name included, for a folder as for a file.
+    value = normalize_directory(path, limits=True) if folder else normalize_path(path)
     segments = value.split("/") if value else []
     if segments[:1] == ["company"] and (len(segments) == 1 or segments[1] in (*AREAS, "products")):
         segments = segments[1:]
