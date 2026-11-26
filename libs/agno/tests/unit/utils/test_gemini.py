@@ -860,7 +860,9 @@ def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async
                     "INTEGER"
                     if argument in ("limit", "page", "days", "offset", "content_offset", "max_chars")
                     else "ARRAY"
-                    if argument in ("sources", "routines")
+                    if argument in ("sources", "routines", "add", "remove")
+                    # A decision's context is text; a Task's context is a list of references.
+                    or (argument == "context" and name != "log_company_decision")
                     else "BOOLEAN"
                     if argument == "enabled"
                     else "STRING"

@@ -173,7 +173,9 @@ def change_task_context(
 ) -> Optional[Dict[str, Any]]:
     """Change a Task's context list under the lock its other writes take, so two changes never lose one."""
     lock_child(sess, goals, projects, tasks, task_id)
-    row = sess.execute(select(tasks).where(tasks.c.id == task_id, tasks.c.deleted_at.is_(None))).first()
+    # The row lock covers a Task that has neither a Goal nor a Project to lock on.
+    found = select(tasks).where(tasks.c.id == task_id, tasks.c.deleted_at.is_(None)).with_for_update()
+    row = sess.execute(found).first()
     if row is None or (expected_status is not None and row._mapping["status"] != expected_status):
         return None
     context = task_context_after(dict(row._mapping), add, remove)

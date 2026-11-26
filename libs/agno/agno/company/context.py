@@ -216,12 +216,14 @@ async def _task_context(manager: Any, task: Dict[str, Any]) -> Optional[Dict[str
         try:
             if entry["kind"] == "task":
                 item.update(await _task_item(manager, files, entry["ref"], budget, notes))
+            elif budget.spent:
+                # The total is spent, so the file is named and not read.
+                item["content"] = budget.take("", entry["ref"], notes)
             else:
-                read = {"content": "", "version": None} if budget.spent else await files.aread(entry["ref"])
+                read = await files.aread(entry["ref"])
                 if "content" not in read:
                     raise LookupError("the file no longer exists")
-                if read["version"] is not None:
-                    item["version"] = read["version"]
+                item["version"] = read["version"]
                 item["content"] = budget.take(read["content"], entry["ref"], notes)
         except (LookupError, ValueError) as exc:
             item = {"kind": entry["kind"], "ref": entry["ref"], "sent": "missing", "note": f"Not sent: {exc}."}

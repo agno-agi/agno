@@ -53,7 +53,8 @@ A run of a Task starts with its brief and evidence only: no wiki page, Goal page
                 reaches it unless it is attached here. Each reference is {kind, ref}, read when the run starts:
                 - kind "task", ref a Task id: that Task's title, status and result, the names of the files in its
                   folder, and its handoff note tasks/<id>/handoff.md when it wrote one. Attach the earlier Task
-                  whenever this one builds on its work.
+                  whenever this one builds on its work. It brings file names, not file text: when the work needs
+                  what a file says, attach that file too.
                 - kind "file", ref tasks/<task-id>/<path>: one file a Task wrote.
                 - kind "wiki", ref wiki/<page>.md: one wiki page.
                 - kind "goal", ref goals/<goal-id>/<page>.md: one page of a Goal, such as brief.md or status.md."""
