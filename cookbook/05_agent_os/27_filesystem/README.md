@@ -55,7 +55,60 @@ combined on one agent.
 AgentOS discovers filesystems from both the setting and `tools`. `/config` lists
 each namespace's linked `agents`, with `access: "read_only"` on read-only agents
 and omitted `access` defaulting to `"full"`. To browse one of an
-agent's several stores, pass its `namespace` to the `/filesystem` routes.
+agent's several stores, pass its `id` from `/config` to the `/filesystem` routes
+as `filesystem_id`.
+
+## File systems declared on AgentOS
+
+A file system can also be declared on the AgentOS itself (`os_level_filesystem.py`).
+Pass one, or a list of any number:
+
+```python
+handbook = FileSystem(db, namespace="handbook")
+drafts = FileSystem(db, namespace="drafts")
+agent_os = AgentOS(db=db, agents=[...], filesystem=[handbook, drafts])
+```
+
+A declared file system is listed in `/config` and browsable through the
+`/filesystem` routes even when no agent holds it. `/config` marks it with
+`declared: true`, and shows `agents: []` when no agent holds it. With
+authorization enabled, `filesystem:read` alone is enough to browse it. A request
+for it loads no agent.
+
+It is not handed to agents: an agent gets file tools on it only by holding the
+same store with `filesystem=` or `tools=`, as `AgentOS(knowledge=[...])` does not
+give agents a knowledge base. `Agent(filesystem=True)` keeps its own `{agent_id}`
+namespace.
+
+Any backend works: a database, or a local folder. Namespaces are not restricted.
+Two declared file systems may use one namespace on two databases, or on two
+tables of one database.
+
+A namespace may use `{user_id}`, which is filled from the caller.
+
+A namespace that uses `{agent_id}` is filled from the agent that holds the
+store. It has no entry in `/config` until an agent holds it, and then it is
+listed with that agent's id in place: `scratch/{agent_id}` held by the agent
+`writer` is the file system `scratch/writer`.
+
+A namespace that uses `{team_id}` is filled only when a team runs. Nothing on
+these routes fills it. Declared alone it has no entry in `/config`. When an
+agent holds it, `/config` lists the namespace as it is written, for example
+`teams/{team_id}/notes`, and the `/filesystem` routes do not open it.
+
+`AgentOS(user_isolation=True)` partitions a declared file system by user unless
+the store sets `user_scoped` itself. The setting is applied to what the AgentOS
+serves, not written onto the `FileSystem` you declared, so one `FileSystem`
+declared on two AgentOS instances follows the setting of each.
+
+One table and namespace is one entry, whoever holds it. When a store is declared
+shared and an agent holds a user-scoped view of the same table and namespace:
+
+- `/config` lists one entry, described by the declaration (`user_isolation: false`).
+- Read by `filesystem_id`, it is the shared partition, for a user and for an admin.
+- The files the agent's runs wrote for each user are in the users' partitions.
+  They are listed only with `agent_id`, which reads the store as that agent holds
+  it: a user sees their own partition, an admin every partition.
 
 ## Namespaces and isolation
 
@@ -99,35 +152,61 @@ identity fails closed. AgentOS exposes read-only browser routes:
 - `GET /filesystem/content` — a preview of one file
 - `GET /filesystem/search` — content search within one filesystem
 
-Filesystems are addressed by namespace, not by agent. `entries`, `content` and
-`search` take `namespace`, `agent_id`, or both:
+A filesystem is addressed by its id. `GET /config` lists every filesystem the
+caller can reach in `filesystem.namespaces`, each with an `id`. Pass it to
+`entries`, `content` and `search` as `filesystem_id`:
 
-- `namespace` alone browses that filesystem when an agent the caller can read holds it.
+```bash
+curl "http://localhost:7777/filesystem/entries?filesystem_id=handbook"
+```
+
+The id is the namespace resolved for the caller. When two filesystems share a
+namespace, each id also names its backend: `handbook:main-db`, and
+`handbook:main-db:fs.agno_fs` when the two are tables of one database. A digest of
+the database follows when those names are the same too. A declared
+filesystem keeps its id whatever agents hold.
+
+`namespace` and `agent_id` are still accepted:
+
+- `namespace` alone browses that filesystem when the AgentOS declares it or an agent
+  the caller can read holds it. One namespace on two backends returns 409: pass
+  `filesystem_id`.
 - `agent_id` alone browses that agent's first filesystem (the setting, then `tools` order).
-- Both together pick one of an agent's several filesystems, and settle the rare case
-  of one namespace used on two backends, which otherwise returns 409.
+- Both together pick one of an agent's several filesystems.
 
-Access always derives from the agents the caller may read: a namespace none of them
-holds returns 404, the same as one that does not exist. Responses carry the resolved
-`namespace` and the accessible `agent_ids` holding it.
+A filesystem `/config` lists has one id, with or without `agent_id`. For a store
+`/config` does not list, a request with `agent_id` can return a shorter id than
+the unfiltered listing. `filesystem_id` with
+`agent_id` opens a filesystem only when that agent holds the one the id names;
+otherwise the request returns 404. A request that names an agent reads the
+store with that agent's limits.
 
-`GET /filesystem/files` accepts optional `agent_id`, `namespace`, and `query` filters, plus
-`page` and `limit`. The namespace filter matches an exact resolved namespace and
-cannot widen access beyond the caller's agents and user scope. Shared files are
-returned once with their accessible `agent_ids`. Remote agents are skipped in a
-global listing; selecting one explicitly returns an unsupported response.
+A filesystem only an agent holds is reachable through the agents the caller may
+read: one none of them holds returns 404, the same as one that does not exist.
+Responses carry the `filesystem_id`, the resolved `namespace` and the accessible
+`agent_ids` holding it; a request with `agent_id` names only that agent. A declared
+filesystem read by `filesystem_id` loads no
+agent, so its `agent_ids` is empty; `/config` names the agents that hold it.
 
-`GET /config` exposes `filesystem.namespaces` discovered from concrete local
-agents. Each entry includes backend metadata, limits, linked agents with access
-in `agents`, and the canonical namespace resolved for the caller. Use that namespace directly as a
-`/filesystem` filter. When identity is unavailable, placeholders remain in config;
-browsing requires the missing identity. Factory and stored agents are resolved
-when browsing but are not included in config discovery.
+`GET /filesystem/files` accepts optional `filesystem_id`, `agent_id`, `namespace`, and
+`query` filters, plus `page` and `limit`. A filter cannot widen access beyond the
+caller's filesystems and user scope. Every row carries its `filesystem_id`. Shared
+files are returned once with their accessible `agent_ids`. Remote agents are skipped
+in a global listing; selecting one explicitly returns an unsupported response.
 
-With authorization enabled, file routes require `agents:read` or the corresponding
-per-agent read scope; config requests require `config:read`. Content previews use the row's
-`namespace` and relative `path`, with `offset` and `limit` for continuation.
-The API provides no write or delete routes.
+`GET /config` exposes `filesystem.namespaces` discovered from the AgentOS
+`filesystem` setting and from concrete local agents. Each entry includes its `id`,
+whether it is `declared`, backend metadata, limits, linked agents with access in
+`agents`, and the canonical namespace resolved for the caller. When identity is
+unavailable, placeholders remain in config; browsing requires the missing identity.
+Factory and stored agents are resolved when browsing but are not included in config
+discovery.
+
+With authorization enabled, file routes require `filesystem:read`. A declared
+filesystem needs nothing more. A filesystem only an agent holds also needs
+`agents:read` or the corresponding per-agent read scope. Config requests require
+`config:read`. Content previews use the row's `filesystem_id` and relative `path`,
+with `offset` and `limit` for continuation. The API provides no write or delete routes.
 
 Listing reads each distinct filesystem once, with bounded concurrency. Page
 counts are computed after collecting results; pagination does not yet limit

@@ -46,23 +46,26 @@ RENAMED_ROUTE_PREFIXES: Dict[str, str] = {
 }
 
 
-def with_renamed_routes(scope_mappings: Dict[str, List[str]]) -> Dict[str, List[str]]:
-    """``scope_mappings`` with each mapping for a renamed route also under the route's current path.
+def _under_prefix(path: str, prefix: str) -> bool:
+    """Whether ``path`` starts with ``prefix``, ending at a segment or at a wildcard that continues it."""
+    return path.startswith(prefix) and path[len(prefix) : len(prefix) + 1] in ("", "/", "*", "?", "[", "{")
 
-    A mapping the caller wrote for the current path is kept as written. The mappings keep their order,
-    which decides the match when two patterns cover one path.
+
+def without_renamed_defaults(
+    defaults: Dict[str, List[str]], scope_mappings: Dict[str, List[str]]
+) -> Dict[str, List[str]]:
+    """``defaults`` without each current-path mapping that a mapping in ``scope_mappings`` overrides under its old path.
+
+    The caller's old-path mapping then guards the route, as it overrode the default before the rename.
     """
-    renamed: Dict[str, List[str]] = {}
-    for key, scopes in scope_mappings.items():
-        renamed[key] = scopes
+    dropped = set()
+    for key in scope_mappings:
         method, _, path = key.partition(" ")
         for old, new in RENAMED_ROUTE_PREFIXES.items():
-            # The prefix ends at a segment or at a wildcard that continues it.
-            if path.startswith(old) and path[len(old) : len(old) + 1] in ("", "/", "*", "?", "[", "{"):
-                current = f"{method} {new}{path[len(old) :]}"
-                if current not in scope_mappings:
-                    renamed[current] = scopes
-    return renamed
+            current = f"{method} {new}{path[len(old) :]}"
+            if _under_prefix(path, old) and current not in scope_mappings:
+                dropped.add(current)
+    return {key: scopes for key, scopes in defaults.items() if key not in dropped}
 
 
 class AgentOSScope(str, Enum):
@@ -93,7 +96,7 @@ class AgentOSScope(str, Enum):
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
-    - filesystem:read - Browse, read and search agent filesystems
+    - filesystem:read - Browse, read and search AgentOS and agent filesystems
     - metrics:read - View metrics
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
@@ -582,8 +585,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
-        # Filesystem browser (read-only). The router further limits results to the
-        # agents the caller may read.
+        # Filesystem browser (read-only). Filesystems declared on the AgentOS need
+        # only this scope; agent-held ones are further limited to the agents the
+        # caller may read.
         "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
@@ -676,26 +680,12 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
     return mappings
 
 
-def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
-    """
-    Look up the required scopes for a method and path in a scope-mappings dict.
-
-    Args:
-        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
-        method: HTTP method (GET, POST, etc.)
-        path: Request path
-
-    Returns:
-        List of required scopes. Empty list [] means no scopes required (allow access).
-        Routes not present in scope_mappings also return [], allowing access.
-    """
+def _first_mapping(scope_mappings: Dict[str, List[str]], method: str, path: str) -> Optional[Tuple[str, List[str]]]:
+    """The first mapping that matches ``method`` and ``path``, with its key; an exact key first."""
     route_key = f"{method} {path}"
-
-    # First, try exact match
     if route_key in scope_mappings:
-        return scope_mappings[route_key]
+        return route_key, scope_mappings[route_key]
 
-    # Then try pattern matching
     for pattern, scopes in scope_mappings.items():
         pattern_method, pattern_path = pattern.split(" ", 1)
 
@@ -709,9 +699,34 @@ def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: 
             normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
 
         if fnmatch.fnmatch(path, normalized_pattern):
-            return scopes
+            return pattern, scopes
+    return None
 
-    return []
+
+def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
+    """
+    Look up the required scopes for a method and path in a scope-mappings dict.
+
+    For a renamed route, a mapping written for its current path decides. Without one, a mapping
+    written for its old path decides, ahead of a broader mapping such as ``GET /company/*``.
+
+    Args:
+        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+
+    Returns:
+        List of required scopes. Empty list [] means no scopes required (allow access).
+        Routes not present in scope_mappings also return [], allowing access.
+    """
+    found = _first_mapping(scope_mappings, method, path)
+    for old, new in RENAMED_ROUTE_PREFIXES.items():
+        if not _under_prefix(path, new) or (found is not None and _under_prefix(found[0].split(" ", 1)[1], new)):
+            continue
+        legacy = _first_mapping(scope_mappings, method, old + path[len(new) :])
+        if legacy is not None and _under_prefix(legacy[0].split(" ", 1)[1], old):
+            return legacy[1]
+    return found[1] if found is not None else []
 
 
 def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[str]]:

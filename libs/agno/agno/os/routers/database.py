@@ -31,10 +31,6 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-class MigrationInProgressError(RuntimeError):
-    """Another process holds the migration lock of the database."""
-
-
 def get_database_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -60,28 +56,21 @@ def get_database_router(
         if isinstance(db, RemoteDb):
             raise ValueError(f"Database '{db.id}' is remote; run the migration on the AgentOS that owns it instead.")
 
-        from agno.db.migrations import startup
-
-        async with startup.migration_lock(db, startup.REQUEST_LOCK_WAIT_SECONDS) as held:
-            if not held:
-                raise MigrationInProgressError(
-                    f"Another process is migrating database '{db.id}'. Try again when it has finished."
-                )
-            if target_version:
-                # Use the session table as proxy for the database schema version. At that version
-                # another table can still be behind it, and up() migrates only those.
-                if isinstance(db, AsyncBaseDb):
-                    current_version = await db.get_latest_schema_version(db.session_table_name)
-                else:
-                    current_version = db.get_latest_schema_version(db.session_table_name)
-
-                if version.parse(target_version) >= version.parse(current_version):  # type: ignore
-                    await MigrationManager(db).up(target_version)  # type: ignore
-                else:
-                    await MigrationManager(db).down(target_version)  # type: ignore
+        if target_version:
+            # Use the session table as proxy for the database schema version. At that version
+            # another table can still be behind it, and up() migrates only those.
+            if isinstance(db, AsyncBaseDb):
+                current_version = await db.get_latest_schema_version(db.session_table_name)
             else:
-                # If the target version is not provided, migrate to the latest version
-                await MigrationManager(db).up()  # type: ignore
+                current_version = db.get_latest_schema_version(db.session_table_name)
+
+            if version.parse(target_version) >= version.parse(current_version):  # type: ignore
+                await MigrationManager(db).up(target_version)  # type: ignore
+            else:
+                await MigrationManager(db).down(target_version)  # type: ignore
+        else:
+            # If the target version is not provided, migrate to the latest version
+            await MigrationManager(db).up()  # type: ignore
 
     def _company_db():
         """The Company database when it is not one of the AgentOS databases."""
@@ -186,7 +175,6 @@ def get_database_router(
                 },
             },
             404: {"description": "Database not found", "model": NotFoundResponse},
-            409: {"description": "Another process is migrating the database", "model": BadRequestResponse},
             500: {"description": "Failed to migrate database", "model": InternalServerErrorResponse},
         },
     )
@@ -217,8 +205,6 @@ def get_database_router(
             )
         except HTTPException:
             raise
-        except MigrationInProgressError as e:
-            raise HTTPException(status_code=409, detail=str(e))
         except AgnoError as e:
             raise AgnoHTTPException(e, detail=f"Failed to migrate database: {str(e)}")
         except Exception as e:

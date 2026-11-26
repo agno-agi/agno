@@ -188,10 +188,10 @@ def test_agentos_starts_with_files_waiting_and_company_refuses_them_until_they_m
     company_db = AsyncSqliteDb(db_file=company_file) if use_async else SqliteDb(db_file=company_file)
     if two_databases:
         os_db = SqliteDb(db_file=str(tmp_path / "os.db"))
-        agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), auto_provision_dbs=False, telemetry=False)
+        agent_os = AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
     else:
         os_db = company_db
-        agent_os = AgentOS(db=company_db, company=CompanyConfig(), auto_provision_dbs=False, telemetry=False)
+        agent_os = AgentOS(db=company_db, company=CompanyConfig(), telemetry=False)
     urls = {
         "/company/wiki/brief.md": "# Company\n\nWe ship weekly.\n",
         f"/company/goals/{ids['goal']}/wiki/research/notes.md": "three",
@@ -199,8 +199,7 @@ def test_agentos_starts_with_files_waiting_and_company_refuses_them_until_they_m
         "/company/notes/ideas.md": "A better note",
     }
 
-    # With provisioning off the start migrates nothing. AgentOS starts, and the Company file system
-    # serves no file while files wait where 3.2.0 kept them.
+    # AgentOS starts. The Company file system serves no file while files wait where 3.2.0 kept them.
     with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
         for url in urls:
             message = _refused(client.get(url))
@@ -284,7 +283,7 @@ def _notes_left_in_the_agentos_database(tmp_path, where: str) -> tuple:
 
 @pytest.mark.parametrize("where", ["company/notes", "company"])
 @pytest.mark.parametrize("os_async", [False, True])
-def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, os_async):
+def test_the_migrate_route_moves_notes_left_in_the_agentos_database(tmp_path, where, os_async):
     from fastapi.testclient import TestClient
 
     os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, where)
@@ -296,6 +295,10 @@ def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, 
         return AgentOS(db=os_db, company=CompanyConfig(db=company_db), telemetry=False)
 
     with TestClient(start().get_app(), raise_server_exceptions=False) as client:
+        # The start moves nothing: the note is where it was, and notes/ says what to run.
+        assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
+        assert "notes/ideas.md" not in stored(company_db)
+        assert client.post("/databases/all/migrate").status_code == 200
         served = client.get("/company/notes/ideas.md")
         assert served.status_code == 200 and served.json()["content"] == "A note"
         assert [row["path"] for row in client.get("/company/notes").json()["data"]] == ["ideas.md"]
@@ -314,7 +317,7 @@ def test_agentos_moves_notes_left_in_its_database_as_it_starts(tmp_path, where, 
 
 @pytest.mark.parametrize("reason", ["provisioning is off", "another note is in the way"])
 @pytest.mark.parametrize("os_async", [False, True])
-def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(tmp_path, reason, os_async):
+def test_notes_left_in_the_agentos_database_are_refused_until_they_move(tmp_path, reason, os_async):
     import logging
 
     from fastapi.testclient import TestClient
@@ -351,13 +354,15 @@ def test_notes_agentos_could_not_move_as_it_started_are_refused_until_they_move(
                 message = _refused(client.get(url))
                 assert "move_company_notes" in message and "agno.db.migrations.versions.v3_3_0" in message
                 assert "amove_company_notes" in message
-            not_moved = [message for message in errors if "Notes were not moved" in message]
+            # The start did not try to move them.
+            assert [message for message in errors if "Notes were not moved" in message] == []
             if reason == "another note is in the way":
-                # The start says once why it moved nothing.
+                # The migrate route says once why it moved nothing, and notes/ stays refused.
+                assert client.post("/databases/all/migrate").status_code == 200
+                not_moved = [message for message in errors if "Notes were not moved" in message]
                 assert len(not_moved) == 1 and "notes/ideas.md" in not_moved[0]
+                assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
                 in_the_way.delete("notes/ideas.md")
-            else:
-                assert not_moved == []
             # The call the error names is the whole remedy, and the same AgentOS then serves the note.
             assert move_company_notes(os_reader, company_db) == 1
             served = client.get("/company/notes/ideas.md")
@@ -443,7 +448,7 @@ def test_agentos_serves_notes_when_none_is_left_behind(tmp_path):
         db.close()
 
 
-def test_the_check_for_waiting_files_runs_at_the_start_and_first_use_and_stops_once_nothing_waits(tmp_path):
+def test_the_check_for_waiting_files_runs_at_first_use_and_stops_once_nothing_waits(tmp_path):
     import logging
 
     from fastapi.testclient import TestClient
@@ -470,8 +475,8 @@ def test_the_check_for_waiting_files_runs_at_the_start_and_first_use_and_stops_o
     level = logger.level
     try:
         with TestClient(agent_os.get_app()) as client:
-            # Starting AgentOS looks once: an older version can write a file after the tables are stamped.
-            assert looked_for_waiting_files(seen) == ["db"]
+            # Starting AgentOS does not look at the file table for files that wait.
+            assert looked_for_waiting_files(seen) == []
             seen.clear()
             logger.addHandler(handler)
             logger.setLevel(logging.DEBUG)
@@ -1226,25 +1231,31 @@ def test_a_write_on_an_asynchronous_database_is_held_to_the_same_limits(tmp_path
     assert asyncio.run(write()) == 1
 
 
-def test_notes_are_not_moved_at_the_start_while_a_database_is_not_migrated(tmp_path):
+def test_a_migrate_route_does_not_move_notes_while_the_company_database_is_not_migrated(tmp_path):
     from fastapi.testclient import TestClient
 
     os_file, os_reader, company_db = _notes_left_in_the_agentos_database(tmp_path, "company/notes")
-    # The Company database has a table behind an older migration, which the start leaves for an operator.
-    company_db._get_table("sessions", create_table_if_not_found=True)
-    company_db._get_table("memories", create_table_if_not_found=True)
-    company_db.upsert_schema_version(company_db.session_table_name, "2.5.0")
-    company_db.upsert_schema_version(company_db.memory_table_name, "3.0.0")
+    # The Company database holds a page where 3.2.0 kept it.
+    company_db._get_table("goals", create_table_if_not_found=True)
+    FileSystem(company_db, namespace="company/wiki", user_scoped=False).write("handbook.md", "The handbook")
     agent_os = AgentOS(db=os_reader, company=CompanyConfig(db=company_db), telemetry=False)
 
+    def notes_in_the_agentos_database() -> list:
+        spaces = [FileSystem(os_reader, namespace=name, user_scoped=False) for name in ("company", "company/notes")]
+        return [meta.path for files in spaces for meta in files.list()]
+
     with TestClient(agent_os.get_app(), raise_server_exceptions=False) as client:
-        assert id(company_db) in agent_os._unmigrated_dbs
-        # The note is where it was, in one place, and notes/ says what to run.
-        assert "move_company_notes" in _refused(client.get("/company/notes/ideas.md"))
-    assert [meta.path for meta in FileSystem(os_reader, namespace="company/notes", user_scoped=False).list()] == [
-        "ideas.md"
-    ]
-    assert "notes/ideas.md" not in stored(company_db)
+        # Only the AgentOS database is migrated. The Company database still holds files where 3.2.0 kept them.
+        assert client.post(f"/databases/{os_reader.id}/migrate").status_code == 200
+        assert _refused(client.get("/company/notes/ideas.md"))
+        # The note is where it was: it is not moved into a store that is still to be migrated.
+        assert len(notes_in_the_agentos_database()) == 1
+
+        # With both migrated, the route moves the notes.
+        assert client.post("/databases/all/migrate").status_code == 200
+        assert client.get("/company/notes/ideas.md").json()["content"] == "A note"
+    assert notes_in_the_agentos_database() == []
+    assert stored(company_db)["wiki/handbook.md"] == "The handbook"
     os_reader.close()
     company_db.close()
 

@@ -930,6 +930,8 @@ unless the entry names PostgreSQL (the `pgvector` container on port 5532).
 
 **Status:** PASS
 
+**Note (2026-11-25):** This run was made while AgentOS migrated a database as it started. It no longer does: the files move when `MigrationManager(db).up()` or a migrate endpoint runs. The `start` and `concurrent` scenarios below describe the earlier behaviour and were not run again after that change.
+
 **Description:** Run on 2026-11-25, with no model call. The starting databases were written by agno 3.2.0 from PyPI in an environment of its own (`uv venv`, then `uv pip install agno==3.2.0 "sqlalchemy[asyncio]" "psycopg[binary]" fastapi httpx aiosqlite pyyaml openai python-multipart`). There, a 3.2.0 AgentOS with Company started once, and 3.2.0's own `CompanyManager` and `CompanyFiles` wrote four Goals (`this-agentos`, `Docs Team`, `team`, `team/growth`), a Project, a Task and 19 files: 3 wiki pages, 3 pages for each Goal, 2 Task files and 2 notes, several of them written more than once. 3.2.0 stamped every table 3.0.0 and kept the slash of `team/growth` in its namespace (`company/products/team/growth/wiki`).
 
 This branch was then started on a copy of that database with `AgentOS(db=db, company=CompanyConfig())` and nothing else, or `CompanyConfig(db=company_db)` for Company in a database of its own. Each scenario ran on SQLite and on PostgreSQL 18 (`agnohq/pgvector:18`), with one database and with two. The two scripts are session files and are not in the repository:
