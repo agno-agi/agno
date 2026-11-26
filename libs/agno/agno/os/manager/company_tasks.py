@@ -17,6 +17,7 @@ from weakref import ReferenceType, ref
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
+from agno.os.manager.linked_work import link_task
 from agno.tools import Toolkit
 from agno.tools.company import _CONTEXT_KINDS, _OptionalContext, _OptionalInt, _OptionalString
 
@@ -192,9 +193,6 @@ class CompanyTaskTools(Toolkit):
                 "review_company_task",
                 "turn_on_routine_auto_accept",
             ],
-            # The receipt is the reply: the coordinator turn ends once the run is queued.
-            stop_after_tool_call_tools=["start_company_task"],
-            show_result_tools=["start_company_task"],
         )
 
     def _caller_context(self, run_context: Any) -> Tuple[Any, Any, Any, Optional[str], Optional[str]]:
@@ -355,6 +353,7 @@ class CompanyTaskTools(Toolkit):
                 if not waits:
                     _return_acceptance(run_id)
                 raise
+            link_task(_agno_run_context, task)
             named = f"'{task['title']}' (Task {task['id']})"
             if waits:
                 then = " Then start it with start_company_task." if start else ""
@@ -446,8 +445,8 @@ class CompanyTaskTools(Toolkit):
     async def astart_company_task(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Start an accepted Company Task in the background and return its run.
 
-        The Task runs in its own session; this conversation continues. Call this tool on its
-        own, then tell the person the run is queued. Use get_company_task_status for progress.
+        The Task runs in its own session; this conversation continues, and the turn does not end:
+        start each Task the person asked for, then answer. The result is a receipt, not the work.
         A Task whose last run failed or was cancelled is started again the same way.
 
         Args:
@@ -490,6 +489,8 @@ class CompanyTaskTools(Toolkit):
                 await authority.arequire("wiki", "read")
             caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(run_context))
             response = await starter.submit(task_id, caller, None, value, None)
+            if response.status_code == 202:
+                link_task(run_context, await starter.task(task_id))
         except PermissionError as exc:
             return f"Not started: {exc}"
         except HTTPException as exc:
@@ -804,6 +805,7 @@ class CompanyTaskTools(Toolkit):
                         lines.append(f"Not done: '{title}' (Task {value['id']}) changed while it was being accepted.")
                     else:
                         accepted = True
+                        link_task(_agno_run_context, record)
                         lines.append(f"Accepted '{title}' (Task {value['id']}) for {kind} {name}.")
             return " ".join(lines) + (" Accepted Tasks are Ready and not started." if accepted else "")
 
@@ -925,6 +927,7 @@ class CompanyTaskTools(Toolkit):
                 )
             if record is None:
                 return f"Not done: '{title}' changed while it was being reviewed. Read it again."
+            link_task(_agno_run_context, record, add=False)
             if outcome == "complete":
                 return f"Completed '{title}' (Task {task_id}). It is Done."
             return (
@@ -1081,7 +1084,7 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
     status = body.get("status")
     run = f"(Task {task_id}, run {body.get('run_id')})"
     if status in ("PENDING", "QUEUED", None):
-        return f"{verb} '{title}' {run}. It runs in its own session; ask for its status at any time."
+        return f"{verb} '{title}' {run}. It runs in its own session and is not done; its state is shown to you on the next turn."
     if status == "RUNNING":
         return f"'{title}' is already running {run}."
     return f"'{title}' already has this attempt, now {status} {run}."

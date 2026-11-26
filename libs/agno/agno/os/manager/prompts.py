@@ -91,6 +91,13 @@ Company work:
 - A recurring Goal job is a Routine, which you create.
 """
 
+LINKED_WORK_INSTRUCTIONS = """\
+Work started here: the Tasks this conversation added, proposed, accepted or started are listed for you
+each turn with their state, under "Work started from this conversation". When an item is marked as
+changed, say so in your reply, even when the person asked about something else. Do not call a status
+tool for a Task you just started: its state is in that list on the next turn.
+"""
+
 COMPANY_FILES_INSTRUCTIONS = """\
 Company files:
 - One tree: wiki/ is agreed direction, goals/<id>/ a Goal's brief.md, status.md and findings,
