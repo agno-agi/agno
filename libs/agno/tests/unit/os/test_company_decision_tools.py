@@ -304,6 +304,11 @@ def test_send_back_returns_the_task_to_ready_with_the_reason(system):
     assert message["review_feedback"] == "Add the changelog"
     assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
     assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 2
+    # Super Agent's start sends the retry the same input: the feedback, and no page for this executor.
+    job = asyncio.run(queue.store.get_job(db.get_task(task["id"])["job_id"]))
+    sent = json.loads(job["payload"]["input"])
+    assert sent["review_feedback"] == "Add the changelog"
+    assert set(sent) == {"brief", "evidence", "review_feedback", "previous_result", "execution_context"}
 
 
 def without_executor(client, db, queue):

@@ -34,7 +34,7 @@ AREAS = ("wiki", "goals", "tasks", "notes")
 _KEYED = ("goals", "tasks")
 _GRAMMAR = "Paths start with wiki/, goals/<goal-id>/, tasks/<task-id>/ or notes/."
 
-# What a Task's input always carries: the Goal's brief and status, then the company wiki.
+# What Mini Agent's Task input carries: the Goal's brief and status, then the company wiki.
 ALWAYS_LOADED_PAGE_CHARS = 8_000
 ALWAYS_LOADED_TOTAL_CHARS = 40_000
 
@@ -541,7 +541,7 @@ class CompanyFiles:
 
 
 async def _always_loaded(manager: Any, goal_id: Optional[str]) -> List[Dict[str, Any]]:
-    """The pages a Task's input carries: the Goal's brief and status, then every company wiki page.
+    """The pages Mini Agent's Task input carries: the Goal's brief and status, then every company wiki page.
 
     A Task with no Goal carries the company wiki pages only.
 

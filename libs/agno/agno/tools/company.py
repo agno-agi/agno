@@ -959,6 +959,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
+                carry what it needs.
                 Null leaves it unspecified.
             project_id: The Project this Task is part of: check list_company_projects for the one it
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
@@ -1300,6 +1302,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
+                carry what it needs.
                 Null leaves it unspecified.
             project_id: The Project this Task is part of: check list_company_projects for the one it
                 serves. Null only when none fits, which puts the Task in the Default Project, the place

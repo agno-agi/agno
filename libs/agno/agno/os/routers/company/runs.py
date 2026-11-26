@@ -597,7 +597,8 @@ def get_company_runs_router(os: Any) -> APIRouter:
                     raise HTTPException(503, "Could not verify the Task run; retry the request")
             if previous is not None and previous["status"] not in {"failed", "cancelled", "completed"}:
                 raise HTTPException(409, "The previous Task run is still active")
-            message = await task_message(value)
+            # The Task is not accepted yet, so the input is built for the executor this start names.
+            message = await task_message({**value, **target})
             validate_seam_input(component, message)
             if body.attempt is not None and body.attempt != task_next_attempt(value):
                 raise HTTPException(409, "Start the next Task attempt, or retry the original attempt")
