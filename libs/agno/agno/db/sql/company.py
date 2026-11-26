@@ -140,7 +140,9 @@ def lock_child(
     if row is None:
         return
     record = row._mapping
-    lock_parent(sess, goals, projects, record["goal_id"], record["project_id"] if "project_id" in table.c else record_id)
+    lock_parent(
+        sess, goals, projects, record["goal_id"], record["project_id"] if "project_id" in table.c else record_id
+    )
     # Read the Project again after taking the Goal lock: a move may have won it.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()

@@ -7346,9 +7346,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(
-                lock_parent, goals, projects, task_data["goal_id"], task_data.get("project_id")
-            )
+            await sess.run_sync(lock_parent, goals, projects, task_data["goal_id"], task_data.get("project_id"))
             await sess.run_sync(require_project, projects, task_data.get("project_id"), task_data["goal_id"])
             proposal = await sess.run_sync(existing_task_proposal, table, task_data)
             if proposal is not None:

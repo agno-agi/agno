@@ -416,8 +416,8 @@ def _rename_column(sql: _Sql, table_name: str, old: str, new: str) -> bool:
 
 # The name a SQLite table has while it is created again without NOT NULL on goal_id.
 _REBUILT_SUFFIX = "_agno_3_3_0_rebuilt"
-_NOT_NULL_GOAL = re.compile(r'''(["`\[]?\bgoal_id\b["`\]]?\s+\w+(?:\s*\([^)]*\))?)\s+NOT\s+NULL''', re.IGNORECASE)
-_CREATED_TABLE = re.compile(r'''^\s*CREATE\s+TABLE\s+("[^"]+"|`[^`]+`|\[[^\]]+\]|[^\s(]+)''', re.IGNORECASE)
+_NOT_NULL_GOAL = re.compile(r"""(["`\[]?\bgoal_id\b["`\]]?\s+\w+(?:\s*\([^)]*\))?)\s+NOT\s+NULL""", re.IGNORECASE)
+_CREATED_TABLE = re.compile(r"""^\s*CREATE\s+TABLE\s+("[^"]+"|`[^`]+`|\[[^\]]+\]|[^\s(]+)""", re.IGNORECASE)
 
 
 def _goal_optional_tables(tables: _CompanyTables) -> Tuple[str, str]:
@@ -431,18 +431,6 @@ def _goal_optional_pending(sql: _Sql, table_name: str) -> bool:
     return not sql.postgres and sql.table_exists(table_name + _REBUILT_SUFFIX)
 
 
-def _sqlite_standard_indexes(sql: _Sql, table_name: str) -> None:
-    """Create the single-column indexes a new database gives this table, where one is missing."""
-    from agno.db.sqlite.schemas import PROJECTS_TABLE_SCHEMA, TASKS_TABLE_SCHEMA
-
-    columns = sql.columns(table_name)
-    schema = TASKS_TABLE_SCHEMA if "project_id" in columns else PROJECTS_TABLE_SCHEMA
-    for name, config in schema.items():
-        if isinstance(config, dict) and config.get("index") and name in columns:
-            index = sql.quote(f"idx_{table_name}_{name}")
-            sql.sess.execute(text(f"CREATE INDEX IF NOT EXISTS {index} ON {sql.quote(table_name)} ({sql.quote(name)})"))
-
-
 def _sqlite_goal_optional(sql: _Sql, table_name: str) -> None:
     """Create a SQLite table again with goal_id accepting NULL, keeping its rows, name and indexes.
 
@@ -453,8 +441,8 @@ def _sqlite_goal_optional(sql: _Sql, table_name: str) -> None:
     spare = table_name + _REBUILT_SUFFIX
     quote = sql.quote
     if not sql.table_exists(table_name):
+        # The adapter creates the indexes of its own schema again when it next uses the table.
         sql.rename_table(spare, table_name)
-        _sqlite_standard_indexes(sql, table_name)
         return
     if sql.table_exists(spare):
         sql.sess.execute(text(f"DROP TABLE {quote(spare)}"))
@@ -482,7 +470,6 @@ def _sqlite_goal_optional(sql: _Sql, table_name: str) -> None:
     sql.rename_table(spare, table_name)
     for index in indexes:
         sql.sess.execute(text(index))
-    _sqlite_standard_indexes(sql, table_name)
 
 
 def _make_goal_optional(sql: _Sql, table_name: str) -> bool:
