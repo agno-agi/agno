@@ -479,8 +479,11 @@ def test_the_checks_of_a_run_in_the_turn_are_kept(plain):
     assert "use run_workflow(workflow_id='investigator')" in refused(plain, component="investigator")
     deep = {DISPATCH_CHAIN_METADATA_KEY: ["team:other"], DISPATCH_DEPTH_METADATA_KEY: 2}
     assert "this dispatch tree is already 2 hop(s) deep" in refused(plain, plain.context(metadata=deep))
-    cycle = {DISPATCH_CHAIN_METADATA_KEY: ["agent:writer", "team:superagent"], DISPATCH_DEPTH_METADATA_KEY: 1}
-    assert "it is already running this request" in refused(plain, plain.context(metadata=cycle))
+    # A run that another component dispatched is not the person's conversation, whatever it would run.
+    nested = {DISPATCH_CHAIN_METADATA_KEY: ["agent:writer", "team:superagent"], DISPATCH_DEPTH_METADATA_KEY: 1}
+    assert refused(plain, plain.context(metadata=nested)) == (
+        "Not started: only a conversation with the person starts background runs."
+    )
     forged = {DISPATCH_CHAIN_METADATA_KEY: "writer", DISPATCH_DEPTH_METADATA_KEY: 0}
     assert "metadata is malformed" in refused(plain, plain.context(metadata=forged))
 

@@ -178,6 +178,9 @@ class BackgroundRunTools(StudioRunnerTools):
             # The same order as a run in the turn: depth, resolution with its refusals, permission, cycle.
             inherited, depth = self._inherited_dispatch_state(run_context)
             self._require_dispatch_budget(depth, kind, component_id)
+            if inherited or depth:
+                # A run another component started has no conversation with the person to report to.
+                return json.dumps({"error": "Not started: only a conversation with the person starts background runs."})
             component = await asyncio.to_thread(self._resolve, kind, component_id, actor)
             if component is None:
                 missing = await asyncio.to_thread(self._not_found_message, kind, component_id, actor=actor)
