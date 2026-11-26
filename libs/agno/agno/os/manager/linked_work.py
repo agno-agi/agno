@@ -36,7 +36,7 @@ LINKED_WORK_KEY = "linked_work"
 # restarted server look the same from here.
 _PROCESS = uuid4().hex
 
-# A stored run status in plain words. UNKNOWN is never stored: run_state derives it.
+# A stored run status in plain words. UNKNOWN and LOST are never stored: run_state derives them.
 RUN_STATUS_MEANING = {
     "PENDING": "queued",
     "RUNNING": "running",
@@ -48,12 +48,16 @@ RUN_STATUS_MEANING = {
         "state unknown: stored as running, but it was started without the durable queue on another "
         "server process, and is lost if that server restarted"
     ),
+    "LOST": (
+        "taken as lost: still stored as running an hour after it was started without the durable "
+        "queue on another server process"
+    ),
 }
-_RUN_ENDED = ("COMPLETED", "ERROR", "CANCELLED")
+_RUN_ENDED = ("COMPLETED", "ERROR", "CANCELLED", "LOST")
 _RUN_LIVE = ("PENDING", "RUNNING", "UNKNOWN")
-# How long a run whose state is unknown keeps its session closed to another run. Past it the run is
-# taken as lost, so one server restart cannot close a component to a conversation for ever.
-_UNKNOWN_HOLDS_SECONDS = 3600
+# How long a run whose state is unknown is waited for. Past it the run is taken as lost, so one
+# server restart cannot keep a line in a conversation, or close a component to it, for ever.
+_UNKNOWN_SECONDS = 3600
 
 # Entries read and listed in one run, newest first.
 _LISTED = 20
@@ -148,26 +152,25 @@ def link_run(run_context: Any, run: Dict[str, Any], status: str = "PENDING") -> 
 
 
 def run_state(entry: Dict[str, Any], row: Dict[str, Any]) -> str:
-    """A stored run's status, or UNKNOWN for a live run this process cannot vouch for.
+    """A stored run's status, or UNKNOWN or LOST for a live run this process cannot vouch for.
 
     Without the durable queue a run is a task in the memory of the server process that started it,
     and nothing ends its stored row when that process stops. Stored as queued or running and started
-    by another process, it may be running on another worker or lost to a restart.
+    by another process, it may be running on another worker or lost to a restart: UNKNOWN. An hour
+    after its start it is taken as LOST, which ends it for this conversation.
     """
     status = getattr(row.get("status"), "value", row.get("status"))
     status = str(status or "").upper()
     if status in ("PENDING", "RUNNING") and not entry.get("durable") and entry.get("process") != _PROCESS:
-        return "UNKNOWN"
+        added = entry.get("added_at")
+        waited = isinstance(added, (int, float)) and time.time() - added >= _UNKNOWN_SECONDS
+        return "LOST" if waited else "UNKNOWN"
     return status
 
 
 def run_holds_session(entry: Dict[str, Any], row: Dict[str, Any]) -> bool:
     """Whether a listed run is still going, so that no other run may enter its session."""
-    status = run_state(entry, row)
-    if status == "UNKNOWN":
-        added = entry.get("added_at")
-        return not isinstance(added, (int, float)) or time.time() - added < _UNKNOWN_HOLDS_SECONDS
-    return status in _RUN_LIVE
+    return run_state(entry, row) in _RUN_LIVE
 
 
 def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Any:
@@ -181,6 +184,8 @@ def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Any:
     from agno.db.utils import get_run_type
     from agno.tools.studio_runner import StudioRunnerTools
 
+    if row is _UNREAD:
+        return _UNREAD
     if not isinstance(row, dict):
         return None
     if "run_data" not in row:
@@ -201,14 +206,20 @@ def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Any:
 
 
 def get_stored_run(stores: Any, run_id: str) -> Any:
-    """Read a run's row from the first of these databases that holds it. Synchronous databases only."""
+    """Read a run's row from the first of these databases that holds it, in a synchronous run.
+
+    An asynchronous database cannot be read here. When the run is in none of the others it may be in
+    that one, so it is reported as _UNREAD, not as gone.
+    """
+    skipped = False
     for store in stores or []:
         if isinstance(store, AsyncBaseDb):
+            skipped = True
             continue
         row = store.get_run(run_id, deserialize=False)
         if row is not None:
             return row
-    return None
+    return _UNREAD if skipped else None
 
 
 async def aget_stored_run(stores: Any, run_id: str) -> Any:
@@ -235,7 +246,7 @@ def _run_line(entry: Dict[str, Any], row: Dict[str, Any], status: str, changed: 
         name = name[: _TITLE_LENGTH - 3] + "..."
     words = RUN_STATUS_MEANING.get(status, status.lower())
     # The row of a run in an unknown state was last written by the process that may be gone.
-    since = "" if status == "UNKNOWN" else _since(row)
+    since = "" if status in ("UNKNOWN", "LOST") else _since(row)
     line = (
         f'- Background run of {entry.get("component_type")} "{name}" '
         f"(id {entry.get('component_id')}, run {entry['id']}): {words}{since}."
@@ -416,7 +427,7 @@ class LinkedWork(BaseGuardrail):
                 if entry.get("kind") == "task":
                     read.append((entry, self.db.get_task(entry["id"], user_id=owner) if tasks_readable else _UNREAD))
                     continue
-                stores = [store for store in self._run_stores(entry) if not isinstance(store, AsyncBaseDb)]
+                stores = self._run_stores(entry)
                 if not stores:
                     read.append((entry, _UNREAD))
                     continue

@@ -556,7 +556,7 @@ def test_two_starts_in_one_step_do_not_both_enter_a_session(plain):
     assert sorted("started" in result for result in results) == [False, True]
     assert len(run_context.session_state[LINKED_WORK_KEY]) == 1
     refusal = next(result for result in results if "error" in result)
-    assert refusal == {"error": "Not started: a run of Writer is already being started here."}
+    assert refusal == {"error": TAKEN}
 
 
 def test_two_people_and_two_conversations_get_their_own_sessions(plain):
@@ -606,8 +606,79 @@ def test_a_run_of_unknown_state_holds_its_session_for_an_hour(plain, monkeypatch
         return first, held, released
 
     first, held, released = scenario(steps)
-    assert held == {"error": going(first["run_id"])}
+    assert held == {"error": unknown(first["run_id"])}
     assert released.get("started") is True
+
+
+def test_a_run_in_the_turn_and_a_start_in_one_step_do_not_share_a_session(plain):
+    async def steps():
+        run_context = plain.context()
+
+        async def in_the_turn():
+            with authorization_scope(lambda: run_context.authorization):
+                return json.loads(await plain.tools.arun_agent("Writer", "Now", _agno_run_context=run_context))
+
+        # The run in the turn is waiting on its model when the same step's other calls arrive.
+        first = asyncio.create_task(in_the_turn())
+        while not SEEN.get("inputs"):
+            await asyncio.sleep(0.01)
+        start = await plain.start(run_context)
+        second = await in_the_turn()
+        sync = json.loads(await asyncio.to_thread(plain.tools.run_agent, "writer", "Now", run_context))
+        other = await plain.start(run_context, "workflow", "investigator")
+        GATES["writer"].set()
+        GATES["investigator"].set()
+        done = await first
+        # The session is free once the run in the turn has returned.
+        after = await plain.start(run_context)
+        await finish(plain, run_id=other["run_id"])
+        return start, second, sync, other, done, after, run_context
+
+    start, second, sync, other, done, after, run_context = scenario(steps)
+    assert start == second == sync == {"error": TAKEN}
+    assert other.get("started") is True and done["status"] == "COMPLETED" and after.get("started") is True
+    assert [entry["component_id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["investigator", "writer"]
+
+
+def test_the_guard_names_the_component_the_run_tool_would_run(plain):
+    # An identifier that resolves to nothing, or to another component, is not held by the writer's run.
+    async def steps():
+        run_context = plain.context()
+        receipt = await plain.start(run_context)
+        plain.crew.name = "writer"
+        with authorization_scope(lambda: run_context.authorization):
+            missing = json.loads(await plain.tools.arun_agent("WRITER", "Now", _agno_run_context=run_context))
+            other = json.loads(await plain.tools.arun_team("writer", "Now", _agno_run_context=run_context))
+            held = json.loads(await plain.tools.arun_agent("Writer", "Now", _agno_run_context=run_context))
+        await finish(plain)
+        return receipt, missing, other, held
+
+    receipt, missing, other, held = scenario(steps)
+    assert missing["error"].startswith("Agent not found: WRITER")
+    assert other["status"] == "COMPLETED" and other["team_id"] == "crew"
+    assert held == {"error": going(receipt["run_id"])}
+
+
+def test_a_turn_cancelled_after_the_run_was_accepted_still_lists_it(tmp_path):
+    value = System(tmp_path, queue=True)
+
+    async def cancelled(run_id):
+        raise asyncio.CancelledError()
+
+    async def steps():
+        run_context = value.context()
+        get_job, value.queue.store.get_job = value.queue.store.get_job, cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await value.start(run_context)
+        value.queue.store.get_job = get_job
+        linked = [dict(entry) for entry in run_context.session_state.get(LINKED_WORK_KEY, [])]
+        await finish(value)
+        return linked, value.row(linked[0]["id"]) if linked else None
+
+    linked, stored = scenario(steps)
+    assert len(linked) == 1 and linked[0]["durable"] is False
+    assert stored is not None and stored["status"] == "COMPLETED"
+    value.db.close()
 
 
 def test_the_components_own_tools_are_checked_as_in_a_run_in_the_turn(system):
@@ -691,6 +762,17 @@ def person(scopes=None, user="alice", run_id="run-1", session="chat"):
         AuthorizationContext(principal_id=user, scopes=SCOPES if scopes is None else scopes, claims={"sub": user}),
     )
     return RunContext(run_id=run_id, session_id=session, user_id=user, authorization=authority, session_state={})
+
+
+TAKEN = "Not started: another run of Writer is being started in this conversation right now."
+
+
+def unknown(run_id, name="Writer"):
+    return (
+        f"Not started: the state of {name}'s background run {run_id} is unknown. It was started without the "
+        "durable queue on another server process. Its session takes one run at a time, and is free again an "
+        "hour after that run started."
+    )
 
 
 def going(run_id, name="Writer"):
@@ -819,6 +901,7 @@ def test_a_run_another_process_started_is_not_called_interrupted(mode, monkeypat
     memory["status"] = "COMPLETED"
     run_context.run_id = "run-3"
     assert f"{LINE}finished. {CHANGED}" in block(db, run_context, mode).split("\n")
+    assert run_context.session_state[LINKED_WORK_KEY][0].get("ended") is None
     # Two workers taking turns do not report a change on each message.
     memory["status"] = "RUNNING"
     run_context.session_state[LINKED_WORK_KEY][0]["shown"] = "LIVE"
@@ -826,6 +909,68 @@ def test_a_run_another_process_started_is_not_called_interrupted(mode, monkeypat
         monkeypatch.setattr(linked_work, "_PROCESS", process)
         run_context.run_id = f"run-{turn + 4}"
         assert CHANGED not in block(db, run_context, mode)
+
+
+LOST = (
+    "taken as lost: still stored as running an hour after it was started without the durable "
+    "queue on another server process"
+)
+
+
+@modes
+def test_a_run_still_unknown_after_an_hour_is_reported_once_as_lost_and_leaves(mode, monkeypatch):
+    run_context = person()
+    stored = listed_run(run_context, "RUNNING", durable=False)
+    db = Runs(stored)
+    monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+    assert block(db, run_context, mode) == f"{LINE}{UNKNOWN}."
+    # Within the hour it is waited for, however many turns pass.
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3599
+    run_context.run_id = "run-2"
+    assert block(db, run_context, mode) == f"{LINE}{UNKNOWN}."
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 2
+    run_context.run_id = "run-3"
+    assert block(db, run_context, mode) == f"{LINE}{LOST}. {CHANGED}"
+    run_context.run_id = "run-4"
+    assert block(db, run_context, mode) == ""
+    assert run_context.session_state[LINKED_WORK_KEY][0]["ended"] is True
+    # A durable run, or one this process started, is never taken as lost.
+    for durable, process in ((True, "another-process"), (False, "this-process")):
+        other = person()
+        row = listed_run(other, "RUNNING", durable=durable)
+        monkeypatch.setattr(linked_work, "_PROCESS", "this-process" if durable else process)
+        other.session_state[LINKED_WORK_KEY][0].update(added_at=1, process="this-process" if not durable else "x")
+        assert block(Runs(row), other, mode) == LINE + "running."
+
+
+class AsyncOnly(linked_work.AsyncBaseDb):
+    """An asynchronous database that holds run rows only."""
+
+    def __init__(self, *rows):
+        self.id = "runs"
+        self.rows = {row["run_id"]: row for row in rows}
+
+    async def get_run(self, run_id, deserialize=True):
+        return self.rows.get(run_id)
+
+
+# Only get_run is used: the rest of the interface stays unimplemented.
+AsyncOnly.__abstractmethods__ = frozenset()
+
+
+def test_a_synchronous_turn_keeps_a_run_it_cannot_look_for():
+    run_context = person()
+    stored = listed_run(run_context)
+    stores = [Runs(), AsyncOnly(stored)]
+    hook = LinkedWork(None, run_db=lambda db_id: stores)
+    hook.check(run_context=run_context)
+    assert attached(run_context) == []
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1"]
+    # An asynchronous turn reads it. With no asynchronous database to miss, a missing row is gone.
+    asyncio.run(hook.async_check(run_context=run_context))
+    assert attached(run_context) == [LINE + "running."]
+    LinkedWork(None, run_db=lambda db_id: [Runs()]).check(run_context=run_context)
+    assert run_context.session_state[LINKED_WORK_KEY] == []
 
 
 @modes
@@ -1051,6 +1196,16 @@ def test_a_run_another_process_started_is_checked_as_unknown_with_no_result(mode
     result = checked(run_context, stored, mode, **run_data("RUNNING", "half a thought"))
     assert result["status"] == "UNKNOWN" and "content" not in result
     assert result["meaning"] == UNKNOWN
+
+
+@modes
+def test_a_run_taken_as_lost_is_checked_as_lost_with_no_result(mode, keep_standins, monkeypatch):
+    run_context = person()
+    stored = listed_run(run_context, "RUNNING", durable=False)
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3601
+    monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+    result = checked(run_context, stored, mode, **run_data("RUNNING", "half a thought"))
+    assert result["status"] == "LOST" and "content" not in result and result["meaning"] == LOST
 
 
 @modes

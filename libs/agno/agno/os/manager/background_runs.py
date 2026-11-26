@@ -12,7 +12,8 @@ the background: nothing else stops two runs from writing one session at once.
 
 import asyncio
 import json
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from threading import Lock
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 from weakref import ReferenceType, ref
 
@@ -34,7 +35,7 @@ from agno.os.manager.linked_work import (
 )
 from agno.registry._reserved import RESERVED_MANAGER_IDS
 from agno.run.authorization import requires_permission
-from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools, _slugify
+from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools
 from agno.utils.log import logger
 
 # The most of a run's result the check tool returns. A longer result is cut, and says so.
@@ -61,8 +62,10 @@ class BackgroundRunTools(StudioRunnerTools):
     def __init__(self, agent_os: Any, **kwargs: Any):
         super().__init__(**kwargs)
         self._agent_os: ReferenceType[Any] = ref(agent_os)
-        # Sessions with a start in flight, so two calls in one model step cannot both enter one session.
-        self._starting: Set[str] = set()
+        # Sessions a run tool of this toolkit is entering or running in, in the turn or as a start. Two
+        # calls of one model step run at once, and neither is in the linked work yet.
+        self._entering: Set[str] = set()
+        self._entering_lock = Lock()
         self.register(self.start_background_run)
         self.register(self.astart_background_run, name="start_background_run")
         self.register(self.check_background_run)
@@ -105,113 +108,188 @@ class BackgroundRunTools(StudioRunnerTools):
         return find[component_type](component_id, actor=actor)
 
     @staticmethod
-    def _going(run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> List[Dict[str, Any]]:
-        """This conversation's background runs that have not been seen to end, among those that match."""
+    def _going(run_context: Any, session_id: str) -> List[Dict[str, Any]]:
+        """This conversation's background runs in that session that have not been seen to end."""
         return [
             entry
             for entry in _entries(run_context)
-            if entry.get("kind") == "run" and not entry.get("ended") and matches(entry)
+            if entry.get("kind") == "run" and not entry.get("ended") and entry.get("session_id") == session_id
         ]
 
-    def _holds(self, run_context: Any, entry: Dict[str, Any], row: Any) -> bool:
-        row = stored_run(entry, row, run_context)
-        return row is not None and row is not _UNREAD and run_holds_session(entry, row)
+    def _held_by(self, run_context: Any, entry: Dict[str, Any], row: Any) -> Optional[str]:
+        """The refusal for a session a listed run still holds, or None.
 
-    def _live_run(self, run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> Optional[Dict[str, Any]]:
-        """A background run of this conversation that is still going, read from the store, or None.
-
-        Only runs this conversation started in the background are counted: a run the server lost is
-        stored as running for ever, and must not close its session for ever.
+        Only runs this conversation started in the background are counted, read from the store: a run
+        in the turn ends with its turn, and a run the server lost is stored as running for ever.
         """
-        for entry in self._going(run_context, matches):
-            if self._holds(run_context, entry, get_stored_run(self._run_stores(entry.get("db_id")), entry["id"])):
-                return entry
-        return None
-
-    async def _alive_run(self, run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> Optional[Dict[str, Any]]:
-        for entry in self._going(run_context, matches):
-            row = await aget_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
-            if self._holds(run_context, entry, row):
-                return entry
-        return None
-
-    @staticmethod
-    def _names(kind: str, identifier: str) -> Callable[[Dict[str, Any]], bool]:
-        """Whether an entry is a run of the component a run tool was asked for, by id, name or slug."""
-        asked = {str(identifier), _slugify(str(identifier))}
-
-        def matches(entry: Dict[str, Any]) -> bool:
-            if entry.get("component_type") != kind:
-                return False
-            known = {str(entry.get("component_id")), _slugify(str(entry.get("name") or ""))}
-            return bool(asked & known) or str(entry.get("name") or "").casefold() == str(identifier).casefold()
-
-        return matches
-
-    @staticmethod
-    def _busy(entry: Optional[Dict[str, Any]]) -> Optional[str]:
-        if entry is None:
+        row = stored_run(entry, row, run_context)
+        if row is None or row is _UNREAD or not run_holds_session(entry, row):
             return None
         name = entry.get("name") or entry.get("component_id")
-        return json.dumps(
-            {
-                "error": f"Not started: {name} still has background run {entry['id']} going in this "
-                "conversation, and its session takes one run at a time. Wait for it to end."
-            }
+        if run_state(entry, row) == "UNKNOWN":
+            return (
+                f"Not started: the state of {name}'s background run {entry['id']} is unknown. It was started "
+                "without the durable queue on another server process. Its session takes one run at a time, "
+                "and is free again an hour after that run started."
+            )
+        return (
+            f"Not started: {name} still has background run {entry['id']} going in this conversation, "
+            "and its session takes one run at a time. Wait for it to end."
         )
 
-    # The run tools of the turn, refused while a background run of the same component is going. They
-    # enter the same session as that run.
+    def _reserve(self, session_id: str, name: str) -> Optional[str]:
+        """Take the session for one run tool call, or say that another call of this turn has it."""
+        with self._entering_lock:
+            if session_id in self._entering:
+                return f"Not started: another run of {name} is being started in this conversation right now."
+            self._entering.add(session_id)
+        return None
+
+    def _release(self, session_id: Optional[str]) -> None:
+        if session_id is not None:
+            with self._entering_lock:
+                self._entering.discard(session_id)
+
+    def _session_of(self, kind: str, identifier: str, run_context: Any) -> Tuple[Optional[str], str]:
+        """The session a run of that component enters from this conversation, and the component's name.
+
+        The component is found the way the run tools find it, so an id, a display name or a slug names
+        the same session. One that does not resolve gives no session: the run tool reports why.
+        """
+        find = {"agent": self._find_agent, "team": self._find_team, "workflow": self._find_workflow}[kind]
+        try:
+            component = find(identifier, for_dispatch=True, actor=getattr(run_context, "user_id", None))
+        except Exception:
+            return None, identifier
+        if component is None:
+            return None, identifier
+        component_id = getattr(component, "id", None) or identifier
+        return self._sub_session_id(run_context, kind, component_id), getattr(component, "name", None) or component_id
+
+    def _enter(self, kind: str, identifier: str, run_context: Any) -> Tuple[Optional[str], Optional[str]]:
+        """Reserve the session of a run in the turn. Returns the session to release, or a refusal."""
+        session_id, name = self._session_of(kind, identifier, run_context)
+        if session_id is None:
+            return None, None
+        refusal = self._reserve(session_id, name)
+        if refusal is None:
+            for entry in self._going(run_context, session_id):
+                row = get_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
+                refusal = self._held_by(run_context, entry, row)
+                if refusal is not None:
+                    self._release(session_id)
+                    break
+        return (None, json.dumps({"error": refusal})) if refusal is not None else (session_id, None)
+
+    async def _aenter(self, kind: str, identifier: str, run_context: Any) -> Tuple[Optional[str], Optional[str]]:
+        session_id, name = await asyncio.to_thread(self._session_of, kind, identifier, run_context)
+        if session_id is None:
+            return None, None
+        refusal = self._reserve(session_id, name)
+        if refusal is None:
+            refusal = await self._aheld(run_context, session_id)
+            if refusal is not None:
+                self._release(session_id)
+        return (None, json.dumps({"error": refusal})) if refusal is not None else (session_id, None)
+
+    async def _aheld(self, run_context: Any, session_id: str) -> Optional[str]:
+        for entry in self._going(run_context, session_id):
+            row = await aget_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
+            refusal = self._held_by(run_context, entry, row)
+            if refusal is not None:
+                return refusal
+        return None
+
+    # The run tools of the turn. Each holds its component's session while it runs, and is refused
+    # while a background run of that component is going: both enter the same session.
 
     @requires_permission()
     def run_agent(self, agent_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None) -> str:
-        busy = self._busy(self._live_run(_agno_run_context, self._names("agent", agent_id)))
-        return busy or super().run_agent(
-            agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = self._enter("agent", agent_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return super().run_agent(
+                agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+            )
+        finally:
+            self._release(session_id)
 
     @requires_permission()
     def run_team(self, team_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None) -> str:
-        busy = self._busy(self._live_run(_agno_run_context, self._names("team", team_id)))
-        return busy or super().run_team(
-            team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = self._enter("team", team_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return super().run_team(
+                team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+            )
+        finally:
+            self._release(session_id)
 
     @requires_permission()
     def run_workflow(
         self, workflow_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
     ) -> str:
-        busy = self._busy(self._live_run(_agno_run_context, self._names("workflow", workflow_id)))
-        return busy or super().run_workflow(
-            workflow_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = self._enter("workflow", workflow_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return super().run_workflow(
+                workflow_id,
+                message,
+                _agno_run_context=_agno_run_context,
+                _agno_agent=_agno_agent,
+                _agno_team=_agno_team,
+            )
+        finally:
+            self._release(session_id)
 
     @requires_permission()
     async def arun_agent(
         self, agent_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
     ) -> str:
-        busy = self._busy(await self._alive_run(_agno_run_context, self._names("agent", agent_id)))
-        return busy or await super().arun_agent(
-            agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = await self._aenter("agent", agent_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return await super().arun_agent(
+                agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+            )
+        finally:
+            self._release(session_id)
 
     @requires_permission()
     async def arun_team(
         self, team_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
     ) -> str:
-        busy = self._busy(await self._alive_run(_agno_run_context, self._names("team", team_id)))
-        return busy or await super().arun_team(
-            team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = await self._aenter("team", team_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return await super().arun_team(
+                team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+            )
+        finally:
+            self._release(session_id)
 
     @requires_permission()
     async def arun_workflow(
         self, workflow_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
     ) -> str:
-        busy = self._busy(await self._alive_run(_agno_run_context, self._names("workflow", workflow_id)))
-        return busy or await super().arun_workflow(
-            workflow_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
-        )
+        session_id, refusal = await self._aenter("workflow", workflow_id, _agno_run_context)
+        if refusal is not None:
+            return refusal
+        try:
+            return await super().arun_workflow(
+                workflow_id,
+                message,
+                _agno_run_context=_agno_run_context,
+                _agno_agent=_agno_agent,
+                _agno_team=_agno_team,
+            )
+        finally:
+            self._release(session_id)
 
     async def _aget_run(self, entry: Dict[str, Any]) -> Any:
         return await aget_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
@@ -303,13 +381,13 @@ class BackgroundRunTools(StudioRunnerTools):
         session_id = self._sub_session_id(run_context, kind, resolved_id)
         assert session_id is not None  # the caller has a session
         name = getattr(component, "name", None) or resolved_id
-        if session_id in self._starting:
-            return json.dumps({"error": f"Not started: a run of {name} is already being started here."})
-        self._starting.add(session_id)
+        taken = self._reserve(session_id, name)
+        if taken is not None:
+            return json.dumps({"error": taken})
         try:
-            busy = self._busy(await self._alive_run(run_context, lambda entry: entry.get("session_id") == session_id))
-            if busy is not None:
-                return busy
+            held = await self._aheld(run_context, session_id)
+            if held is not None:
+                return json.dumps({"error": held})
             metadata = self._outgoing_metadata(run_context, running, depth, target)
             metadata[REQUESTED_FROM_METADATA_KEY] = _requested_from(run_context, _agno_team)
             run = {"component_type": kind, "component_id": resolved_id, "name": name, "session_id": session_id}
@@ -318,7 +396,7 @@ class BackgroundRunTools(StudioRunnerTools):
             logger.exception(f"Failed to start {kind} in the background")
             return json.dumps({"error": f"Not started: {str(exc) or type(exc).__name__}"})
         finally:
-            self._starting.discard(session_id)
+            self._release(session_id)
 
     async def _start(
         self,
@@ -359,20 +437,25 @@ class BackgroundRunTools(StudioRunnerTools):
             detail = body.get("detail") if isinstance(body, dict) else None
             return json.dumps({"error": f"Not started: {detail or 'the run was refused'}"})
         status = str(body.get("status") or "PENDING")
-        worker = getattr(app.state, "queue_worker", None)
-        try:
-            durable = worker is not None and await worker.store.get_job(body["run_id"]) is not None
-        except Exception:
-            # The run is accepted whatever this lookup does. Unconfirmed, it is not called durable.
-            durable = False
         run = {
             **run,
             "id": body["run_id"],
             "session_id": body.get("session_id") or run["session_id"],
             "db_id": getattr(getattr(component, "db", None), "id", None),
-            "durable": durable,
+            "durable": False,
         }
+        # The run is accepted: it is listed before anything else is awaited, so a turn cancelled or a
+        # queue that cannot be asked leaves no run going that the conversation does not know.
         link_run(run_context, run, status)
+        worker = getattr(app.state, "queue_worker", None)
+        try:
+            durable = worker is not None and await worker.store.get_job(run["id"]) is not None
+        except Exception:
+            # Unconfirmed, it is not called durable.
+            durable = False
+        entry = run_entry(run_context, run["id"])
+        if durable and entry is not None:
+            entry["durable"] = True
         note = "Started, not finished. Its state is shown to you each turn; check_background_run reads its result."
         if not durable:
             note += " It runs in the server's memory: if the server restarts before it ends, the run is lost."
@@ -407,7 +490,7 @@ class BackgroundRunTools(StudioRunnerTools):
         if status not in _RUN_LIVE:
             # Its end is read here, so the next turn does not report it as a change.
             entry["shown"] = _run_phase(status)
-        if status in _RUN_LIVE:
+        if status in _RUN_LIVE or status == "LOST":
             # Nothing a run wrote before it ended is its result.
             payload: Dict[str, Any] = {
                 f"{kind}_id": component_id,
@@ -460,7 +543,10 @@ class BackgroundRunTools(StudioRunnerTools):
             stores = self._run_stores(entry.get("db_id"))
             if not stores or all(isinstance(store, AsyncBaseDb) for store in stores):
                 return json.dumps({"error": "Reading this run needs an asynchronous run."})
-            return self._checked(_agno_run_context, run_id, get_stored_run(stores, run_id))
+            row = get_stored_run(stores, run_id)
+            if row is _UNREAD:
+                return json.dumps({"error": "Reading this run needs an asynchronous run."})
+            return self._checked(_agno_run_context, run_id, row)
         except PermissionError as exc:
             return json.dumps({"error": f"Cannot read the run: {exc}"})
         except Exception as exc:
