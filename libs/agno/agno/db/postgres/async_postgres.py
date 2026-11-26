@@ -8255,7 +8255,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import validate_task_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.sql.company import lock_child, require_move
 
         validate_task_fields(fields)
         table = await self._get_table(table_type="tasks")
@@ -8274,7 +8274,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             await sess.run_sync(lock_child, goals, projects, table, task_id)
             current = (await sess.execute(select(table.c.goal_id).where(table.c.id == task_id))).first()
             if current is not None and fields.get("project_id") is not None:
-                await sess.run_sync(require_project, projects, fields["project_id"], current[0], "backlog")
+                fields.update(await sess.run_sync(require_move, goals, projects, current[0], fields["project_id"]))
             result = (
                 await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
             ).fetchone()

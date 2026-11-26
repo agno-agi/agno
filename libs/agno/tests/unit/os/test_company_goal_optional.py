@@ -232,7 +232,7 @@ def test_the_manager_takes_a_project_and_a_task_with_no_goal(system):
     assert manager.get(goal["id"])["counts"]["tasks"]["backlog"] == 2
 
 
-def test_a_task_moves_to_the_default_project_and_keeps_its_goal(system):
+def test_a_task_keeps_its_goal_when_it_moves_and_takes_one_when_it_has_none(system):
     manager = system.manager
     goal = manager.create(name="Developer docs")
     under_goal = manager.create_project(goal_id=goal["id"], name="3.3 migration guide")
@@ -244,9 +244,20 @@ def test_a_task_moves_to_the_default_project_and_keeps_its_goal(system):
     assert (moved["project_id"], moved["goal_id"]) == (DEFAULT_PROJECT_ID, goal["id"])
     assert manager.update_task(task["id"], project_id=under_goal["id"])["project_id"] == under_goal["id"]
     assert manager.update_task(loose["id"], project_id=other["id"])["project_id"] == other["id"]
-    for task_id, project_id in ((task["id"], other["id"]), (loose["id"], under_goal["id"])):
+    # A Task that has a Goal keeps it: a Project with no Goal, or with another, refuses it.
+    elsewhere = manager.create_project(goal_id=manager.create(name="Customer support")["id"], name="Faster replies")
+    for project_id in (other["id"], elsewhere["id"]):
         with pytest.raises(ValueError, match="Task and Project must belong to the same Goal"):
-            manager.update_task(task_id, project_id=project_id)
+            manager.update_task(task["id"], project_id=project_id)
+    # A Task with no Goal takes the Goal of the Project it moves into, from a Project or from Default.
+    adopted = manager.update_task(loose["id"], project_id=under_goal["id"])
+    assert (adopted["project_id"], adopted["goal_id"]) == (under_goal["id"], goal["id"])
+    filed = manager.create_task(title="Fix the typo on the pricing page")
+    adopted = manager.update_task(filed["id"], project_id=under_goal["id"])
+    assert (adopted["project_id"], adopted["goal_id"]) == (under_goal["id"], goal["id"])
+    assert manager.get(goal["id"])["counts"]["tasks"]["backlog"] == 3
+    # Back in the Default Project it keeps the Goal it took.
+    assert manager.update_task(filed["id"], project_id=None)["goal_id"] == goal["id"]
 
 
 def test_work_with_no_goal_runs_the_whole_lifecycle(system):
