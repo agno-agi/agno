@@ -986,3 +986,35 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 
 ---
 
+
+---
+
+### 18_work_without_a_goal.py
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-26 with `.venvs/demo/bin/python cookbook/05_agent_os/30_company/18_work_without_a_goal.py`, with this branch's `agno` on the path. No model call, SQLite. It creates a Task with no Goal and no Project, accepts it, creates a Project with no Goal and a Task in it, tags a Task in the Default Project with a Goal, and tries to rename, complete and archive the Default Project.
+
+**Result:** The Task landed in the Default Project (`id` `default`, `is_default` true, `active`, no Goal) and was accepted with no Project approval. The Project with no Goal was proposed, then approved. Each of the three changes to the Default Project was refused with its reason. It ended with "Work without a Goal example passed". `02_manage_projects.py`, `03_manage_tasks.py` and `07_cascading_archive.py` were run again after the change and passed. `12_task_board.py` fails as it did before this change: it starts a Task under a Project it never approves.
+
+---
+
+### Super Agent with an optional Goal and the Default Project (live model)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-26 with `gpt-5.6-luna` on PostgreSQL, each run on a new empty database. A copy of the harness from the 2026-11-26 design test seeds two Goals ("Developer docs", "Customer support"), an active Project "3.3 migration guide" and one Done Task, then sends each request in a new chat as the same person and confirms every pause. Five requests were sent, in this order: R1 a two-line announcement, R3 "50 paying customers on the hosted plan by the end of March, set this up", R6 "add a task to write the breaking-changes section of the 3.3 migration guide", R10 "do the breaking-changes task now", R13 "add a task: fix the typo on the pricing page".
+
+**Result:** Seven runs. The first two used a first wording of the prompt; the last five used the wording in this branch.
+
+| Request | First wording (2 runs) | Wording in this branch (5 runs) |
+| --- | --- | --- |
+| R1 | Answer, no record: 2 of 2 | Answer, no record: 5 of 5 |
+| R3 | One proposed Project with no Goal and 3 or 4 Backlog Tasks, no Goal created: 2 of 2 | The same: 5 of 5 |
+| R6 | Reused "3.3 migration guide": 1 of 2. In the other run it did not list the Projects and filed the Task in the Default Project | Listed the Projects and reused "3.3 migration guide": 5 of 5 |
+| R10 | Accepted with one confirmation, started, ended In review: 2 of 2 | The same: 5 of 5 |
+| R13 | Default Project, no new Project, no new Goal: 2 of 2 | The same: 5 of 5, each time with the "50 customers" Project from R3 in the list |
+
+The first wording let a Task be added without a look at the Projects, so the branch adds "Before adding a Task, list the Projects and put it in the one it serves" to the prompt and to the `project_id` argument of `propose_company_task`. Not covered: R3 with a Goal that fits the target (the seed has none), every other request of the original thirteen, authorization on, and SQLite.
+
+---
