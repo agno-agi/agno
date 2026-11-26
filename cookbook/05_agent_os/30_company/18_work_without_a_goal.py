@@ -67,7 +67,7 @@ if __name__ == "__main__":
         )
         print(f"Project '{project['name']}' is active with no Goal")
 
-        # A Project may still serve a Goal. A Task takes its Goal from its Project: it is not chosen.
+        # A Project may still serve a Goal, and a Task in it carries that Goal.
         goal = manager.create(name="Customer growth", user_id="alice")
         under_goal = manager.create_project(goal_id=goal["id"], name="Launch week")
         launch = manager.create_task(

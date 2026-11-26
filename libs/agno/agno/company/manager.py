@@ -547,11 +547,9 @@ class CompanyManager:
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
 
-        A Task's Goal is derived: in a Project that has a Goal it is that Goal, and a goal_id that
-        differs is refused. In the Default Project it is the goal_id given, which is how a Routine's
-        proposal is tagged with the Routine's Goal and how the HTTP API files a Task under a Goal
-        with no Project; with none given the Task has no Goal. scoped_user_id filters the Goal and
-        the Project while user_id records the creator.
+        In a Project other than the Default one the Task carries that Project's Goal, and a
+        goal_id that differs is refused. In the Default Project it carries the goal_id given, or
+        none. scoped_user_id filters the Goal and the Project while user_id records the creator.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
@@ -1564,11 +1562,9 @@ class AsyncCompanyManager:
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
 
-        A Task's Goal is derived: in a Project that has a Goal it is that Goal, and a goal_id that
-        differs is refused. In the Default Project it is the goal_id given, which is how a Routine's
-        proposal is tagged with the Routine's Goal and how the HTTP API files a Task under a Goal
-        with no Project; with none given the Task has no Goal. scoped_user_id filters the Goal and
-        the Project while user_id records the creator.
+        In a Project other than the Default one the Task carries that Project's Goal, and a
+        goal_id that differs is refused. In the Default Project it carries the goal_id given, or
+        none. scoped_user_id filters the Goal and the Project while user_id records the creator.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization

@@ -185,22 +185,18 @@ Every Task belongs to a Project. A Task created with no `project_id` goes into
 the **Default Project**, the one place for a single piece of work that fits no
 other Project, so nobody makes a Project to hold one Task.
 
-A Task's Goal is derived, not chosen. It only says which Goal the Task belongs
-to, and a Task does not need one.
+The Goal on a Task only says which Goal the Task belongs to. A Task does not
+need one.
 
-- A Task in a Project that has a Goal carries that Goal. A different `goal_id`
-  is refused.
-- A Task a Routine proposes carries the Routine's Goal, also when it names no
-  Project and lands in the Default Project. A Project a Routine proposes
-  carries the Routine's Goal too.
-- A Task asked for in chat with no Project lands in the Default Project with no
-  Goal. `propose_company_task` refuses a `goal_id` sent with no Project to take
-  it from.
-- A Project that a person or Super Agent creates may point at a Goal or at
-  none. That one is a choice.
-- `POST /company/tasks` with a `goal_id` and no `project_id` is accepted and
-  files the Task in the Default Project under that Goal. With both, they must
-  agree.
+- A Task in a Project other than the Default one carries that Project's Goal,
+  or none when the Project has none. A `goal_id` left out is filled from the
+  Project, and a different one is refused.
+- A Task in the Default Project carries the `goal_id` it is given, or none. This
+  is the same through `POST /company/tasks`, `propose_company_task` and the
+  manager.
+- A Task and a Project that a Routine proposes carry the Routine's Goal, also
+  when the Task names no Project and lands in the Default Project. A Routine is
+  refused another Goal.
 - A Backlog Task can move between Projects of its Goal. `project_id: null` moves
   it to the Default Project. A Task keeps its Goal when it moves, so a Task with
   no Goal cannot move into a Project that has one.

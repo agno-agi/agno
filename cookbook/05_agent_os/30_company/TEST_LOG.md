@@ -993,7 +993,7 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 
 **Status:** PASS
 
-**Description:** Run on 2026-11-26 with `.venvs/demo/bin/python cookbook/05_agent_os/30_company/18_work_without_a_goal.py`, with this branch's `agno` on the path. No model call, SQLite. It creates a Task with no Goal and no Project, accepts it, creates a Project with no Goal and a Task in it, a Task that takes its Goal from its Project, lists the Tasks with no Goal, and tries to rename, complete and archive the Default Project.
+**Description:** Run on 2026-11-26 with `.venvs/demo/bin/python cookbook/05_agent_os/30_company/18_work_without_a_goal.py`, with this branch's `agno` on the path. No model call, SQLite. It creates a Task with no Goal and no Project, accepts it, creates a Project with no Goal and a Task in it, a Task in a Project that has a Goal, lists the Tasks with no Goal, and tries to rename, complete and archive the Default Project.
 
 **Result:** The Task landed in the Default Project (`id` `default`, `is_default` true, `active`, no Goal) and was accepted with no Project approval. The Project with no Goal was proposed, then approved. Each of the three changes to the Default Project was refused with its reason. It ended with "Work without a Goal example passed". `02_manage_projects.py`, `03_manage_tasks.py` and `07_cascading_archive.py` were run again after the change and passed. `12_task_board.py` fails as it did before this change: it starts a Task under a Project it never approves.
 
@@ -1005,7 +1005,7 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 
 **Description:** Run on 2026-11-26 with `gpt-5.6-luna` on PostgreSQL, each run on a new empty database. A copy of the harness from the 2026-11-26 design test seeds two Goals ("Developer docs", "Customer support"), an active Project "3.3 migration guide" and one Done Task, then sends each request in a new chat as the same person and confirms every pause. Five requests were sent, in this order: R1 a two-line announcement, R3 "50 paying customers on the hosted plan by the end of March, set this up", R6 "add a task to write the breaking-changes section of the 3.3 migration guide", R10 "do the breaking-changes task now", R13 "add a task: fix the typo on the pricing page".
 
-**Result:** Nine runs. The first two used a first wording of the prompt; the next five used the wording in this branch; the last two also had the derived-Goal rule.
+**Result:** Nine runs. The first two used a first wording of the prompt; the next five used the wording in this branch; the last two ran while the propose tool refused a Goal with no Project, which was later removed.
 
 | Request | First wording (2 runs) | Wording in this branch (5 runs) |
 | --- | --- | --- |
@@ -1015,6 +1015,6 @@ The Goal `team/growth` cannot be named in a tree path, so its pages were read th
 | R10 | Accepted with one confirmation, started, ended In review: 2 of 2 | The same: 5 of 5 |
 | R13 | Default Project, no new Project, no new Goal: 2 of 2 | The same: 5 of 5, each time with the "50 customers" Project from R3 in the list |
 
-The first wording let a Task be added without a look at the Projects, so the branch adds "Before adding a Task, list the Projects and put it in the one it serves" to the prompt and to the `project_id` argument of `propose_company_task`. After the rule was tightened so that a Task's Goal is derived and `propose_company_task` refuses a `goal_id` with no Project, two more runs gave the same result on all five requests (2 of 2); in R6 the model sent the Project's own Goal, which agrees and is accepted. Not covered: R3 with a Goal that fits the target (the seed has none), every other request of the original thirteen, authorization on, and SQLite.
+The first wording let a Task be added without a look at the Projects, so the branch adds "Before adding a Task, list the Projects and put it in the one it serves" to the prompt and to the `project_id` argument of `propose_company_task`. Two more runs were made while `propose_company_task` refused a `goal_id` sent with no Project; that refusal was then removed, so a Task in the Default Project may carry a Goal through the tool as it does through the API. Those two runs gave the same result on all five requests (2 of 2). One run of R6 and R13 after the removal, on a new empty database: R6 reused "3.3 migration guide" and R13 landed in the Default Project with no Goal. Not covered: R3 with a Goal that fits the target (the seed has none), every other request of the original thirteen, authorization on, and SQLite.
 
 ---

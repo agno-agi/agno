@@ -19,7 +19,7 @@ from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_goal, _RoutineAuthorization, _run_kind
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
-from agno.db.schemas.projects import is_default_project, refuse_default_project
+from agno.db.schemas.projects import refuse_default_project
 from agno.run.authorization import current_authorization, requires_permission
 from agno.tools import Toolkit
 
@@ -105,15 +105,6 @@ def _require_plain_proposal(run_context):
 
     if isinstance(_authority(run_context), _RoutineAuthorization):
         raise PermissionError("Routines must propose Tasks through intake_goal_source with evidence and a dedupe key")
-
-
-def _require_project_goal(goal_id, project_id):
-    """A Task's Goal is not chosen in a proposal: a Goal sent with no Project to take it from is refused."""
-    if goal_id is not None and (not project_id or is_default_project(project_id)):
-        raise ValueError(
-            "A Task takes its Goal from its Project: name a Project of that Goal with project_id, "
-            "or send goal_id null to put the Task in the Default Project with no Goal."
-        )
 
 
 def _require_decision_log_write(run_context):
@@ -870,8 +861,8 @@ class CompanyTools(Toolkit):
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
                 is required before accepting or running them.
-            goal_id: Send null. A Task takes its Goal from its Project, and has none in the Default
-                Project. A value that differs from the Project's Goal is refused.
+            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
+                Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -879,7 +870,6 @@ class CompanyTools(Toolkit):
         project_id = _empty_to_none(project_id)
         goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
-        _require_project_goal(goal_id, project_id)
         _permission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
@@ -1212,8 +1202,8 @@ class CompanyTools(Toolkit):
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
                 is required before accepting or running them.
-            goal_id: Send null. A Task takes its Goal from its Project, and has none in the Default
-                Project. A value that differs from the Project's Goal is refused.
+            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
+                Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
@@ -1221,7 +1211,6 @@ class CompanyTools(Toolkit):
         project_id = _empty_to_none(project_id)
         goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
-        _require_project_goal(goal_id, project_id)
         await _apermission("tasks", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(

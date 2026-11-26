@@ -349,22 +349,21 @@ def test_the_tools_take_a_project_and_a_task_with_no_goal(system, use_async):
     in_project = call("propose_company_task", goal_id=None, title="Count paying customers", project_id=project["id"])
     assert in_project["goal_id"] is None
 
-    # A Task's Goal comes from its Project. It is not chosen in a proposal.
+    # A Task may carry a Goal. In a Project it is the Project's Goal; in the Default Project it is the one given.
     goal = system.manager.create(name="Developer docs")
     under_goal = call("propose_company_project", goal_id=goal["id"], name="3.3 migration guide")
-    derived = call(
-        "propose_company_task", goal_id=None, title="Write the breaking changes", project_id=under_goal["id"]
-    )
-    assert derived["goal_id"] == goal["id"]
+    filled = call("propose_company_task", goal_id=None, title="Write the breaking changes", project_id=under_goal["id"])
     agreed = call("propose_company_task", goal_id=goal["id"], title="Review it", project_id=under_goal["id"])
-    assert agreed["goal_id"] == goal["id"]
-    for project_id in (None, "", DEFAULT_PROJECT_ID):
-        with pytest.raises(ValueError, match="A Task takes its Goal from its Project"):
-            call("propose_company_task", goal_id=goal["id"], title="Tagged by choice", project_id=project_id)
+    assert filled["goal_id"] == agreed["goal_id"] == goal["id"]
+    tagged = [
+        call("propose_company_task", goal_id=goal["id"], title="A docs chore", project_id=project_id)
+        for project_id in (None, "", DEFAULT_PROJECT_ID)
+    ]
+    assert {(task["project_id"], task["goal_id"]) for task in tagged} == {(DEFAULT_PROJECT_ID, goal["id"])}
     with pytest.raises(ValueError, match="Task and Project must belong to the same Goal"):
         call("propose_company_task", goal_id=goal["id"], title="Mismatched", project_id=project["id"])
-    system.manager.delete_task(derived["id"])
-    system.manager.delete_task(agreed["id"])
+    for task in (filled, agreed, *tagged):
+        system.manager.delete_task(task["id"])
     system.manager.delete_project(under_goal["id"])
 
     projects = call("list_company_projects")["data"]

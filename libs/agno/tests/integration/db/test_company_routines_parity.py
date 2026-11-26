@@ -315,11 +315,10 @@ async def test_a_task_with_no_project_goes_to_the_default_project(system):
         result = propose(None, "Work")
         proposed = json.loads(await result if asyncio.iscoroutine(result) else result)
         assert (proposed["project_id"], proposed["goal_id"]) == ("default", None)
-        # A proposal does not choose a Goal for a Task that has no Project to take it from.
-        with pytest.raises(ValueError, match="A Task takes its Goal from its Project"):
-            result = propose(goal["id"], "Work")
-            if asyncio.iscoroutine(result):
-                await result
+        # A Goal given with no Project tags the Task in the Default Project, as the HTTP route does.
+        result = propose(goal["id"], "Work")
+        tagged = json.loads(await result if asyncio.iscoroutine(result) else result)
+        assert (tagged["project_id"], tagged["goal_id"]) == ("default", goal["id"])
     project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
