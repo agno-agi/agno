@@ -54,8 +54,13 @@ def test_lifecycle(client):
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
-    assert client.get("/company/projects").json()["meta"]["total_count"] == 0
-    assert client.get("/company/projects?include_deleted=true").json()["meta"]["total_count"] == 1
+    # With its own Project archived, the list holds only the Default Project.
+    listed = client.get("/company/projects").json()
+    assert listed["meta"]["total_count"] == 1
+    assert [(p["id"], p["is_default"], p["goal_id"]) for p in listed["data"]] == [("default", True, None)]
+    with_archived = client.get("/company/projects?include_deleted=true").json()
+    assert with_archived["meta"]["total_count"] == 2
+    assert {p["id"]: p["is_default"] for p in with_archived["data"]} == {"default": True, record["id"]: False}
     assert client.post(path + "/restore").json()["status"] == "done"
 
 

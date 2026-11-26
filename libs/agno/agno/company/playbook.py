@@ -36,7 +36,8 @@ def _require_goal_scope(record: Dict[str, Any]) -> None:
     """Keep a Routine's authority on its own Goal; Company writes are not owner-scoped."""
     from agno.company.routines import _require_routine_goal
 
-    _require_routine_goal(record.get("goal_id") or record.get("id"))
+    goal_id = record.get("goal_id") or record.get("id")
+    _require_routine_goal(goal_id, company_wide=goal_id is None)
 
 
 def _seed(provider: WikiContextProvider, goal: Optional[Dict[str, Any]]) -> None:

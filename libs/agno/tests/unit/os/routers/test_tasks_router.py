@@ -327,7 +327,14 @@ def test_task_project_must_belong_to_same_goal(client):
     own = client.post("/company/projects", json={"goal_id": task["goal_id"], "name": "Own"}).json()
     assert client.patch(path, json={"project_id": own["id"]}).status_code == 200
     assert client.get("/company/tasks", params={"project_id": own["id"]}).json()["meta"]["total_count"] == 1
-    assert client.patch(path, json={"project_id": None}).status_code == 422
+    # Taken out of its Project, the Task moves to the Default Project and keeps its Goal.
+    moved = client.patch(path, json={"project_id": None})
+    assert moved.status_code == 200, moved.text
+    assert (moved.json()["project_id"], moved.json()["goal_id"]) == ("default", task["goal_id"])
+    assert client.get("/company/tasks", params={"project_id": own["id"]}).json()["meta"]["total_count"] == 0
+    assert client.get("/company/projects/default").json()["is_default"] is True
+    # In the Default Project it still cannot be given to a Project of another Goal.
+    assert client.patch(path, json={"project_id": project["id"]}).status_code == 422
 
 
 @pytest.mark.parametrize(

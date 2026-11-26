@@ -114,7 +114,8 @@ TaskStatus = Literal["backlog", "ready", "in_progress", "in_review", "done", "ca
 
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    goal_id: str = Field(..., min_length=1)
+    # The Goal this Project serves. Without one the Project stands on its own.
+    goal_id: Optional[str] = Field(None, min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -143,7 +144,9 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(BaseModel):
     counts: ProjectCounts = Field(default_factory=ProjectCounts)
-    goal_id: str = Field(..., min_length=1)
+    goal_id: Optional[str] = None
+    # True for the one Default Project: always active, and it refuses edits, transitions and archive.
+    is_default: bool = False
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -182,10 +185,12 @@ class TaskCreate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
-    goal_id: str = Field(..., min_length=1)
+    # In a Project the Task takes the Project's Goal. In the Default Project it has this Goal or none.
+    goal_id: Optional[str] = Field(None, min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
-    project_id: str = Field(..., min_length=1)
+    # Without a Project the Task goes into the Default Project.
+    project_id: Optional[str] = Field(None, min_length=1)
     evidence: Optional[List[Dict[str, Any]]] = None
     # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
     status: Literal["backlog", "ready", "cancelled"] = "backlog"
@@ -247,7 +252,7 @@ class TaskResponse(BaseModel):
 
         return public_task({"transitions": value})["transitions"]
 
-    goal_id: str = Field(..., min_length=1)
+    goal_id: Optional[str] = None
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: Optional[str] = None

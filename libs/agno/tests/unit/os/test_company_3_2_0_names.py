@@ -903,7 +903,10 @@ def test_the_3_2_0_filter_is_refused_and_not_ignored(company_client, path):
 def test_the_goal_filter_narrows_the_list(company_client):
     listed = company_client.get("/company/projects", params={"goal_id": "docs"}).json()
     assert listed["meta"]["total_count"] == 1
-    assert company_client.get("/company/projects").json()["meta"]["total_count"] == 2
+    # Unfiltered, the list also holds the Default Project, which has no Goal.
+    everything = company_client.get("/company/projects").json()
+    assert everything["meta"]["total_count"] == 3
+    assert [project["name"] for project in everything["data"] if project["is_default"]] == ["Default"]
 
 
 def test_purpose_in_a_goal_body_is_refused_and_not_dropped(company_client):
