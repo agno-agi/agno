@@ -356,9 +356,10 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
     run_id = starts[0].json()["run_id"]
     job = await worker.store.get_job(run_id)
     payload = json.loads(job["payload"]["input"])
-    assert set(payload) == {"brief", "wiki", "evidence", "execution_context"}
+    # An executor other than Mini Agent receives no wiki page and no Goal page.
+    assert set(payload) == {"brief", "evidence", "execution_context"}
     assert payload["execution_context"]["stage"] == "accepted_task_execution"
-    assert len(payload["wiki"]) == 4 and payload["evidence"][0]["hash"] == "abc"
+    assert payload["evidence"][0]["hash"] == "abc"
     assert "never-forward" not in job["payload"]["input"]
     assert job["idempotency_key"] == f"company:{value['id']}:1" and job["max_attempts"] == 2
     assert (await execute(worker))["status"] == "completed"

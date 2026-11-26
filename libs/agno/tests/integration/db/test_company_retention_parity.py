@@ -20,6 +20,7 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
 from agno.registry import Registry
+from agno.registry._reserved import MINI_AGENT_ID
 from agno.run.authorization import authorization_scope
 
 
@@ -257,7 +258,8 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         assert (await client.post("/company/tasks/0/runs")).status_code == 404
     active = await call(manager, "get_task", "open")
-    context = json.loads(await _task_input(manager, active))
+    # Only Mini Agent's input carries pages.
+    context = json.loads(await _task_input(manager, {**active, "executor_type": "agent", "executor_id": MINI_AGENT_ID}))
     assert not any(page["path"] == "summary.md" for page in context["wiki"])
     assert (await call(manager, "read_wiki", goal["id"], "brief.md")).content == brief.content
     assert (await call(manager, "read_wiki", goal["id"], "status.md")).content == status_page.content
@@ -484,7 +486,7 @@ async def test_completion_proposal_does_not_reintroduce_archived_task_context(ar
     result = await call(manager, "refresh", goal["id"])
     assert result["archived_tasks"] == ["archived-task-private-detail"]
     assert result["completion_proposals"][0]["project_id"] == project["id"]
-    context = await _task_input(manager, current)
+    context = await _task_input(manager, {**current, "executor_type": "agent", "executor_id": MINI_AGENT_ID})
     assert "archived-task-private-detail" not in context
     assert "Old Task detail" not in context
 

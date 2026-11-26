@@ -633,10 +633,16 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
     from agno.company.files import _always_loaded
 
-    # Company-wide read visibility. No Source credentials, Goal metadata, other Tasks or
-    # caller-supplied runtime state are forwarded. Every other file is read on request.
-    pages = await _always_loaded(manager, task["goal_id"])
-    payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
+    # No Source credentials, Goal metadata, other Tasks or caller-supplied runtime state are forwarded.
+    payload: Dict[str, Any] = {"brief": task.get("brief")}
+    # Only Mini Agent receives the company wiki and the Goal's brief and status. Any other executor may
+    # send its input outside AgentOS, so the pages people save do not reach it; its brief carries what it needs.
+    if (task.get("executor_type"), task.get("executor_id")) == ("agent", MINI_AGENT_ID):
+        payload["wiki"] = await _always_loaded(manager, task["goal_id"])
+    else:
+        # Reading the pages also refuses a Task whose Goal is gone. Keep that refusal without reading a page.
+        await _call(manager, "get_wiki", task["goal_id"])
+    payload["evidence"] = task.get("evidence") or []
     feedback = _review_feedback(task)
     if feedback:
         payload["review_feedback"] = feedback

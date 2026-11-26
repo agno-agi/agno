@@ -1182,6 +1182,7 @@ def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypat
     from agno.company.execution import _task_input
     from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS
     from agno.company.manager import CompanyManager
+    from agno.registry._reserved import MINI_AGENT_ID
 
     task = system.proposal()
     manager = CompanyManager(system.db, system.os.registry)
@@ -1197,6 +1198,8 @@ def test_a_tasks_input_reads_no_page_after_the_budget_is_spent(system, monkeypat
         return original(self, goal_id, path)
 
     monkeypatch.setattr(CompanyManager, "read_wiki", counted)
+    # Only Mini Agent's input carries pages.
+    task = {**task, "executor_type": "agent", "executor_id": MINI_AGENT_ID}
     pages = json.loads(asyncio.run(_task_input(manager, task)))["wiki"]
     loaded = [page for page in pages if "content" in page]
     named = [page for page in pages if "content" not in page]

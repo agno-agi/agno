@@ -280,9 +280,12 @@ def test_the_input_of_a_task_with_no_goal_carries_the_company_wiki_only(system):
     loose = manager.create_task(title="Fix the typo", brief="Change 'recieve' to 'receive'.")
     tagged = manager.create_task(title="A stray finding", goal_id=goal["id"])
 
-    pages = json.loads(asyncio.run(_task_input(manager, loose)))["wiki"]
+    # Only Mini Agent's input carries pages.
+    mini = {"executor_type": "agent", "executor_id": "miniagent"}
+    assert "wiki" not in json.loads(asyncio.run(_task_input(manager, loose)))
+    pages = json.loads(asyncio.run(_task_input(manager, {**loose, **mini})))["wiki"]
     assert pages and {page["namespace"] for page in pages} == {"company"}
-    with_goal = json.loads(asyncio.run(_task_input(manager, tagged)))["wiki"]
+    with_goal = json.loads(asyncio.run(_task_input(manager, {**tagged, **mini})))["wiki"]
     assert [page["file"] for page in with_goal[:2]] == [
         f"goals/{goal['id']}/brief.md",
         f"goals/{goal['id']}/status.md",

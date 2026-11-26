@@ -63,6 +63,51 @@ After adding a Task that is not started, Super Agent offers once to start it. In
 four runs on that wording, seven of eight replies made the offer ("Ask me to start
 it when you're ready"), one only said the Task was not started, and no added Task
 was started before the person said yes.
+# Only Mini Agent receives wiki and Goal pages in a Task's input — November 26, 2026
+
+Branch: `fix/company-task-wiki-mini-agent-only`. Run on a new, empty PostgreSQL
+database passed as `COMPANY_DB_URL` and `COMPANY_QUEUE_DB_URL`.
+
+### 06_execute_tasks.py
+
+**Status:** PASS
+
+**Description:** A workflow executes an accepted Task. Its step now asserts the
+input holds `brief`, `evidence` and `execution_context` and no `wiki` key.
+
+**Result:** The Task completed and waits for review; the duplicate start returned
+the first run. No model call.
+
+---
+
+### 16_company_file_tree.py
+
+**Status:** PASS
+
+**Description:** Builds the input of one Task twice: for a named agent and for
+Mini Agent.
+
+**Result:** The named agent's input holds `brief` and `evidence` only, and none
+of the Goal brief's text. Mini Agent's input loads the Goal's `brief.md` and
+`status.md`, then `wiki/brief.md`, `wiki/status.md` and `wiki/priorities.md`, as
+before. No model call.
+
+---
+
+### Real run: one Task for a plain agent, one for Mini Agent
+
+**Status:** PASS
+
+**Description:** A script outside the cookbook, with `gpt-5.6-luna`: a company
+page `wiki/people.md` and the Goal's `status.md` each hold a marker string. Two
+Backlog Tasks are started through `POST /company/tasks/{id}/runs`, one naming a
+plain agent and one naming Mini Agent. The input is read from each stored run.
+
+**Result:** Both runs completed and both Tasks reached In review. The plain
+agent's stored input is 715 characters with the keys `brief`, `evidence` and
+`execution_context`, and neither marker. Mini Agent's stored input is 1,396
+characters, lists five pages and holds both markers. The same script on `main`
+gives the plain agent the 1,396-character input with both markers.
 
 ---
 
