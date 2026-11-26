@@ -2,8 +2,9 @@
 state, and record a person's decisions.
 
 Work a person asks for in chat is created accepted, with that person recorded as the accepter:
-the ask is the acceptance. Starting reuses the Company start route's checks, duplicate handling
-and queue path, under the calling user's own authority. The decision tools approve a Project,
+the ask is the acceptance. A message to a Task that has run returns it to Ready and starts its next
+attempt in one step, on the same ground. Starting reuses the Company start route's checks, duplicate
+handling and queue path, under the calling user's own authority. The decision tools approve a Project,
 accept Tasks and review a finished one. Each decision pauses the run until the chatting person
 confirms it, runs under that person's permissions, and records that person on the transition.
 Two more tools turn a Routine's auto-accept on, with the same confirmation, or off.
@@ -174,6 +175,7 @@ class CompanyTaskTools(Toolkit):
             "add_company_task",
             "move_company_task",
             "start_company_task",
+            "message_company_task",
             "get_company_task_status",
             "approve_company_project",
             "accept_company_task",
@@ -499,6 +501,152 @@ class CompanyTaskTools(Toolkit):
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
         return _receipt("Queued", title, task_id, response)
+
+    def message_company_task(
+        self, task_id: str, message: str, context: _OptionalContext = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Send the person's message to a Company Task that has run, and start its next attempt with it.
+
+        Args:
+            task_id: The Task to message: one waiting for review, or one whose last run failed or was cancelled.
+            message: What the person asked for, in their words.
+            context: More for the run to read beside the brief; null attaches nothing.
+        """
+        return "Messaging a Task needs an asynchronous run. Send the Task back from AgentOS instead."
+
+    async def amessage_company_task(
+        self, task_id: str, message: str, context: _OptionalContext = None, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Send the person's message to a Company Task that has run, and start its next attempt with it.
+        The Task continues in its own session with its earlier work in view, and its executor receives
+        the message as the person's reply to its last result. The run does not pause: the person's
+        request in this conversation is the decision.
+
+        Call this when the person answers a finished Task's question, picks one of its options, or
+        asks it for changes or additions, such as "tell it to add a section" or "have it drop that
+        restriction". It takes a Task waiting for review, and one whose last run failed or was
+        cancelled. A Task that is still running is refused and nothing is queued or kept for later:
+        tell the person, who asks again when its run has ended. To complete a Task use review_company_task; to
+        retry a failed run unchanged use start_company_task. The turn does not end: the result is a
+        receipt, not the work.
+
+        Args:
+            task_id: The Task to message.
+            message: What the person asked for, in their words, addressed to the Task's executor.
+            context: More for the run to read beside the brief; null attaches nothing. CONTEXT_KINDS
+        """
+        from dataclasses import replace
+
+        from agno.company.context import read_permissions
+        from agno.company.execution import _call, _project_run_block
+        from agno.company.routines import _manager_call
+        from agno.company.sandbox import _is_sandboxed
+        from agno.db.schemas.tasks import task_next_attempt
+        from agno.os.routers.company.runs import _StartCaller, _TaskStarter
+        from agno.registry._reserved import MINI_AGENT_ID
+        from agno.run.authorization import authorization_scope
+        from agno.tools.company import _scoped_user
+
+        async def call(agent_os: Any) -> str:
+            authority, user_id = self._person(agent_os, _agno_run_context, "message a Company Task")
+            text = (message or "").strip()
+            if not text:
+                return "Not sent: the message is empty."
+            app = getattr(agent_os, "_company_app", None)
+            if app is None:
+                return "Not sent: Company execution is not running here."
+            if authority is not None:
+                await authority.arequire("tasks", "write")
+                # The start route's own requirement, checked before anything is recorded.
+                await authority.arequire("wiki", "read")
+                # Attaching a reference asks for the permission that reads it.
+                for resource, action in read_permissions(context):
+                    await authority.arequire(resource, action)
+            starter = _TaskStarter(agent_os)
+            # Where users are isolated a person reaches only their own Tasks.
+            owner = _scoped_user(_agno_run_context, _user_isolation(agent_os))
+            value = await _call(starter.db, "get_task", task_id, user_id=owner)
+            if value is None:
+                return "Not sent: Task not found"
+            title = value.get("title") or task_id
+            status = value["status"]
+            ended = status == "in_progress" and (value.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+            if status == "in_progress" and not ended:
+                return (
+                    f"Not sent: '{title}' is still running. Nothing was interrupted and nothing is queued: "
+                    "the person asks again when its run has ended."
+                )
+            if status == "backlog":
+                return f"Not sent: '{title}' is a proposal that has not run. Edit its brief instead."
+            if status == "ready":
+                return (
+                    f"Not sent: '{title}' is accepted and not started, so it has no result to answer. "
+                    "Edit its brief, or start it with start_company_task."
+                )
+            if status != "in_review" and not ended:
+                return f"Not sent: '{title}' is {status}, and a message does not reopen a closed Task."
+            # The return to Ready is a fresh acceptance of the same executor, or of Mini Agent when the
+            # Task names none: the person must be allowed to run that executor themselves.
+            kind, name = value.get("executor_type"), value.get("executor_id")
+            if name is None:
+                kind, name = "agent", MINI_AGENT_ID
+            executor = {"executor_type": kind, "executor_id": name}
+            await _StartCaller.for_authority(app, authority, user_id).require_accept(starter.endpoint(executor))
+            if _is_sandboxed(starter.executor(executor)):
+                # Work for an executor that pushes code is confirmed by the person, as when it is added.
+                confirmed = (
+                    "send it back with review_company_task, which pauses for their confirmation, then start it"
+                    if status == "in_review"
+                    else "retry it unchanged with start_company_task, or send it back from the Company pages"
+                )
+                return (
+                    f"Not sent: {kind} {name} runs in a sandbox and can push code, so the person confirms "
+                    f"what '{title}' is asked to do: {confirmed}."
+                )
+            # What the start would refuse is refused before the Task leaves its stage.
+            starter.worker(app)
+            blocked = await _project_run_block(starter.db, value)
+            if blocked:
+                return f"Not sent: {blocked}"
+            saved = replace(authority, enforce_tools=False) if authority is not None else None
+            with authorization_scope(lambda: saved):
+                if context:
+                    # A reference that names nothing is refused here, before the Task changes.
+                    value = await _manager_call(
+                        starter.manager, "change_task_context", task_id, add=context, user_id=user_id
+                    )
+                record = await _manager_call(
+                    starter.manager,
+                    "transition_task",
+                    task_id=task_id,
+                    target="ready",
+                    # The reason of a return to Ready is what the next attempt is given as the person's reply.
+                    reason=text,
+                    user_id=owner,
+                    accepted_by=user_id,
+                    expected_updated_at=value["updated_at"],
+                    # Seconds cannot tell two writes in one second apart. The stage and the run can.
+                    expected_status=status,
+                    expected_job_id=value.get("job_id"),
+                    **executor,
+                )
+            if record is None:
+                attached = " The context was attached." if context else ""
+                return f"Not sent: '{title}' changed while the message was being sent.{attached} Read it again."
+            link_task(_agno_run_context, record)
+            attempt = task_next_attempt(record)
+            try:
+                started = await self._start(agent_os, app, authority, user_id, _agno_run_context, task_id)
+            except Exception as exc:
+                started = f"Not started: {exc}"
+            if started.startswith("Not "):
+                return (
+                    f"The message is recorded on '{title}' (Task {task_id}) and it is Ready, but its run did "
+                    f"not start. {started} Start it with start_company_task: the message goes with it."
+                )
+            return f"Sent the message to '{title}' as attempt {attempt}, in the Task's own session. {started}"
+
+        return await self._decide(call)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:
         """Read a Company Task's saved state, latest run and recorded evidence without waiting for it.
@@ -1091,6 +1239,5 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
     return f"'{title}' already has this attempt, now {status} {run}."
 
 
-CompanyTaskTools.aadd_company_task.__doc__ = (CompanyTaskTools.aadd_company_task.__doc__ or "").replace(
-    "CONTEXT_KINDS", _CONTEXT_KINDS
-)
+for _tool in (CompanyTaskTools.aadd_company_task, CompanyTaskTools.amessage_company_task):
+    _tool.__doc__ = (_tool.__doc__ or "").replace("CONTEXT_KINDS", _CONTEXT_KINDS)
