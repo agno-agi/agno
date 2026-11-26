@@ -6,28 +6,35 @@ person's authority. The route puts the run on the durable queue when it is on, a
 task in the server's memory when it is not. The tool returns a receipt and the turn goes on.
 
 The run is recorded in the conversation's linked work, and stores which conversation asked for it.
+While it is going, no other run of that component may start from the conversation, in the turn or in
+the background: nothing else stops two runs from writing one session at once.
 """
 
 import asyncio
 import json
-from dataclasses import replace
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
 from weakref import ReferenceType, ref
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
 from agno.os.manager.linked_work import (
+    _RUN_LIVE,
+    _UNREAD,
     RUN_STATUS_MEANING,
     _entries,
+    _run_phase,
+    aget_stored_run,
+    get_stored_run,
     link_run,
     run_entry,
+    run_holds_session,
     run_state,
     stored_run,
 )
 from agno.registry._reserved import RESERVED_MANAGER_IDS
 from agno.run.authorization import requires_permission
-from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools
+from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools, _slugify
 from agno.utils.log import logger
 
 # The most of a run's result the check tool returns. A longer result is cut, and says so.
@@ -68,11 +75,16 @@ class BackgroundRunTools(StudioRunnerTools):
     def _app(self) -> Any:
         return getattr(self._agent_os(), "_manager_app", None)
 
-    def _run_store(self, db_id: Any) -> Any:
-        """The database that stores a component's runs, by its id; the OS database when it is not served."""
+    def _run_stores(self, db_id: Any) -> List[Any]:
+        """The databases that may store a component's runs, or the OS database when none is served.
+
+        AgentOS groups its databases by id, and two handles on one database with different run tables
+        share an id, so a run is looked for in each.
+        """
         agent_os = self._agent_os()
         stores = (getattr(agent_os, "dbs", None) or {}).get(db_id) if db_id else None
-        return stores[0] if stores else getattr(agent_os, "db", None)
+        fallback = getattr(agent_os, "db", None)
+        return list(stores) if stores else ([fallback] if fallback is not None else [])
 
     def _person(self, run_context: Any, app: Any) -> Tuple[Any, Optional[str]]:
         """The chatting person's authority and identity. Raises PermissionError for every other caller."""
@@ -92,28 +104,117 @@ class BackgroundRunTools(StudioRunnerTools):
         find = {"agent": self._agent_for_run, "team": self._team_for_run, "workflow": self._workflow_for_run}
         return find[component_type](component_id, actor=actor)
 
-    async def _session_busy(self, run_context: Any, session_id: str) -> Optional[str]:
-        """The run of this conversation still going in that session, or None.
+    @staticmethod
+    def _going(run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> List[Dict[str, Any]]:
+        """This conversation's background runs that have not been seen to end, among those that match."""
+        return [
+            entry
+            for entry in _entries(run_context)
+            if entry.get("kind") == "run" and not entry.get("ended") and matches(entry)
+        ]
 
-        Nothing stops two runs of an agent, team or workflow from writing one session at once, so a
-        second start is refused here. Only runs this conversation started in the background are
-        counted: a run the server lost is stored as running for ever, and must not close its session.
+    def _holds(self, run_context: Any, entry: Dict[str, Any], row: Any) -> bool:
+        row = stored_run(entry, row, run_context)
+        return row is not None and row is not _UNREAD and run_holds_session(entry, row)
+
+    def _live_run(self, run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> Optional[Dict[str, Any]]:
+        """A background run of this conversation that is still going, read from the store, or None.
+
+        Only runs this conversation started in the background are counted: a run the server lost is
+        stored as running for ever, and must not close its session for ever.
         """
-        for entry in _entries(run_context):
-            if entry.get("kind") != "run" or entry.get("ended") or entry.get("session_id") != session_id:
-                continue
-            row = stored_run(entry, await self._aget_run(entry), run_context)
-            if row is not None and run_state(entry, row) in ("PENDING", "RUNNING"):
-                return entry["id"]
+        for entry in self._going(run_context, matches):
+            if self._holds(run_context, entry, get_stored_run(self._run_stores(entry.get("db_id")), entry["id"])):
+                return entry
         return None
 
-    async def _aget_run(self, entry: Dict[str, Any]) -> Any:
-        store = self._run_store(entry.get("db_id"))
-        if store is None:
+    async def _alive_run(self, run_context: Any, matches: Callable[[Dict[str, Any]], bool]) -> Optional[Dict[str, Any]]:
+        for entry in self._going(run_context, matches):
+            row = await aget_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
+            if self._holds(run_context, entry, row):
+                return entry
+        return None
+
+    @staticmethod
+    def _names(kind: str, identifier: str) -> Callable[[Dict[str, Any]], bool]:
+        """Whether an entry is a run of the component a run tool was asked for, by id, name or slug."""
+        asked = {str(identifier), _slugify(str(identifier))}
+
+        def matches(entry: Dict[str, Any]) -> bool:
+            if entry.get("component_type") != kind:
+                return False
+            known = {str(entry.get("component_id")), _slugify(str(entry.get("name") or ""))}
+            return bool(asked & known) or str(entry.get("name") or "").casefold() == str(identifier).casefold()
+
+        return matches
+
+    @staticmethod
+    def _busy(entry: Optional[Dict[str, Any]]) -> Optional[str]:
+        if entry is None:
             return None
-        if isinstance(store, AsyncBaseDb):
-            return await store.get_run(entry["id"], deserialize=False)
-        return await asyncio.to_thread(store.get_run, entry["id"], deserialize=False)
+        name = entry.get("name") or entry.get("component_id")
+        return json.dumps(
+            {
+                "error": f"Not started: {name} still has background run {entry['id']} going in this "
+                "conversation, and its session takes one run at a time. Wait for it to end."
+            }
+        )
+
+    # The run tools of the turn, refused while a background run of the same component is going. They
+    # enter the same session as that run.
+
+    @requires_permission()
+    def run_agent(self, agent_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None) -> str:
+        busy = self._busy(self._live_run(_agno_run_context, self._names("agent", agent_id)))
+        return busy or super().run_agent(
+            agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    @requires_permission()
+    def run_team(self, team_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None) -> str:
+        busy = self._busy(self._live_run(_agno_run_context, self._names("team", team_id)))
+        return busy or super().run_team(
+            team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    @requires_permission()
+    def run_workflow(
+        self, workflow_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
+    ) -> str:
+        busy = self._busy(self._live_run(_agno_run_context, self._names("workflow", workflow_id)))
+        return busy or super().run_workflow(
+            workflow_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    @requires_permission()
+    async def arun_agent(
+        self, agent_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
+    ) -> str:
+        busy = self._busy(await self._alive_run(_agno_run_context, self._names("agent", agent_id)))
+        return busy or await super().arun_agent(
+            agent_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    @requires_permission()
+    async def arun_team(
+        self, team_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
+    ) -> str:
+        busy = self._busy(await self._alive_run(_agno_run_context, self._names("team", team_id)))
+        return busy or await super().arun_team(
+            team_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    @requires_permission()
+    async def arun_workflow(
+        self, workflow_id: str, message: str, _agno_run_context=None, _agno_agent=None, _agno_team=None
+    ) -> str:
+        busy = self._busy(await self._alive_run(_agno_run_context, self._names("workflow", workflow_id)))
+        return busy or await super().arun_workflow(
+            workflow_id, message, _agno_run_context=_agno_run_context, _agno_agent=_agno_agent, _agno_team=_agno_team
+        )
+
+    async def _aget_run(self, entry: Dict[str, Any]) -> Any:
+        return await aget_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
 
     @requires_permission()
     def start_background_run(
@@ -152,7 +253,7 @@ class BackgroundRunTools(StudioRunnerTools):
         finished. Its state is shown to you on every turn, and check_background_run reads its
         result once it has one. A later run of the same component from this conversation continues
         the same session, so a follow-up is another run of it. A component with a run still going
-        here is refused until that run ends.
+        here is refused until that run ends, in the turn and in the background.
 
         Args:
             component_type (str): agent, team or workflow.
@@ -206,11 +307,9 @@ class BackgroundRunTools(StudioRunnerTools):
             return json.dumps({"error": f"Not started: a run of {name} is already being started here."})
         self._starting.add(session_id)
         try:
-            busy = await self._session_busy(run_context, session_id)
+            busy = self._busy(await self._alive_run(run_context, lambda entry: entry.get("session_id") == session_id))
             if busy is not None:
-                return json.dumps(
-                    {"error": f"Not started: {name} still has run {busy} going in this conversation. Wait for it."}
-                )
+                return busy
             metadata = self._outgoing_metadata(run_context, running, depth, target)
             metadata[REQUESTED_FROM_METADATA_KEY] = _requested_from(run_context, _agno_team)
             run = {"component_type": kind, "component_id": resolved_id, "name": name, "session_id": session_id}
@@ -237,8 +336,9 @@ class BackgroundRunTools(StudioRunnerTools):
 
         response = await enter_run_route(
             app,
-            # The route checks its own tools. It receives the person's grants, as a request of theirs would.
-            replace(authority, enforce_tools=False) if authority is not None else None,
+            # The authority Super Agent's tools run under, as a run in the turn carries it: the person's
+            # permissions are checked on the component's own tools too.
+            authority,
             "POST",
             f"/{run['component_type']}s/{quote(run['component_id'], safe='')}/runs",
             owner=user_id,
@@ -260,7 +360,11 @@ class BackgroundRunTools(StudioRunnerTools):
             return json.dumps({"error": f"Not started: {detail or 'the run was refused'}"})
         status = str(body.get("status") or "PENDING")
         worker = getattr(app.state, "queue_worker", None)
-        durable = worker is not None and await worker.store.get_job(body["run_id"]) is not None
+        try:
+            durable = worker is not None and await worker.store.get_job(body["run_id"]) is not None
+        except Exception:
+            # The run is accepted whatever this lookup does. Unconfirmed, it is not called durable.
+            durable = False
         run = {
             **run,
             "id": body["run_id"],
@@ -296,11 +400,14 @@ class BackgroundRunTools(StudioRunnerTools):
         entry = run_entry(run_context, run_id)
         assert entry is not None
         row = stored_run(entry, row, run_context)
-        if row is None:
-            return json.dumps({"error": f"Run {run_id} is not stored for this conversation."})
+        if row is None or row is _UNREAD:
+            return json.dumps({"error": f"Run {run_id} is not a run you started in this conversation."})
         status = run_state(entry, row)
         kind, component_id = entry["component_type"], entry["component_id"]
-        if status in ("PENDING", "RUNNING", "INTERRUPTED"):
+        if status not in _RUN_LIVE:
+            # Its end is read here, so the next turn does not report it as a change.
+            entry["shown"] = _run_phase(status)
+        if status in _RUN_LIVE:
             # Nothing a run wrote before it ended is its result.
             payload: Dict[str, Any] = {
                 f"{kind}_id": component_id,
@@ -350,10 +457,10 @@ class BackgroundRunTools(StudioRunnerTools):
             authority = _authority(_agno_run_context)
             if authority is not None:
                 authority.require(f"{entry.get('component_type')}s", "run", entry.get("component_id"))
-            store = self._run_store(entry.get("db_id"))
-            if store is None or isinstance(store, AsyncBaseDb):
+            stores = self._run_stores(entry.get("db_id"))
+            if not stores or all(isinstance(store, AsyncBaseDb) for store in stores):
                 return json.dumps({"error": "Reading this run needs an asynchronous run."})
-            return self._checked(_agno_run_context, run_id, store.get_run(run_id, deserialize=False))
+            return self._checked(_agno_run_context, run_id, get_stored_run(stores, run_id))
         except PermissionError as exc:
             return json.dumps({"error": f"Cannot read the run: {exc}"})
         except Exception as exc:
@@ -389,3 +496,8 @@ class BackgroundRunTools(StudioRunnerTools):
         except Exception as exc:
             logger.exception("Failed to read a background run")
             return json.dumps({"error": f"Cannot read the run: {str(exc) or type(exc).__name__}"})
+
+
+# The model is shown the base tools' descriptions: the guard adds nothing to what they say.
+for _name in ("run_agent", "run_team", "run_workflow", "arun_agent", "arun_team", "arun_workflow"):
+    getattr(BackgroundRunTools, _name).__doc__ = getattr(StudioRunnerTools, _name).__doc__

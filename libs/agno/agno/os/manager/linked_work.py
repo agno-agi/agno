@@ -32,10 +32,11 @@ from agno.utils.log import log_warning
 LINKED_WORK_KEY = "linked_work"
 
 # This server process. A run that is not on the durable queue lives in the memory of the process
-# that started it, so one started by another process and still stored as live was interrupted.
+# that started it. Another process cannot tell whether that one still runs: a second worker and a
+# restarted server look the same from here.
 _PROCESS = uuid4().hex
 
-# A stored run status in plain words. INTERRUPTED is never stored: run_state derives it.
+# A stored run status in plain words. UNKNOWN is never stored: run_state derives it.
 RUN_STATUS_MEANING = {
     "PENDING": "queued",
     "RUNNING": "running",
@@ -43,9 +44,16 @@ RUN_STATUS_MEANING = {
     "ERROR": "failed",
     "CANCELLED": "cancelled",
     "PAUSED": "paused for a person",
-    "INTERRUPTED": "interrupted: the server restarted while it ran, and it was not on the durable queue",
+    "UNKNOWN": (
+        "state unknown: stored as running, but it was started without the durable queue on another "
+        "server process, and is lost if that server restarted"
+    ),
 }
-_RUN_ENDED = ("COMPLETED", "ERROR", "CANCELLED", "INTERRUPTED")
+_RUN_ENDED = ("COMPLETED", "ERROR", "CANCELLED")
+_RUN_LIVE = ("PENDING", "RUNNING", "UNKNOWN")
+# How long a run whose state is unknown keeps its session closed to another run. Past it the run is
+# taken as lost, so one server restart cannot close a component to a conversation for ever.
+_UNKNOWN_HOLDS_SECONDS = 3600
 
 # Entries read and listed in one run, newest first.
 _LISTED = 20
@@ -140,39 +148,85 @@ def link_run(run_context: Any, run: Dict[str, Any], status: str = "PENDING") -> 
 
 
 def run_state(entry: Dict[str, Any], row: Dict[str, Any]) -> str:
-    """A stored run's status, or INTERRUPTED for a run the server lost.
+    """A stored run's status, or UNKNOWN for a live run this process cannot vouch for.
 
     Without the durable queue a run is a task in the memory of the server process that started it,
-    and nothing ends its stored row when that process stops. Such a run, started by another process
-    and still stored as queued or running, was interrupted.
+    and nothing ends its stored row when that process stops. Stored as queued or running and started
+    by another process, it may be running on another worker or lost to a restart.
     """
     status = getattr(row.get("status"), "value", row.get("status"))
     status = str(status or "").upper()
     if status in ("PENDING", "RUNNING") and not entry.get("durable") and entry.get("process") != _PROCESS:
-        return "INTERRUPTED"
+        return "UNKNOWN"
     return status
 
 
-def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Optional[Dict[str, Any]]:
-    """The stored row of a listed run, or None when it is not a run of this conversation and person.
+def run_holds_session(entry: Dict[str, Any], row: Dict[str, Any]) -> bool:
+    """Whether a listed run is still going, so that no other run may enter its session."""
+    status = run_state(entry, row)
+    if status == "UNKNOWN":
+        added = entry.get("added_at")
+        return not isinstance(added, (int, float)) or time.time() - added < _UNKNOWN_HOLDS_SECONDS
+    return status in _RUN_LIVE
+
+
+def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Any:
+    """The stored row of a listed run, None when it is gone, or _UNREAD when it is not this caller's to read.
 
     Session state can be sent by a client, so an entry proves nothing. A run this conversation started
-    is stored in the session derived from the conversation, the person and the component.
+    is a top-level run of the named component, stored in the session derived from the conversation,
+    the person and the component. A team keeps its members' runs in its own session, and several
+    people can share one conversation: a row that is another run, or another person's, is left alone.
     """
+    from agno.db.utils import get_run_type
     from agno.tools.studio_runner import StudioRunnerTools
 
     if not isinstance(row, dict):
         return None
+    if "run_data" not in row:
+        # A database that keeps runs inside their session returns the run itself.
+        row = {**row, "run_type": get_run_type(row), "run_data": row}
     kind, component_id = entry.get("component_type"), entry.get("component_id")
     if kind not in ("agent", "team", "workflow") or not isinstance(component_id, str):
-        return None
+        return _UNREAD
     expected = StudioRunnerTools._sub_session_id(run_context, kind, component_id)
-    return row if expected is not None and row.get("session_id") == expected else None
+    mine = (
+        expected is not None
+        and row.get("session_id") == expected
+        and row.get("run_type") == kind
+        and row.get(f"{kind}_id") == component_id
+        and not row.get("parent_run_id")
+    )
+    return row if mine else _UNREAD
+
+
+def get_stored_run(stores: Any, run_id: str) -> Any:
+    """Read a run's row from the first of these databases that holds it. Synchronous databases only."""
+    for store in stores or []:
+        if isinstance(store, AsyncBaseDb):
+            continue
+        row = store.get_run(run_id, deserialize=False)
+        if row is not None:
+            return row
+    return None
+
+
+async def aget_stored_run(stores: Any, run_id: str) -> Any:
+    """Read a run's row from the first of these databases that holds it."""
+    for store in stores or []:
+        if isinstance(store, AsyncBaseDb):
+            row = await store.get_run(run_id, deserialize=False)
+        else:
+            row = await asyncio.to_thread(store.get_run, run_id, deserialize=False)
+        if row is not None:
+            return row
+    return None
 
 
 def _run_phase(status: str) -> str:
-    """A run's state as one comparable value. Queued and running are one state: started, not ended."""
-    return "LIVE" if status in ("PENDING", "RUNNING") else status
+    """A run's state as one comparable value. Queued, running and unknown are one state: started, not
+    known to have ended. Two workers that take turns must not report a change on every message."""
+    return "LIVE" if status in _RUN_LIVE else status
 
 
 def _run_line(entry: Dict[str, Any], row: Dict[str, Any], status: str, changed: bool) -> str:
@@ -180,8 +234,8 @@ def _run_line(entry: Dict[str, Any], row: Dict[str, Any], status: str, changed: 
     if len(name) > _TITLE_LENGTH:
         name = name[: _TITLE_LENGTH - 3] + "..."
     words = RUN_STATUS_MEANING.get(status, status.lower())
-    # A lost run's row was last written while it ran: that time is not when it was interrupted.
-    since = "" if status == "INTERRUPTED" else _since(row)
+    # The row of a run in an unknown state was last written by the process that may be gone.
+    since = "" if status == "UNKNOWN" else _since(row)
     line = (
         f'- Background run of {entry.get("component_type")} "{name}" '
         f"(id {entry.get('component_id')}, run {entry['id']}): {words}{since}."
@@ -235,8 +289,8 @@ class LinkedWork(BaseGuardrail):
     A pre-hook of Super Agent. It refuses nothing: with no list, no permission or a failed read, the
     run goes on without the block, or without the lines that could not be read.
 
-    db holds the Company Tasks, or is None without Company. run_db returns the database that stores a
-    component's runs, by its id.
+    db holds the Company Tasks, or is None without Company. run_db returns the databases that may
+    store a component's runs, by the id they share.
     """
 
     def __init__(
@@ -340,8 +394,8 @@ class LinkedWork(BaseGuardrail):
     async def async_check(self, run_input: Any = None, run_context: Any = None) -> None:
         self._attach(run_context, await self.aread(run_context))
 
-    def _run_store(self, entry: Dict[str, Any]) -> Any:
-        return self.run_db(entry.get("db_id")) if self.run_db is not None else None
+    def _run_stores(self, entry: Dict[str, Any]) -> List[Any]:
+        return list(self.run_db(entry.get("db_id")) or []) if self.run_db is not None else []
 
     def read(self, run_context: Any) -> Optional[str]:
         authority = _caller_authorization(run_context)
@@ -362,8 +416,8 @@ class LinkedWork(BaseGuardrail):
                 if entry.get("kind") == "task":
                     read.append((entry, self.db.get_task(entry["id"], user_id=owner) if tasks_readable else _UNREAD))
                     continue
-                store = self._run_store(entry)
-                if store is None or isinstance(store, AsyncBaseDb):
+                stores = [store for store in self._run_stores(entry) if not isinstance(store, AsyncBaseDb)]
+                if not stores:
                     read.append((entry, _UNREAD))
                     continue
                 try:
@@ -373,7 +427,7 @@ class LinkedWork(BaseGuardrail):
                 except PermissionError:
                     read.append((entry, _UNREAD))
                     continue
-                read.append((entry, stored_run(entry, store.get_run(entry["id"], deserialize=False), run_context)))
+                read.append((entry, stored_run(entry, get_stored_run(stores, entry["id"]), run_context)))
             return self._block(run_context, read)
         except NotImplementedError:
             return None
@@ -401,19 +455,15 @@ class LinkedWork(BaseGuardrail):
                     if isinstance(self.db, AsyncBaseDb):
                         return await self.db.get_task(entry["id"], user_id=owner)
                     return await asyncio.to_thread(self.db.get_task, entry["id"], user_id=owner)
-                store = self._run_store(entry)
-                if store is None:
+                stores = self._run_stores(entry)
+                if not stores:
                     return _UNREAD
                 try:
                     if authority is not None:
                         await authority.arequire(f"{entry.get('component_type')}s", "run", entry.get("component_id"))
                 except PermissionError:
                     return _UNREAD
-                if isinstance(store, AsyncBaseDb):
-                    row = await store.get_run(entry["id"], deserialize=False)
-                else:
-                    row = await asyncio.to_thread(store.get_run, entry["id"], deserialize=False)
-                return stored_run(entry, row, run_context)
+                return stored_run(entry, await aget_stored_run(stores, entry["id"]), run_context)
 
             values = list(await asyncio.gather(*(find(entry) for entry in head)))
             return self._block(run_context, list(zip(head, values)))

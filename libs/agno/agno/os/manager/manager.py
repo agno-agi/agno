@@ -383,7 +383,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
     company_db = agent_os._company_db
     # The work a conversation started is read before each run: its Tasks, and its background runs.
-    linked_work = LinkedWork(company_db, run_db=runner._run_store)
+    linked_work = LinkedWork(company_db, run_db=runner._run_stores)
     if config.access_docs:
         try:
             from agno.tools.mcp import MCPTools

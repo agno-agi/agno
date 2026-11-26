@@ -235,9 +235,14 @@ def test_only_super_agent_has_the_background_tools(plain):
     assert names(_TaskRunTools()) == (RUN_TOOLS, RUN_TOOLS)
     extra = {"start_background_run", "check_background_run"}
     assert names(plain.tools) == (RUN_TOOLS | extra, RUN_TOOLS | extra)
-    # The run tools Super Agent already had are the ones every other user has.
-    for name in RUN_TOOLS:
-        assert plain.tools.functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, name)
+    # Every other user has the shared run tools themselves. Super Agent's are those behind one more
+    # check, and the model is shown the same descriptions.
+    for name in ("run_agent", "run_team", "run_workflow"):
+        for toolkit in (StudioRunnerTools(), _TaskRunTools()):
+            assert toolkit.functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, name)
+            assert toolkit.async_functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, "a" + name)
+        assert getattr(BackgroundRunTools, name).__doc__ == getattr(StudioRunnerTools, name).__doc__
+        assert getattr(BackgroundRunTools, "a" + name).__doc__ == getattr(StudioRunnerTools, "a" + name).__doc__
     assert not plain.tools.async_functions["start_background_run"].stop_after_tool_call
 
 
@@ -336,8 +341,8 @@ def test_the_run_is_the_persons_under_their_authority(system):
     assert stored["user_id"] == "alice"
     authority = SEEN["authority"]
     assert authority.context.principal_id == "alice" and set(authority.context.scopes) == set(SCOPES)
-    # The route receives the person's grants as a request of theirs would: tools check for themselves.
-    assert authority.enforce_tools is False and not authority.scheduled and not authority.service_account
+    # As in a run in the turn, the person's permissions are checked on the component's own tools.
+    assert authority.enforce_tools is True and not authority.scheduled and not authority.service_account
     if job is not None:
         assert job["user_id"] == "alice"
         assert job["payload"]["_agno_authorization"]["context"]["principal_id"] == "alice"
@@ -521,9 +526,7 @@ def test_a_later_run_continues_the_session_and_a_running_one_closes_it(system):
         run_context = system.context()
         first = await system.start(run_context)
         busy = await system.start(run_context)
-        assert busy == {
-            "error": f"Not started: Writer still has run {first['run_id']} going in this conversation. Wait for it."
-        }
+        assert busy == {"error": going(first["run_id"])}
         # Another component of the same conversation is not held up.
         other = await system.start(run_context, "workflow", "investigator")
         assert other.get("started") is True
@@ -568,6 +571,104 @@ def test_two_people_and_two_conversations_get_their_own_sessions(plain):
     assert len(set(scenario(steps))) == 3
 
 
+def test_a_run_in_the_turn_is_refused_while_a_background_run_of_it_is_going(system):
+    async def steps():
+        run_context = system.context()
+        receipt = await system.start(run_context)
+        with authorization_scope(lambda: run_context.authorization):
+            by_id = json.loads(await system.tools.arun_agent("writer", "Shorter", _agno_run_context=run_context))
+            by_name = json.loads(await system.tools.arun_agent("Writer", "Shorter", _agno_run_context=run_context))
+            sync = json.loads(await asyncio.to_thread(system.tools.run_agent, "writer", "Shorter", run_context))
+            # Another component of the conversation still runs in the turn.
+            other = json.loads(await system.tools.arun_team("crew", "Hello", _agno_run_context=run_context))
+            inputs = list(SEEN["inputs"]) if system.queue is None else []
+            await finish(system)
+            after = json.loads(await system.tools.arun_agent("writer", "Shorter", _agno_run_context=run_context))
+        return receipt, by_id, by_name, sync, other, inputs, after
+
+    receipt, by_id, by_name, sync, other, inputs, after = scenario(steps)
+    assert by_id == by_name == sync == {"error": going(receipt["run_id"])}
+    assert other["status"] == "COMPLETED"
+    # The writer was entered once while its background run was going, by that run.
+    assert len(inputs) <= 1
+    assert after["status"] == "COMPLETED" and after["session_id"] == receipt["session_id"]
+
+
+def test_a_run_of_unknown_state_holds_its_session_for_an_hour(plain, monkeypatch):
+    async def steps():
+        run_context = plain.context()
+        first = await plain.start(run_context)
+        monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+        held = await plain.start(run_context)
+        # An hour on, a run whose process cannot be found is taken as lost.
+        run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3601
+        released = await plain.start(run_context)
+        return first, held, released
+
+    first, held, released = scenario(steps)
+    assert held == {"error": going(first["run_id"])}
+    assert released.get("started") is True
+
+
+def test_the_components_own_tools_are_checked_as_in_a_run_in_the_turn(system):
+    from agno.run.authorization import requires_permission
+
+    ran = []
+
+    @requires_permission("components", "write")
+    def publish_component() -> str:
+        """Publish a component."""
+        ran.append("published")
+        return "published"
+
+    def give_tool(agent):
+        agent.model = ScriptedModel([("publish_component", {})])
+        agent.tools = [publish_component]
+
+    give_tool(system.writer)
+
+    async def steps():
+        run_context = system.context()
+        receipt = await system.start(run_context)
+        assert receipt.get("started") is True, receipt
+        if system.queue is not None:
+            await system.work()
+        await await_background_runs(timeout=5)
+        background = list(ran)
+        granted = system.context(session="granted", scopes=[*SCOPES, "components:write"])
+        receipt = await system.start(granted)
+        if system.queue is not None:
+            await system.work()
+        await await_background_runs(timeout=5)
+        return background, list(ran)
+
+    background, with_grant = scenario(steps)
+    # Alice may run the writer and may not write components: the writer's tool refuses her.
+    assert background == []
+    assert with_grant == ["published"]
+
+
+def test_an_accepted_run_is_listed_when_the_queue_cannot_be_asked(tmp_path):
+    value = System(tmp_path, queue=True)
+
+    async def broken(run_id):
+        raise ConnectionError("queue store unavailable")
+
+    async def steps():
+        run_context = value.context()
+        get_job, value.queue.store.get_job = value.queue.store.get_job, broken
+        receipt = await value.start(run_context)
+        value.queue.store.get_job = get_job
+        await finish(value)
+        return receipt, run_context.session_state[LINKED_WORK_KEY]
+
+    receipt, linked = scenario(steps)
+    assert receipt["started"] is True and [entry["id"] for entry in linked] == [receipt["run_id"]]
+    # Unconfirmed, the run is not called durable.
+    assert linked[0]["durable"] is False and "the run is lost" in receipt["note"]
+    value.db.close()
+
+
 # ----------------------------------------------------------------- the block
 
 
@@ -592,6 +693,13 @@ def person(scopes=None, user="alice", run_id="run-1", session="chat"):
     return RunContext(run_id=run_id, session_id=session, user_id=user, authorization=authority, session_state={})
 
 
+def going(run_id, name="Writer"):
+    return (
+        f"Not started: {name} still has background run {run_id} going in this conversation, "
+        "and its session takes one run at a time. Wait for it to end."
+    )
+
+
 def listed_run(run_context, status="RUNNING", durable=True, run_id="r-1", at=None, **fields):
     """A run this conversation started, as its entry and its stored row."""
     session_id = StudioRunnerTools._sub_session_id(run_context, "workflow", "investigator")
@@ -605,11 +713,20 @@ def listed_run(run_context, status="RUNNING", durable=True, run_id="r-1", at=Non
         "durable": durable,
     }
     link_run(run_context, run)
-    return {"run_id": run_id, "session_id": session_id, "status": status, "updated_at": at, **fields}
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "run_type": "workflow",
+        "workflow_id": "investigator",
+        "run_data": {},
+        "status": status,
+        "updated_at": at,
+        **fields,
+    }
 
 
 def block(db, run_context, mode="async"):
-    hook = LinkedWork(None, run_db=lambda db_id: db)
+    hook = LinkedWork(None, run_db=lambda db_id: [db])
     hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
     return "\n".join(attached(run_context))
 
@@ -676,23 +793,39 @@ def test_queued_to_running_is_not_a_change_and_a_pause_stays(mode):
     assert block(db, run_context, mode) == LINE + "paused for a person."
 
 
+UNKNOWN = (
+    "state unknown: stored as running, but it was started without the durable queue on another "
+    "server process, and is lost if that server restarted"
+)
+
+
 @modes
-def test_a_run_the_server_lost_is_reported_as_interrupted(mode, monkeypatch):
+def test_a_run_another_process_started_is_not_called_interrupted(mode, monkeypatch):
     run_context = person()
-    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1", at=int(time.time()))
+    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1")
     queued = listed_run(run_context, "RUNNING", durable=True, run_id="r-2")
     db = Runs(memory, queued)
     assert CHANGED not in block(db, run_context, mode)
-    # The server restarted: this is another process, and the stored rows still say running.
+    # Another worker serves this turn, or the server restarted: from here the two look the same.
     monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
     run_context.run_id = "run-2"
-    going = '- Background run of workflow "Investigator" (id investigator, run r-2): running.'
-    assert sorted(block(db, run_context, mode).split("\n")) == [
-        f"{LINE}interrupted: the server restarted while it ran, and it was not on the durable queue. {CHANGED}",
-        going,
+    lines = sorted(block(db, run_context, mode).split("\n"))
+    assert lines == [
+        f"{LINE}{UNKNOWN}.",
+        '- Background run of workflow "Investigator" (id investigator, run r-2): running.',
     ]
+    # It is not taken as ended: it stays listed, and its real end is announced by whoever reads it.
+    assert not any(entry.get("ended") for entry in run_context.session_state[LINKED_WORK_KEY])
+    memory["status"] = "COMPLETED"
     run_context.run_id = "run-3"
-    assert block(db, run_context, mode) == going
+    assert f"{LINE}finished. {CHANGED}" in block(db, run_context, mode).split("\n")
+    # Two workers taking turns do not report a change on each message.
+    memory["status"] = "RUNNING"
+    run_context.session_state[LINKED_WORK_KEY][0]["shown"] = "LIVE"
+    for turn, process in enumerate(["first", "another-process", "first"]):
+        monkeypatch.setattr(linked_work, "_PROCESS", process)
+        run_context.run_id = f"run-{turn + 4}"
+        assert CHANGED not in block(db, run_context, mode)
 
 
 @modes
@@ -712,7 +845,50 @@ def test_an_entry_a_client_sent_shows_nothing_of_another_conversation(mode):
     mine = person()
     mine.session_state[LINKED_WORK_KEY] = [dict(entry) for entry in theirs.session_state[LINKED_WORK_KEY]]
     assert block(Runs(stored), mine, mode) == ""
-    assert mine.session_state[LINKED_WORK_KEY] == []
+    # It is left alone, not removed: in a shared conversation it is another person's own entry.
+    assert [entry["id"] for entry in mine.session_state[LINKED_WORK_KEY]] == ["r-1"]
+
+
+@modes
+def test_one_persons_message_keeps_another_persons_run_in_a_shared_conversation(mode):
+    alice, bob = person(), person(user="bob")
+    stored = listed_run(alice)
+    db = Runs(stored)
+    # One conversation, one list: Bob's turn reads the state Alice's turn saved.
+    bob.session_state = alice.session_state
+    assert block(db, bob, mode) == ""
+    assert block(db, alice, mode) == LINE + "running."
+    stored["status"] = "COMPLETED"
+    bob.run_id, alice.run_id = "run-2", "run-3"
+    assert block(db, bob, mode) == ""
+    assert block(db, alice, mode) == f"{LINE}finished. {CHANGED}"
+
+
+@modes
+def test_a_member_run_in_a_teams_session_is_not_the_teams_run(mode):
+    run_context = person()
+    stored = listed_run(run_context, "COMPLETED")
+    # A row of that session that another component wrote, or that a parent run started.
+    others = (
+        {"run_type": "agent", "agent_id": "member", "workflow_id": None},
+        {"run_type": "agent", "agent_id": "investigator"},
+        {"parent_run_id": "r-0"},
+    )
+    for other in others:
+        assert block(Runs({**stored, **other}), run_context, mode) == ""
+    wrong_id = {**stored, "workflow_id": "another"}
+    assert block(Runs(wrong_id), run_context, mode) == ""
+    assert block(Runs(stored), run_context, mode) == f"{LINE}finished. {CHANGED}"
+
+
+@modes
+def test_a_run_is_found_in_whichever_database_of_that_id_holds_it(mode):
+    run_context = person()
+    stored = listed_run(run_context)
+    first, second = Runs(), Runs(stored)
+    hook = LinkedWork(None, run_db=lambda db_id: [first, second])
+    hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
+    assert attached(run_context) == [LINE + "running."]
 
 
 @modes
@@ -736,7 +912,7 @@ def test_tasks_and_runs_share_one_block(plain):
     stored = listed_run(run_context)
     link_task(run_context, {"id": "task-1", "status": "ready"})
     db = Both(stored)
-    LinkedWork(db, run_db=lambda db_id: db).check(run_context=run_context)
+    LinkedWork(db, run_db=lambda db_id: [db]).check(run_context=run_context)
     assert attached(run_context) == ['- Task "Draft" (id task-1, writer): accepted, not started.', LINE + "running."]
 
 
@@ -811,7 +987,7 @@ def test_check_refuses_a_run_this_conversation_did_not_start(plain):
     assert refusal == {
         "error": f"Run {run_id} was not started from this conversation. Only runs started here can be read."
     }
-    assert forged == {"error": f"Run {run_id} is not stored for this conversation."}
+    assert forged == {"error": f"Run {run_id} is not a run you started in this conversation."}
 
 
 def checked(run_context, stored, mode="async", **row):
@@ -826,7 +1002,6 @@ def checked(run_context, stored, mode="async", **row):
 
 def run_data(status, content="Found it.", **fields):
     return {
-        "run_type": "workflow",
         "status": status,
         "run_data": {"run_id": "r-1", "workflow_id": "investigator", "status": status, "content": content, **fields},
     }
@@ -869,13 +1044,44 @@ def test_a_failed_and_a_cancelled_run_say_so(mode, keep_standins):
 
 
 @modes
-def test_a_lost_run_is_reported_as_interrupted_with_no_result(mode, keep_standins, monkeypatch):
+def test_a_run_another_process_started_is_checked_as_unknown_with_no_result(mode, keep_standins, monkeypatch):
     run_context = person()
     stored = listed_run(run_context, "RUNNING", durable=False)
     monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
     result = checked(run_context, stored, mode, **run_data("RUNNING", "half a thought"))
-    assert result["status"] == "INTERRUPTED" and "content" not in result
-    assert result["meaning"].startswith("interrupted: the server restarted while it ran")
+    assert result["status"] == "UNKNOWN" and "content" not in result
+    assert result["meaning"] == UNKNOWN
+
+
+@modes
+def test_a_result_read_by_the_check_is_not_announced_again(mode, keep_standins):
+    run_context = person()
+    stored = {**listed_run(run_context, "COMPLETED"), **run_data("COMPLETED")}
+    assert checked(run_context, stored, mode)["content"] == "Found it."
+    run_context.run_id = "run-2"
+    assert block(Runs(stored), run_context, mode) == ""
+    assert run_context.session_state[LINKED_WORK_KEY][0]["ended"] is True
+
+
+@modes
+def test_a_run_stored_inside_its_session_is_read_too(mode, keep_standins):
+    # A database that keeps runs in their session returns the run itself, with no run_data around it.
+    run_context = person()
+    entry_row = listed_run(run_context, "COMPLETED")
+    run = {
+        "run_id": "r-1",
+        "session_id": entry_row["session_id"],
+        "workflow_id": "investigator",
+        "status": "COMPLETED",
+        "content": "Found it.",
+    }
+    tools = BackgroundRunTools(type("OS", (), {"dbs": {}, "db": Runs(run)})())
+    with authorization_scope(lambda: run_context.authorization):
+        if mode == "sync":
+            result = json.loads(tools.check_background_run("r-1", _agno_run_context=run_context))
+        else:
+            result = json.loads(asyncio.run(tools.acheck_background_run("r-1", _agno_run_context=run_context)))
+    assert (result["status"], result["content"]) == ("COMPLETED", "Found it.")
 
 
 @modes
@@ -903,7 +1109,8 @@ def test_a_paused_run_reports_what_it_waits_for(tmp_path):
         run_context = value.context()
         receipt = await value.start(run_context)
         await await_background_runs(timeout=5)
-        return await value.check(run_context, receipt["run_id"]), await value.block(run_context)
+        lines = await value.block(run_context)
+        return await value.check(run_context, receipt["run_id"]), lines
 
     result, lines = scenario(steps)
     assert result["status"] == "PAUSED" and result["meaning"] == "paused for a person"
