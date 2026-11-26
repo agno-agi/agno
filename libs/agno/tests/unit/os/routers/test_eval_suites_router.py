@@ -5,6 +5,7 @@ persists one eval run of type ``suite`` whose ``eval_data`` is the ``SuiteResult
 so the pass rate shows up in ``GET /eval-runs`` like any other eval.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
+from agno.db.base import BaseDb
 from agno.db.in_memory import InMemoryDb
 from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.eval import Case, EvalSuite, SuiteResult
@@ -495,6 +497,67 @@ def test_run_eval_suite_from_body_strips_runtime_metadata_keys(client):
     assert seen[0].metadata == {"team": "ok"}
 
 
+def test_run_eval_suite_in_background_stores_a_running_row_then_the_result(client, db):
+    """With background=true the run is answered 202 as RUNNING and owned by the caller; the cases run
+    after the response and the same row then holds the result."""
+    with patch.object(Agent, "arun", side_effect=_tool_run):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["eval_data"] == {"summary": {"total": 2, "passed": 0, "failed": 0, "status": "RUNNING"}, "cases": []}
+    assert body["user_id"] == "alice"
+
+    # TestClient runs the background task before returning, so the row already holds the result.
+    finished = client.get(f"/eval-runs/{body['id']}", headers=auth_header("alice")).json()
+    assert finished["eval_data"]["summary"] == {"total": 2, "passed": 1, "failed": 1, "status": "FAIL"}
+    assert [case["name"] for case in finished["eval_data"]["cases"]] == ["multiplies", "adds"]
+    rows, total = db.get_eval_runs(deserialize=False, eval_type=["suite"])
+    assert total == 1
+    assert client.get(f"/eval-runs/{body['id']}", headers=auth_header("bob")).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "failure,error", [(RuntimeError("judge unavailable"), "judge unavailable"), (asyncio.CancelledError(), "cancelled")]
+)
+def test_run_eval_suite_in_background_stores_an_error_when_the_run_fails(client, failure, error):
+    """A failed or cancelled background run leaves the row as ERROR, never RUNNING."""
+    with patch("agno.os.routers.evals.evals.arun_cases", side_effect=failure):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 202
+    finished = client.get(f"/eval-runs/{resp.json()['id']}", headers=auth_header("alice")).json()
+    assert finished["eval_data"]["summary"]["status"] == "ERROR"
+    assert finished["eval_data"]["error"] == error
+
+
+def test_run_eval_suite_from_body_in_background_is_answered_202(client):
+    case = {"name": "multiplies", "agent_id": "assistant", "input": "10 times 5", "expected_tool_calls": ["multiply"]}
+    with patch.object(Agent, "arun", side_effect=_tool_run):
+        resp = client.post(
+            "/eval-suites?background=true", json=_posted_suite(cases=[case]), headers=auth_header("alice")
+        )
+    assert resp.status_code == 202
+    assert resp.json()["eval_data"]["summary"]["status"] == "RUNNING"
+    finished = client.get(f"/eval-runs/{resp.json()['id']}", headers=auth_header("alice")).json()
+    assert finished["eval_data"]["summary"]["status"] == "PASS"
+
+
+def test_run_eval_suite_in_background_still_refuses_an_unknown_tag(client, db):
+    resp = client.post(
+        "/eval-suites/assistant-quality/runs?background=true", json={"tag": "nope"}, headers=auth_header("alice")
+    )
+    assert resp.status_code == 400
+    assert db.get_eval_runs(deserialize=False, eval_type=["suite"])[1] == 0
+
+
+def test_registered_eval_suite_runs_on_a_copy_of_the_agent(client, suite):
+    """The cases run on a per-request copy, as every other run route does, never on the shared instance."""
+    with patch.object(Agent, "arun", autospec=True, side_effect=_tool_run) as arun:
+        resp = client.post("/eval-suites/assistant-quality/runs", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 200
+    ran_on = {id(call.args[0]) for call in arun.call_args_list}
+    assert ran_on and id(suite.cases[0].agent) not in ran_on
+
+
 def test_run_eval_suite_from_body_does_not_store_case_dependencies(client, db):
     """A run's dependencies are never stored, so they stay out of the eval_input GET /eval-runs returns."""
     case = {
@@ -513,10 +576,23 @@ def test_run_eval_suite_from_body_does_not_store_case_dependencies(client, db):
     assert stored_case["session_state"] == {"step": 1}
 
 
-def test_registered_eval_suite_runs_on_a_copy_of_the_agent(client, suite):
-    """The cases run on a per-request copy, as every other run route does, never on the shared instance."""
-    with patch.object(Agent, "arun", autospec=True, side_effect=_tool_run) as arun:
-        resp = client.post("/eval-suites/assistant-quality/runs", json={}, headers=auth_header("alice"))
-    assert resp.status_code == 200
-    ran_on = {id(call.args[0]) for call in arun.call_args_list}
-    assert ran_on and id(suite.cases[0].agent) not in ran_on
+def test_run_eval_suite_in_background_needs_a_db_that_can_update_the_run(client, db):
+    """A db without update_eval_run_data could never replace the running row, so background is refused."""
+    with patch.object(InMemoryDb, "update_eval_run_data", BaseDb.update_eval_run_data):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 501
+    assert db.get_eval_runs(deserialize=False, eval_type=["suite"])[1] == 0
+
+
+def test_run_eval_suite_in_background_fails_when_the_running_row_is_not_stored(client):
+    with patch.object(InMemoryDb, "create_eval_run", return_value=None):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 500
+
+
+def test_run_eval_suite_in_background_fails_when_the_owner_is_not_stored(client, db):
+    """The poll is scoped to the owner, so a background run whose owner was not stored is removed and refused."""
+    with patch.object(InMemoryDb, "update_eval_run_user_id", side_effect=RuntimeError("db down")):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 500
+    assert db.get_eval_runs(deserialize=False, eval_type=["suite"])[1] == 0

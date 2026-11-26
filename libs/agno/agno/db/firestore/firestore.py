@@ -3467,6 +3467,29 @@ class FirestoreDb(BaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="evals")
+            if not collection_ref:
+                return
+
+            docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
+            doc_ref = next((doc.reference for doc in docs), None)
+            if doc_ref is None:
+                return
+
+            doc_ref.update({"eval_data": eval_data, "updated_at": int(time.time())})
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.

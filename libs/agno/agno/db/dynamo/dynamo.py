@@ -3764,6 +3764,36 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to set owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        if not self.eval_table_name:
+            return
+
+        try:
+            self.client.update_item(
+                TableName=self.eval_table_name,
+                Key={"run_id": {"S": eval_run_id}},
+                UpdateExpression="SET eval_data = :eval_data, updated_at = :updated_at",
+                # Avoid upserting a phantom item when the run doesn't exist.
+                ConditionExpression="attribute_exists(run_id)",
+                ExpressionAttributeValues={
+                    ":eval_data": {"S": json.dumps(eval_data)},
+                    ":updated_at": {"N": str(int(time.time()))},
+                },
+            )
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return
+
+        except Exception as e:
+            log_error(f"Failed to update eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.

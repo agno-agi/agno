@@ -168,11 +168,12 @@ def test_eval_reads_accept_user_id(module_path: str, class_name: str, method_nam
 
 
 @pytest.mark.parametrize("module_path,class_name", _EVAL_ADAPTERS)
-def test_update_eval_run_user_id_is_implemented(module_path: str, class_name: str):
-    """Every adapter overrides ``update_eval_run_user_id``; the base stub raises NotImplementedError."""
+@pytest.mark.parametrize("method_name", ["update_eval_run_user_id", "update_eval_run_data"])
+def test_eval_run_update_is_implemented(module_path: str, class_name: str, method_name: str):
+    """Every adapter overrides the eval-run updates the OS makes; the base stubs raise NotImplementedError."""
     from agno.db.base import AsyncBaseDb, BaseDb
 
     cls = _try_import_class(module_path, class_name)
-    own = cls.update_eval_run_user_id
-    assert own is not BaseDb.update_eval_run_user_id, f"{class_name} inherits the BaseDb stub"
-    assert own is not AsyncBaseDb.update_eval_run_user_id, f"{class_name} inherits the AsyncBaseDb stub"
+    own = getattr(cls, method_name)
+    assert own is not getattr(BaseDb, method_name), f"{class_name} inherits the BaseDb stub"
+    assert own is not getattr(AsyncBaseDb, method_name), f"{class_name} inherits the AsyncBaseDb stub"

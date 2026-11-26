@@ -2535,9 +2535,15 @@ class AgentOSClient:
         default_timeout: int = 120,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        background: bool = False,
         headers: Optional[Dict[str, str]] = None,
     ) -> EvalSchema:
         """Run a registered eval suite, or the cases selected by tag or name.
+
+        By default the call returns when every selected case has finished, so the client timeout
+        (``AgentOSClient(timeout=...)``, 60 seconds by default) must cover the whole suite.
+        With background=True the server returns 202 with the run while its summary status is
+        RUNNING; poll get_eval_run until it is PASS, FAIL or ERROR.
 
         Args:
             suite_id: ID of the eval suite to run
@@ -2546,6 +2552,7 @@ class AgentOSClient:
             default_timeout: Default per-case timeout in seconds
             db_id: Optional database ID to use
             table: Optional table name to use
+            background: Run the cases in the background and return the running eval run
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2559,6 +2566,8 @@ class AgentOSClient:
             "table": table,
         }
         params = {k: v for k, v in params.items() if v is not None}
+        if background:
+            params["background"] = True
 
         # Use schema for type-safe payload construction
         payload = EvalSuiteRunInput(tag=tag, case_name=case_name, default_timeout=default_timeout)
@@ -2579,9 +2588,15 @@ class AgentOSClient:
         default_timeout: int = 120,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        background: bool = False,
         headers: Optional[Dict[str, str]] = None,
     ) -> EvalSchema:
         """Run eval cases sent in the request against a registered agent or team.
+
+        By default the call returns when every selected case has finished, so the client timeout
+        (``AgentOSClient(timeout=...)``, 60 seconds by default) must cover the whole suite.
+        With background=True the server returns 202 with the run while its summary status is
+        RUNNING; poll get_eval_run until it is PASS, FAIL or ERROR.
 
         Args:
             name: Name for the suite run
@@ -2591,6 +2606,7 @@ class AgentOSClient:
             default_timeout: Default per-case timeout in seconds
             db_id: Optional database ID to use
             table: Optional table name to use
+            background: Run the cases in the background and return the running eval run
             headers: HTTP headers to include in the request (optional)
 
         Returns:
@@ -2604,6 +2620,8 @@ class AgentOSClient:
             "table": table,
         }
         params = {k: v for k, v in params.items() if v is not None}
+        if background:
+            params["background"] = True
 
         # Use schema for type-safe payload construction
         payload = EvalSuiteInput(name=name, cases=cases, tag=tag, case_name=case_name, default_timeout=default_timeout)

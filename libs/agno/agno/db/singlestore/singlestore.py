@@ -3946,6 +3946,30 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(eval_data=eval_data, updated_at=int(time.time()))
+                )
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # --- Traces ---
     def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
         """Build base query for traces with aggregated span counts.

@@ -2999,6 +2999,19 @@ class SurrealDb(BaseDb):
         record = RecordID(table, eval_run_id)
         _ = self.client.query("UPDATE ONLY $record SET user_id = $user_id", {"record": record, "user_id": user_id})
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        table = self._get_table("evals")
+        record = RecordID(table, eval_run_id)
+        _ = self.client.query(
+            "UPDATE ONLY $record SET eval_data = $eval_data", {"record": record, "eval_data": eval_data}
+        )
+
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.

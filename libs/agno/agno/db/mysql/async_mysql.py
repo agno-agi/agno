@@ -4046,6 +4046,30 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    async def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            table = await self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(eval_data=eval_data, updated_at=int(time.time()))
+                )
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # -- Migrations --
 
     async def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):

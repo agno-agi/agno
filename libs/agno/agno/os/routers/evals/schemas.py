@@ -199,6 +199,30 @@ class EvalSchema(BaseModel):
             updated_at=datetime.now(timezone.utc),
         )
 
+    @classmethod
+    def from_running_suite(
+        cls,
+        eval_suite: EvalSuite,
+        total: int,
+        run_id: str,
+        eval_input: Dict[str, Any],
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "EvalSchema":
+        """A background suite run before its cases finish: the summary says RUNNING and no case has a result."""
+        return cls(
+            id=run_id,
+            name=eval_suite.name or eval_suite.id,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=None,
+            eval_type=EvalType.SUITE,
+            eval_data={"summary": {"total": total, "passed": 0, "failed": 0, "status": "RUNNING"}, "cases": []},
+            eval_input=eval_input,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
 
 class EvalSuiteCaseInput(BaseModel):
     # A field Case does not have is refused, as Case(...) refuses an unknown keyword.

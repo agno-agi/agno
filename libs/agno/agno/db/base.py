@@ -1088,6 +1088,9 @@ class BaseDb(ABC):
     def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
     # --- Traces ---
     @abstractmethod
     def upsert_trace(self, trace: "Trace") -> None:
@@ -3502,6 +3505,9 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        raise NotImplementedError
+
+    async def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
         raise NotImplementedError
 
     # --- Traces ---

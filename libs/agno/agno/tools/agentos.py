@@ -880,7 +880,8 @@ def _normalize_eval_run(record: Dict[str, Any]) -> Dict[str, Any]:
     elif eval_type == "suite":
         summary = eval_data.get("summary") or {}
         normalized["status"] = summary.get("status")
-        if summary.get("total"):
+        # A background run has no pass rate until it finishes.
+        if summary.get("total") and summary.get("status") in ("PASS", "FAIL"):
             normalized["pass_rate"] = summary.get("passed", 0) / summary["total"] * 100
     else:
         normalized["status"] = "UNKNOWN"

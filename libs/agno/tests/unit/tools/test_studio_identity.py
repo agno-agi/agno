@@ -323,10 +323,11 @@ class TestInternalServiceScopes:
         assert "schedules:delete" not in INTERNAL_SERVICE_SCOPES
         assert "schedules:read" in INTERNAL_SERVICE_SCOPES
 
-    def test_internal_token_runs_eval_suites_but_cannot_delete_evals(self):
+    def test_internal_token_runs_and_polls_eval_suites_but_cannot_delete_evals(self):
         from agno.os.auth import INTERNAL_SERVICE_SCOPES
 
         assert "evals:write" in INTERNAL_SERVICE_SCOPES
+        assert "evals:read" in INTERNAL_SERVICE_SCOPES
         assert "evals:delete" not in INTERNAL_SERVICE_SCOPES
 
 

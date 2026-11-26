@@ -3342,6 +3342,26 @@ class RedisDb(BaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            eval_run_data = self._get_record("evals", eval_run_id)
+            if eval_run_data is None:
+                return
+
+            eval_run_data["eval_data"] = eval_data
+            eval_run_data["updated_at"] = int(time.time())
+            self._store_record("evals", eval_run_id, eval_run_data)
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise
+
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.

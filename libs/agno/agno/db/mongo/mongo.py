@@ -3453,6 +3453,26 @@ class MongoDb(BaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
+            collection.update_one(
+                {"run_id": eval_run_id}, {"$set": {"eval_data": eval_data, "updated_at": int(time.time())}}
+            )
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
         """Migrate all content in the given collection to the right v2 collection"""
 
