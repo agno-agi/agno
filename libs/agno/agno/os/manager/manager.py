@@ -292,8 +292,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.company.routines import _RoutineBoundary
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.tools.agentos import AgentOSTools
+    from agno.os.manager.background_runs import BackgroundRunTools
+    from agno.os.manager.linked_work import LinkedWork
     from agno.tools.studio import StudioTools
-    from agno.tools.studio_runner import StudioRunnerTools
     from agno.utils.live_sequence import LiveSequence
 
     db = agent_os.db
@@ -359,8 +360,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         entry = manifest.get(component_id) if manifest else None
         return entry.description if entry is not None else None
 
-    # The manager can run served components, including itself once.
-    runner = StudioRunnerTools(
+    # The manager can run served components, including itself once, and start one in the background.
+    runner = BackgroundRunTools(
+        agent_os,
         registry=registry,
         db=db,
         include_agents=LiveSequence(
@@ -379,6 +381,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         _diagnostics_tool(agent_os, config.required_env),
     ]
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
+    company_db = agent_os._company_db
+    # The work a conversation started is read before each run: its Tasks, and its background runs.
+    linked_work = LinkedWork(company_db, run_db=runner._run_store)
     if config.access_docs:
         try:
             from agno.tools.mcp import MCPTools
@@ -394,12 +399,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     if workspace is not None:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
-    company_db = agent_os._company_db
     # Super Agent can edit the platform, so a Company Routine never runs on it.
-    pre_hooks: List[Any] = [_RoutineBoundary(routine=False)]
+    pre_hooks: List[Any] = [_RoutineBoundary(routine=False), linked_work]
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
-        from agno.os.manager.linked_work import LinkedWork, alink_proposal, link_proposal
+        from agno.os.manager.linked_work import alink_proposal, link_proposal
         from agno.tools.company import CompanyTools
 
         # The file tree tools below read and write the wiki and every Goal's pages.
@@ -418,7 +422,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.append(company_tools)
         tools.append(CompanyTaskTools(agent_os))
         instructions.extend([COMPANY_INSTRUCTIONS, LINKED_WORK_INSTRUCTIONS])
-        pre_hooks.append(LinkedWork(company_db, _user_isolation(agent_os)))
+        linked_work.user_isolation = _user_isolation(agent_os)
     # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
     notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
@@ -449,7 +453,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         pre_hooks=pre_hooks,
         # The work a conversation started is sent beside each message, not in the instructions: a
         # model that continues from its previous response is sent the instructions of the first run only.
-        add_dependencies_to_context=company_db is not None,
+        add_dependencies_to_context=True,
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,

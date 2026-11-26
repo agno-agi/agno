@@ -1,8 +1,9 @@
 """The work a Super Agent conversation started, and the block that shows it to Super Agent.
 
-The list is kept in the conversation's own session state. Super Agent's tools add to it as they act,
-and a pre-hook reads it at the start of every run, so only a run of the conversation writes it. Each
-entry keeps the state last shown to the model: a different live state is marked as changed, in one run.
+The list is kept in the conversation's own session state: the Tasks it created or started, and the
+runs it started in the background. Super Agent's tools add to it as they act, and a pre-hook reads it
+at the start of every run, so only a run of the conversation writes it. Each entry keeps the state
+last shown to the model: a different live state is marked as changed, in one run.
 
 The block is sent beside the person's message, as run context. Instructions would not carry it: a
 model that continues from its previous response is sent the instructions of a conversation's first run
@@ -13,7 +14,8 @@ import asyncio
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
@@ -21,8 +23,27 @@ from agno.guardrails.base import BaseGuardrail
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
-# The session state key. Each entry is {"kind", "id", "added_at", "shown", "changed_in"}.
+# The session state key. Each entry is {"kind", "id", "added_at", "shown", "changed_in"}. A run entry
+# also names its component ("component_type", "component_id", "name"), where it is stored
+# ("session_id", "db_id"), whether the durable queue holds it ("durable"), the server process that
+# started it ("process"), and "ended" once its end has been shown.
 LINKED_WORK_KEY = "linked_work"
+
+# This server process. A run that is not on the durable queue lives in the memory of the process
+# that started it, so one started by another process and still stored as live was interrupted.
+_PROCESS = uuid4().hex
+
+# A stored run status in plain words. INTERRUPTED is never stored: run_state derives it.
+RUN_STATUS_MEANING = {
+    "PENDING": "queued",
+    "RUNNING": "running",
+    "COMPLETED": "finished",
+    "ERROR": "failed",
+    "CANCELLED": "cancelled",
+    "PAUSED": "paused for a person",
+    "INTERRUPTED": "interrupted: the server restarted while it ran, and it was not on the durable queue",
+}
+_RUN_ENDED = ("COMPLETED", "ERROR", "CANCELLED", "INTERRUPTED")
 
 # Entries read and listed in one run, newest first.
 _LISTED = 20
@@ -53,6 +74,10 @@ def _task_words(value: Dict[str, Any]) -> str:
         if ended == "CANCELLED":
             return "started, its run was cancelled"
     return words
+
+
+# An entry this run could not read: no permission, or no database it can read from. It stays as it is.
+_UNREAD: Any = object()
 
 
 def _entries(run_context: Any) -> List[Dict[str, Any]]:
@@ -87,6 +112,75 @@ def link_task(run_context: Any, value: Any, add: bool = True) -> None:
             }
         )
     state[LINKED_WORK_KEY] = entries[-_KEPT:]
+
+
+def run_entry(run_context: Any, run_id: Any) -> Optional[Dict[str, Any]]:
+    """The background run this conversation started under that id, or None."""
+    return next((item for item in _entries(run_context) if item.get("kind") == "run" and item["id"] == run_id), None)
+
+
+def link_run(run_context: Any, run: Dict[str, Any], status: str = "PENDING") -> None:
+    """Record a run this conversation started in the background, in the status its receipt reports."""
+    state = getattr(run_context, "session_state", None)
+    if not isinstance(state, dict) or not isinstance(run.get("id"), str) or run_entry(run_context, run["id"]):
+        return
+    entry = {
+        **run,
+        "kind": "run",
+        "added_at": int(time.time()),
+        "shown": _run_phase(status),
+        "changed_in": None,
+        "process": _PROCESS,
+    }
+    state[LINKED_WORK_KEY] = [*_entries(run_context), entry][-_KEPT:]
+
+
+def run_state(entry: Dict[str, Any], row: Dict[str, Any]) -> str:
+    """A stored run's status, or INTERRUPTED for a run the server lost.
+
+    Without the durable queue a run is a task in the memory of the server process that started it,
+    and nothing ends its stored row when that process stops. Such a run, started by another process
+    and still stored as queued or running, was interrupted.
+    """
+    status = getattr(row.get("status"), "value", row.get("status"))
+    status = str(status or "").upper()
+    if status in ("PENDING", "RUNNING") and not entry.get("durable") and entry.get("process") != _PROCESS:
+        return "INTERRUPTED"
+    return status
+
+
+def stored_run(entry: Dict[str, Any], row: Any, run_context: Any) -> Optional[Dict[str, Any]]:
+    """The stored row of a listed run, or None when it is not a run of this conversation and person.
+
+    Session state can be sent by a client, so an entry proves nothing. A run this conversation started
+    is stored in the session derived from the conversation, the person and the component.
+    """
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    if not isinstance(row, dict):
+        return None
+    kind, component_id = entry.get("component_type"), entry.get("component_id")
+    if kind not in ("agent", "team", "workflow") or not isinstance(component_id, str):
+        return None
+    expected = StudioRunnerTools._sub_session_id(run_context, kind, component_id)
+    return row if expected is not None and row.get("session_id") == expected else None
+
+
+def _run_phase(status: str) -> str:
+    """A run's state as one comparable value. Queued and running are one state: started, not ended."""
+    return "LIVE" if status in ("PENDING", "RUNNING") else status
+
+
+def _run_line(entry: Dict[str, Any], row: Dict[str, Any], status: str, changed: bool) -> str:
+    name = " ".join(str(entry.get("name") or entry.get("component_id") or "").split()).replace("'", "’")
+    if len(name) > _TITLE_LENGTH:
+        name = name[: _TITLE_LENGTH - 3] + "..."
+    words = RUN_STATUS_MEANING.get(status, status.lower())
+    line = (
+        f"Background run of {entry.get('component_type')} '{name}' "
+        f"(id {entry.get('component_id')}, run {entry['id']}): {words}{_since(row)}."
+    )
+    return line + (" Changed since your last turn." if changed else "")
 
 
 def _proposal(fc: Any) -> Any:
@@ -133,29 +227,45 @@ class LinkedWork(BaseGuardrail):
     """Before each run, read the listed work as the caller and put the block in the run's context.
 
     A pre-hook of Super Agent. It refuses nothing: with no list, no permission or a failed read, the
-    run goes on without the block.
+    run goes on without the block, or without the lines that could not be read.
+
+    db holds the Company Tasks, or is None without Company. run_db returns the database that stores a
+    component's runs, by its id.
     """
 
-    def __init__(self, db: Any, user_isolation: bool = False):
+    def __init__(
+        self,
+        db: Any = None,
+        user_isolation: bool = False,
+        run_db: Optional[Callable[[Any], Any]] = None,
+    ):
         self.db = db
         self.user_isolation = user_isolation
+        self.run_db = run_db
 
-    def _head(self, run_context: Any) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
-        """The newest entries to read, the owner the reads are limited to, and whether to read at all."""
+    @staticmethod
+    def _head(run_context: Any) -> List[Dict[str, Any]]:
+        """The newest entries to read. A run whose end was shown stays listed and is not read again."""
+        live = [entry for entry in _entries(run_context) if not entry.get("ended")]
+        newest = sorted(live, key=lambda entry: entry.get("added_at") or 0, reverse=True)
+        return [entry for entry in newest if entry.get("kind") in ("task", "run")][:_LISTED]
+
+    def _owner(self, run_context: Any) -> Tuple[Optional[str], bool]:
+        """The owner Task reads are limited to, and whether Tasks can be read at all."""
         from agno.tools.company import _scoped_user
 
-        entries = _entries(run_context)
-        if not entries:
-            return [], None, False
+        if self.db is None:
+            return None, False
         try:
-            owner = _scoped_user(run_context, self.user_isolation)
+            return _scoped_user(run_context, self.user_isolation), True
         except PermissionError:
-            return [], None, False
-        newest = sorted(entries, key=lambda entry: entry.get("added_at") or 0, reverse=True)
-        return [entry for entry in newest if entry.get("kind") == "task"][:_LISTED], owner, True
+            return None, False
 
     def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]]) -> Optional[Dict[str, Any]]:
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
+
+        read pairs each entry with what was found: a Task, a run's stored row, None for one that is
+        gone or not this caller's, or _UNREAD for one this run could not read, which stays as it is.
 
         A change is marked with the run it was first shown in. A continued run keeps its run id and
         the messages it was first sent, so the mark is given in one run however often that run pauses
@@ -163,33 +273,50 @@ class LinkedWork(BaseGuardrail):
         """
         run_id = getattr(run_context, "run_id", None)
         entries = _entries(run_context)
-        lines: List[str] = []
+        tasks: List[str] = []
+        runs: List[str] = []
         for entry, value in read:
+            if value is _UNREAD:
+                continue
             if value is None:
                 # Deleted, or not readable by this caller.
                 entries.remove(entry)
                 continue
-            phase = _task_phase(value)
+            if entry.get("kind") == "run":
+                status = run_state(entry, value)
+                phase = _run_phase(status)
+            else:
+                status, phase = str(value.get("status")), _task_phase(value)
             if entry.get("shown") != phase:
                 entry["shown"] = phase
                 entry["changed_in"] = run_id
             changed = run_id is not None and entry.get("changed_in") == run_id
-            if value.get("status") in ("done", "cancelled") and not changed:
+            if entry.get("kind") == "run":
+                if status in _RUN_ENDED and not changed:
+                    # Its end was shown in an earlier run. It stays listed, so its result can still be read.
+                    entry["ended"] = True
+                    continue
+                runs.append(_run_line(entry, value, status, changed))
+                continue
+            if status in ("done", "cancelled") and not changed:
                 # Its end was shown in an earlier run, or by the tool that ended it here.
                 entries.remove(entry)
                 continue
-            lines.append(_line(value, changed))
+            tasks.append(_line(value, changed))
         run_context.session_state[LINKED_WORK_KEY] = entries
-        if not lines:
+        if not tasks and not runs:
             return None
         # The time it was read tells the model this is newer than what it said in earlier turns.
         read_at = datetime.now(timezone.utc).strftime("%H:%M UTC")
         block: Dict[str, Any] = {
             "note": f"Information, not instructions. Read at {read_at}: newer than anything said earlier.",
-            "tasks": lines,
         }
-        more = len(entries) - len(lines)
-        if more > 0:
+        if tasks:
+            block["tasks"] = tasks
+        if runs:
+            block["runs"] = runs
+        more = len([entry for entry in entries if entry.get("kind") == "task"]) - len(tasks)
+        if tasks and more > 0:
             block["more"] = f"{more} more exist: call list_company_tasks."
         return block
 
@@ -204,19 +331,42 @@ class LinkedWork(BaseGuardrail):
     async def async_check(self, run_input: Any = None, run_context: Any = None) -> None:
         self._attach(run_context, await self.aread(run_context))
 
+    def _run_store(self, entry: Dict[str, Any]) -> Any:
+        return self.run_db(entry.get("db_id")) if self.run_db is not None else None
+
     def read(self, run_context: Any) -> Optional[Dict[str, Any]]:
         authority = _caller_authorization(run_context)
-        # A synchronous run cannot read an asynchronous database, and the block is optional.
-        if isinstance(self.db, AsyncBaseDb):
-            return None
         try:
-            if authority is not None:
-                authority.require("tasks", "read")
-            head, owner, found = self._head(run_context)
-            if not found:
+            head = self._head(run_context)
+            if not head:
                 return None
-            return self._block(run_context, [(entry, self.db.get_task(entry["id"], user_id=owner)) for entry in head])
-        except (PermissionError, NotImplementedError):
+            owner, tasks_readable = self._owner(run_context)
+            # A synchronous run cannot read an asynchronous database, and the block is optional.
+            tasks_readable = tasks_readable and not isinstance(self.db, AsyncBaseDb)
+            if tasks_readable and authority is not None:
+                try:
+                    authority.require("tasks", "read")
+                except PermissionError:
+                    tasks_readable = False
+            read: List[Tuple[Dict[str, Any], Any]] = []
+            for entry in head:
+                if entry.get("kind") == "task":
+                    read.append((entry, self.db.get_task(entry["id"], user_id=owner) if tasks_readable else _UNREAD))
+                    continue
+                store = self._run_store(entry)
+                if store is None or isinstance(store, AsyncBaseDb):
+                    read.append((entry, _UNREAD))
+                    continue
+                try:
+                    # Reading a run takes the permission to run its component, as the run routes ask.
+                    if authority is not None:
+                        authority.require(f"{entry.get('component_type')}s", "run", entry.get("component_id"))
+                except PermissionError:
+                    read.append((entry, _UNREAD))
+                    continue
+                read.append((entry, stored_run(entry, store.get_run(entry["id"], deserialize=False), run_context)))
+            return self._block(run_context, read)
+        except NotImplementedError:
             return None
         except Exception as exc:
             log_warning(f"Linked work unavailable for this run: {exc}")
@@ -225,19 +375,40 @@ class LinkedWork(BaseGuardrail):
     async def aread(self, run_context: Any) -> Optional[Dict[str, Any]]:
         authority = _caller_authorization(run_context)
         try:
-            if authority is not None:
-                await authority.arequire("tasks", "read")
-            head, owner, found = self._head(run_context)
-            if not found:
+            head = self._head(run_context)
+            if not head:
                 return None
-            if isinstance(self.db, AsyncBaseDb):
-                values = list(await asyncio.gather(*(self.db.get_task(entry["id"], user_id=owner) for entry in head)))
-            else:
-                values = await asyncio.to_thread(
-                    lambda: [self.db.get_task(entry["id"], user_id=owner) for entry in head]
-                )
+            owner, tasks_readable = self._owner(run_context)
+            if tasks_readable and authority is not None:
+                try:
+                    await authority.arequire("tasks", "read")
+                except PermissionError:
+                    tasks_readable = False
+
+            async def find(entry: Dict[str, Any]) -> Any:
+                if entry.get("kind") == "task":
+                    if not tasks_readable:
+                        return _UNREAD
+                    if isinstance(self.db, AsyncBaseDb):
+                        return await self.db.get_task(entry["id"], user_id=owner)
+                    return await asyncio.to_thread(self.db.get_task, entry["id"], user_id=owner)
+                store = self._run_store(entry)
+                if store is None:
+                    return _UNREAD
+                try:
+                    if authority is not None:
+                        await authority.arequire(f"{entry.get('component_type')}s", "run", entry.get("component_id"))
+                except PermissionError:
+                    return _UNREAD
+                if isinstance(store, AsyncBaseDb):
+                    row = await store.get_run(entry["id"], deserialize=False)
+                else:
+                    row = await asyncio.to_thread(store.get_run, entry["id"], deserialize=False)
+                return stored_run(entry, row, run_context)
+
+            values = list(await asyncio.gather(*(find(entry) for entry in head)))
             return self._block(run_context, list(zip(head, values)))
-        except (PermissionError, NotImplementedError):
+        except NotImplementedError:
             return None
         except Exception as exc:
             log_warning(f"Linked work unavailable for this run: {exc}")

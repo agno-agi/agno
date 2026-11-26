@@ -144,6 +144,16 @@ async def mcp_lifespan(_, mcp_tools):
 
 
 @asynccontextmanager
+async def manager_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Give Super Agent the served app: its tools start background runs through this app's run routes."""
+    agent_os._manager_app = app
+    try:
+        yield
+    finally:
+        agent_os._manager_app = None
+
+
+@asynccontextmanager
 async def http_client_lifespan(_):
     """Manage httpx client lifecycle for proper connection pool cleanup."""
     from agno.utils.http import aclose_default_clients
@@ -748,7 +758,8 @@ class AgentOS:
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if (self._scheduler_enabled or company is not None) and not internal_service_token:
+        # Super Agent starts background runs through the run routes, as the scheduler and Company do.
+        if (self._scheduler_enabled or company is not None or manager) and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -804,6 +815,7 @@ class AgentOS:
                 )
 
         self._manager: Optional["_Manager"] = None
+        self._manager_app: Optional[Any] = None
         if manager is not None and not isinstance(manager, (bool, OSManager)):
             raise TypeError("AgentOS.manager must be True, False, None, or OSManager")
         if manager:
@@ -2121,6 +2133,9 @@ class AgentOS:
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
 
+            if self._manager is not None:
+                lifespans.append(partial(manager_lifespan, agent_os=self))
+
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))
 
@@ -2181,6 +2196,9 @@ class AgentOS:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
+
+            if self._manager is not None:
+                lifespans.append(partial(manager_lifespan, agent_os=self))
 
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))  # type: ignore
