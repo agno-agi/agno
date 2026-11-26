@@ -1381,6 +1381,20 @@ def test_a_continue_that_names_no_conversation_tells_nobody(plain, monkeypatch):
 
     asyncio.run(run_background.anotify_continued_run_requester(Component(), "r", "s"))
     assert told == []
+    # With nothing listening, the continued run is not read at all.
+    read = []
+
+    class Counted:
+        async def aget_run_output(self, run_id, session_id=None):
+            read.append(run_id)
+
+    listening = list(run_background._requester_listeners)
+    run_background._requester_listeners.clear()
+    try:
+        asyncio.run(run_background.anotify_continued_run_requester(Counted(), "r", "s"))
+    finally:
+        run_background._requester_listeners.extend(listening)
+    assert read == []
 
 
 def test_an_in_memory_workflow_with_a_workflow_agent_is_reported(plain):

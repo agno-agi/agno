@@ -79,13 +79,10 @@ def notify_requester(requested_from: Any, work: Dict[str, Any], authority: Optio
         log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
 
 
-def _notify_run_requester(run: Any, metadata: Any = None) -> None:
-    """Tell the conversation that started this in-process run, if one did, how the run ended.
-
-    metadata is what the run was started with, for a run object that does not hold it.
-    """
+def _notify_run_requester(run: Any) -> None:
+    """Tell the conversation that started this in-process run, if one did, how the run ended."""
     try:
-        metadata = metadata if isinstance(metadata, dict) else getattr(run, "metadata", None)
+        metadata = getattr(run, "metadata", None)
         if not isinstance(metadata, dict) or not _requester_listeners:
             return
         from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
