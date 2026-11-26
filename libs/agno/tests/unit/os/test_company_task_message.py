@@ -161,18 +161,74 @@ def test_a_message_to_a_task_whose_run_failed_or_was_cancelled_starts_its_next_a
 
 
 def test_a_return_from_a_failed_run_carries_its_reason_until_an_attempt_reaches_review():
-    failed = {"status": "ERROR"}
     history = [
         {"from": "ready", "target": "in_progress", "attempt": 1},
-        {"from": "in_progress", "target": "ready", "reason": "Use the other key"},
+        {"from": "in_progress", "target": "ready", "reason": "Use the other key", "ended_run": "run-1"},
     ]
-    assert _review_feedback({"transitions": history, "result": failed}) == "Use the other key"
+    assert _review_feedback({"transitions": history}) == "Use the other key"
+    # The reply is the same whatever the Task's result is now: a queued attempt has none.
     history += [{"from": "ready", "target": "in_progress", "attempt": 2}]
-    assert _review_feedback({"transitions": history, "result": failed}) == "Use the other key"
+    assert _review_feedback({"transitions": history, "result": None}) == "Use the other key"
     history += [{"from": "in_progress", "target": "in_review", "reason": "Execution completed"}]
-    assert _review_feedback({"transitions": history, "result": {"status": "COMPLETED"}}) is None
-    # A start is not a return.
-    assert _review_feedback({"transitions": history[:1], "result": failed}) is None
+    assert _review_feedback({"transitions": history}) is None
+    # A start is not a return, and a return that answered no ended run is a note.
+    assert _review_feedback({"transitions": history[:1]}) is None
+    note = {"from": "in_progress", "target": "ready", "reason": "Hold until Monday"}
+    assert _review_feedback({"transitions": [history[0], note], "result": {"status": "ERROR"}}) is None
+
+
+def withdraw(client, queue, task_id, note):
+    """Move the Task's queued attempt back to Ready, as the Company pages do."""
+    moved = client.post(
+        f"/company/tasks/{task_id}/transitions",
+        json={"target": "ready", "reason": note, "executor_type": "agent", "executor_id": "writer"},
+        headers=headers(),
+    )
+    assert moved.status_code == 200, moved.text
+
+    async def refuse():
+        # The withdrawn ticket stays live until the worker refuses it, and blocks the next start.
+        job = await queue.store.claim_job(queue.worker_id, queue.config.lock_grace_seconds)
+        assert await queue.store.complete_job(job["id"], queue.worker_id, job["attempt"], "failed")
+
+    asyncio.run(refuse())
+
+
+def status_feedback(agent_os, task_id):
+    return json.loads(call(agent_os, "get_company_task_status", context(), task_id=task_id)).get("review_feedback")
+
+
+def test_a_withdrawal_note_never_becomes_a_reply_after_a_later_failure(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    started(client, task["id"])
+    withdraw(client, queue, task["id"], "Hold until Monday")
+    assert "ended_run" not in db.get_task(task["id"])["transitions"][-1]
+    # The next attempt fails. A plain retry is given no reply, and a message is given alone.
+    assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
+    fail(db, queue, task["id"], 2)
+    assert _review_feedback(db.get_task(task["id"])) is None
+    assert message(agent_os, context(), task["id"], text="Use the other key").startswith("Sent")
+    _, sent = sent_input(db, queue, task["id"])
+    assert sent["review_feedback"] == "Use the other key"
+
+
+def test_a_reply_to_a_failed_run_survives_a_withdrawn_attempt_and_shows_in_the_status(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    ended(client, db, queue, task["id"], "failed")
+    assert message(agent_os, context(), task["id"], text="Use the other key").startswith("Sent")
+    returned = db.get_task(task["id"])["transitions"][-2]
+    assert returned["ended_run"] == task_run_id(task["id"], 1)
+    # The status shows what the queued run was sent.
+    assert db.get_task(task["id"])["result"] is None
+    assert status_feedback(agent_os, task["id"]) == "Use the other key"
+    # Withdrawing the queued attempt keeps the reply for the attempt started next.
+    withdraw(client, queue, task["id"], "Hold until Monday")
+    assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
+    _, sent = sent_input(db, queue, task["id"])
+    assert sent["review_feedback"] == "Use the other key"
+    assert status_feedback(agent_os, task["id"]) == "Use the other key"
 
 
 def test_the_note_on_a_withdrawn_queued_attempt_is_not_a_reply(system):  # noqa: F811
@@ -200,6 +256,7 @@ def test_a_reply_not_yet_acted_on_is_kept_beside_a_later_one(system):  # noqa: F
     assert message(agent_os, context(), task["id"], text="Try again, shorter").startswith("Sent")
     _, sent = sent_input(db, queue, task["id"])
     assert sent["review_feedback"] == "Add a permissions section\n\nTry again, shorter"
+    assert status_feedback(agent_os, task["id"]) == sent["review_feedback"]
     # Once an attempt reaches review, the next reply stands alone.
     finish(db, queue, task["id"], attempt=3)
     assert _review_feedback(db.get_task(task["id"])) is None

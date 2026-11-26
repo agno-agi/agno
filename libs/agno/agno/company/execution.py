@@ -683,21 +683,20 @@ def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
     """What people said when they returned the Task to Ready after an attempt, oldest first, until an
     attempt reaches review again.
 
-    A return from review answers a finished result. A return from In progress answers a run that
-    failed or was cancelled, and counts only while the Task holds such a result: the same move
-    withdraws a queued attempt, and the reason of that is a note, not a reply. A return to Backlog
-    withdraws the acceptance, and the work that is accepted next starts without the earlier replies.
+    A return from review answers a finished result. A return from In progress is a reply only when it
+    answered a run that failed or was cancelled, which its entry records as ended_run: the same move
+    withdraws a queued attempt, and the reason of that is a note. A return to Backlog withdraws the
+    acceptance, and the work that is accepted next starts without the earlier replies.
     """
-    replies: List[Tuple[str, Any]] = []
+    replies: List[str] = []
     for entry in task.get("transitions") or []:
         origin, target = entry.get("from"), entry.get("target")
         if target in ("in_review", "backlog"):
             replies = []
-        elif target == "ready" and origin in ("in_review", "in_progress"):
-            replies.append((origin, entry.get("reason")))
-    ended = (task.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
-    kept = [reason for origin, reason in replies if reason and (origin == "in_review" or ended)]
-    return "\n\n".join(kept) or None
+        elif target == "ready" and (origin == "in_review" or (origin == "in_progress" and entry.get("ended_run"))):
+            if entry.get("reason"):
+                replies.append(entry["reason"])
+    return "\n\n".join(replies) or None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
