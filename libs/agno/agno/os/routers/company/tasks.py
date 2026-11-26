@@ -206,6 +206,9 @@ def get_tasks_router(
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         goal_id: Optional[str] = Query(None),
+        has_goal: Optional[bool] = Query(
+            None, description="false lists only records with no Goal, true only records with one"
+        ),
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
@@ -220,6 +223,7 @@ def get_tasks_router(
             sort_by=sort_by,
             sort_order=sort_order,
             goal_id=goal_id,
+            has_goal=has_goal,
             status=status,
             project_id=project_id,
             failed=failed,

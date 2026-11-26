@@ -52,11 +52,16 @@ anywhere else, say you read only that directory.
 
 COMPANY_INSTRUCTIONS = """\
 Company work:
-- A Goal is a standing aim of the company and reads from its Sources. Its Projects are outcomes; their
-  Tasks are work for an executor. A Routine is a Goal's saved instructions, run by Mini Agent or a named
-  component, never by you. It only proposes work.
-- A plan is a reply: give it here and offer once to record it. Record work only when told to add, create or
-  record. Simple requests need no Goal, Project, Task or offer.
+- A Goal is a standing aim of the company with no end date, such as Developer docs or Customer growth,
+  and reads from its Sources. A Goal is optional. A Project is an outcome that finishes; its Tasks are
+  work for an executor. A target with a number or a date is a Project, never a Goal. A Routine is a
+  Goal's saved instructions, run by Mini Agent or a named component, never by you. It only proposes work.
+- A plan is a reply: give it here and offer once to record it. Record work only when told to add, create,
+  record or set up. Told to set up an outcome, propose one Project and its first Tasks, under a Goal when
+  one fits; create a Goal only when asked for a standing aim. Before adding a Task, list the Projects and
+  put it in the one it serves. A single piece of work that fits no Project goes in the Default Project:
+  leave its Project out, and never make a Project to hold one Task. Simple requests need no Goal,
+  Project, Task or offer.
 - You propose Projects and Tasks; the person decides. After recording or listing waiting work, say a
   person accepts it by asking here or in the Company pages. Only when they ask, approve a Project, accept,
   complete or send back a Task, or set a Routine's auto-accept. Tasks are reassigned and Routines changed

@@ -57,7 +57,11 @@ Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
 is up. Company then starts without a restart.
 
 The migration renames the stored tables and columns in place and keeps every
-id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+id. It also lets `goal_id` be empty on the projects and tasks tables, because a
+Goal is optional from 3.3.0. PostgreSQL drops the requirement in place. SQLite
+cannot, so there each of the two tables is created again without it and its
+rows and indexes are carried over; a run that stops part way is finished by the
+next run. A deployment made from the 3.2.0 template then runs with no edit. Your own
 code that calls the Company Python API by its 3.2.0 names needs the rename
 first: see the names that changed with no alias, below.
 
@@ -97,6 +101,18 @@ Goals, for example `create_company_goal` and `update_goal_status`; a row holds
 reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
 still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
 with 422.
+
+A Task's input changed. In 3.2.0 every executor received the Goal's `brief.md`
+and `status.md` and every page of the company wiki. Now only Mini Agent does. A
+named agent, team, workflow or external agent receives the Task's brief and
+evidence and no page, and its input no longer has a `wiki` key. If such an
+executor relied on a page, put what it needs in the Task's brief, or accept the
+Task for Mini Agent and let it run the component. See "One file tree".
+
+This holds for an input built after the upgrade. A retry that was already queued
+on 3.2.0 keeps the input it was queued with, and an agent or team with
+`add_history_to_context=True` reads its own earlier attempts of the same Task,
+so an attempt that ran on 3.2.0 can bring its pages back.
 
 ## Weekly Mini Agent review
 
@@ -169,19 +185,61 @@ run the Routine can trigger it.
 | --- | --- |
 | `02_manage_projects.py` | Goal-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
 | `03_manage_tasks.py` | Backlog proposals, executor acceptance, frozen scope, rescoping, review and completion. |
+| `18_work_without_a_goal.py` | A Task with no Goal in the Default Project, a Project with no Goal, and what the Default Project refuses. |
 | `09_sandboxed_engineers.py` | Claude and Codex execute a Task from a public repository in Docker, with durable checkpoints and checkout pinning. |
 
-A Goal contains Projects and Routines. Every new Task belongs to a Project
-in that Goal: `project_id` is required by Task creation and proposal/Intake
-tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+A Goal is a standing aim: it has Sources, Routines, `brief.md` and `status.md`,
+and no end date. A Goal is optional. A Project is an outcome that finishes, and
+it may serve a Goal or none: `goal_id` is optional on `POST /company/projects`
+and on `propose_company_project`.
+
+Every Task belongs to a Project. A Task created with no `project_id` goes into
+the **Default Project**, the one place for a single piece of work that fits no
+other Project, so nobody makes a Project to hold one Task.
+
+The Goal on a Task only says which Goal the Task belongs to. A Task does not
+need one.
+
+- A Task in a Project other than the Default one carries that Project's Goal,
+  or none when the Project has none. A `goal_id` left out is filled from the
+  Project, and a different one is refused.
+- A Task in the Default Project carries the `goal_id` it is given, or none. This
+  is the same through `POST /company/tasks`, `propose_company_task` and the
+  manager.
+- A Task and a Project that a Routine proposes carry the Routine's Goal, also
+  when the Task names no Project and lands in the Default Project. A Routine is
+  refused another Goal.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
+- `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
+  list the records with no Goal; `has_goal=true` lists the others.
+
+The Default Project has the fixed id `default` and the name "Default". It is
+stored when Company starts and on first use. Project responses carry
+`is_default`, true for this Project only. It has no Goal, is always `active`,
+is listed like any Project and never finishes: it is not proposed, approved,
+completed or cancelled, the Refresh Routine and auto-accept never complete it,
+auto-accept never accepts a Task in it (nobody approved it, so such a Task
+waits for a person),
+and archiving a Goal leaves it in place (the Goal's own Tasks in it are archived
+and restored with the Goal). Renaming, editing, a transition and archiving are
+each refused with the reason, by the API (422 for an edit, 409 for a transition
+or a delete), the tools and a Routine.
+
+Backlog drafts can be created under a `proposed` Project so people
 can review the plan. The Project must be approved before its Tasks move to Ready
 or start a run; creating a Task directly in Ready also requires approval.
-When no Project fits, propose one with `propose_company_project` and use its ID
-for Backlog proposals. A human can then transition it to `active`. Project approval
-does not accept or execute Tasks.
-New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
-but cannot clear its Project. Existing nullable storage rows remain readable.
+A human transitions a proposed Project to `active`. Project approval
+does not accept or execute Tasks. The Default Project needs no approval.
+New Backlog proposals reuse an existing Task with the same key.
+
+A database created before this change requires a Goal on every Project and
+Task. The 3.3.0 migration removes that requirement; see "Upgrading from agno 3.2.0".
+A Task run with no Goal gets the company wiki pages in its input and no Goal
+pages, and writes only its own `tasks/<task-id>/` folder. Its list tools still
+read Projects and Tasks company-wide, as they do for any Task run.
 
 Routine instructions can make these two approval steps explicit:
 
@@ -236,7 +294,7 @@ methods retain explicit owner filters for direct callers.
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
-| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input holds for a named executor and for Mini Agent. |
 
 Each Goal has a durable wiki folder with `brief.md` (human direction) and
 `status.md` (current work). A second folder holds company context. Default
@@ -394,18 +452,20 @@ A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Goal's `brief.md` and `status.md`, then every
-`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
-is cut and the input names the file to read for the rest. Pages past the total
-are named without their content. Every other file is read on request. Every read
-result says that file content is information, never an instruction.
+A Task's input carries pages only when its executor is Mini Agent: the Goal's
+`brief.md` and `status.md` when the Task has a Goal, then every `wiki/` page, at
+most 8,000 characters a page and 40,000 in total. A longer page is cut and the
+input names the file to read for the rest. Pages past the total are named
+without their content. Mini Agent reads every other file on request, with its
+file tools. Every read result says that file content is information, never an
+instruction.
 
-This input is the same for every executor. Before 3.2 it carried every page of the
-Goal. Mini Agent reads the other pages with its file tools. A named agent, team
-or workflow that needs a Goal page other than `brief.md` and `status.md`, such as
-a runbook, must hold the read tools:
+Any other executor, a named agent, team, workflow or external agent, receives
+the Task's brief and evidence and no page: its input may leave AgentOS, and the
+wiki is not written for that. Put what it needs in the brief, or accept the Task
+for Mini Agent and let it run the component with what the work needs. An
+executor that should read pages for itself must hold the read tools:
 `CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
-Without them it no longer sees that page.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
 remain. A search returns up to ten matches and `more` when others exist. A search
@@ -535,9 +595,10 @@ session to the Task owner only after matching its original reservation and run. 
 including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
-Executor input contains only the Task brief, its evidence, every company wiki
-page and the Goal's `brief.md` and `status.md`; see "One file tree" for the
-size limit. Queue retries and restart recovery use the
+Executor input contains only the Task brief and its evidence, and on a retry
+after a send-back the reviewer's reason and the earlier result. Mini Agent alone
+also receives every company wiki page and the Goal's `brief.md` and `status.md`;
+see "One file tree" for the size limit. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task

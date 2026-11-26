@@ -87,6 +87,9 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         goal_id: Optional[str] = Query(None),
+        has_goal: Optional[bool] = Query(
+            None, description="false lists only records with no Goal, true only records with one"
+        ),
         status: Optional[ProjectStatus] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ProjectResponse]:
@@ -99,6 +102,7 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             sort_by=sort_by,
             sort_order=sort_order,
             goal_id=goal_id,
+            has_goal=has_goal,
             status=status,
         )
         return PaginatedResponse(

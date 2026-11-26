@@ -984,6 +984,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         from agno.company.manager import AsyncCompanyManager, CompanyManager, _routine_project_id
         from agno.company.refresh import _records
         from agno.db.base import AsyncBaseDb
+        from agno.db.schemas.projects import is_default_project
         from agno.os.authz.run_context import restore_authorization
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope
 
@@ -1081,6 +1082,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         approving = None
         if not completing:
             project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and is_default_project(project["id"]):
+                # Nobody approved the Default Project, so a policy does not accept work in it.
+                raise _AutomationSkip("A Task in the Default Project waits for a person to accept it")
             if project and project["status"] == "cancelled":
                 raise _AutomationSkip("Cannot accept Task work in a cancelled Project")
             if project and project["status"] == "proposed":
@@ -1316,11 +1320,22 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             _automatic_task.reset(token)
 
 
-def _require_routine_goal(goal_id: Optional[str], authority: Any = None) -> None:
+def _require_routine_goal(goal_id: Optional[str], authority: Any = None, *, company_wide: bool = False) -> None:
+    """Refuse a Routine or Task run that acts outside its own Goal.
+
+    goal_id is the Goal of the record acted on, or None for a record with no Goal. A Routine acts only
+    on its Goal's records. A Task run acts only on records of its Task's Goal: a Task with no Goal
+    acts only on records with no Goal. company_wide marks a record of the whole company, such as a
+    wiki page, which no such run may change.
+    """
     from agno.run.authorization import current_authorization
 
     authority = authority or current_authorization()
-    if isinstance(authority, _ExecutorAuthorization) and authority.goal_id is not None and authority.goal_id != goal_id:
+    if not isinstance(authority, _ExecutorAuthorization):
+        return
+    # A Task run is bound by its Task even when that Task has no Goal.
+    bound = authority.goal_id is not None or authority.task_id is not None
+    if bound and (company_wide or authority.goal_id != goal_id):
         if isinstance(authority, _RoutineAuthorization):
             raise PermissionError("Routine authority is restricted to its configured Goal")
         raise PermissionError("A Task run is restricted to its Task's Goal")
