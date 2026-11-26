@@ -293,6 +293,7 @@ def test_a_task_is_listed_once_however_often_it_is_recorded():
         "added_at": added_at,
         "shown": "in_progress:task-1:1:",
         "changed_in": None,
+        "receipt_in": run_context.run_id,
     }
 
 
@@ -598,7 +599,8 @@ def test_a_change_shown_to_a_run_that_pauses_is_shown_once_more_after_it_continu
     assert sent.count("- Task ") == 2 and CHANGED not in sent
 
 
-def test_a_completed_task_leaves_the_list(chat):  # noqa: F811
+@pytest.mark.parametrize("failed_reply", [True, False])
+def test_a_completed_task_leaves_after_the_confirming_run_replies(chat, failed_reply):  # noqa: F811
     say(chat, [("add_company_task", {**ADD, "start": True})])
     task = only_task(chat)
     work(chat)
@@ -612,9 +614,17 @@ def test_a_completed_task_leaves_the_list(chat):  # noqa: F811
     }
     paused, _ = say(chat, [("review_company_task", review)])
     paused.requirements[0].confirm()
+    if failed_reply:
+        chat.os.manager.model = Refuses()
     with authorization_scope(person):
-        asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
+        continued = asyncio.run(chat.os.manager.acontinue_run(run_response=paused, user_id="alice"))
     assert chat.db.get_task(task["id"])["status"] == "done"
+    if failed_reply:
+        assert continued.status.value == "ERROR"
+        _, sent = say(chat)
+        assert "): done" in sent and sent.count(CHANGED) == 1
+    else:
+        assert continued.status.value == "COMPLETED"
     _, sent = say(chat)
     assert sent == "" and linked(chat) == []
 

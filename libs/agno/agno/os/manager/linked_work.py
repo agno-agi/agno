@@ -19,7 +19,7 @@ from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
-# The session state key. Each entry is {"kind", "id", "added_at", "shown", "changed_in"}.
+# Each entry records the phase shown and which run received its change notice or tool receipt.
 LINKED_WORK_KEY = "linked_work"
 
 # Entries read and listed in one run, newest first.
@@ -71,18 +71,14 @@ def link_task(run_context: Any, value: Any, add: bool = True) -> None:
         return
     entries = _entries(run_context)
     entry = next((item for item in entries if item.get("kind") == "task" and item["id"] == value["id"]), None)
-    if entry is not None:
-        entry["shown"] = _task_phase(value)
-    elif add:
-        entries.append(
-            {
-                "kind": "task",
-                "id": value["id"],
-                "added_at": int(time.time()),
-                "shown": _task_phase(value),
-                "changed_in": None,
-            }
-        )
+    if entry is None:
+        if not add:
+            return
+        entry = {"kind": "task", "id": value["id"], "added_at": int(time.time())}
+        entries.append(entry)
+    entry["shown"] = _task_phase(value)
+    entry["changed_in"] = None
+    entry["receipt_in"] = getattr(run_context, "run_id", None)
     state[LINKED_WORK_KEY] = entries[-_KEPT:]
 
 
@@ -169,7 +165,7 @@ class LinkedWork:
         return newest[:_LISTED], owner, True
 
     @staticmethod
-    def _replied(session: Any, run_id: Any) -> bool:
+    def _replied(session: Any, run_id: Any, *, tool_receipt: bool = False) -> bool:
         """Whether the run a change was shown in gave the person a reply written with the change in view.
 
         A run that failed or was cancelled gave none. A run that paused for a confirmation is
@@ -182,7 +178,8 @@ class LinkedWork:
             if getattr(run, "run_id", None) == run_id:
                 status = getattr(run, "status", None)
                 completed = str(getattr(status, "value", status)).upper() == "COMPLETED"
-                return completed and not getattr(run, "requirements", None)
+                # The continuation includes its confirmed tool result in the messages used to reply.
+                return completed and (tool_receipt or not getattr(run, "requirements", None))
         return False
 
     def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any) -> Optional[str]:
@@ -202,15 +199,24 @@ class LinkedWork:
                 entries.remove(entry)
                 continue
             phase = _task_phase(value)
-            shown_in = entry.get("changed_in")
-            unheard = shown_in is not None and shown_in != run_id and not self._replied(session, shown_in)
+            receipt_in = entry.get("receipt_in")
+            shown_in = receipt_in or entry.get("changed_in")
+            unheard = (
+                shown_in is not None
+                and shown_in != run_id
+                and not self._replied(session, shown_in, tool_receipt=receipt_in is not None)
+            )
             if entry.get("shown") != phase or unheard:
                 entry["shown"] = phase
                 entry["changed_in"] = run_id
+                entry.pop("receipt_in", None)
+            elif receipt_in is not None and receipt_in != run_id:
+                entry.pop("receipt_in")
             changed = run_id is not None and entry.get("changed_in") == run_id
             if value.get("status") in ("done", "cancelled") and not changed:
-                # Its end was shown in an earlier run, or by the tool that ended it here.
-                entries.remove(entry)
+                # A receipt in this same run may still be followed by a failed reply.
+                if receipt_in is None or receipt_in != run_id:
+                    entries.remove(entry)
                 continue
             lines.append(_line(value, changed))
         run_context.session_state[LINKED_WORK_KEY] = entries
