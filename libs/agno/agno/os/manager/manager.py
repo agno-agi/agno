@@ -74,17 +74,15 @@ def _remembers_people(learning: Any) -> bool:
 
 
 class _ManagerInstructions:
-    """Super Agent's instructions for one run: the fixed text, the company details, the components
-    the caller can run and the work this conversation started."""
+    """Super Agent's instructions for one run: the fixed text, the company details and the components
+    the caller can run."""
 
-    def __init__(self, base: List[str], runner: Any, company_db: Any = None, user_isolation: bool = False):
+    def __init__(self, base: List[str], runner: Any, company_db: Any = None):
         from agno.company.details import _company_instructions
-        from agno.os.manager.linked_work import _LinkedWork
 
         self.base = base
         self.runner = runner
         self.company: Any = _company_instructions(company_db, base) if company_db is not None else None
-        self.linked: Any = _LinkedWork(company_db, user_isolation) if company_db is not None else None
 
     def __copy__(self) -> "_ManagerInstructions":
         # Holds no run state. A run copy of the team keeps this object, so the copy is
@@ -145,9 +143,8 @@ class _ManagerInstructions:
             from agno.utils.log import log_warning
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
-            rows = []
-        linked = self.linked(run_context) if self.linked is not None else []
-        return [*base, *self._catalog(rows, more), *linked]
+            return base
+        return [*base, *self._catalog(rows, more)]
 
     async def __acall__(self, run_context: Any = None) -> List[str]:
         base = await self.company.__acall__(run_context) if self.company is not None else list(self.base)
@@ -169,9 +166,8 @@ class _ManagerInstructions:
             from agno.utils.log import log_warning
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
-            rows = []
-        linked = await self.linked.__acall__(run_context) if self.linked is not None else []
-        return [*base, *self._catalog(rows, more), *linked]
+            return base
+        return [*base, *self._catalog(rows, more)]
 
 
 def _resolve_model(agent_os: "AgentOS", config: OSManager) -> Any:
@@ -399,10 +395,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
     company_db = agent_os._company_db
-    isolated = False
+    # Super Agent can edit the platform, so a Company Routine never runs on it.
+    pre_hooks: List[Any] = [_RoutineBoundary(routine=False)]
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
-        from agno.os.manager.linked_work import alink_proposal, link_proposal
+        from agno.os.manager.linked_work import LinkedWork, alink_proposal, link_proposal
         from agno.tools.company import CompanyTools
 
         # The file tree tools below read and write the wiki and every Goal's pages.
@@ -421,7 +418,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.append(company_tools)
         tools.append(CompanyTaskTools(agent_os))
         instructions.extend([COMPANY_INSTRUCTIONS, LINKED_WORK_INSTRUCTIONS])
-        isolated = _user_isolation(agent_os)
+        pre_hooks.append(LinkedWork(company_db, _user_isolation(agent_os)))
     # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
     notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
@@ -448,9 +445,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         knowledge=config.knowledge,
         tools=tools,
         members=[builder],
-        instructions=_ManagerInstructions(instructions, runner, company_db, isolated),
-        # Super Agent can edit the platform, so a Company Routine never runs on it.
-        pre_hooks=[_RoutineBoundary(routine=False)],
+        instructions=_ManagerInstructions(instructions, runner, company_db),
+        pre_hooks=pre_hooks,
+        # The work a conversation started is sent beside each message, not in the instructions: a
+        # model that continues from its previous response is sent the instructions of the first run only.
+        add_dependencies_to_context=company_db is not None,
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,

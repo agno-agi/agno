@@ -3,9 +3,9 @@
 A person accepts the Task with an executor; Super Agent never accepts work. Asked to
 start it, Super Agent submits it to the durable queue and says it is queued. The Task
 runs in its own session, so unrelated questions get answers before it finishes, and the
-Task records which conversation asked for it. Super Agent's instructions list the work
-this conversation started with its state on every turn, so it says the Task finished on
-the next message without being asked.
+Task records which conversation asked for it. Each message reaches Super Agent with the
+state of the work this conversation started, so it says the Task finished on the next
+message without being asked.
 
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
 

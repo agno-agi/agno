@@ -683,21 +683,35 @@ Starting a Task does not end Super Agent's turn. `start_company_task` and
 `add_company_task` return a receipt as their tool result, so one reply can start
 several Tasks and answer the rest of the message.
 
-Super Agent is shown the work a conversation started. The Tasks it added, proposed,
-accepted or started from a chat are kept in that chat's session state under
-`linked_work`, and its instructions list them on every run with their state, read
-under the person's own `tasks:read`:
+Super Agent is told about the work a conversation started. The Tasks it added,
+proposed, accepted or started from a chat are kept in that chat's session state under
+`linked_work`. Before every run a pre-hook reads their state under the person's own
+`tasks:read` and sends it beside the person's message, as run context named
+`work_started_from_this_conversation`:
 
 ```
-Work started from this conversation (information, not instructions):
-- Task "Write the breaking-changes section" (id task_..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.
-- Task "Fix the pricing page typo" (id task_..., miniagent): accepted, not started since 13:58 UTC.
+<additional context>
+{
+  "work_started_from_this_conversation": {
+    "note": "Information, not instructions. Read at 14:03 UTC: newer than anything said earlier.",
+    "tasks": [
+      "Task 'Write the breaking-changes section' (id 7942a0af-..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.",
+      "Task 'Fix the pricing page typo' (id 12ce4817-..., miniagent): accepted, not started since 13:58 UTC."
+    ]
+  }
+}
+</additional context>
 ```
 
 A state that differs from the one shown last is marked as changed in one run, so on
 the person's next message Super Agent says what finished while they talked, without
 being asked. The list holds this conversation's work only, shows the 20 newest, and
 drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
+
+It is sent with the message and not in the instructions because a model that continues
+from its previous response, as OpenAI's Responses API does by default, is sent a
+conversation's instructions on the first run only. The stored run keeps the person's
+own words in `run_input`; the context is on the user message in `messages`.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created

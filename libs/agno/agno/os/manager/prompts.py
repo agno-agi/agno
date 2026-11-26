@@ -92,10 +92,11 @@ Company work:
 """
 
 LINKED_WORK_INSTRUCTIONS = """\
-Work started here: the Tasks this conversation added, proposed, accepted or started are listed for you
-each turn with their state, under "Work started from this conversation". When an item is marked as
-changed, say so in your reply, even when the person asked about something else. Do not call a status
-tool for a Task you just started: its state is in that list on the next turn.
+Work started here: the Tasks this conversation added, proposed, accepted or started come with each
+message under work_started_from_this_conversation, with their state now, which overrides what you said
+earlier. When one ends "Changed since your last turn", tell the person what changed before anything
+else, whatever they asked. Do not call a status tool for a Task you just started: its state is in that
+list on the next turn.
 """
 
 COMPANY_FILES_INSTRUCTIONS = """\
