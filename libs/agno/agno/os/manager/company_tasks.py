@@ -283,7 +283,6 @@ class CompanyTaskTools(Toolkit):
         from dataclasses import replace
 
         from agno.company.context import read_permissions
-
         from agno.company.routines import _manager_call
         from agno.company.sandbox import _is_sandboxed
         from agno.db.schemas.projects import is_default_project
