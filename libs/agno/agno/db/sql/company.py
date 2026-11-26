@@ -206,16 +206,23 @@ def lock_child(
     """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project.
 
     moving_to is the Project a Task is being moved into. A Task with no Goal locks its Project's
-    row, so a move locks both Projects, lower id first: two opposite moves then wait for each
-    other instead of deadlocking.
+    row, so a move between two Projects with no Goal locks both, lower id first: two opposite moves
+    then wait for each other instead of deadlocking. A Project that has a Goal is protected by its
+    Goal's lock, which the move takes afterwards, so its row is not locked here: a write to that
+    Project holds the Goal and then writes the row, and the two would wait on each other.
     """
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
         return
     record = row._mapping
     own_project = record["project_id"] if "project_id" in table.c else record_id
-    if record["goal_id"] is None and moving_to and own_project and moving_to != own_project:
-        for project_id in sorted((own_project, moving_to)):
+    both_rows = record["goal_id"] is None and bool(moving_to) and bool(own_project) and moving_to != own_project
+    if both_rows:
+        # A Project's Goal never changes, so it is read before any lock is held.
+        target_goal = sess.execute(select(projects.c.goal_id).where(projects.c.id == moving_to)).scalar()
+        both_rows = target_goal is None
+    if both_rows:
+        for project_id in sorted((str(own_project), str(moving_to))):
             lock_parent(sess, goals, projects, None, project_id)
     else:
         lock_parent(sess, goals, projects, record["goal_id"], own_project)
