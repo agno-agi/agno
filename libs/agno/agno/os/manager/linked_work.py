@@ -4,8 +4,8 @@ The list is kept in the conversation's own session state. Super Agent's tools ad
 and a pre-hook reads it at the start of every run, so only a run of the conversation writes it. Each
 entry keeps the state last shown to the model: a different live state is marked as changed, in one run.
 
-The block is sent as a message of its own right before the person's message, and is not stored with
-the run. Instructions would not carry it: a model that continues from its previous response is sent
+The block is attached as a message of its own right before the person's message and is not stored
+with the run. The model is sent the two as one message, the block first. Instructions would not carry it: a model that continues from its previous response is sent
 the instructions of a conversation's first run only, and what follows the last reply is what every
 request carries.
 """
@@ -115,9 +115,22 @@ async def alink_proposal(run_context: Any = None, fc: Any = None) -> None:
 
 
 def _since(value: Dict[str, Any]) -> str:
-    # The last recorded step of the Task, not its last edit: renaming a Task does not move it.
-    steps = [step.get("created_at") for step in value.get("transitions") or [] if isinstance(step, dict)]
-    at = next((moment for moment in reversed(steps) if moment), None) or value.get("created_at")
+    """When the Task entered the state its line describes, or '' when no record says.
+
+    The time of the step into its stage: an edit, a move to another Project and an archive are not
+    steps. A proposal is dated by its creation. A run's failure or cancellation is not dated.
+    """
+    status = value.get("status")
+    result = value.get("result") or {}
+    if status == "in_progress" and result.get("run_id") == value.get("job_id"):
+        if result.get("status") in ("ERROR", "CANCELLED"):
+            return ""
+    steps = [
+        step.get("created_at")
+        for step in value.get("transitions") or []
+        if isinstance(step, dict) and not step.get("action") and step.get("target") == status
+    ]
+    at = steps[-1] if steps else (value.get("created_at") if status == "backlog" else None)
     if not isinstance(at, (int, float)) or isinstance(at, bool):
         return ""
     moment = datetime.fromtimestamp(at, timezone.utc)
@@ -168,16 +181,19 @@ class LinkedWork(BaseGuardrail):
 
     @staticmethod
     def _replied(session: Any, run_id: Any) -> bool:
-        """Whether the run a change was shown in completed, so the person was given its reply.
+        """Whether the run a change was shown in gave the person a reply written with the change in view.
 
-        With no session to look in, the run is taken to have replied.
+        A run that failed or was cancelled gave none. A run that paused for a confirmation is
+        continued from its stored messages, which hold no block, so its reply may not have it either:
+        the change is shown again. With no session to look in, the run is taken to have replied.
         """
         if session is None:
             return True
         for run in getattr(session, "runs", None) or []:
             if getattr(run, "run_id", None) == run_id:
                 status = getattr(run, "status", None)
-                return str(getattr(status, "value", status)).upper() == "COMPLETED"
+                completed = str(getattr(status, "value", status)).upper() == "COMPLETED"
+                return completed and not getattr(run, "requirements", None)
         return False
 
     def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any) -> Optional[str]:
@@ -185,9 +201,9 @@ class LinkedWork(BaseGuardrail):
 
         A change is marked with the run it was first shown in. A retry builds the block again under
         the same run id and gets the same mark. A continued run keeps its run id and runs no pre-hook,
-        so the mark is given in one run however often that run pauses or retries. A run that failed,
-        was cancelled or still waits for a confirmation gave the person no reply, so its marks pass to
-        the next run.
+        so the mark is given once to a run however often it retries. A run that failed, was
+        cancelled or paused for a confirmation may have given the person no reply that had the change
+        in view, so its marks pass to the next run.
         """
         run_id = getattr(run_context, "run_id", None)
         entries = _entries(run_context)

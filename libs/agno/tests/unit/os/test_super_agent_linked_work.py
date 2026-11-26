@@ -100,6 +100,12 @@ def listed(run_context):
 modes = pytest.mark.parametrize("mode", ["sync", "async"])
 
 
+def stamp(at):
+    """A time as the block writes it: the hour today, the date and hour for another day."""
+    today = time.strftime("%Y-%m-%d", time.gmtime()) == time.strftime("%Y-%m-%d", time.gmtime(at))
+    return time.strftime("%H:%M UTC" if today else "%Y-%m-%d %H:%M UTC", time.gmtime(at))
+
+
 @modes
 @pytest.mark.parametrize(
     "fields, words",
@@ -122,20 +128,20 @@ modes = pytest.mark.parametrize("mode", ["sync", "async"])
     ],
 )
 def test_each_state_is_one_line_in_plain_words(mode, fields, words):
-    at = int(time.time())
-    # The time is the Task's last recorded step. A later edit, such as a rename, does not move it.
-    task = row(
-        created_at=at - 7200,
-        updated_at=at + 3600,
-        transitions=[{"created_at": at - 3600}, {"created_at": at}],
-        **fields,
-    )
+    at = int(time.time()) - 600
+    # The time is the step into the Task's stage. A rename, a move and an archive are not steps.
+    history = [
+        {"target": "elsewhere", "created_at": at - 3600},
+        {"target": fields["status"], "created_at": at},
+        {"action": "move", "created_at": at + 120},
+        {"action": "archive", "from": fields["status"], "target": fields["status"], "created_at": at + 240},
+    ]
+    task = row(created_at=at - 7200, updated_at=at + 300, transitions=history, **fields)
     run_context = context()
     link_task(run_context, task)
-    since = time.strftime("%H:%M UTC", time.gmtime(at))
-    assert (
-        block(Tasks(task), run_context, mode) == f'- Task "Draft the notes" (id task-1, writer): {words} since {since}.'
-    )
+    # A run that failed or was cancelled records no step, so its line gives no time.
+    since = "" if "its run" in words else f" since {stamp(at)}"
+    assert block(Tasks(task), run_context, mode) == f'- Task "Draft the notes" (id task-1, writer): {words}{since}.'
 
 
 @modes
@@ -159,12 +165,16 @@ def test_a_title_cannot_break_out_of_its_line(mode):
 
 
 @modes
-def test_a_task_with_no_recorded_step_is_dated_by_its_creation(mode):
+def test_a_proposal_is_dated_by_its_creation_and_a_stage_with_no_step_is_not_dated(mode):
     at = int(time.time()) - 600
-    task = row(created_at=at, updated_at=at + 300)
+    proposal = row(status="backlog", created_at=at, updated_at=at + 300)
     run_context = context()
-    link_task(run_context, task)
-    assert block(Tasks(task), run_context, mode).endswith("since " + time.strftime("%H:%M UTC", time.gmtime(at)) + ".")
+    link_task(run_context, proposal)
+    assert block(Tasks(proposal), run_context, mode).endswith(f"proposed, not accepted since {stamp(at)}.")
+    undated = row(status="ready", created_at=at, updated_at=at + 300)
+    run_context = context()
+    link_task(run_context, undated)
+    assert block(Tasks(undated), run_context, mode).endswith("): accepted, not started.")
 
 
 @modes
@@ -387,9 +397,20 @@ class Scripted(ScriptedModel):
         return super().invoke(system + [m for m in messages if not m.from_history and m.role != "system"], tools)
 
 
+def split(content):
+    """A message as the model was sent it: the block that came with it ('' for none) and the text."""
+    content = str(content)
+    if not content.startswith(_HEADER):
+        return "", content
+    # The block has no empty line in it, so the first one ends it.
+    block_text, _, text = content.partition("\n\n")
+    return block_text, text
+
+
 def blocks(request):
     """The linked-work blocks in one request to the model."""
-    return [content for role, content, _ in request if role == "user" and str(content).startswith(_HEADER)]
+    found = [split(content)[0] for role, content, old in request if role == "user" and not old]
+    return [block_text for block_text in found if block_text]
 
 
 def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
@@ -399,11 +420,13 @@ def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
     with authorization_scope(lambda: person(scopes)):
         run = asyncio.run(chat.os.manager.arun("Hello", user_id="alice", session_id=session, **options))
     sent = [blocks(request) for request in model.requests]
-    # Every model step of the run is sent the same block, once, right before the person's message.
+    # Every model step of the run is sent the same block, once, as the start of the person's message.
     assert all(found == sent[0] and len(found) <= 1 for found in sent), sent
     for request in model.requests:
-        fresh = [(role, content) for role, content, old in request if not old and role == "user"]
-        assert fresh[-1][1].startswith("Hello") and len(fresh) == 1 + len(sent[0])
+        fresh = [content for role, content, old in request if not old and role == "user"]
+        assert len(fresh) == 1 and split(fresh[0])[1].startswith("Hello")
+        roles = [role for role, _, _ in request]
+        assert all(pair != ("user", "user") for pair in zip(roles, roles[1:])), roles
     return run, (sent[0][0] if sent[0] else "")
 
 
@@ -472,8 +495,12 @@ def test_an_added_task_is_listed_and_shown_on_the_next_message(chat):  # noqa: F
 
 
 def since(task):
-    steps = [step["created_at"] for step in task.get("transitions") or []]
-    return time.strftime("%H:%M UTC", time.gmtime(steps[-1] if steps else task["created_at"]))
+    steps = [
+        step["created_at"]
+        for step in task.get("transitions") or []
+        if not step.get("action") and step.get("target") == task["status"]
+    ]
+    return stamp(steps[-1] if steps else task["created_at"])
 
 
 def test_starting_does_not_end_the_turn_and_a_finished_task_is_announced_once(chat):  # noqa: F811
@@ -544,7 +571,7 @@ def test_a_task_accepted_after_a_pause_is_listed_once_and_not_marked_changed(cha
     assert "writer): accepted, not started" in sent and CHANGED not in sent
 
 
-def test_a_change_shown_to_a_run_that_pauses_is_not_shown_again_after_it_continues(chat):  # noqa: F811
+def test_a_change_shown_to_a_run_that_pauses_is_shown_once_more_after_it_continues(chat):  # noqa: F811
     say(chat, [("add_company_task", {**ADD, "start": True})])
     first = only_task(chat)
     work(chat)
@@ -570,6 +597,9 @@ def test_a_change_shown_to_a_run_that_pauses_is_not_shown_again_after_it_continu
     assert [entry["id"] for entry in linked(chat)] == [first["id"], other["id"]]
     assert linked(chat)[0]["changed_in"] == paused.run_id
 
+    # The reply after the confirmation was written without the block, so the change is shown once more.
+    _, sent = say(chat)
+    assert sent.count("- Task ") == 2 and sent.count(CHANGED) == 1
     _, sent = say(chat)
     assert sent.count("- Task ") == 2 and CHANGED not in sent
 
@@ -742,6 +772,84 @@ def test_learning_is_not_given_a_message_the_run_does_not_keep(mode):
     assert learning.messages == said
 
 
+def test_a_note_is_sent_as_the_start_of_the_message_after_it():
+    from agno.models.base import Model
+    from agno.models.message import Message
+
+    def view(messages):
+        return [(m.role, m.content) for m in Model._with_notes_merged(messages)]
+
+    system, earlier, reply = Message(role="system", content="S"), Message(role="user", content="Earlier"), None
+    reply = Message(role="assistant", content="Reply")
+    note = Message(role="user", content="Note", add_to_agent_memory=False)
+    hello = Message(role="user", content="Hello")
+
+    # With no note the list itself is passed on, untouched.
+    plain = [system, earlier, reply, hello]
+    assert Model._with_notes_merged(plain) is plain
+    assert view([system, earlier, reply, note, hello]) == [
+        ("system", "S"),
+        ("user", "Earlier"),
+        ("assistant", "Reply"),
+        ("user", "Note\n\nHello"),
+    ]
+    assert (note.content, hello.content, hello.add_to_agent_memory) == ("Note", "Hello", True)
+    # Two notes go in the order they were attached. A note with no message after it is sent as it is.
+    second = Message(role="user", content="Second", add_to_agent_memory=False)
+    assert view([note, second, hello]) == [("user", "Note\n\nSecond\n\nHello")]
+    assert view([system, note]) == [("system", "S"), ("user", "Note")]
+    assert view([note, reply, hello]) == [("user", "Note"), ("assistant", "Reply"), ("user", "Hello")]
+    # An unstored system note, as compaction writes, is not a user note.
+    compaction = Message(role="system", content="Summary", add_to_agent_memory=False)
+    kept = [system, compaction, hello]
+    assert Model._with_notes_merged(kept) is kept
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_every_way_a_model_is_called_sends_the_note_with_the_message(mode, stream):
+    from agno.models.message import Message
+
+    model = Scripted()
+    messages = [
+        Message(role="system", content="S"),
+        Message(role="user", content=NOTE + "now", add_to_agent_memory=False),
+        Message(role="user", content="Hello"),
+    ]
+    assistant = Message(role="assistant")
+
+    async def call():
+        if stream:
+            return [
+                part async for part in model._ainvoke_stream_with_retry(messages=messages, assistant_message=assistant)
+            ]
+        return await model._ainvoke_with_retry(messages=messages, assistant_message=assistant)
+
+    if mode == "async":
+        asyncio.run(call())
+    elif stream:
+        list(model._invoke_stream_with_retry(messages=messages, assistant_message=assistant))
+    else:
+        model._invoke_with_retry(messages=messages, assistant_message=assistant)
+    assert [(role, content) for role, content, _ in model.requests[0]] == [
+        ("system", "S"),
+        ("user", NOTE + "now\n\nHello"),
+    ]
+    assert len(messages) == 3
+
+
+def test_a_move_does_not_change_when_a_task_was_accepted_and_a_failed_run_is_not_dated(chat):  # noqa: F811
+    from agno.os.manager.linked_work import _since
+
+    say(chat, [("add_company_task", {**ADD, "start": False})])
+    task = only_task(chat)
+    accepted = since(task)
+    moved = {**task, "transitions": [*task["transitions"], {"action": "move", "created_at": task["created_at"] + 7200}]}
+    assert _since(moved) == f" since {accepted}"
+    failed = {**task, "status": "in_progress", "job_id": "run-1", "result": {"run_id": "run-1", "status": "ERROR"}}
+    assert _since(failed) == ""
+
+
 def test_the_attached_messages_are_not_a_constructor_argument():
     from dataclasses import fields
 
@@ -830,9 +938,8 @@ def test_a_callers_dependencies_behave_as_they_did(chat, asked):  # noqa: F811
         options["add_dependencies_to_context"] = asked
     _, sent = say(chat, **options)
     assert sent != "" and "secret-value" not in sent
-    person_message = [
-        content for role, content, old in chat.os.manager.model.requests[0] if role == "user" and not old
-    ][-1]
+    fresh = [content for role, content, old in chat.os.manager.model.requests[0] if role == "user" and not old]
+    person_message = split(fresh[-1])[1]
     if asked:
         # Asked for, the caller's dependencies are added to the person's message, and only theirs.
         added = json.loads(person_message.split("<additional context>")[1].split("</additional context>")[0])
@@ -924,7 +1031,8 @@ def test_a_retry_inside_a_run_is_sent_the_block_once(chat):  # noqa: F811
 
 @pytest.mark.parametrize("chained", [True, False])
 def test_the_block_is_in_the_request_a_reasoning_model_is_sent(chained):
-    """With response chaining, OpenAI is sent what follows the last response: the block and the message."""
+    """With response chaining, OpenAI is sent what follows the last response: the block and the message,
+    as one user message."""
     import httpx
     from openai import OpenAI
 
@@ -948,14 +1056,17 @@ def test_the_block_is_in_the_request_a_reasoning_model_is_sent(chained):
         Message(role="user", content=_HEADER + ": one Task", add_to_agent_memory=False),
         Message(role="user", content="Hello"),
     ]
-    model.invoke(messages, Message(role="assistant"))
+    model._invoke_with_retry(messages=messages, assistant_message=Message(role="assistant"))
     sent = [item["content"] for item in requests[0]["input"]]
+    together = _HEADER + ": one Task\n\nHello"
     if chained:
         assert requests[0]["previous_response_id"] == "resp_earlier"
-        assert sent == [_HEADER + ": one Task", "Hello"]
+        assert sent == [together]
     else:
         assert "previous_response_id" not in requests[0]
-        assert sent == [message.content for message in messages]
+        assert sent == ["Instructions of this run", "Earlier", "Reply", together]
+    # The run's own messages are untouched: the note and the person's message stay apart.
+    assert [message.content for message in messages][-2:] == [_HEADER + ": one Task", "Hello"]
     client.close()
 
 

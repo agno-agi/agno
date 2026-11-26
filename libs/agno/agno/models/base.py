@@ -223,6 +223,36 @@ class Model(ABC):
 
         return True
 
+    @staticmethod
+    def _with_notes_merged(messages: Any) -> Any:
+        """Send a note with the message it precedes.
+
+        A user message that is sent and not stored (add_to_agent_memory=False) is a note the framework
+        attached for the message after it. It is sent as the start of that message, so no request has
+        two user messages in a row, which some providers and chat templates refuse. The run's own
+        messages stay apart: the note is not stored and the message after it is stored as written.
+        A list with no such note is returned as it is.
+        """
+        if not isinstance(messages, list) or not any(
+            m.role == "user" and not m.add_to_agent_memory and isinstance(m.content, str) for m in messages
+        ):
+            return messages
+        merged: List[Message] = []
+        notes: List[Message] = []
+        for message in messages:
+            if message.role == "user" and not message.add_to_agent_memory and isinstance(message.content, str):
+                notes.append(message)
+                continue
+            if notes and message.role == "user" and isinstance(message.content, str):
+                content = "\n\n".join([*(str(note.content) for note in notes), message.content])
+                message = message.model_copy(update={"content": content})
+            else:
+                merged.extend(notes)
+            notes = []
+            merged.append(message)
+        merged.extend(notes)
+        return merged
+
     def _invoke_with_retry(self, **kwargs) -> ModelResponse:
         """
         Invoke the model with retry logic for ModelProviderError.
@@ -230,6 +260,8 @@ class Model(ABC):
         This method wraps the invoke() call and retries on ModelProviderError
         with optional exponential backoff.
         """
+        if "messages" in kwargs:
+            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -278,6 +310,8 @@ class Model(ABC):
         This method wraps the ainvoke() call and retries on ModelProviderError
         with optional exponential backoff.
         """
+        if "messages" in kwargs:
+            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -327,6 +361,8 @@ class Model(ABC):
         This method wraps the invoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
         """
+        if "messages" in kwargs:
+            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
@@ -379,6 +415,8 @@ class Model(ABC):
         This method wraps the ainvoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
         """
+        if "messages" in kwargs:
+            kwargs["messages"] = self._with_notes_merged(kwargs["messages"])
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
