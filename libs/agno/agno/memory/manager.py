@@ -115,10 +115,9 @@ class MemoryManager:
                 from agno.models.openai import OpenAIChat
             except ModuleNotFoundError as e:
                 log_error(e)
-                log_error(
+                raise ImportError(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
-                )
-                exit(1)
+                ) from e
             self.model = OpenAIChat(id="gpt-4o")
         return self.model
 

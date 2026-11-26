@@ -11,6 +11,7 @@ import pytest
 
 from agno.db.schemas import UserMemory
 from agno.memory.manager import MemoryManager
+from agno.models.base import Model
 
 
 @pytest.fixture
@@ -93,6 +94,52 @@ class TestMemoryManagerInit:
         assert mm.add_memories is False
         assert mm.clear_memories is True
         assert mm.debug_mode is True
+
+
+# =============================================================================
+# Tests for get_model
+# =============================================================================
+
+
+class TestMemoryManagerGetModel:
+    def test_get_model_returns_existing_model(self):
+        """get_model() returns existing model if already initialized."""
+        mock_model = MagicMock(spec=Model)
+        mm = MemoryManager(model=mock_model)
+        assert mm.get_model() is mock_model
+
+    def test_get_model_initializes_default_openai(self):
+        """get_model() initializes OpenAIChat when model is None."""
+        with patch("agno.models.openai.OpenAIChat") as mock_openai:
+            mock_instance = MagicMock()
+            mock_openai.return_value = mock_instance
+            mm = MemoryManager()
+            model = mm.get_model()
+            mock_openai.assert_called_once_with(id="gpt-4o")
+            assert model is mock_instance
+            assert mm.model is mock_instance
+
+    def test_get_model_raises_import_error_when_openai_missing(self, monkeypatch):
+        """get_model() raises ImportError instead of exiting process when openai is missing."""
+        import builtins
+        import sys
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name.startswith("agno.models.openai"):
+                raise ModuleNotFoundError("No module named 'openai'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.delitem(sys.modules, "agno.models.openai", raising=False)
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+        mm = MemoryManager()
+        with pytest.raises(ImportError) as exc_info:
+            mm.get_model()
+
+        assert "Agno uses `openai` as the default model provider" in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, ModuleNotFoundError)
 
 
 # =============================================================================
