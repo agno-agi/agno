@@ -142,10 +142,15 @@ class System:
         self.queue = None
         if queue:
             by_id = {writer.id: writer for writer in self.writers}
-            by_id.update({"investigator": self.investigator, "superagent": self.os.manager})
+            by_id["investigator"] = self.investigator
+
+            def resolve(kind, component_id, *a, **k):
+                # Super Agent runs on a copy of the served Team, as the AgentOS queue and routes run it.
+                return self.os.manager.deep_copy() if component_id == "superagent" else by_id[component_id]
+
             self.queue = QueueWorker(
                 InMemoryQueueStore(),
-                lambda kind, component_id, *a, **k: by_id[component_id],
+                resolve,
                 QueueConfig(durable=True),
                 authorization_app=self.app,
             )
@@ -796,14 +801,56 @@ def test_a_work_update_is_offered_only_reads_and_no_member(company, async_mode):
     person = RunContext(run_id="r", session_id=CHAT, user_id="alice", session_state={})
     hook.check(run_context=person, team=company.os.manager)
     assert person.tools is None and person.members is None
-    assert work_update._latest_run[CHAT] == "r"
+    assert work_update._latest_run[CHAT] == ("r", False)
 
 
-def test_the_gate_and_the_boundary_are_on_super_agent_only(company):
+def test_the_gate_is_on_a_work_updates_own_team_and_never_on_the_served_one(company):
     team = company.os.manager
-    assert team.tool_hooks == [work_update.work_update_gate]
-    assert any(isinstance(hook, work_update.WorkUpdateBoundary) for hook in team.pre_hooks)
+    boundary = next(hook for hook in team.pre_hooks if isinstance(hook, work_update.WorkUpdateBoundary))
+    assert team.tool_hooks is None and boundary.served() is team
+    assert any(isinstance(hook, work_update.WorkUpdateState) for hook in team.post_hooks)
     assert not company.writer.tool_hooks and not company.os._manager.builder.tool_hooks
+    # A work update runs on a copy of the Team, as every request and queued run does: the copy gets the gate.
+    copy = team.deep_copy()
+    copied = next(hook for hook in copy.pre_hooks if isinstance(hook, work_update.WorkUpdateBoundary))
+    assert copied.served() is team
+    copied.check(run_context=marked(), team=copy)
+    assert copy.tool_hooks == [work_update.work_update_gate] and team.tool_hooks is None
+    # A turn of the person on a copy, and a work update run on the served Team itself, leave hooks alone.
+    other = team.deep_copy()
+    copied.check(run_context=RunContext(run_id="r", session_id=CHAT, user_id="alice", session_state={}), team=other)
+    boundary.check(run_context=marked(), team=team)
+    assert other.tool_hooks is None and team.tool_hooks is None
+
+
+@pytest.mark.parametrize("updates", [True, False], ids=["work updates on", "work updates off"])
+def test_a_tools_own_hooks_still_run_on_the_persons_turns(tmp_path, updates):
+    from agno.tools import tool
+
+    audited = []
+
+    def audit(function_name, function_call, arguments):
+        audited.append(function_name)
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[audit])
+    def lookup(key: str) -> str:
+        """Look a key up."""
+        return "value of " + key
+
+    system = System(tmp_path, tools=[lookup], work_updates=updates)
+
+    async def steps():
+        first = await system.say("Look it up", ("lookup", {"key": "a"}))
+        # Also after a work update ran in the conversation.
+        await system.start()
+        await system.finish()
+        second = await system.say("Again", ("lookup", {"key": "b"}))
+        return first.tools[0].result, second.tools[0].result, len(system.updates_stored())
+
+    assert scenario(steps) == ("value of a", "value of b", 1 if updates else 0)
+    system.close()
+    assert audited == ["lookup", "lookup"]
 
 
 PERSON_ONLY = [
@@ -1099,3 +1146,267 @@ def test_the_lifespan_registers_the_listener_and_takes_it_away(tmp_path):
         assert len(added) == 1 and isinstance(added[0], WorkUpdates)
     assert run_background._requester_listeners == before
     system.close()
+
+
+# ----------------------------------------------------------------- while a work update is going
+
+
+class HeldUpdates(Chat):
+    """Super Agent's model, which holds a work update at GATES["update"] and lets every other run through."""
+
+    async def ainvoke(self, messages, tools=None, **kwargs):
+        fresh = [m for m in messages if not m.from_history and m.role == "user"]
+        if any(str(m.content).startswith(WORK_UPDATE_LABEL) for m in fresh):
+            if GATES.get("update") is not None:
+                await GATES["update"].wait()
+        elif GATES.get("chat") is not None:
+            await GATES["chat"].wait()
+        return self.invoke(messages, tools=tools, **kwargs)
+
+
+@pytest.fixture(params=[False, True], ids=["in-memory", "durable-queue"])
+def held(request, tmp_path):
+    value = System(tmp_path, queue=request.param)
+    value.chat = HeldUpdates()
+    value.os.manager.model = value.chat
+    yield value
+    value.close()
+
+
+def listed(system):
+    session = system.db.get_session(CHAT, deserialize=False)
+    entries = ((session.get("session_data") or {}).get("session_state") or {}).get(LINKED_WORK_KEY, [])
+    return {entry.get("component_id"): entry.get("shown") for entry in entries}
+
+
+def test_a_message_sent_while_a_work_update_is_going_keeps_the_work_it_starts(held, monkeypatch):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        await held.finish("writer")
+        going = [row["status"] for row in held.updates_stored()]
+        # The person cannot see that a work update is going, and asks for more work.
+        second = await held.start("workflow", "investigator")
+        after_the_turn = listed(held)
+        # The work update ends after the person's turn did.
+        GATES["update"].set()
+        await held.settle()
+        after_the_update = listed(held)
+        await held.finish("investigator")
+        await asyncio.sleep(0.2)
+        await held.settle()
+        check = await held.say("Did it finish?", ("check_background_run", {"run_id": second}))
+        return going, after_the_turn, after_the_update, len(held.updates_stored()), json.loads(check.tools[0].result)
+
+    going, after_the_turn, after_the_update, updates, checked = scenario(steps)
+    assert going[0] in ("PENDING", "RUNNING")
+    assert after_the_turn == {"writer": "COMPLETED", "investigator": "LIVE"}
+    # The work update, which loaded the state before that turn, kept the run the person started.
+    assert after_the_update == {"writer": "COMPLETED", "investigator": "LIVE"}
+    assert updates == 2 and checked.get("status") == "COMPLETED", checked
+
+
+def test_the_state_a_work_update_saves_is_the_stored_one_with_its_own_marks():
+    stored = {
+        "session_data": {
+            "session_state": {
+                "other": "kept",
+                LINKED_WORK_KEY: [
+                    {"kind": "run", "id": "a", "shown": "LIVE", "changed_in": None, "name": "stored name"},
+                    {"kind": "run", "id": "new", "shown": "LIVE", "changed_in": None},
+                ],
+            }
+        }
+    }
+    update = marked()
+    update.session_state = {
+        "other": "stale",
+        LINKED_WORK_KEY: [
+            {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update", "ended": True, "name": "old"},
+            {"kind": "run", "id": "gone", "shown": "COMPLETED", "changed_in": None},
+        ],
+    }
+    work_update.WorkUpdateState._merge(update, stored)
+    assert update.session_state == {
+        "other": "kept",
+        LINKED_WORK_KEY: [
+            {
+                "kind": "run",
+                "id": "a",
+                "shown": "COMPLETED",
+                "changed_in": "update",
+                "ended": True,
+                "name": "stored name",
+            },
+            {"kind": "run", "id": "new", "shown": "LIVE", "changed_in": None},
+        ],
+    }
+    # Nothing readable stored: the run's own state stands.
+    before = dict(update.session_state)
+    work_update.WorkUpdateState._merge(update, None)
+    work_update.WorkUpdateState._merge(update, {"session_data": {}})
+    assert update.session_state == before
+
+
+def test_a_turn_of_the_person_saves_its_state_as_before(plain):
+    hook = next(h for h in plain.os.manager.post_hooks if isinstance(h, work_update.WorkUpdateState))
+    person = RunContext(run_id="r", session_id=CHAT, user_id="alice", session_state={"a": 1})
+    hook.check(run_context=person, team=plain.os.manager)
+    asyncio.run(hook.async_check(run_context=person, team=plain.os.manager))
+    assert person.session_state == {"a": 1}
+
+
+def test_work_that_ends_while_a_work_update_is_going_gets_one_of_its_own(held, monkeypatch):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        second = await held.start("workflow", "investigator")
+        await held.finish("writer")
+        # The second run ends while the first work update, which called it running, is still going.
+        await held.finish("investigator")
+        during = len(held.updates_stored())
+        GATES["update"].set()
+        await held.settle()
+        await asyncio.sleep(0.3)
+        await held.settle()
+        shown = [run["sent"] for run in held.chat.runs if run["sent"][-1].startswith(WORK_UPDATE_LABEL)]
+        return held.row(second)["status"], shown[0][0], during, held.updates_stored(), shown[-1]
+
+    ended, first_block, during, updates, last = scenario(steps)
+    assert ended == "COMPLETED" and during == 1
+    assert 'agent "Writer"' in first_block and "finished" in first_block
+    assert first_block.count("Changed since your last turn.") == 1
+    assert 'workflow "Investigator"' in first_block and "Investigator" not in first_block.split("Changed")[0]
+    assert len(updates) == 2
+    assert 'workflow "Investigator"' in sent(updates[1])
+    assert last[0].count("Changed since your last turn.") == 1 and 'workflow "Investigator"' in last[0]
+
+
+def test_work_a_going_work_update_will_show_gets_no_second_one(held, monkeypatch):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        for name in WRITERS[:3]:
+            await held.start("agent", name)
+        await held.finish("writer")
+        # Two more end while the first work update is going. One work update reports both.
+        await held.finish("writer-2", "writer-3")
+        GATES["update"].set()
+        await held.settle()
+        await asyncio.sleep(0.3)
+        await held.settle()
+        return held.updates_stored(), held.chat.runs[-1]["sent"][0]
+
+    updates, block = scenario(steps)
+    assert len(updates) == 2
+    assert block.count("Changed since your last turn.") == 2
+
+
+def test_a_turn_of_the_person_while_a_notice_waits_means_no_work_update(held, monkeypatch):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        await held.start("workflow", "investigator")
+        await held.finish("writer")
+        await held.finish("investigator")
+        # The person speaks while the second notice waits for the first work update.
+        GATES["chat"] = asyncio.Event()
+        turn = asyncio.ensure_future(held.say("What is 17 times 23?"))
+        await asyncio.sleep(0.05)
+        GATES["update"].set()
+        await held.settle()
+        count = len(held.updates_stored())
+        GATES["chat"].set()
+        await turn
+        GATES["chat"] = None
+        await held.settle()
+        return count, len(held.updates_stored())
+
+    assert scenario(steps) == (1, 1)
+
+
+# ----------------------------------------------------------------- the two paths that told nobody
+
+
+def test_a_paused_run_approved_in_the_foreground_is_reported_when_it_finishes(plain):
+    import httpx
+
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def publish() -> str:
+        """Publish the page."""
+        return "published"
+
+    async def steps():
+        plain.writer.tools = [publish]
+        plain.writer.model.script = [("publish", {})]
+        run_id = await plain.start()
+        await plain.finish()
+        paused = plain.row(run_id)
+        tools = [{**item, "confirmed": True} for item in paused["run_data"]["tools"]]
+        # The person approves it on the run's own page: the continue runs in that request.
+        transport = httpx.ASGITransport(app=plain.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://agentos") as client:
+            response = await client.post(
+                f"/agents/writer/runs/{run_id}/continue",
+                data={"tools": json.dumps(tools), "session_id": paused["session_id"], "stream": "false"},
+            )
+        assert response.status_code == 200, response.text
+        await plain.settle()
+        await asyncio.sleep(0.2)
+        await plain.settle()
+        return paused["status"], plain.row(run_id)["status"], [sent(u).split("\n")[1] for u in plain.updates_stored()]
+
+    paused, ended, updates = scenario(steps)
+    assert (paused, ended) == ("PAUSED", "COMPLETED")
+    assert len(updates) == 2
+    assert updates[0].endswith("paused for a person.") and updates[1].endswith("finished.")
+
+
+def test_a_continue_that_names_no_conversation_tells_nobody(plain, monkeypatch):
+    told = []
+    monkeypatch.setattr(run_background, "notify_requester", lambda *a, **k: told.append(a))
+
+    class Component:
+        async def aget_run_output(self, run_id, session_id=None):
+            return type("Run", (), {"metadata": {"a": 1}, "status": "COMPLETED", "run_id": run_id})()
+
+    asyncio.run(run_background.anotify_continued_run_requester(Component(), "r", "s"))
+    assert told == []
+
+
+def test_an_in_memory_workflow_with_a_workflow_agent_is_reported(plain):
+    from agno.workflow.agent import WorkflowAgent
+
+    async def step(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="stepped")
+
+    flow = Workflow(
+        id="answerer",
+        name="Answerer",
+        db=plain.db,
+        agent=WorkflowAgent(model=ScriptedModel()),
+        steps=[Step(name="s", executor=step)],
+    )
+    plain.os.workflows.append(flow)
+    plain.os.registry.workflows.append(flow)
+
+    async def steps():
+        run_id = await plain.start("workflow", "answerer")
+        await plain.settle()
+        await asyncio.sleep(0.2)
+        await plain.settle()
+        return plain.row(run_id)["status"], [sent(u).split("\n")[1] for u in plain.updates_stored()]
+
+    status, updates = scenario(steps)
+    assert status == "COMPLETED"
+    assert updates == [next(iter(updates), "")] and updates[0].startswith('Background run of workflow "Answerer"')
+    assert updates[0].endswith("finished.")
