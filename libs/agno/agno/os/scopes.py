@@ -622,7 +622,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
         # Filesystem browser (read-only). Filesystems declared on the AgentOS need
         # only this scope; agent-held ones are further limited to the agents the
-        # caller may read.
+        # caller may read. The router asks for wiki:read too on the Company
+        # filesystem, and tasks:read under its tasks/.
         "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],

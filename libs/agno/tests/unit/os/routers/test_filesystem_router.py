@@ -405,6 +405,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
                 "max_namespace_bytes": 20_000_000,
                 "id": "notes",
                 "declared": False,
+                "company": False,
                 "agents": [{"id": "notes"}],
             }
         ]
@@ -802,6 +803,7 @@ def _declared_entry(namespace: str, **overrides) -> dict:
         "max_namespace_bytes": 20_000_000,
         "id": namespace,
         "declared": True,
+        "company": False,
         "agents": [],
         **overrides,
     }
@@ -1234,7 +1236,7 @@ def test_two_agents_on_one_namespace_and_two_backends_are_read_by_id(tmp_path, d
     for path in ("/filesystem/entries", "/filesystem/files"):
         ambiguous = client.get(path, params={"filesystem_id": "notes"}, headers=_headers("alice"))
         assert ambiguous.status_code == 409, path
-        assert "/config" in ambiguous.json()["detail"]
+        assert "/filesystem/namespaces" in ambiguous.json()["detail"]
 
 
 def test_a_longer_form_of_an_id_names_the_same_filesystem(db, client_factory):
@@ -1468,6 +1470,7 @@ def test_filesystem_routes_are_read_only(db, client_factory):
         "/filesystem/content": {"get"},
         "/filesystem/entries": {"get"},
         "/filesystem/files": {"get"},
+        "/filesystem/namespaces": {"get"},
         "/filesystem/search": {"get"},
     }
     admin = _headers("root", ["agent_os:admin"])
@@ -2357,8 +2360,9 @@ def test_a_request_that_names_an_agent_loads_only_that_agent(db, client_factory,
     monkeypatch.setattr(filesystem_router, "resolve_agent", spy)
     monkeypatch.setattr(agent_module, "get_agents", query)
 
-    # A listing of every agent's files reads the stored agents and builds the others: the broken one fails it.
-    assert client.get("/filesystem/files", headers=_headers("alice")).status_code == 500
+    # A listing of every agent's files reads the stored agents and builds the others: the broken one is left out.
+    every = client.get("/filesystem/files", headers=_headers("alice"))
+    assert every.status_code == 200 and [row["path"] for row in every.json()["entries"]] == ["style.md"]
     assert "broken" in resolved and len(stored_queries) == 1
 
     # A request for one agent builds no other agent and does not read the stored ones.
@@ -2449,9 +2453,12 @@ def test_an_agent_whose_file_tools_cannot_be_built_fails_only_the_requests_that_
         assert response.status_code == 200, route
         body = response.json()["entries"][0] if route == "/filesystem/files" else response.json()
         assert (body["filesystem_id"], body["agent_ids"]) == ("own", ["writer"]), route
-    # A request that names it, and a listing of every agent's files, report its failure.
-    for params in ({"agent_id": "broken"}, {}):
-        assert client.get("/filesystem/files", params=params, headers=_headers("alice")).status_code == 503
+    # A request that names it reports its failure. A listing of every agent's files leaves it out.
+    named = client.get("/filesystem/files", params={"agent_id": "broken"}, headers=_headers("alice"))
+    assert named.status_code == 503
+    every = client.get("/filesystem/files", headers=_headers("alice"))
+    assert every.status_code == 200
+    assert [(row["filesystem_id"], row["agent_ids"]) for row in every.json()["entries"]] == [("own", ["writer"])]
 
     # Beside a declared filesystem, the listing leaves the agent out instead of failing.
     handbook = FileSystem(db, namespace="handbook")

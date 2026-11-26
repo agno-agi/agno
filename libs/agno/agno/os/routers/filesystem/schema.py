@@ -2,7 +2,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
-from agno.os.schema import PaginationInfo
+from agno.os.schema import FileSystemNamespace, PaginationInfo
 
 
 class FileSystemEntry(BaseModel):
@@ -78,6 +78,11 @@ class FileSystemTableEntry(BaseModel):
     snippet: Optional[str] = None
     line: Optional[int] = None
     match_count: Optional[int] = None
+
+
+class FileSystemNamespacesResponse(BaseModel):
+    namespaces: List[FileSystemNamespace]
+    meta: PaginationInfo
 
 
 class FileSystemTableResponse(BaseModel):

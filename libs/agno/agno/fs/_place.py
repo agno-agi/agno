@@ -16,9 +16,11 @@ def _connect_arguments(engine: Any) -> Optional[Tuple[tuple, Dict[str, Any]]]:
     creator = getattr(engine.pool, "_creator", None)
     names = getattr(getattr(creator, "__code__", None), "co_freevars", ())
     held = {name: cell.cell_contents for name, cell in zip(names, getattr(creator, "__closure__", None) or ())}
-    if held.get("dialect") is not dialect or "cargs_tup" not in held or "cparams" not in held:
+    # SQLAlchemy before 2.0.48 holds the positional arguments as cargs.
+    positional = held.get("cargs_tup", held.get("cargs"))
+    if held.get("dialect") is not dialect or positional is None or "cparams" not in held:
         return None
-    return tuple(held["cargs_tup"]), dict(held["cparams"])
+    return tuple(positional), dict(held["cparams"])
 
 
 def _sqlite_name(filename: Any, is_uri: bool) -> Tuple[str, Dict[str, List[str]]]:

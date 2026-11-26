@@ -1484,6 +1484,17 @@ class AgentOS:
             )
         )
 
+    def _company_filesystem(self) -> Optional["FileSystem"]:
+        """The Company filesystem, when Company is on and its database can hold files."""
+        if self._company_db is None:
+            return None
+        from agno.company.filesystem import company_filesystem
+
+        try:
+            return company_filesystem(self._company_db)
+        except NotImplementedError:
+            return None
+
     def _served_filesystems(self) -> List["FileSystem"]:
         """The declared filesystems as this AgentOS serves them.
 
@@ -3457,23 +3468,32 @@ class AgentOS:
         self, user_id: Optional[str] = None, agents: Optional[List[Any]] = None
     ) -> "FileSystemConfig":
         from agno.fs import InvalidPathError
+        from agno.fs._reserved import is_reserved
         from agno.os.routers.filesystem.utils import _filesystem_key, _listed_filesystem_ids
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
         namespaces: Dict[tuple, FileSystemNamespace] = {}
 
-        def describe(filesystem: Any, agent: Optional[Agent] = None) -> FileSystemNamespace:
+        def describe(filesystem: Any, agent: Optional[Agent] = None, company: bool = False) -> FileSystemNamespace:
             """The entry of one store: every filesystem on one backend and namespace joins it."""
             summary = _extract_filesystem(filesystem, agent, user_id=user_id)
             key = _filesystem_key(filesystem, summary.namespace)
             namespace_config = namespaces.get(key)
             if namespace_config is None:
                 namespace_config = namespaces[key] = FileSystemNamespace(
-                    **summary.model_dump(), id=summary.namespace, declared=agent is None, agents=[]
+                    **summary.model_dump(), id=summary.namespace, declared=agent is None and not company, agents=[]
                 )
+            namespace_config.company = namespace_config.company or company
+            namespace_config.declared = namespace_config.declared or (agent is None and not company)
             return namespace_config
 
-        # Declared filesystems come first and stand without an agent; an agent
+        # The Company filesystem is listed when Company is on. It needs no agent, and it is first
+        # so a declaration of the same store does not describe it.
+        company_store = self._company_filesystem()
+        if company_store is not None:
+            describe(company_store, company=True)
+
+        # Declared filesystems stand without an agent too; an agent
         # holding the same store is linked to the same entry below.
         for filesystem in self._served_filesystems():
             if any(name != "user_id" for name in filesystem._placeholders):
@@ -3495,6 +3515,10 @@ class AgentOS:
         # The first agent by id describes a store that several agents hold, as on the /filesystem routes.
         for entry in sorted(roster, key=lambda agent: str(agent.id)):
             for filesystem, read_only in entry.filesystems:
+                view = filesystem.resolve(user_id=user_id, agent_id=entry.id)
+                if not filesystem.user_scoped and is_reserved(view.backend, view.namespace):
+                    # The agent is refused this namespace, so it holds nothing there.
+                    continue
                 namespace_config = describe(filesystem, entry)
                 linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
                 if linked_agent is None:

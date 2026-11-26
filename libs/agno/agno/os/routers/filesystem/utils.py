@@ -1,9 +1,9 @@
-import os
 from collections import Counter
 from hashlib import sha1
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import parse_qs, unquote
+
+from agno.fs._place import _connect_arguments, database_place
 
 if TYPE_CHECKING:
     from agno.fs import FileSystem
@@ -15,69 +15,13 @@ _ID_SEPARATOR = ":"
 _ENGINE_PLACE = "engine"
 
 
-def _connect_arguments(engine: Any) -> Optional[Tuple[tuple, Dict[str, Any]]]:
-    """What the driver is called with: the URL, its query and ``connect_args``, or None when that is not known."""
-    dialect = engine.dialect
-    if getattr(dialect, "_has_events", False) and list(dialect.dispatch.do_connect):
-        # A listener may connect anywhere.
-        return None
-    # SQLAlchemy has no public accessor for these. A custom creator or pool does not hold them.
-    creator = getattr(engine.pool, "_creator", None)
-    names = getattr(getattr(creator, "__code__", None), "co_freevars", ())
-    held = {name: cell.cell_contents for name, cell in zip(names, getattr(creator, "__closure__", None) or ())}
-    # SQLAlchemy before 2.0.48 holds the positional arguments as cargs.
-    positional = held.get("cargs_tup", held.get("cargs"))
-    if held.get("dialect") is not dialect or positional is None or "cparams" not in held:
-        return None
-    return tuple(positional), dict(held["cparams"])
-
-
-def _sqlite_place(filename: Any, is_uri: bool) -> Optional[tuple]:
-    """The file a SQLite connection opens, or None for a database that belongs to its engine."""
-    path = str(filename or "")
-    if is_uri and path.startswith("file:"):
-        path, _, query = path[len("file:") :].partition("?")
-        # Named and shared memory databases are kept apart too: listing one twice hides no file.
-        if any(option in parse_qs(query) for option in ("mode", "cache", "vfs")):
-            return None
-        path = unquote(path[2:] if path.startswith("///") else path)
-    if not path or path == ":memory:":
-        return None
-    return ("sqlite", str(Path(path).resolve()))
-
-
-def _postgres_place(params: Dict[str, Any]) -> Optional[tuple]:
-    """The server and database a PostgreSQL connection opens, or None when the driver chooses them."""
-    if any(params.get(name) for name in ("service", "conninfo", "dsn")):
-        return None
-    # libpq applies these to a connection that names its own host.
-    if os.getenv("PGSERVICE") or os.getenv("PGHOSTADDR"):
-        return None
-    host = params.get("hostaddr") or params.get("host")
-    database = params.get("dbname") or params.get("database")
-    # libpq reads a dbname that is itself a connection string.
-    if not host or not database or "=" in str(database) or "://" in str(database):
-        return None
-    port = params.get("port") or os.getenv("PGPORT") or "5432"
-    return ("postgresql", str(host), str(port), str(database))
-
-
 def _database_place(engine: Any) -> tuple:
     """The database an engine connects to: the same for every engine on it, synchronous or not.
 
     An engine whose database is not known for certain is its own place: listing
     one store twice hides no file, and merging two stores does.
     """
-    arguments = _connect_arguments(engine)
-    place: Optional[tuple] = None
-    if arguments is not None:
-        positional, params = arguments
-        backend_name = engine.url.get_backend_name()
-        if backend_name == "sqlite" and positional:
-            place = _sqlite_place(positional[0], bool(params.get("uri")))
-        elif backend_name == "postgresql" and not positional:
-            place = _postgres_place(params)
-    return place or (_ENGINE_PLACE, id(engine))
+    return database_place(engine) or (_ENGINE_PLACE, id(engine))
 
 
 def _filesystem_backend_key(filesystem: "FileSystem") -> tuple:
@@ -151,11 +95,15 @@ def _assign_filesystem_ids(
     forms_by_key: Dict[tuple, Tuple[str, ...]],
     reserved_forms: Iterable[Tuple[str, ...]] = (),
     reserved_ids: Iterable[str] = (),
+    *,
+    unnumbered_first: bool = True,
 ) -> Dict[tuple, str]:
     """Give each store its shortest form that names no other store, in ``forms_by_key`` or reserved.
 
     Stores whose backends have the same names share every form. They are numbered
-    in order, skipping any number that would name another store.
+    in order, skipping any number that would name another store. Without ``unnumbered_first``
+    the first of them has a number too: the form alone is one the others answer to, so it would
+    open another store when the first is not there.
     """
     reserved = {form for forms in reserved_forms for form in forms} | set(reserved_ids)
     counts = Counter(form for forms in forms_by_key.values() for form in forms)
@@ -164,8 +112,11 @@ def _assign_filesystem_ids(
     for key, forms in forms_by_key.items():
         chosen = next((form for form in forms if counts[form] == 1 and form not in reserved), None)
         if chosen is None:
+            # A form another store takes as its own is not given, with or without a number.
             chosen, position = forms[-1], 1
-            while chosen in taken or (position > 1 and chosen in counts):
+            if not unnumbered_first:
+                position = 1 if chosen in reserved else 0
+            while chosen in taken or (chosen in counts and not (unnumbered_first and position == 1)):
                 position += 1
                 chosen = f"{forms[-1]}{_ID_SEPARATOR}{position}"
         taken.add(chosen)
@@ -173,22 +124,26 @@ def _assign_filesystem_ids(
     return assigned
 
 
-def _filesystem_ids(*groups: Iterable[Tuple[tuple, Tuple[str, ...]]]) -> Dict[tuple, str]:
+def _filesystem_ids(
+    *groups: Iterable[Tuple[tuple, Tuple[str, ...]]], others: Iterable[Tuple[tuple, Tuple[str, ...]]] = ()
+) -> Dict[tuple, str]:
     """An id for each store, keyed as given: its namespace, with the backend added when two would share it.
 
     Each group is ``(key, forms)`` pairs, and the first pair given for a store
     names it. The ids of a group depend on that group and the groups before it
     alone: a store takes the shortest form that can name no store of an earlier
     group. So the ids of declared stores stay the same whatever agents come and go.
+    ``others`` are named last. Any of them may not be loaded, so the first of
+    those sharing every name is numbered too.
     """
     ids: Dict[tuple, str] = {}
     earlier: List[Tuple[str, ...]] = []
-    for group in groups:
+    for group, unnumbered_first in [*((group, True) for group in groups), (others, False)]:
         forms_by_key: Dict[tuple, Tuple[str, ...]] = {}
         for key, forms in group:
             if key not in ids:
                 forms_by_key.setdefault(key, forms)
-        ids.update(_assign_filesystem_ids(forms_by_key, earlier, list(ids.values())))
+        ids.update(_assign_filesystem_ids(forms_by_key, earlier, list(ids.values()), unnumbered_first=unnumbered_first))
         earlier.extend(forms_by_key.values())
     return ids
 
@@ -201,8 +156,8 @@ def _listed_filesystem_ids(
 ) -> Dict[tuple, str]:
     """The id of each store a caller is shown, for /config and for the /filesystem routes alike.
 
-    The stores /config lists are named first: those declared on the AgentOS,
-    then those the ``agents`` declared in code hold, in the order of their ids,
+    The stores /config lists are named first: the Company filesystem and those
+    declared on the AgentOS, then those the ``agents`` declared in code hold, in the order of their ids,
     each with its namespace resolved for the caller. ``others`` are the
     ``(key, forms)`` of stores only the routes see, held by agents built for a
     request or stored. They are named last, so an id /config lists names the
@@ -210,19 +165,26 @@ def _listed_filesystem_ids(
     """
     from agno.agent import Agent
     from agno.fs import InvalidPathError
+    from agno.fs._reserved import is_reserved
 
     declared: List[Tuple[tuple, Tuple[str, ...]]] = []
     held: List[Tuple[tuple, Tuple[str, ...]]] = []
 
     def name(group: List[Tuple[tuple, Tuple[str, ...]]], filesystem: "FileSystem", agent_id: Optional[str]) -> None:
         try:
-            namespace = filesystem.resolve(user_id=user_id, agent_id=agent_id).namespace
+            view = filesystem.resolve(user_id=user_id, agent_id=agent_id)
         except InvalidPathError:
             # The caller's identity cannot be part of the namespace: there is no store of theirs to name.
             return
+        if agent_id is not None and not filesystem.user_scoped and is_reserved(view.backend, view.namespace):
+            # The agent is refused this namespace, so it holds nothing there.
+            return
+        namespace = view.namespace
         group.append((_filesystem_key(filesystem, namespace), _filesystem_id_forms(filesystem, namespace)))
 
-    for filesystem in os._served_filesystems():
+    company = os._company_filesystem()
+    # The Company filesystem is first, as /config describes it.
+    for filesystem in [*([company] if company is not None else []), *os._served_filesystems()]:
         # Only an agent holding the store fills {agent_id} or {team_id}.
         if all(placeholder == "user_id" for placeholder in filesystem._placeholders):
             name(declared, filesystem, None)
@@ -235,7 +197,15 @@ def _listed_filesystem_ids(
             continue
         for filesystem, _ in filesystems:
             name(held, filesystem, agent.id)
-    return _filesystem_ids(declared, held, others)
+    return _filesystem_ids(declared, held, others=others)
+
+
+def _can_share_every_name(key: tuple) -> bool:
+    """Whether another store can have every name of this one, because where its files are is not known."""
+    backend = key[0]
+    if backend[0] == "backend":
+        return True
+    return backend[0] == "db" and not (isinstance(backend[1], tuple) and backend[1][0] != _ENGINE_PLACE)
 
 
 def _match_filesystem_id(filesystem_id: str, candidates: List[Tuple[str, Tuple[str, ...]]]) -> List[int]:
