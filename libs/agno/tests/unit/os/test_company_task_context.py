@@ -683,7 +683,10 @@ def test_an_attached_tasks_title_and_file_names_count_toward_the_total(system):
 
     assert len(item["title"]) == CONTEXT_TITLE_CHARS and len(item["files"]) == CONTEXT_FILE_NAMES
     assert item["sent"] == "partial"
-    assert item["note"] == f"files names {CONTEXT_FILE_NAMES} of {CONTEXT_FILE_NAMES + 11} files."
+    assert item["note"] == (
+        f"The title is cut at {CONTEXT_TITLE_CHARS} characters. "
+        f"files names {CONTEXT_FILE_NAMES} of {CONTEXT_FILE_NAMES + 11} files."
+    )
 
     # Many attached Tasks cannot pass the total through their names alone.
     others = []
@@ -741,3 +744,35 @@ def test_the_company_tools_import_with_docstrings_stripped():
         text=True,
     )
     assert done.returncode == 0, done.stderr[-400:]
+
+
+def test_a_cut_title_alone_is_recorded_as_partial(system):
+    ids = seed(system)
+    system.manager.update_task(ids["stray"], title="T" * (CONTEXT_TITLE_CHARS + 1))
+    system.manager.change_task_context(ids["task"], add=[{"kind": "task", "ref": ids["stray"]}])
+
+    message = asyncio.run(_task_input(system.manager, system.db.get_task(ids["task"])))
+
+    (item,) = json.loads(message)["context"]["items"]
+    assert len(item["title"]) == CONTEXT_TITLE_CHARS and item["sent"] == "partial"
+    assert item["note"] == f"The title is cut at {CONTEXT_TITLE_CHARS} characters."
+    assert context_sent(message)[0]["sent"] == "partial"
+
+
+def test_a_task_attached_after_the_total_is_spent_brings_no_title_and_no_file_names(system):
+    ids = seed(system)
+    files = CompanyFiles(system.db)
+    refs = []
+    for index, size in enumerate([8_000, 8_000, 8_000, 8_000, 7_000, 2_000]):
+        files.write(f"tasks/{ids['earlier']}/part-{index}.md", "x" * size)
+        refs.append({"kind": "file", "ref": f"tasks/{ids['earlier']}/part-{index}.md"})
+    system.manager.change_task_context(ids["task"], add=[*refs, {"kind": "task", "ref": ids["stray"]}])
+
+    items = task_input(system, ids["task"])["context"]["items"]
+
+    # 1,000 characters are left when the sixth file does not fit. Nothing after it is sent, small or not.
+    assert [item["sent"] for item in items[:6]] == ["full"] * 5 + ["partial"] and items[5]["content"] is None
+    after = items[6]
+    assert (after["title"], after["files"], after["sent"]) == ("", [], "partial")
+    assert "The title was not sent in full" in after["note"] and "files names 0 of 1 files." in after["note"]
+    assert after["status"] == "backlog"

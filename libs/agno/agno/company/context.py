@@ -169,6 +169,9 @@ async def acontext_entries(db: Any, refs: Optional[List[Any]], added_by: Optiona
     return _as_list(entries)
 
 
+_TOTAL_SPENT = f"the attached context holds {CONTEXT_TOTAL_CHARS} characters in total."
+
+
 class _Budget:
     """Cut each text at CONTEXT_ITEM_CHARS. The first text past CONTEXT_TOTAL_CHARS and every later one are left out.
 
@@ -183,7 +186,7 @@ class _Budget:
         part = text[:CONTEXT_ITEM_CHARS]
         if self.spent or self.used + len(part) > CONTEXT_TOTAL_CHARS:
             self.spent = True
-            notes.append(f"{name} was not sent: the attached context holds {CONTEXT_TOTAL_CHARS} characters in total.")
+            notes.append(f"{name} was not sent: {_TOTAL_SPENT}")
             return None
         self.used += len(part)
         if len(part) < len(text):
@@ -196,9 +199,18 @@ async def _task_item(manager: Any, files: CompanyFiles, task_id: str, budget: _B
     row = await _call(manager.db, "get_task", task_id)
     if row is None:
         raise LookupError("the Task no longer exists")
-    # The title and the file names are text of the input too, so they count toward the total.
-    title = str(row.get("title") or "")[: min(CONTEXT_TITLE_CHARS, max(CONTEXT_TOTAL_CHARS - budget.used, 0))]
+    # The title and the file names are text of the input too: they count toward the total, and once
+    # the total is spent they are left out like any later text.
+    full_title = str(row.get("title") or "")
+    room = 0 if budget.spent else max(CONTEXT_TOTAL_CHARS - budget.used, 0)
+    title = full_title[: min(CONTEXT_TITLE_CHARS, room)]
     budget.used += len(title)
+    if len(title) < len(full_title):
+        if len(title) < min(CONTEXT_TITLE_CHARS, len(full_title)):
+            budget.spent = True
+            notes.append(f"The title was not sent in full: {_TOTAL_SPENT}")
+        else:
+            notes.append(f"The title is cut at {CONTEXT_TITLE_CHARS} characters.")
     item: Dict[str, Any] = {
         # A Task has no version number. The time it last changed tells two readings of it apart.
         "version": row.get("updated_at") or row["created_at"],
@@ -219,7 +231,8 @@ async def _task_item(manager: Any, files: CompanyFiles, task_id: str, budget: _B
     stored = [entry["path"] for entry in listing["files"]]
     item["files"] = []
     for name in stored[:CONTEXT_FILE_NAMES]:
-        if budget.used + len(name) > CONTEXT_TOTAL_CHARS:
+        if budget.spent or budget.used + len(name) > CONTEXT_TOTAL_CHARS:
+            budget.spent = True
             break
         budget.used += len(name)
         item["files"].append(name)
