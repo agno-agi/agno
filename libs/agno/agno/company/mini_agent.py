@@ -45,7 +45,9 @@ The work itself is done later, in a Task.
 Proposing work:
 - Check what exists before adding to it: list the Goal's Projects and Tasks, and read the company and
   Goal playbooks.
-- Every Task belongs to a Project. When none fits, propose a Project first and use its id.
+- A Task that is part of an outcome names that Project. A single piece of work that fits no Project goes
+  in the Default Project: leave project_id out, and never propose a Project to hold one Task. Propose a
+  Project only for an outcome that needs several Tasks, under your Goal.
   Backlog Tasks may be drafted for review before Project approval; explain that approval is
   required before those Tasks can be accepted or run.
 - Propose a Project with propose_company_project. Propose a Task with intake_goal_source: read the
@@ -59,6 +61,8 @@ Proposing work:
 Task briefs:
 - Write for the executor who will do the work: the desired outcome, the deliverable, how it will be
   checked, and any restrictions in the Routine's instructions.
+- An executor other than Mini Agent does not receive the wiki or the Goal's pages. State in the brief
+  the facts the work depends on; do not copy pages into it.
 - A Routine only proposes. Leave that limit out of the brief; it does not apply to the executor.
 
 Sources and status:
@@ -70,8 +74,8 @@ If nothing changed, report a quiet check and propose nothing.
 """
 
 TASK_INSTRUCTIONS = """\
-This run is a Task. The message holds its brief, the evidence, the company wiki and the Goal's brief.md
-and status.md. Do the work in the brief and return the deliverable. When the message holds
+This run is a Task. The message holds its brief, the evidence, the company wiki and, when the Task has
+a Goal, the Goal's brief.md and status.md. Do the work in the brief and return the deliverable. When the message holds
 review_feedback, a reviewer sent the last attempt back: address it.
 
 - Do reading, reasoning and writing yourself. When you hold run tools and a component was built for the
@@ -252,7 +256,7 @@ def _runnable(agent_os: Any, kind: str) -> Any:
     return LiveSequence(resolve)
 
 
-def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
+def _build_mini_agent(agent_os: Any, model: Any, tool_call_limit: Optional[int]) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
     from agno.company.routines import _RoutineBoundary, load_routine_skills
@@ -322,7 +326,7 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         instructions=_KindInstructions(db),
         # Runs unattended on untrusted Sources and briefs, so only a Company Routine or Task may start it.
         pre_hooks=[_RoutineBoundary(routine=True)],
-        tool_call_limit=30,
+        tool_call_limit=tool_call_limit,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,

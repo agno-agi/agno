@@ -8,15 +8,15 @@ import pytest
 from agno.company.execution import _ExecutorAuthorization, _task_input
 from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS, READ_NOTE
 from agno.company.filesystem import company_filesystem
-from agno.company.manager import CompanyManager
+from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.mini_agent import TASK_FILE_TOOLS
 from agno.company.routines import _RoutineAuthorization
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.manager.prompts import COMPANY_FILES_INSTRUCTIONS, NOTES_INSTRUCTIONS
-from agno.registry._reserved import MANAGER_TEAM_ID
+from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization, authorization_scope
 from agno.tools.company_files import CompanyFileTools
@@ -608,10 +608,144 @@ def test_the_save_tool_tells_the_model_what_is_never_a_request_to_save(system):
 # ----------------------------------------------------------------- what a Task's input loads
 
 
+MINI_AGENT = {"executor_type": "agent", "executor_id": MINI_AGENT_ID}
+OTHER_EXECUTORS = [("agent", "writer"), ("team", "crew"), ("workflow", "pipeline")]
+SENT_BACK = {
+    "transitions": [{"from": "in_review", "target": "ready", "reason": "Add the changelog"}],
+    "result": {"status": "COMPLETED", "content": "First draft"},
+}
+
+
+def task_input(system, task, use_async=False):
+    """The input an accepted Task's run is sent, as the text the executor receives."""
+    if use_async:
+        manager = AsyncCompanyManager(AsyncSqliteDb(db_file=system.db.db_file), system.os.registry)
+    else:
+        manager = CompanyManager(system.db, system.os.registry)
+    return asyncio.run(_task_input(manager, task, accepted_execution=True))
+
+
 def task_pages(system, ids):
+    """The pages Mini Agent's input carries. No other executor's input carries any."""
+    task = {**system.db.get_task(ids["task"]), **MINI_AGENT}
+    return json.loads(task_input(system, task))["wiki"]
+
+
+def marked_pages(system, ids):
+    """A company page and the Goal's status with text that must not leave, and enough pages to pass the total."""
     manager = CompanyManager(system.db, system.os.registry)
-    payload = json.loads(asyncio.run(_task_input(manager, system.db.get_task(ids["task"]))))
-    return payload["wiki"]
+    manager.write_wiki(goal_id=None, path="people.md", content="PRIVATE-PEOPLE", expected_version=0)
+    manager.write_wiki(goal_id=ids["goal"], path="status.md", content="PRIVATE-STATUS", expected_version=1)
+    for index in range(6):
+        manager.write_wiki(
+            goal_id=None, path=f"zz-{index}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
+        )
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("retry", [False, True])
+def test_mini_agents_task_input_carries_the_goals_pages_and_the_wiki(system, retry, use_async):
+    ids = records(system)
+    marked_pages(system, ids)
+    task = {**system.db.get_task(ids["task"]), **MINI_AGENT, **(SENT_BACK if retry else {})}
+    payload = json.loads(task_input(system, task, use_async))
+    goal = f"goals/{ids['goal']}"
+    assert [page["file"] for page in payload["wiki"]] == [
+        f"{goal}/brief.md",
+        f"{goal}/status.md",
+        "wiki/brief.md",
+        "wiki/status.md",
+        "wiki/people.md",
+        *(f"wiki/zz-{index}.md" for index in range(6)),
+    ]
+    loaded = {page["file"]: page for page in payload["wiki"]}
+    assert loaded[f"{goal}/status.md"]["content"] == "PRIVATE-STATUS"
+    assert loaded["wiki/people.md"]["content"] == "PRIVATE-PEOPLE"
+    assert loaded["wiki/zz-5.md"]["note"].startswith("Not loaded")
+    feedback = ["review_feedback", "previous_result"] if retry else []
+    assert list(payload) == ["brief", "wiki", "evidence", *feedback, "execution_context"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("executor_type, executor_id", OTHER_EXECUTORS)
+def test_no_other_executors_task_input_carries_a_wiki_page_or_a_goal_page(
+    system, executor_type, executor_id, retry, use_async
+):
+    ids = records(system)
+    marked_pages(system, ids)
+    task = {**system.db.get_task(ids["task"]), "executor_type": executor_type, "executor_id": executor_id}
+    sent = task_input(system, {**task, **(SENT_BACK if retry else {})}, use_async)
+    payload = json.loads(sent)
+    feedback = ["review_feedback", "previous_result"] if retry else []
+    assert list(payload) == ["brief", "evidence", *feedback, "execution_context"]
+    assert payload["brief"] == "Write the release notes" and payload["evidence"] == []
+    if retry:
+        assert payload["review_feedback"] == "Add the changelog"
+        assert payload["previous_result"] == {"status": "COMPLETED", "content": "First draft"}
+    # No page, no page name, and no note that names a page left out.
+    for text in ("PRIVATE", "wiki", "brief.md", "status.md", "people.md", "Not loaded", ids["goal"]):
+        assert text not in sent, text
+
+
+def queued_input(system, task_id, **executor):
+    """Start the Task through the run route and return the input its queued run holds."""
+    started = system.client.post(f"/company/tasks/{task_id}/runs", json=executor or None, headers=headers())
+    assert started.status_code == 202, started.text
+    job = asyncio.run(system.queue.store.get_job(started.json()["run_id"]))
+    return job["payload"]["input"]
+
+
+def test_a_start_that_names_the_executor_sends_that_executors_input(system):
+    """A Backlog Task holds no executor until the start accepts it; the input follows the one the start names."""
+    ids = records(system)
+    marked_pages(system, ids)
+    sent = queued_input(system, ids["task"], executor_type="agent", executor_id="writer")
+    assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
+
+    other = system.proposal()
+    CompanyManager(system.db, system.os.registry).write_wiki(
+        goal_id=other["goal_id"], path="status.md", content="PRIVATE-STATUS", expected_version=1
+    )
+    sent = queued_input(system, other["id"], **MINI_AGENT)
+    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" in sent
+
+
+def test_a_start_for_another_executor_sends_no_page_when_mini_agent_was_suggested(system):
+    """A Backlog Task can hold Mini Agent as a suggestion; a start that names another executor decides the input."""
+    ids = records(system)
+    marked_pages(system, ids)
+    manager = CompanyManager(system.db, system.os.registry)
+    project = system.db.get_task(ids["task"])["project_id"]
+    suggested = manager.create_task(goal_id=ids["goal"], title="Suggested", project_id=project, **MINI_AGENT)
+    assert (suggested["status"], suggested["executor_id"]) == ("backlog", MINI_AGENT_ID)
+    sent = queued_input(system, suggested["id"], executor_type="agent", executor_id="writer")
+    assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_named_executors_task_input_needs_no_file_store(system, use_async, monkeypatch):
+    """Building the input for another executor reads and writes no page, and still refuses a missing Goal."""
+    ids = records(system)
+    task = {**system.db.get_task(ids["stray"]), "executor_type": "agent", "executor_id": "writer"}
+    store = company_filesystem(system.db)
+    before = sorted(meta.path for meta in store.list())
+    assert not any(path.startswith(f"goals/{ids['other']}/") for path in before)
+    monkeypatch.setattr(AsyncCompanyManager if use_async else CompanyManager, "get_wiki", None)
+    assert "wiki" not in json.loads(task_input(system, task, use_async))
+    with pytest.raises(LookupError, match="Goal not found"):
+        task_input(system, {**task, "goal_id": "missing"}, use_async)
+    assert sorted(meta.path for meta in store.list()) == before
+
+
+def test_an_accepted_task_sends_its_stored_executors_input(system):
+    ids = records(system)
+    marked_pages(system, ids)
+    # Accepted without an executor, the Task runs on Mini Agent.
+    system.accept(ids["task"])
+    assert system.db.get_task(ids["task"])["executor_id"] == MINI_AGENT_ID
+    sent = queued_input(system, ids["task"])
+    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" in sent
 
 
 def test_a_task_input_loads_the_wiki_and_its_goals_brief_and_status_only(system):

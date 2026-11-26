@@ -9567,14 +9567,14 @@ class SqliteDb(BaseDb):
     # --- Projects ---
 
     def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
-        from agno.db.sql.company import lock_goal
+        from agno.db.sql.company import lock_parent
 
         table = self._get_table(table_type="projects", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create projects table")
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_goal(sess, goals, project_data["goal_id"])
+            lock_parent(sess, goals, table, project_data["goal_id"])
             if reuse:
                 existing = sess.execute(select(table).where(table.c.id == project_data["id"])).first()
                 if existing is not None:
@@ -9609,6 +9609,7 @@ class SqliteDb(BaseDb):
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -9623,6 +9624,8 @@ class SqliteDb(BaseDb):
         stmt = active_parents(select(table), table, goals)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if user_id is not None:
@@ -9796,7 +9799,7 @@ class SqliteDb(BaseDb):
     # --- Tasks ---
 
     def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agno.db.sql.company import existing_task_proposal, lock_goal, require_project
+        from agno.db.sql.company import existing_task_proposal, lock_parent, require_project
 
         table = self._get_table(table_type="tasks", create_table_if_not_found=True)
         if table is None:
@@ -9804,7 +9807,7 @@ class SqliteDb(BaseDb):
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_goal(sess, goals, task_data["goal_id"])
+            lock_parent(sess, goals, projects, task_data["goal_id"], task_data.get("project_id"))
             require_project(sess, projects, task_data.get("project_id"), task_data["goal_id"])
             proposal = existing_task_proposal(sess, table, task_data)
             if proposal is not None:
@@ -9865,6 +9868,7 @@ class SqliteDb(BaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -9893,6 +9897,8 @@ class SqliteDb(BaseDb):
             stmt = stmt.where(table.c.session_id == session_id)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if project_id is not None:
@@ -9913,18 +9919,26 @@ class SqliteDb(BaseDb):
             return [dict(row._mapping) for row in rows], total
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        from agno.db.schemas.tasks import validate_task_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
+        from agno.db.sql.company import lock_child, require_move
 
         validate_task_fields(fields)
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
         stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
-        if set(fields) - {"title", "brief"}:
+        # A change of Project is allowed in more stages than the rest of a Task's scope.
+        if set(fields) - {"title", "brief", "project_id"}:
             stmt = stmt.where(table.c.status == "backlog")
+        elif "project_id" in fields:
+            stmt = stmt.where(table.c.status.in_(MOVABLE_TASK_STATUSES))
         if expected_status is not None:
             stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
@@ -9932,10 +9946,18 @@ class SqliteDb(BaseDb):
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, goals, projects, table, task_id)
-            goal_id = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).scalar()
-            if goal_id is not None and fields.get("project_id") is not None:
-                require_project(sess, projects, fields["project_id"], goal_id, "backlog")
+            lock_child(sess, goals, projects, table, task_id, moving_to=fields.get("project_id"))
+            current = (
+                sess.execute(
+                    select(table.c.goal_id, table.c.status, table.c.project_id, table.c.transitions).where(
+                        table.c.id == task_id
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if current is not None and fields.get("project_id") is not None:
+                fields.update(require_move(sess, goals, projects, current, fields["project_id"], moved_by))
             result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 

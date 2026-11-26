@@ -71,9 +71,12 @@ def get_tasks_router(
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
+            from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
+
             conflict = (
                 method in {"transition_task", "restore_task", "delete_task"}
                 or str(exc) == "Accepted task scope requires a return to Backlog"
+                or str(exc) in TASK_MOVE_REFUSAL.values()
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
 
@@ -206,6 +209,9 @@ def get_tasks_router(
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
         goal_id: Optional[str] = Query(None),
+        has_goal: Optional[bool] = Query(
+            None, description="false lists only records with no Goal, true only records with one"
+        ),
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
@@ -220,6 +226,7 @@ def get_tasks_router(
             sort_by=sort_by,
             sort_order=sort_order,
             goal_id=goal_id,
+            has_goal=has_goal,
             status=status,
             project_id=project_id,
             failed=failed,
@@ -263,7 +270,9 @@ def get_tasks_router(
         fields = body.model_dump(exclude_unset=True)
         if not fields:
             return await task_response(request, existing)
-        task = await _call("update_task", task_id, user_id=None, **fields)
+        task = await _call(
+            "update_task", task_id, user_id=None, moved_by=getattr(request.state, "user_id", None), **fields
+        )
         if task is None:
             raise HTTPException(status_code=409, detail="Task changed while updating")
         return await task_response(request, task)
