@@ -33,7 +33,7 @@ def create_token(user_id: str, scopes: list[str] | None = None) -> str:
         "sub": user_id,
         "aud": TEST_OS_ID,
         # Running a suite executes the target agent, so the default token also holds run on it.
-        "scopes": scopes or ["evals:read", "evals:run", "agents:assistant:read", "agents:assistant:run"],
+        "scopes": scopes or ["evals:read", "evals:write", "agents:assistant:read", "agents:assistant:run"],
         "exp": datetime.now(UTC) + timedelta(hours=1),
         "iat": datetime.now(UTC),
     }
@@ -169,8 +169,8 @@ def test_run_eval_suite_selects_by_tag_or_name(client, db):
 
 
 def test_run_eval_suite_requires_run_access_on_the_target(client, db):
-    """Same gate as a single eval: evals:run alone does not let the caller execute the agent."""
-    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:read', 'evals:run'])}"}
+    """Same gate as a single eval: evals:write alone does not let the caller execute the agent."""
+    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:read', 'evals:write'])}"}
     with patch.object(Agent, "arun", side_effect=_tool_run) as arun:
         resp = client.post("/eval-suites/assistant-quality/runs", json={}, headers=headers)
     assert resp.status_code == 403
@@ -268,14 +268,14 @@ def test_run_eval_suite_from_body_rejects_a_bad_body(client):
 
 def test_run_eval_suite_from_body_unknown_agent_is_404(client):
     body = _posted_suite(cases=[{"name": "x", "agent_id": "ghost", "input": "q", "criteria": "k"}])
-    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:run', 'agents:ghost:run'])}"}
+    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:write', 'agents:ghost:run'])}"}
     resp = client.post("/eval-suites", json=body, headers=headers)
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Agent with id 'ghost' not found"
 
 
 def test_run_eval_suite_from_body_requires_run_access_on_the_target(client, db):
-    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:read', 'evals:run'])}"}
+    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:read', 'evals:write'])}"}
     with patch.object(Agent, "arun", side_effect=_tool_run) as arun:
         resp = client.post("/eval-suites", json=_posted_suite(), headers=headers)
     assert resp.status_code == 403
@@ -447,7 +447,7 @@ def test_run_eval_suite_from_body_forwards_session_fields(client):
 
 def test_run_eval_suite_from_body_checks_run_access_before_the_lookup(client):
     """A caller without run rights gets 403 before the target is looked up, so ids cannot be probed."""
-    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:run'])}"}
+    headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:write'])}"}
     with patch("agno.os.routers.evals.evals.get_agent_by_id") as lookup:
         resp = client.post("/eval-suites", json=_posted_suite(), headers=headers)
     assert resp.status_code == 403

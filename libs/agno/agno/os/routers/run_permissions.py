@@ -73,20 +73,22 @@ async def _require_endpoint_permission(
             )
         provider = resolve_authorization_provider(request)
         if suite_match is not None:
-            # The suite route also needs evals:run, asked the way its own route gate asks it; an unknown
-            # suite answers the same 403, so schedule creation does not reveal which suites exist.
+            # The suite route also needs evals:write, asked the way its own route gate asks it; then an
+            # unknown suite answers 404, as the run route answers it.
             evals_ctx = AuthorizationContext(
                 principal_id=getattr(request.state, "user_id", None),
                 scopes=list(caller_scopes),
                 claims=getattr(request.state, "claims", None) or {},
                 resource_type=None,
                 resource_id=None,
-                action="run",
+                action="write",
                 admin_scope=admin_scope,
             )
+            if not await provider.aauthorize_route(evals_ctx, ["evals:write"]):
+                raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["evals:write"]))
             suite_target = _eval_suite_run_target(request, suite_match.group(1))
-            if not await provider.aauthorize_route(evals_ctx, ["evals:run"]) or suite_target is None:
-                raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["evals:run"]))
+            if suite_target is None:
+                raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_match.group(1)}' not found")
             resource_type, resource_id = suite_target
         else:
             resource_type, resource_id = match.group(1), match.group(2)  # type: ignore[union-attr]
@@ -112,9 +114,9 @@ async def _require_endpoint_permission(
         return
 
     if suite_match is not None:
-        # evals:run is checked before the lookup, so a caller without it gets 403 for any suite id.
-        if not has_required_scopes(list(caller_scopes), ["evals:run"], admin_scope=admin_scope):
-            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["evals:run"]))
+        # evals:write is checked before the lookup, so a caller without it gets 403 for any suite id.
+        if not has_required_scopes(list(caller_scopes), ["evals:write"], admin_scope=admin_scope):
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(["evals:write"]))
         suite_target = _eval_suite_run_target(request, suite_match.group(1))
         if suite_target is None:
             raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_match.group(1)}' not found")

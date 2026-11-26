@@ -561,8 +561,8 @@ class TestScheduleRunScope:
         resp = scoped_client(["agent_os:admin"]).post("/schedules", json=self._body())
         assert resp.status_code == 201
 
-    def test_eval_suite_run_needs_run_on_its_agent_and_evals_run(self, scoped_client, mock_db):
-        """Scheduling a suite asks what running it by hand asks: run on its one agent, plus evals:run."""
+    def test_eval_suite_run_needs_run_on_its_agent_and_evals_write(self, scoped_client, mock_db):
+        """Scheduling a suite asks what running it by hand asks: run on its one agent, plus evals:write."""
         suite = EvalSuite(id="s1", cases=(Case(name="c", agent=Agent(id="a1"), input="q", criteria="k"),))
 
         def _client(scopes):
@@ -572,17 +572,20 @@ class TestScheduleRunScope:
 
         body = self._body("/eval-suites/s1/runs")
         assert (
-            _client(["schedules:write", "evals:run", "agents:a1:run"]).post("/schedules", json=body).status_code == 201
+            _client(["schedules:write", "evals:write", "agents:a1:run"]).post("/schedules", json=body).status_code
+            == 201
         )
         assert _client(["schedules:write", "agents:a1:run"]).post("/schedules", json=body).status_code == 403
         assert (
-            _client(["schedules:write", "evals:run", "agents:a2:run"]).post("/schedules", json=body).status_code == 403
+            _client(["schedules:write", "evals:write", "agents:a2:run"]).post("/schedules", json=body).status_code
+            == 403
         )
         unknown = self._body("/eval-suites/nope/runs")
         assert (
-            _client(["schedules:write", "evals:run", "agents:run"]).post("/schedules", json=unknown).status_code == 404
+            _client(["schedules:write", "evals:write", "agents:run"]).post("/schedules", json=unknown).status_code
+            == 404
         )
-        # Without evals:run an unknown and a real suite answer alike, as /agents/<id>/runs does.
+        # Without evals:write an unknown and a real suite answer alike, as /agents/<id>/runs does.
         assert _client(["schedules:write"]).post("/schedules", json=unknown).status_code == 403
         assert _client(["schedules:write"]).post("/schedules", json=body).status_code == 403
 
@@ -594,7 +597,7 @@ class TestScheduleRunScope:
 
 @pytest.mark.asyncio
 async def test_eval_suite_run_under_managed_roles_asks_the_provider(monkeypatch):
-    """Under managed roles, scheduling a suite asks evals:run as its route gate does, then run on its agent."""
+    """Under managed roles, scheduling a suite asks evals:write as its route gate does, then run on its agent."""
     from starlette.requests import Request
 
     from agno.os.routers.run_permissions import _require_endpoint_permission
@@ -612,13 +615,19 @@ async def test_eval_suite_run_under_managed_roles_asks_the_provider(monkeypatch)
 
     await _require_endpoint_permission(request, "/eval-suites/s1/runs", "POST")
     evals_ctx, required_scopes = provider.aauthorize_route.call_args.args
-    assert (evals_ctx.resource_type, evals_ctx.action, required_scopes) == (None, "run", ["evals:run"])
+    assert (evals_ctx.resource_type, evals_ctx.action, required_scopes) == (None, "write", ["evals:write"])
     ctx = provider.acheck.call_args.args[0]
     assert (ctx.principal_id, ctx.resource_type, ctx.resource_id, ctx.action) == ("alice", "agents", "a1", "run")
-    # An unknown suite answers the same 403 as a refused one.
+    # An unknown suite answers 404, as the suite's run route answers it.
     with pytest.raises(HTTPException) as exc:
         await _require_endpoint_permission(request, "/eval-suites/nope/runs", "POST")
+    assert exc.value.status_code == 404
+    # A known suite whose agent the caller cannot run answers 403.
+    provider.acheck.return_value = False
+    with pytest.raises(HTTPException) as exc:
+        await _require_endpoint_permission(request, "/eval-suites/s1/runs", "POST")
     assert exc.value.status_code == 403
+    provider.acheck.return_value = True
     provider.aauthorize_route.return_value = False
     with pytest.raises(HTTPException) as exc:
         await _require_endpoint_permission(request, "/eval-suites/s1/runs", "POST")

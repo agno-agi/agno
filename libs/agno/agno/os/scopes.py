@@ -101,7 +101,6 @@ class AgentOSScope(str, Enum):
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
     - evals:write - Create and update evaluation runs
-    - evals:run - Run evaluation suites
     - evals:delete - Delete evaluation runs
     - traces:read - View traces and trace statistics
     - service_accounts:read - List service accounts
@@ -553,8 +552,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "DELETE /eval-runs": ["evals:delete"],
         "GET /eval-suites": ["evals:read"],
         "GET /eval-suites/*": ["evals:read"],
-        "POST /eval-suites": ["evals:run"],
-        "POST /eval-suites/*/runs": ["evals:run"],
+        "POST /eval-suites": ["evals:write"],
+        "POST /eval-suites/*/runs": ["evals:write"],
         # Trace endpoints
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],
