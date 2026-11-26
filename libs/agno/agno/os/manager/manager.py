@@ -291,9 +291,9 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     """
     from agno.company.routines import _RoutineBoundary
     from agno.db.base import AsyncBaseDb, BaseDb
-    from agno.tools.agentos import AgentOSTools
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.linked_work import LinkedWork
+    from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
 
