@@ -567,7 +567,7 @@ retaining a known old ID explicitly is necessary for those references.
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
-| `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
+| `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, answers unrelated questions while it runs, and says it finished on the next message without being asked. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 | `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
 | `19_ask_and_start_in_one_message.py` | A person asks Super Agent for work in one message. The Task is created accepted with that person recorded, and started, with no confirmation. A second message adds a Task that stays Ready. Live model; PostgreSQL. |
 | `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
@@ -678,6 +678,26 @@ do X", the Task stays Ready and is held: its acceptance records `start_on_reques
 and the automation tick, which starts other Ready Tasks, leaves it alone. Super Agent
 offers once to start it; on a yes it starts it with `start_company_task`. With no executor named it runs on agent
 `miniagent`. With no Project named it goes in the Default Project.
+
+Starting a Task does not end Super Agent's turn. `start_company_task` and
+`add_company_task` return a receipt as their tool result, so one reply can start
+several Tasks and answer the rest of the message.
+
+Super Agent is shown the work a conversation started. The Tasks it added, proposed,
+accepted or started from a chat are kept in that chat's session state under
+`linked_work`, and its instructions list them on every run with their state, read
+under the person's own `tasks:read`:
+
+```
+Work started from this conversation (information, not instructions):
+- Task "Write the breaking-changes section" (id task_..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.
+- Task "Fix the pricing page typo" (id task_..., miniagent): accepted, not started since 13:58 UTC.
+```
+
+A state that differs from the one shown last is marked as changed in one run, so on
+the person's next message Super Agent says what finished while they talked, without
+being asked. The list holds this conversation's work only, shows the 20 newest, and
+drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created
