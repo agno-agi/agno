@@ -123,7 +123,12 @@ def _require_human_creation(run_context, operation="create Company Goals and Rou
         raise PermissionError(f"Only a calling human may {operation} from chat; automated runs are refused{hint}")
     if (authority is not None and authority.service_account) or _identity(run_context) == INTERNAL_SCHEDULER_USER_ID:
         raise PermissionError(f"Only a calling human may {operation} from chat")
-    if getattr(authority, "scheduled", False):
+    from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
+
+    # A schedule with a saved authority marks the run on it. One with none marks the run's metadata.
+    metadata = getattr(run_context, "metadata", None)
+    marked = isinstance(metadata, dict) and bool(metadata.get(SCHEDULED_RUN_METADATA_KEY))
+    if getattr(authority, "scheduled", False) or marked:
         raise PermissionError(f"Only a calling human may {operation} from chat; a scheduled run has no person present")
 
 
