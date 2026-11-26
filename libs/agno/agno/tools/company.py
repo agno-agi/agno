@@ -17,9 +17,9 @@ from pydantic import BeforeValidator
 from agno.company.declarations import Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_goal, _RoutineAuthorization, _run_kind
-from agno.db.schemas.projects import refuse_default_project
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
+from agno.db.schemas.projects import refuse_default_project
 from agno.run.authorization import current_authorization, requires_permission
 from agno.tools import Toolkit
 
@@ -815,8 +815,9 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def propose_company_project(
-        self, name: str,
-        goal_id: _OptionalString = None,
+        self,
+        goal_id: _OptionalString,
+        name: str,
         outcome: _OptionalString = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
@@ -839,8 +840,8 @@ class CompanyTools(Toolkit):
     @requires_permission()
     def propose_company_task(
         self,
+        goal_id: _OptionalString,
         title: str,
-        goal_id: _OptionalString = None,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
@@ -855,9 +856,10 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: The Project this Task is part of; null puts it in the Default Project, the place
-                for a single piece of work that fits no Project. A proposed Project can hold Backlog
-                drafts; human approval is required before accepting or running them.
+            project_id: The Project this Task is part of: check list_company_projects for the one it
+                serves. Null only when none fits, which puts the Task in the Default Project, the place
+                for a single piece of work. A proposed Project can hold Backlog drafts; human approval
+                is required before accepting or running them.
             goal_id: The Goal this Task serves. Null in a Project takes the Project's Goal; null in the
                 Default Project leaves the Task under no Goal.
         """
@@ -1153,8 +1155,9 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     async def apropose_company_project(
-        self, name: str,
-        goal_id: _OptionalString = None,
+        self,
+        goal_id: _OptionalString,
+        name: str,
         outcome: _OptionalString = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
@@ -1177,8 +1180,8 @@ class CompanyTools(Toolkit):
     @requires_permission()
     async def apropose_company_task(
         self,
+        goal_id: _OptionalString,
         title: str,
-        goal_id: _OptionalString = None,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
@@ -1193,9 +1196,10 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: The Project this Task is part of; null puts it in the Default Project, the place
-                for a single piece of work that fits no Project. A proposed Project can hold Backlog
-                drafts; human approval is required before accepting or running them.
+            project_id: The Project this Task is part of: check list_company_projects for the one it
+                serves. Null only when none fits, which puts the Task in the Default Project, the place
+                for a single piece of work. A proposed Project can hold Backlog drafts; human approval
+                is required before accepting or running them.
             goal_id: The Goal this Task serves. Null in a Project takes the Project's Goal; null in the
                 Default Project leaves the Task under no Goal.
         """

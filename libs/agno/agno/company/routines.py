@@ -575,9 +575,11 @@ async def _project_active(task, manager):
     from agno.db.schemas.projects import is_default_project
 
     project = await _manager_call(manager, "get_project", task["project_id"]) if task.get("project_id") else None
+    if not project:
+        return False
     # The Default Project is always active and holds Tasks of any Goal.
-    same_goal = bool(project) and (is_default_project(project["id"]) or project["goal_id"] == task["goal_id"])
-    return bool(project and same_goal and project["status"] == "active")
+    same_goal = is_default_project(project["id"]) or project["goal_id"] == task["goal_id"]
+    return same_goal and project["status"] == "active"
 
 
 async def _has_source_evidence(task, manager):
