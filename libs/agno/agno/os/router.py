@@ -315,15 +315,44 @@ def _agno_tracing_is_active() -> bool:
     return is_agno_tracing_active()
 
 
+def _component_telemetry_flags(components: List[Any]) -> List[bool]:
+    """The telemetry flag of every local agent, team and workflow reachable from the given components.
+
+    Team members and the agents, teams and workflows inside workflow steps send their own run
+    telemetry, whatever the flag on the team or workflow that holds them.
+    """
+    from agno.agent import Agent
+    from agno.team import Team
+    from agno.workflow import Workflow
+
+    flags: List[bool] = []
+    visited: set = set()
+    pending: List[Any] = list(components)
+    while pending:
+        node = pending.pop()
+        if node is None or id(node) in visited:
+            continue
+        visited.add(id(node))
+        if isinstance(node, (Agent, Team, Workflow)):
+            flags.append(bool(node.telemetry))
+        if isinstance(node, Agent):
+            continue
+        # A team's members, a workflow's coordinator agent and step tree, a step's executor,
+        # and the branches of a step container.
+        for attr in ("members", "agent", "team", "workflow", "steps", "else_steps", "choices"):
+            child = getattr(node, attr, None)
+            if isinstance(child, (list, tuple)):
+                pending.extend(child)
+            elif child is not None:
+                pending.append(child)
+    return flags
+
+
 def _telemetry_is_on(os: "AgentOS") -> bool:
     """AgentOS(telemetry=...) covers only the launch ping; each component sends its own run telemetry."""
     if os.telemetry:
         return True
-    flags = [
-        *(agent.telemetry for agent in os._agents),
-        *(team.telemetry for team in os._teams),
-        *(workflow.telemetry for workflow in os._workflows),
-    ]
+    flags = _component_telemetry_flags([*os._agents, *os._teams, *os._workflows])
     # Components apply AGNO_TELEMETRY over their own flag each time they send.
     env = getenv("AGNO_TELEMETRY")
     if env is not None:

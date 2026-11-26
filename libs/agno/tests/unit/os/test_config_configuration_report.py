@@ -28,6 +28,8 @@ from agno.os.manager import OSManager
 from agno.os.public import PublicSurface
 from agno.os.schema import ConfigResponse
 from agno.os.settings import AgnoAPISettings
+from agno.team import Team
+from agno.workflow import Parallel, Step, Workflow
 
 SECRET = "configuration-report-test-key-at-least-32-characters"
 OS_KEY = "configuration-report-security-key"
@@ -373,6 +375,37 @@ class TestFeatures:
         assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": False}
         monkeypatch.setenv("AGNO_TELEMETRY", "true")
         assert _config(_os(db)).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_telemetry_from_a_team_member_when_the_team_is_off(self, db):
+        member = Agent(id="member-agent", db=db)
+        inner = Team(id="inner-team", members=[member], telemetry=False)
+        team = Team(id="cfg-team", members=[inner], db=db, telemetry=False)
+        agent_os = AgentOS(id=OS_ID, teams=[team], db=db, telemetry=False)
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_telemetry_from_an_agent_inside_a_workflow_step(self, db):
+        nested = Agent(id="step-agent", db=db)
+        quiet = Agent(id="quiet-agent", db=db, telemetry=False)
+        workflow = Workflow(
+            id="cfg-workflow",
+            db=db,
+            telemetry=False,
+            steps=[Step(name="first", agent=quiet), Parallel(Step(name="second", agent=nested), name="fan-out")],
+        )
+        agent_os = AgentOS(id=OS_ID, workflows=[workflow], db=db, telemetry=False)
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_telemetry_off_when_every_nested_component_is_off(self, db):
+        member = Agent(id="member-agent", db=db, telemetry=False)
+        team = Team(id="cfg-team", members=[member], db=db, telemetry=False)
+        workflow = Workflow(
+            id="cfg-workflow",
+            db=db,
+            telemetry=False,
+            steps=[Step(name="first", team=team), Step(name="second", executor=lambda step_input: None)],
+        )
+        agent_os = AgentOS(id=OS_ID, teams=[team], workflows=[workflow], db=db, telemetry=False)
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": False}
 
     def test_member_sees_manager_media_storage_and_telemetry(self, db, tmp_path):
         storage = LocalMediaStorage(base_path=str(tmp_path / "media"))
