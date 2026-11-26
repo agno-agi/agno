@@ -11005,7 +11005,7 @@ class PostgresDb(BaseDb):
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, goals, projects, table, task_id)
+            lock_child(sess, goals, projects, table, task_id, moving_to=fields.get("project_id"))
             current = (
                 sess.execute(
                     select(table.c.goal_id, table.c.status, table.c.project_id, table.c.transitions).where(

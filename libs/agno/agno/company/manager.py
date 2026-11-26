@@ -102,7 +102,14 @@ def _at_limit(goal: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], t
             continue
         open_now = _open_tasks(tasks, schedule["id"])
         if open_now >= max_open:
-            backlog = sum(1 for t in tasks if t.get("routine_id") == schedule["id"] and t["status"] == "backlog")
+            # A proposal in the Default Project waits for a person, not for room under the limit.
+            backlog = sum(
+                1
+                for t in tasks
+                if t.get("routine_id") == schedule["id"]
+                and t["status"] == "backlog"
+                and not is_default_project(t.get("project_id"))
+            )
             waiting.append(
                 {
                     "routine_id": schedule["id"],
