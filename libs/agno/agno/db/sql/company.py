@@ -120,6 +120,23 @@ def require_project(
         raise ValueError("Cannot add open work to a completed or cancelled Project")
 
 
+def require_move(sess: Any, goals: Any, projects: Any, task_goal_id: Optional[str], project_id: str) -> Dict[str, Any]:
+    """Check a Backlog Task's move into a Project, and return the fields the move also changes.
+
+    A Task with no Goal that moves into a Project with a Goal takes that Goal. The Goal is locked
+    first, as for every write under it. A Task that has a Goal keeps it, so its Project must have
+    the same one or be the Default Project.
+    """
+    adopted: Dict[str, Any] = {}
+    if task_goal_id is None and not is_default_project(project_id):
+        goal_id = sess.execute(select(projects.c.goal_id).where(projects.c.id == project_id)).scalar()
+        if goal_id is not None:
+            lock_goal(sess, goals, goal_id)
+            adopted = {"goal_id": goal_id}
+    require_project(sess, projects, project_id, adopted.get("goal_id", task_goal_id), "backlog")
+    return adopted
+
+
 def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """A completed proposal remains idempotent even after its Project is completed."""
     if data.get("dedupe_key") is None:

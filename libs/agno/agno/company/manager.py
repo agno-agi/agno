@@ -645,8 +645,9 @@ class CompanyManager:
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
 
-        A project_id of None moves the Task to the Default Project. The Task keeps its Goal, so it
-        moves only to a Project of the same Goal or to the Default Project.
+        A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
+        so it moves only to a Project of the same Goal or to the Default Project. A Task with no
+        Goal takes the Goal of the Project it moves into.
         """
         from agno.db.schemas.tasks import validate_task_fields
 
@@ -1660,8 +1661,9 @@ class AsyncCompanyManager:
     ) -> Optional[Dict[str, Any]]:
         """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
 
-        A project_id of None moves the Task to the Default Project. The Task keeps its Goal, so it
-        moves only to a Project of the same Goal or to the Default Project.
+        A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
+        so it moves only to a Project of the same Goal or to the Default Project. A Task with no
+        Goal takes the Goal of the Project it moves into.
         """
         from agno.db.schemas.tasks import validate_task_fields
 

@@ -197,9 +197,10 @@ need one.
 - A Task and a Project that a Routine proposes carry the Routine's Goal, also
   when the Task names no Project and lands in the Default Project. A Routine is
   refused another Goal.
-- A Backlog Task can move between Projects of its Goal. `project_id: null` moves
-  it to the Default Project. A Task keeps its Goal when it moves, so a Task with
-  no Goal cannot move into a Project that has one.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
 - `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
   list the records with no Goal; `has_goal=true` lists the others.
 
