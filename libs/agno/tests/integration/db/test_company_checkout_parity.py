@@ -22,7 +22,7 @@ async def test_checkout_is_atomic_and_a_different_pin_fails_the_attempt(system):
     source = await _call(
         db,
         "create_source",
-        {"id": "repository", "product_id": task["product_id"], "type": "git", "reference": URL, "created_at": 1},
+        {"id": "repository", "goal_id": task["goal_id"], "type": "git", "reference": URL, "created_at": 1},
     )
     response = await client.post("/company/tasks/" + task["id"] + "/runs")
     assert response.status_code == 202
@@ -89,7 +89,7 @@ async def test_git_source_partial_updates_validate_complete_reference(system):  
     await _call(
         db,
         "create_source",
-        {"id": "source", "product_id": task["product_id"], "type": "git", "reference": URL, "created_at": 1},
+        {"id": "source", "goal_id": task["goal_id"], "type": "git", "reference": URL, "created_at": 1},
     )
     updated = await _call(db, "update_source", "source", config={"branch": "main"})
     assert updated["config"] == {"branch": "main"}
@@ -108,7 +108,7 @@ async def test_legacy_git_source_can_be_updated_without_replacing_reference(syst
         "create_source",
         {
             "id": "legacy",
-            "product_id": task["product_id"],
+            "goal_id": task["goal_id"],
             "type": "git",
             "reference": "https://gitlab.com/a/b",
             "created_at": 1,

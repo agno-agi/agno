@@ -1,4 +1,4 @@
-"""Synchronous and asynchronous management of Company Products."""
+"""Synchronous and asynchronous management of Company Goals."""
 
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from agno.company.summary import _serialized_summary
 from agno.db.base import _UNSET_UPDATED_AT, AsyncBaseDb, BaseDb
-from agno.db.schemas.products import validate_product_fields
+from agno.db.schemas.goals import validate_goal_fields
 
 
 def _validate_agent_source(type: str, executor_type: str, executor_id: Optional[str], run_id: Optional[str]) -> None:
@@ -84,8 +84,8 @@ def _has_policy(schedule: Optional[Dict[str, Any]]) -> bool:
     return bool(metadata.get("auto_accept")) and metadata.get("deleted_at") is None
 
 
-def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], tasks: Any) -> List[Dict[str, Any]]:
-    """The Product's Routines whose auto-accept is waiting because their open Tasks are at the limit."""
+def _at_limit(goal: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]], tasks: Any) -> List[Dict[str, Any]]:
+    """The Goal's Routines whose auto-accept is waiting because their open Tasks are at the limit."""
     from agno.company.routines import _open_tasks
 
     waiting = []
@@ -99,7 +99,7 @@ def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]]
             waiting.append(
                 {
                     "routine_id": schedule["id"],
-                    "routine": schedule["name"].removeprefix(product["id"] + "."),
+                    "routine": schedule["name"].removeprefix(goal["id"] + "."),
                     "open_tasks": open_now,
                     "max_open": max_open,
                     "proposals_waiting": backlog,
@@ -109,12 +109,12 @@ def _at_limit(product: Dict[str, Any], schedules: List[Optional[Dict[str, Any]]]
     return waiting
 
 
-# The automatic decisions listed for a Product come from this many of its most recently changed
+# The automatic decisions listed for a Goal come from this many of its most recently changed
 # Projects and Tasks, so reading them costs one page of each.
 _DECISION_RECORDS = 100
 
 
-def _waiting_for_a_person(schedules: Any, product_id: Optional[str]) -> List[Dict[str, Any]]:
+def _waiting_for_a_person(schedules: Any, goal_id: Optional[str]) -> List[Dict[str, Any]]:
     """Routines whose auto_accept is declared in code and that no person has turned on."""
     from agno.company.routines import _DECLARED, _stored_policy
 
@@ -128,15 +128,15 @@ def _waiting_for_a_person(schedules: Any, product_id: Optional[str]) -> List[Dic
             or not metadata.get("auto_accept")
             or metadata.get("deleted_at") is not None
             or payload.get("_agno_company_acceptance") != _DECLARED
-            or product_id not in (None, metadata.get("product_id"))
+            or goal_id not in (None, metadata.get("goal_id"))
         ):
             continue
         policy, _ = _stored_policy(metadata["auto_accept"])
         waiting.append(
             {
                 "routine_id": schedule["id"],
-                "routine": schedule["name"].removeprefix(str(metadata.get("product_id")) + "."),
-                "product_id": metadata.get("product_id"),
+                "routine": schedule["name"].removeprefix(str(metadata.get("goal_id")) + "."),
+                "goal_id": metadata.get("goal_id"),
                 "default_executor": policy.default_executor,
                 "note": "This Routine declares auto-accept and does not run until a person turns it on. "
                 "Turn auto-accept on for it once; it and its declared policy then run under that person's permissions.",
@@ -145,25 +145,25 @@ def _waiting_for_a_person(schedules: Any, product_id: Optional[str]) -> List[Dic
     return waiting
 
 
-def _routine_project_id(product_id: str, routine_id: Optional[str], name: str) -> str:
-    """The id of the Project a Routine proposes under this name in a Product."""
+def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
+    """The id of the Project a Routine proposes under this name in a Goal."""
     from uuid import NAMESPACE_URL, uuid5
 
-    return str(uuid5(NAMESPACE_URL, f"company-project/{product_id}/{routine_id}/{name}"))
+    return str(uuid5(NAMESPACE_URL, f"company-project/{goal_id}/{routine_id}/{name}"))
 
 
-def _project_proposal_id(product_id: str, name: str) -> Optional[str]:
+def _project_proposal_id(goal_id: str, name: str) -> Optional[str]:
     from agno.company.routines import _RoutineAuthorization
     from agno.run.authorization import current_authorization
 
     authority = current_authorization()
     if isinstance(authority, _RoutineAuthorization):
-        return _routine_project_id(product_id, authority.routine_id, name)
+        return _routine_project_id(goal_id, authority.routine_id, name)
     return None
 
 
 class CompanyManager:
-    """Manage Products through a synchronous database.
+    """Manage Goals through a synchronous database.
 
     user_id=None leaves reads and writes unscoped; a string restricts them to
     that owner. On create it records the accountable owner.
@@ -181,15 +181,15 @@ class CompanyManager:
         self,
         *,
         name: str,
-        purpose: Optional[str] = None,
+        objective: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a Product."""
-        fields = {"name": name, "purpose": purpose, "metadata": metadata}
-        validate_product_fields(fields)
-        return self.db.create_product(
+        """Create a Goal."""
+        fields = {"name": name, "objective": objective, "metadata": metadata}
+        validate_goal_fields(fields)
+        return self.db.create_goal(
             {
                 **fields,
                 "id": id or str(uuid4()),
@@ -203,7 +203,7 @@ class CompanyManager:
     def create_routine(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         routine: Any,
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
@@ -212,23 +212,23 @@ class CompanyManager:
     ) -> Dict[str, Any]:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
-        Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        Any writer may add a Routine to a Goal, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Goal the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
-        from agno.company.routines import _declared_schedule_fields, _require_routine_product
+        from agno.company.routines import _declared_schedule_fields, _require_routine_goal
 
-        product = self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_routine_product(product_id)
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_routine_goal(goal_id)
         routine = Routine.model_validate(routine)
-        fields = _declared_schedule_fields(product_id, routine, self.registry, agent_os=agent_os)
+        fields = _declared_schedule_fields(goal_id, routine, self.registry, agent_os=agent_os)
         if check is not None:
             check(fields)
-        return self._write_routine(product_id, routine, fields, user_id)
+        return self._write_routine(goal_id, routine, fields, user_id)
 
-    def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+    def _write_routine(self, goal_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
         """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
@@ -242,35 +242,35 @@ class CompanyManager:
         )
         linked = False
         try:
-            if self.db.add_product_routine(product_id, schedule.id) is None:
-                raise RuntimeError("Routine could not be linked to its Product")
+            if self.db.add_goal_routine(goal_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Goal")
             linked = True
             enabled = schedules.enable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:
             if linked:
-                self._unlink_routine(product_id, schedule.id)
+                self._unlink_routine(goal_id, schedule.id)
             schedules.delete(schedule.id, user_id=user_id)
             raise
         return enabled.to_dict()
 
-    def _unlink_routine(self, product_id: str, schedule_id: str) -> None:
-        product = self.get(product_id)
-        if product is not None:
-            metadata = dict(product.get("metadata") or {})
+    def _unlink_routine(self, goal_id: str, schedule_id: str) -> None:
+        goal = self.get(goal_id)
+        if goal is not None:
+            metadata = dict(goal.get("metadata") or {})
             metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
-            self.db.update_product(product_id, metadata=metadata)
+            self.db.update_goal(goal_id, metadata=metadata)
 
-    def discard_product(
+    def discard_goal(
         self,
-        product_id: str,
+        goal_id: str,
         *,
         source_ids: Sequence[str] = (),
         schedule_ids: Sequence[str] = (),
         user_id: Optional[str] = None,
     ) -> None:
-        """Remove a Product whose declared records could not all be created."""
+        """Remove a Goal whose declared records could not all be created."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -278,15 +278,15 @@ class CompanyManager:
             schedules.delete(schedule_id, user_id=user_id)
         for source_id in source_ids:
             self.db.delete_source(source_id)
-        self.db.delete_product(product_id)
+        self.db.delete_goal(goal_id)
 
     def get(
-        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """Get a visible Product, optionally including deleted records."""
-        record = self.db.get_product(product_id, user_id=user_id, include_deleted=include_deleted)
+        """Get a visible Goal, optionally including deleted records."""
+        record = self.db.get_goal(goal_id, user_id=user_id, include_deleted=include_deleted)
         if record is not None:
-            record["counts"] = (self.db.get_product_counts([product_id]))[product_id]
+            record["counts"] = (self.db.get_goal_counts([goal_id]))[goal_id]
         return record
 
     def list(
@@ -298,10 +298,10 @@ class CompanyManager:
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Return a page of visible Products and the total before pagination."""
+        """Return a page of visible Goals and the total before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
-        rows, total = self.db.get_products(
+        rows, total = self.db.get_goals(
             user_id=user_id,
             limit=limit,
             page=page,
@@ -309,26 +309,26 @@ class CompanyManager:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        counts = self.db.get_product_counts([row["id"] for row in rows])
+        counts = self.db.get_goal_counts([row["id"] for row in rows])
         return [{**row, "counts": counts[row["id"]]} for row in rows], total
 
-    def update(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update name, purpose or metadata on an active Product; linked Routine ids are kept."""
-        validate_product_fields(fields)
-        return self.db.update_product(product_id, user_id=user_id, **_without_routine_links(fields))
+    def update(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update name, objective or metadata on an active Goal; linked Routine ids are kept."""
+        validate_goal_fields(fields)
+        return self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
 
-    def delete(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Product and its children atomically; active Tasks raise ValueError."""
-        return self.db.delete_product(product_id, user_id=user_id)
+    def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
+        return self.db.delete_goal(goal_id, user_id=user_id)
 
-    def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Product and only children archived by it; return None if already active."""
-        return self.db.restore_product(product_id, user_id=user_id)
+    def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and only children archived by it; return None if already active."""
+        return self.db.restore_goal(goal_id, user_id=user_id)
 
     def create_project(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         name: str,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
@@ -336,15 +336,15 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create project work; scoped_user_id filters parents while user_id records the creator."""
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
         from agno.db.schemas.projects import validate_project_fields
 
-        _require_routine_product(product_id)
+        _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
-        if self.db.get_product(product_id, user_id=scoped_user_id) is None:
-            raise LookupError("Product not found")
-        proposal_id = _project_proposal_id(product_id, name)
+        if self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        proposal_id = _project_proposal_id(goal_id, name)
         if proposal_id is not None:
             existing = self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -352,7 +352,7 @@ class CompanyManager:
         return self.db.create_project(
             {
                 **fields,
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "id": proposal_id or str(uuid4()),
                 "status": "proposed",
                 "user_id": user_id,
@@ -379,12 +379,12 @@ class CompanyManager:
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Products, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         rows, total = self.db.get_projects(
@@ -392,7 +392,7 @@ class CompanyManager:
             limit=limit,
             page=page,
             include_deleted=include_deleted,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -415,11 +415,11 @@ class CompanyManager:
         self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
     ) -> bool:
         """Archive a Project and its Tasks atomically; active Tasks raise ValueError."""
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         record = self.db.get_project(project_id)
         if record is not None:
-            _require_routine_product(record["product_id"])
+            _require_routine_goal(record["goal_id"])
         return self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
 
     def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -465,7 +465,7 @@ class CompanyManager:
     def create_task(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         title: str,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
@@ -485,7 +485,7 @@ class CompanyManager:
 
         if isinstance(current_authorization(), _RoutineAuthorization):
             raise PermissionError(
-                "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
+                "Routines must propose Tasks through intake_goal_source with evidence and a dedupe key"
             )
         from agno.db.schemas.tasks import validate_task_fields
 
@@ -500,17 +500,17 @@ class CompanyManager:
         validate_task_fields(fields)
         if not project_id:
             raise ValueError("A Task requires a Project")
-        if self.db.get_product(product_id, user_id=scoped_user_id) is None:
-            raise LookupError("Product not found")
+        if self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
         if project_id is not None:
             project = self.db.get_project(project_id, user_id=scoped_user_id)
             if project is None:
                 raise LookupError("Project not found")
-            if project["product_id"] != product_id:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project["goal_id"] != goal_id:
+                raise ValueError("Task and Project must belong to the same Goal")
         task = {
             **fields,
-            "product_id": product_id,
+            "goal_id": goal_id,
             "id": str(uuid4()),
             "status": "backlog",
             "origin": origin,
@@ -544,7 +544,7 @@ class CompanyManager:
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
         failed: Optional[bool] = None,
@@ -552,7 +552,7 @@ class CompanyManager:
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Products, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         return self.db.get_tasks(
@@ -560,7 +560,7 @@ class CompanyManager:
             limit=limit,
             page=page,
             include_deleted=include_deleted,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
             project_id=project_id,
             failed=failed,
@@ -596,8 +596,8 @@ class CompanyManager:
             project = self.db.get_project(fields["project_id"], user_id=None)
             if project is None:
                 raise LookupError("Project not found")
-            if project["product_id"] != existing["product_id"]:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project["goal_id"] != existing["goal_id"]:
+                raise ValueError("Task and Project must belong to the same Goal")
         return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -619,7 +619,7 @@ class CompanyManager:
             sources = []
             page = 1
             while True:
-                rows, total = self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                rows, total = self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
                 sources.extend(rows)
                 if page * 100 >= total:
                     break
@@ -669,26 +669,26 @@ class CompanyManager:
             expected_job_id=expected_job_id,
         )
 
-    def _tasks_in(self, product_id: str, status: str) -> List[Dict[str, Any]]:
+    def _tasks_in(self, goal_id: str, status: str) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         page = 1
         while True:
-            batch, total = self.db.get_tasks(product_id=product_id, status=status, limit=100, page=page)
+            batch, total = self.db.get_tasks(goal_id=goal_id, status=status, limit=100, page=page)
             rows.extend(batch)
             if page * 100 >= total:
                 return rows
             page += 1
 
-    def auto_accept_status(self, product_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
-        """What auto-accept did and is waiting on in a Product.
+    def auto_accept_status(self, goal_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Goal.
 
-        automatic_decisions holds the latest decisions a policy made, newest first, from the Product's
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Goal's
         most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
-        person to finish an open Task. Both are empty, and nothing is read, for a Product whose Routines
+        person to finish an open Task. Both are empty, and nothing is read, for a Goal whose Routines
         have no policy.
         """
-        product = self.get(product_id) or {}
-        routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+        goal = self.get(goal_id) or {}
+        routine_ids = (goal.get("metadata") or {}).get("routine_ids") or []
         schedules = [self.schedule_db.get_schedule(routine_id) for routine_id in routine_ids]
         status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
         if not any(_has_policy(schedule) for schedule in schedules):
@@ -696,21 +696,21 @@ class CompanyManager:
         if any(_open_limit(schedule) is not None for schedule in schedules):
             from agno.company.routines import _OPEN_STATUSES
 
-            tasks = [row for stage in _OPEN_STATUSES for row in self._tasks_in(product_id, stage)]
-            if _at_limit(product, schedules, tasks):
+            tasks = [row for stage in _OPEN_STATUSES for row in self._tasks_in(goal_id, stage)]
+            if _at_limit(goal, schedules, tasks):
                 # Only a Routine at its limit has proposals waiting on it.
-                tasks += self._tasks_in(product_id, "backlog")
-            status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
+                tasks += self._tasks_in(goal_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(goal, schedules, tasks)
         if decisions:
             latest: Dict[str, Any] = dict(
-                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+                goal_id=goal_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
             )
             projects, _ = self.db.get_projects(**latest)
             recent, _ = self.db.get_tasks(**latest)
             status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
         return status
 
-    def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def auto_accept_waiting(self, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Routines that declare auto_accept in code and wait for a person to turn it on.
 
         This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
@@ -718,9 +718,9 @@ class CompanyManager:
         from agno.scheduler import ScheduleManager
 
         rows = ScheduleManager(self.schedule_db).list_all()
-        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
+        return _waiting_for_a_person([row.to_dict() for row in rows], goal_id)
 
-    def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
+    def attention(self, goal_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
         counts: Dict[str, Any] = {}
         for name, filters in (
@@ -728,58 +728,58 @@ class CompanyManager:
             ("in_review", {"status": "in_review"}),
             ("failed", {"failed": True}),
         ):
-            _, counts[name] = self.list_tasks(product_id=product_id, limit=1, **filters)
+            _, counts[name] = self.list_tasks(goal_id=goal_id, limit=1, **filters)
         from agno.company.routines import _failed_routines
 
-        products = []
-        if product_id is not None:
-            product = self.get(product_id)
-            if product is not None:
-                products.append(product)
+        goals = []
+        if goal_id is not None:
+            goal = self.get(goal_id)
+            if goal is not None:
+                goals.append(goal)
         else:
             page = 1
             while True:
                 rows, total = self.list(limit=100, page=page)
-                products.extend(rows)
+                goals.extend(rows)
                 if page * 100 >= total:
                     break
                 page += 1
-        counts["failed"] += _failed_routines(self.schedule_db, products)
+        counts["failed"] += _failed_routines(self.schedule_db, goals)
         from agno.company.automation_history import automation_failures
 
-        failures = automation_failures(self.schedule_db, self.db, product_id)
+        failures = automation_failures(self.schedule_db, self.db, goal_id)
         if failures:
             counts["automation_failures"] = failures
             counts["failed"] += len(failures)
         return counts
 
-    def get_wiki(self, product_id: Optional[str] = None):
-        """Return a Product or company wiki; reads are company-wide.
+    def get_wiki(self, goal_id: Optional[str] = None):
+        """Return a Goal or company wiki; reads are company-wide.
 
         Default pages are created atomically on first access and never reset.
         """
         from agno.company.playbook import _seed, _wiki
 
-        product = self.get(product_id) if product_id is not None else None
-        if product_id is not None and product is None:
-            raise LookupError("Product not found")
-        provider = _wiki(self.db, product)
-        _seed(provider, product)
+        goal = self.get(goal_id) if goal_id is not None else None
+        if goal_id is not None and goal is None:
+            raise LookupError("Goal not found")
+        provider = _wiki(self.db, goal)
+        _seed(provider, goal)
         return provider
 
-    def list_wiki(self, product_id: Optional[str] = None, limit: int = 20, page: int = 1):
+    def list_wiki(self, goal_id: Optional[str] = None, limit: int = 20, page: int = 1):
         """List wiki pages with the standard Company pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
-        provider = self.get_wiki(product_id)
+        provider = self.get_wiki(goal_id)
         pages = provider.backend.filesystem.list()
         return pages[(page - 1) * limit : page * limit], len(pages)
 
-    def read_wiki(self, product_id: Optional[str], path: str):
+    def read_wiki(self, goal_id: Optional[str], path: str):
         """Read a Markdown page and its filesystem version."""
         from agno.company.playbook import _page_path
 
-        provider = self.get_wiki(product_id)
+        provider = self.get_wiki(goal_id)
         result = provider.backend.filesystem.read_with_meta(_page_path(path))
         if result is None:
             raise LookupError("Wiki page not found")
@@ -788,7 +788,7 @@ class CompanyManager:
     def write_wiki(
         self,
         *,
-        product_id: Optional[str],
+        goal_id: Optional[str],
         path: str,
         content: str,
         expected_version: int,
@@ -798,15 +798,15 @@ class CompanyManager:
 
         ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_product_scope
+        from agno.company.playbook import _page_path, _require_goal_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
-        product = self.get(product_id) if product_id is not None else {}
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
-        provider = self.get_wiki(product_id)
+        goal = self.get(goal_id) if goal_id is not None else {}
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        provider = self.get_wiki(goal_id)
         return provider.backend.filesystem.write(_page_path(path), content, expected_version=expected_version)
 
     def log_decision(
@@ -849,7 +849,7 @@ class CompanyManager:
     def create_source(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         type: str,
         reference: str,
         credential_ref: Optional[str] = None,
@@ -858,21 +858,21 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on a Product; secret values are never resolved."""
-        from agno.company.playbook import _require_product_scope
+        """Configure a reader on a Goal; secret values are never resolved."""
+        from agno.company.playbook import _require_goal_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
         validate_source_fields(fields)
-        product = self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return self.db.create_source(
             {
                 **fields,
                 "id": source_id or str(uuid4()),
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "user_id": user_id,
                 "created_at": int(time.time()),
                 "updated_at": None,
@@ -883,7 +883,7 @@ class CompanyManager:
     def add_source(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         type: str,
         reference: str,
         executor_id: str,
@@ -894,19 +894,19 @@ class CompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
         from agno.db.schemas.sources import validate_source_fields
 
         _validate_agent_source(type, executor_type, executor_id, run_id)
         validate_source_fields(dict(type=type, reference=reference, config=config))
-        product = self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return self.db.create_source(
             {
                 "id": str(uuid4()),
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "type": type,
                 "reference": reference,
                 "credential_ref": None,
@@ -925,7 +925,7 @@ class CompanyManager:
 
     def list_sources(
         self,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
@@ -933,37 +933,37 @@ class CompanyManager:
     ):
         """List Sources using the database's paging and owner filters."""
         return self.db.get_sources(
-            product_id=product_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
+            goal_id=goal_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
         )
 
     def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
         """Soft delete a Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
 
         source = self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
+            _require_routine_goal(source["goal_id"])
         if source is None:
             return False
-        product = self.get(source["product_id"])
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return self.db.delete_source(source_id)
 
     def restore_source(self, source_id: str, user_id: Optional[str] = None):
         """Restore a Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
 
         source = self.get_source(source_id, include_deleted=True)
         if source is None:
             return None
-        product = self.get(source["product_id"])
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return self.db.restore_source(source_id)
 
     def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -971,11 +971,11 @@ class CompanyManager:
         from agno.company.sources import read_source
 
         source = self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
-        if source is None or self.get(source["product_id"]) is None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or self.get(source["goal_id"]) is None:
             raise LookupError("Source not found")
         return read_source(source, run_id, links=links)
 
@@ -994,11 +994,11 @@ class CompanyManager:
         from agno.company.sources import browse_source
 
         source = self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
-        if source is None or self.get(source["product_id"]) is None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or self.get(source["goal_id"]) is None:
             raise LookupError("Source not found")
         return browse_source(source, run_id, path, pattern, offset, limit, content_offset, max_chars)
 
@@ -1024,16 +1024,16 @@ class CompanyManager:
         validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
 
         source = self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
+            _require_routine_goal(source["goal_id"])
         if source is None:
             raise LookupError("Source not found")
         if project_id is not None:
             project = self.get_project(project_id)
-            if project is None or project["product_id"] != source["product_id"]:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project is None or project["goal_id"] != source["goal_id"]:
+                raise ValueError("Task and Project must belong to the same Goal")
         proposal = IntakeProposal.model_validate(proposal)
         evidence = self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)
@@ -1042,7 +1042,7 @@ class CompanyManager:
             {
                 **fields,
                 "id": str(uuid4()),
-                "product_id": source["product_id"],
+                "goal_id": source["goal_id"],
                 "status": "backlog",
                 "executor_type": executor_type,
                 "executor_id": executor_id,
@@ -1058,18 +1058,16 @@ class CompanyManager:
             }
         )
 
-    def refresh(self, product_id: str, user_id: Optional[str] = None):
-        """Propose Project completion and apply the Product's archive window."""
-        from agno.company.refresh import refresh_product
+    def refresh(self, goal_id: str, user_id: Optional[str] = None):
+        """Propose Project completion and apply the Goal's archive window."""
+        from agno.company.refresh import refresh_goal
 
-        return refresh_product(self, product_id, user_id)
+        return refresh_goal(self, goal_id, user_id)
 
     @_serialized_summary
-    def summarize(
-        self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
-    ):
-        """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_product_scope
+    def summarize(self, *, goal_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None):
+        """Write the observed report to the wiki and deliver using Goal configuration."""
+        from agno.company.playbook import _require_goal_scope
         from agno.company.summary import (
             _STATE_PATH,
             _delivery_state,
@@ -1080,36 +1078,34 @@ class CompanyManager:
             deliver_summary,
         )
 
-        product = self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
-        delivery = (product.get("metadata") or {}).get("summary") or {}
+        goal = self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        delivery = (goal.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
-            raise ValueError("Product summary requires an interface and destination")
-        counts = self.attention(product_id)
+            raise ValueError("Goal summary requires an interface and destination")
+        counts = self.attention(goal_id)
         rows = []
         page = 1
         while True:
-            tasks, total = self.list_tasks(product_id=product_id, limit=100, page=page)
+            tasks, total = self.list_tasks(goal_id=goal_id, limit=100, page=page)
             rows.extend(tasks)
             if page * 100 >= total:
                 break
             page += 1
         path = "summary.md"
         try:
-            existing = self.read_wiki(product_id, path)
+            existing = self.read_wiki(goal_id, path)
         except LookupError:
             existing = None
-        state_fs, previous, state_version = _load_summary_state(
-            self.db, product_id, existing.content if existing else ""
-        )
-        content = _summary_report(product, counts, rows, narrative, previous)
+        state_fs, previous, state_version = _load_summary_state(self.db, goal_id, existing.content if existing else "")
+        content = _summary_report(goal, counts, rows, narrative, previous)
         report, delivered, marker = _summary_page(previous, run_id, content)
         if delivered:
             return {"path": path, "delivered": True, "quiet": True}
         saved = self.write_wiki(
-            product_id=product_id,
+            goal_id=goal_id,
             path=path,
             content=report,
             expected_version=existing.metadata.version if existing else 0,
@@ -1123,14 +1119,12 @@ class CompanyManager:
         )
         completed = _summary_delivered(report, marker)
         state_fs.write(_STATE_PATH, _delivery_state(completed), expected_version=state_version)
-        self.write_wiki(
-            product_id=product_id, path=path, content=completed, expected_version=saved.version, user_id=user_id
-        )
+        self.write_wiki(goal_id=goal_id, path=path, content=completed, expected_version=saved.version, user_id=user_id)
         return {"path": path, "delivered": True, "quiet": not rows}
 
 
 class AsyncCompanyManager:
-    """Manage Products through an asynchronous database.
+    """Manage Goals through an asynchronous database.
 
     user_id=None leaves reads and writes unscoped; a string restricts them to
     that owner. On create it records the accountable owner.
@@ -1152,15 +1146,15 @@ class AsyncCompanyManager:
         self,
         *,
         name: str,
-        purpose: Optional[str] = None,
+        objective: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Create a Product."""
-        fields = {"name": name, "purpose": purpose, "metadata": metadata}
-        validate_product_fields(fields)
-        return await self.db.create_product(
+        """Create a Goal."""
+        fields = {"name": name, "objective": objective, "metadata": metadata}
+        validate_goal_fields(fields)
+        return await self.db.create_goal(
             {
                 **fields,
                 "id": id or str(uuid4()),
@@ -1174,7 +1168,7 @@ class AsyncCompanyManager:
     async def create_routine(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         routine: Any,
         user_id: Optional[str] = None,
         scoped_user_id: Optional[str] = None,
@@ -1183,23 +1177,23 @@ class AsyncCompanyManager:
     ) -> Dict[str, Any]:
         """Create and link a Routine owned by ``user_id``; ``check`` sees the schedule fields before any write.
 
-        Any writer may add a Routine to a Product, as with Projects and Tasks; ``scoped_user_id`` is kept for
-        callers and does not restrict which Product the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
+        Any writer may add a Routine to a Goal, as with Projects and Tasks; ``scoped_user_id`` is kept for
+        callers and does not restrict which Goal the Routine joins. Supply ``agent_os`` to name Mini Agent as the executor.
         """
         from agno.company.declarations import Routine
-        from agno.company.routines import _declared_schedule_fields, _require_routine_product
+        from agno.company.routines import _declared_schedule_fields, _require_routine_goal
 
-        product = await self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_routine_product(product_id)
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_routine_goal(goal_id)
         routine = Routine.model_validate(routine)
-        fields = _declared_schedule_fields(product_id, routine, self.registry, agent_os=agent_os)
+        fields = _declared_schedule_fields(goal_id, routine, self.registry, agent_os=agent_os)
         if check is not None:
             await check(fields)
-        return await self._write_routine(product_id, routine, fields, user_id)
+        return await self._write_routine(goal_id, routine, fields, user_id)
 
-    async def _write_routine(self, product_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
+    async def _write_routine(self, goal_id: str, routine: Any, fields: Dict[str, Any], user_id: Optional[str]):
         """Create and link the schedule, then enable it if requested; roll back failed writes."""
         from agno.scheduler import ScheduleManager
 
@@ -1213,35 +1207,35 @@ class AsyncCompanyManager:
         )
         linked = False
         try:
-            if await self.db.add_product_routine(product_id, schedule.id) is None:
-                raise RuntimeError("Routine could not be linked to its Product")
+            if await self.db.add_goal_routine(goal_id, schedule.id) is None:
+                raise RuntimeError("Routine could not be linked to its Goal")
             linked = True
             enabled = await schedules.aenable(schedule.id, user_id=user_id) if routine.enabled else schedule
             if enabled is None:
                 raise RuntimeError("Routine could not be enabled")
         except Exception:
             if linked:
-                await self._unlink_routine(product_id, schedule.id)
+                await self._unlink_routine(goal_id, schedule.id)
             await schedules.adelete(schedule.id, user_id=user_id)
             raise
         return enabled.to_dict()
 
-    async def _unlink_routine(self, product_id: str, schedule_id: str) -> None:
-        product = await self.get(product_id)
-        if product is not None:
-            metadata = dict(product.get("metadata") or {})
+    async def _unlink_routine(self, goal_id: str, schedule_id: str) -> None:
+        goal = await self.get(goal_id)
+        if goal is not None:
+            metadata = dict(goal.get("metadata") or {})
             metadata["routine_ids"] = [i for i in metadata.get("routine_ids") or [] if i != schedule_id]
-            await self.db.update_product(product_id, metadata=metadata)
+            await self.db.update_goal(goal_id, metadata=metadata)
 
-    async def discard_product(
+    async def discard_goal(
         self,
-        product_id: str,
+        goal_id: str,
         *,
         source_ids: Sequence[str] = (),
         schedule_ids: Sequence[str] = (),
         user_id: Optional[str] = None,
     ) -> None:
-        """Remove a Product whose declared records could not all be created."""
+        """Remove a Goal whose declared records could not all be created."""
         from agno.scheduler import ScheduleManager
 
         schedules = ScheduleManager(self.schedule_db)
@@ -1249,15 +1243,15 @@ class AsyncCompanyManager:
             await schedules.adelete(schedule_id, user_id=user_id)
         for source_id in source_ids:
             await self.db.delete_source(source_id)
-        await self.db.delete_product(product_id)
+        await self.db.delete_goal(goal_id)
 
     async def get(
-        self, product_id: str, user_id: Optional[str] = None, include_deleted: bool = False
+        self, goal_id: str, user_id: Optional[str] = None, include_deleted: bool = False
     ) -> Optional[Dict[str, Any]]:
-        """Get a visible Product, optionally including deleted records."""
-        record = await self.db.get_product(product_id, user_id=user_id, include_deleted=include_deleted)
+        """Get a visible Goal, optionally including deleted records."""
+        record = await self.db.get_goal(goal_id, user_id=user_id, include_deleted=include_deleted)
         if record is not None:
-            record["counts"] = (await self.db.get_product_counts([product_id]))[product_id]
+            record["counts"] = (await self.db.get_goal_counts([goal_id]))[goal_id]
         return record
 
     async def list(
@@ -1269,10 +1263,10 @@ class AsyncCompanyManager:
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Return a page of visible Products and the total before pagination."""
+        """Return a page of visible Goals and the total before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
-        rows, total = await self.db.get_products(
+        rows, total = await self.db.get_goals(
             user_id=user_id,
             limit=limit,
             page=page,
@@ -1280,26 +1274,26 @@ class AsyncCompanyManager:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        counts = await self.db.get_product_counts([row["id"] for row in rows])
+        counts = await self.db.get_goal_counts([row["id"] for row in rows])
         return [{**row, "counts": counts[row["id"]]} for row in rows], total
 
-    async def update(self, product_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
-        """Update name, purpose or metadata on an active Product; linked Routine ids are kept."""
-        validate_product_fields(fields)
-        return await self.db.update_product(product_id, user_id=user_id, **_without_routine_links(fields))
+    async def update(self, goal_id: str, user_id: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
+        """Update name, objective or metadata on an active Goal; linked Routine ids are kept."""
+        validate_goal_fields(fields)
+        return await self.db.update_goal(goal_id, user_id=user_id, **_without_routine_links(fields))
 
-    async def delete(self, product_id: str, user_id: Optional[str] = None) -> bool:
-        """Archive a Product and its children atomically; active Tasks raise ValueError."""
-        return await self.db.delete_product(product_id, user_id=user_id)
+    async def delete(self, goal_id: str, user_id: Optional[str] = None) -> bool:
+        """Archive a Goal and its children atomically; active Tasks raise ValueError."""
+        return await self.db.delete_goal(goal_id, user_id=user_id)
 
-    async def restore(self, product_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Restore a Product and only children archived by it; return None if already active."""
-        return await self.db.restore_product(product_id, user_id=user_id)
+    async def restore(self, goal_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Restore a Goal and only children archived by it; return None if already active."""
+        return await self.db.restore_goal(goal_id, user_id=user_id)
 
     async def create_project(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         name: str,
         outcome: Optional[str] = None,
         target_date: Optional[int] = None,
@@ -1307,15 +1301,15 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create project work; scoped_user_id filters parents while user_id records the creator."""
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
         from agno.db.schemas.projects import validate_project_fields
 
-        _require_routine_product(product_id)
+        _require_routine_goal(goal_id)
         fields = {"name": name, "outcome": outcome, "target_date": target_date}
         validate_project_fields(fields)
-        if await self.db.get_product(product_id, user_id=scoped_user_id) is None:
-            raise LookupError("Product not found")
-        proposal_id = _project_proposal_id(product_id, name)
+        if await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
+        proposal_id = _project_proposal_id(goal_id, name)
         if proposal_id is not None:
             existing = await self.db.get_project(proposal_id, include_deleted=True)
             if existing is not None:
@@ -1323,7 +1317,7 @@ class AsyncCompanyManager:
         return await self.db.create_project(
             {
                 **fields,
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "id": proposal_id or str(uuid4()),
                 "status": "proposed",
                 "user_id": user_id,
@@ -1350,12 +1344,12 @@ class AsyncCompanyManager:
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Products, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         rows, total = await self.db.get_projects(
@@ -1363,7 +1357,7 @@ class AsyncCompanyManager:
             limit=limit,
             page=page,
             include_deleted=include_deleted,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -1386,11 +1380,11 @@ class AsyncCompanyManager:
         self, project_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
     ) -> bool:
         """Archive a Project and its Tasks atomically; active Tasks raise ValueError."""
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         record = await self.db.get_project(project_id)
         if record is not None:
-            _require_routine_product(record["product_id"])
+            _require_routine_goal(record["goal_id"])
         return await self.db.delete_project(project_id, user_id=user_id, updated_before=updated_before)
 
     async def restore_project(self, project_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -1436,7 +1430,7 @@ class AsyncCompanyManager:
     async def create_task(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         title: str,
         brief: Optional[str] = None,
         project_id: Optional[str] = None,
@@ -1456,7 +1450,7 @@ class AsyncCompanyManager:
 
         if isinstance(current_authorization(), _RoutineAuthorization):
             raise PermissionError(
-                "Routines must propose Tasks through intake_product_source with evidence and a dedupe key"
+                "Routines must propose Tasks through intake_goal_source with evidence and a dedupe key"
             )
         from agno.db.schemas.tasks import validate_task_fields
 
@@ -1471,17 +1465,17 @@ class AsyncCompanyManager:
         validate_task_fields(fields)
         if not project_id:
             raise ValueError("A Task requires a Project")
-        if await self.db.get_product(product_id, user_id=scoped_user_id) is None:
-            raise LookupError("Product not found")
+        if await self.db.get_goal(goal_id, user_id=scoped_user_id) is None:
+            raise LookupError("Goal not found")
         if project_id is not None:
             project = await self.db.get_project(project_id, user_id=scoped_user_id)
             if project is None:
                 raise LookupError("Project not found")
-            if project["product_id"] != product_id:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project["goal_id"] != goal_id:
+                raise ValueError("Task and Project must belong to the same Goal")
         task = {
             **fields,
-            "product_id": product_id,
+            "goal_id": goal_id,
             "id": str(uuid4()),
             "status": "backlog",
             "origin": origin,
@@ -1515,7 +1509,7 @@ class AsyncCompanyManager:
         limit: int = 20,
         page: int = 1,
         include_deleted: bool = False,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         status: Optional[str] = None,
         project_id: Optional[str] = None,
         failed: Optional[bool] = None,
@@ -1523,7 +1517,7 @@ class AsyncCompanyManager:
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """List across Products, filtering status and owner before pagination."""
+        """List across Goals, filtering status and owner before pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
         return await self.db.get_tasks(
@@ -1531,7 +1525,7 @@ class AsyncCompanyManager:
             limit=limit,
             page=page,
             include_deleted=include_deleted,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
             project_id=project_id,
             failed=failed,
@@ -1567,8 +1561,8 @@ class AsyncCompanyManager:
             project = await self.db.get_project(fields["project_id"], user_id=None)
             if project is None:
                 raise LookupError("Project not found")
-            if project["product_id"] != existing["product_id"]:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project["goal_id"] != existing["goal_id"]:
+                raise ValueError("Task and Project must belong to the same Goal")
         return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
 
     async def delete_task(
@@ -1594,7 +1588,7 @@ class AsyncCompanyManager:
             sources = []
             page = 1
             while True:
-                rows, total = await self.db.get_sources(product_id=task["product_id"], limit=100, page=page)
+                rows, total = await self.db.get_sources(goal_id=task["goal_id"], limit=100, page=page)
                 sources.extend(rows)
                 if page * 100 >= total:
                     break
@@ -1644,30 +1638,30 @@ class AsyncCompanyManager:
             expected_job_id=expected_job_id,
         )
 
-    async def _tasks_in(self, product_id: str, status: str) -> List[Dict[str, Any]]:
+    async def _tasks_in(self, goal_id: str, status: str) -> List[Dict[str, Any]]:
         from agno.company.execution import _call
 
         rows: List[Dict[str, Any]] = []
         page = 1
         while True:
-            batch, total = await _call(self.db, "get_tasks", product_id=product_id, status=status, limit=100, page=page)
+            batch, total = await _call(self.db, "get_tasks", goal_id=goal_id, status=status, limit=100, page=page)
             rows.extend(batch)
             if page * 100 >= total:
                 return rows
             page += 1
 
-    async def auto_accept_status(self, product_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
-        """What auto-accept did and is waiting on in a Product.
+    async def auto_accept_status(self, goal_id: str, limit: int = 20, decisions: bool = True) -> Dict[str, Any]:
+        """What auto-accept did and is waiting on in a Goal.
 
-        automatic_decisions holds the latest decisions a policy made, newest first, from the Product's
+        automatic_decisions holds the latest decisions a policy made, newest first, from the Goal's
         most recently changed Projects and Tasks. auto_accept_at_limit holds its Routines that wait for a
-        person to finish an open Task. Both are empty, and nothing is read, for a Product whose Routines
+        person to finish an open Task. Both are empty, and nothing is read, for a Goal whose Routines
         have no policy.
         """
         from agno.company.execution import _call
 
-        product = await self.get(product_id) or {}
-        routine_ids = (product.get("metadata") or {}).get("routine_ids") or []
+        goal = await self.get(goal_id) or {}
+        routine_ids = (goal.get("metadata") or {}).get("routine_ids") or []
         schedules = [await _call(self.schedule_db, "get_schedule", routine_id) for routine_id in routine_ids]
         status: Dict[str, Any] = {"automatic_decisions": [], "auto_accept_at_limit": []}
         if not any(_has_policy(schedule) for schedule in schedules):
@@ -1675,21 +1669,21 @@ class AsyncCompanyManager:
         if any(_open_limit(schedule) is not None for schedule in schedules):
             from agno.company.routines import _OPEN_STATUSES
 
-            tasks = [row for stage in _OPEN_STATUSES for row in await self._tasks_in(product_id, stage)]
-            if _at_limit(product, schedules, tasks):
+            tasks = [row for stage in _OPEN_STATUSES for row in await self._tasks_in(goal_id, stage)]
+            if _at_limit(goal, schedules, tasks):
                 # Only a Routine at its limit has proposals waiting on it.
-                tasks += await self._tasks_in(product_id, "backlog")
-            status["auto_accept_at_limit"] = _at_limit(product, schedules, tasks)
+                tasks += await self._tasks_in(goal_id, "backlog")
+            status["auto_accept_at_limit"] = _at_limit(goal, schedules, tasks)
         if decisions:
             latest: Dict[str, Any] = dict(
-                product_id=product_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
+                goal_id=goal_id, limit=_DECISION_RECORDS, sort_by="updated_at", sort_order="desc"
             )
             projects, _ = await _call(self.db, "get_projects", **latest)
             recent, _ = await _call(self.db, "get_tasks", **latest)
             status["automatic_decisions"] = _automatic_decisions(projects, recent, limit)
         return status
 
-    async def auto_accept_waiting(self, product_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def auto_accept_waiting(self, goal_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Routines that declare auto_accept in code and wait for a person to turn it on.
 
         This applies where authorization is on: there a declared policy acts for no one until a person adopts it.
@@ -1697,9 +1691,9 @@ class AsyncCompanyManager:
         from agno.scheduler import ScheduleManager
 
         rows = await ScheduleManager(self.schedule_db).alist_all()
-        return _waiting_for_a_person([row.to_dict() for row in rows], product_id)
+        return _waiting_for_a_person([row.to_dict() for row in rows], goal_id)
 
-    async def attention(self, product_id: Optional[str] = None) -> Dict[str, Any]:
+    async def attention(self, goal_id: Optional[str] = None) -> Dict[str, Any]:
         """Company-wide counts over the same filters used by the Task list."""
         counts: Dict[str, Any] = {}
         for name, filters in (
@@ -1707,58 +1701,58 @@ class AsyncCompanyManager:
             ("in_review", {"status": "in_review"}),
             ("failed", {"failed": True}),
         ):
-            _, counts[name] = await self.list_tasks(product_id=product_id, limit=1, **filters)
+            _, counts[name] = await self.list_tasks(goal_id=goal_id, limit=1, **filters)
         from agno.company.routines import _afailed_routines
 
-        products = []
-        if product_id is not None:
-            product = await self.get(product_id)
-            if product is not None:
-                products.append(product)
+        goals = []
+        if goal_id is not None:
+            goal = await self.get(goal_id)
+            if goal is not None:
+                goals.append(goal)
         else:
             page = 1
             while True:
                 rows, total = await self.list(limit=100, page=page)
-                products.extend(rows)
+                goals.extend(rows)
                 if page * 100 >= total:
                     break
                 page += 1
-        counts["failed"] += await _afailed_routines(self.schedule_db, products)
+        counts["failed"] += await _afailed_routines(self.schedule_db, goals)
         from agno.company.automation_history import aautomation_failures
 
-        failures = await aautomation_failures(self.schedule_db, self.db, product_id)
+        failures = await aautomation_failures(self.schedule_db, self.db, goal_id)
         if failures:
             counts["automation_failures"] = failures
             counts["failed"] += len(failures)
         return counts
 
-    async def get_wiki(self, product_id: Optional[str] = None):
-        """Return a Product or company wiki; reads are company-wide.
+    async def get_wiki(self, goal_id: Optional[str] = None):
+        """Return a Goal or company wiki; reads are company-wide.
 
         Default pages are created atomically on first access and never reset.
         """
         from agno.company.playbook import _aseed, _wiki
 
-        product = await self.get(product_id) if product_id is not None else None
-        if product_id is not None and product is None:
-            raise LookupError("Product not found")
-        provider = _wiki(self.db, product)
-        await _aseed(provider, product)
+        goal = await self.get(goal_id) if goal_id is not None else None
+        if goal_id is not None and goal is None:
+            raise LookupError("Goal not found")
+        provider = _wiki(self.db, goal)
+        await _aseed(provider, goal)
         return provider
 
-    async def list_wiki(self, product_id: Optional[str] = None, limit: int = 20, page: int = 1):
+    async def list_wiki(self, goal_id: Optional[str] = None, limit: int = 20, page: int = 1):
         """List wiki pages with the standard Company pagination."""
         if limit < 1 or page < 1:
             raise ValueError("limit and page must be positive")
-        provider = await self.get_wiki(product_id)
+        provider = await self.get_wiki(goal_id)
         pages = await provider.backend.filesystem.alist()
         return pages[(page - 1) * limit : page * limit], len(pages)
 
-    async def read_wiki(self, product_id: Optional[str], path: str):
+    async def read_wiki(self, goal_id: Optional[str], path: str):
         """Read a Markdown page and its filesystem version."""
         from agno.company.playbook import _page_path
 
-        provider = await self.get_wiki(product_id)
+        provider = await self.get_wiki(goal_id)
         result = await provider.backend.filesystem.aread_with_meta(_page_path(path))
         if result is None:
             raise LookupError("Wiki page not found")
@@ -1767,7 +1761,7 @@ class AsyncCompanyManager:
     async def write_wiki(
         self,
         *,
-        product_id: Optional[str],
+        goal_id: Optional[str],
         path: str,
         content: str,
         expected_version: int,
@@ -1777,15 +1771,15 @@ class AsyncCompanyManager:
 
         ``user_id`` is accepted for compatibility; Company pages are shared, so it does not restrict the write.
         """
-        from agno.company.playbook import _page_path, _require_product_scope
+        from agno.company.playbook import _page_path, _require_goal_scope
 
         if expected_version < 0:
             raise ValueError("expected_version must be nonnegative")
-        product = await self.get(product_id) if product_id is not None else {}
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
-        provider = await self.get_wiki(product_id)
+        goal = await self.get(goal_id) if goal_id is not None else {}
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        provider = await self.get_wiki(goal_id)
         return await provider.backend.filesystem.awrite(_page_path(path), content, expected_version=expected_version)
 
     async def log_decision(
@@ -1828,7 +1822,7 @@ class AsyncCompanyManager:
     async def create_source(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         type: str,
         reference: str,
         credential_ref: Optional[str] = None,
@@ -1837,21 +1831,21 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
         source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Configure a reader on a Product; secret values are never resolved."""
-        from agno.company.playbook import _require_product_scope
+        """Configure a reader on a Goal; secret values are never resolved."""
+        from agno.company.playbook import _require_goal_scope
         from agno.db.schemas.sources import validate_source_fields
 
         fields = dict(type=type, reference=reference, credential_ref=credential_ref, config=config)
         validate_source_fields(fields)
-        product = await self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return await self.db.create_source(
             {
                 **fields,
                 "id": source_id or str(uuid4()),
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "user_id": user_id,
                 "created_at": int(time.time()),
                 "updated_at": None,
@@ -1862,7 +1856,7 @@ class AsyncCompanyManager:
     async def add_source(
         self,
         *,
-        product_id: str,
+        goal_id: str,
         type: str,
         reference: str,
         executor_id: str,
@@ -1873,19 +1867,19 @@ class AsyncCompanyManager:
         scoped_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Add a website discovered by an identified agent or team without widening an existing Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
         from agno.db.schemas.sources import validate_source_fields
 
         _validate_agent_source(type, executor_type, executor_id, run_id)
         validate_source_fields(dict(type=type, reference=reference, config=config))
-        product = await self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return await self.db.create_source(
             {
                 "id": str(uuid4()),
-                "product_id": product_id,
+                "goal_id": goal_id,
                 "type": type,
                 "reference": reference,
                 "credential_ref": None,
@@ -1904,7 +1898,7 @@ class AsyncCompanyManager:
 
     async def list_sources(
         self,
-        product_id: Optional[str] = None,
+        goal_id: Optional[str] = None,
         user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
@@ -1912,37 +1906,37 @@ class AsyncCompanyManager:
     ):
         """List Sources using the database's paging and owner filters."""
         return await self.db.get_sources(
-            product_id=product_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
+            goal_id=goal_id, user_id=user_id, limit=limit, page=page, include_deleted=include_deleted
         )
 
     async def delete_source(self, source_id: str, user_id: Optional[str] = None) -> bool:
         """Soft delete a Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
 
         source = await self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
+            _require_routine_goal(source["goal_id"])
         if source is None:
             return False
-        product = await self.get(source["product_id"])
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = await self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return await self.db.delete_source(source_id)
 
     async def restore_source(self, source_id: str, user_id: Optional[str] = None):
         """Restore a Source."""
-        from agno.company.playbook import _require_product_scope
+        from agno.company.playbook import _require_goal_scope
 
         source = await self.get_source(source_id, include_deleted=True)
         if source is None:
             return None
-        product = await self.get(source["product_id"])
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
+        goal = await self.get(source["goal_id"])
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
         return await self.db.restore_source(source_id)
 
     async def read_source(self, source_id: str, run_id: str, links: Optional[List[str]] = None):
@@ -1950,11 +1944,11 @@ class AsyncCompanyManager:
         from agno.company.sources import aread_source
 
         source = await self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
-        if source is None or await self.get(source["product_id"]) is None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or await self.get(source["goal_id"]) is None:
             raise LookupError("Source not found")
         return await aread_source(source, run_id, links=links)
 
@@ -1973,11 +1967,11 @@ class AsyncCompanyManager:
         from agno.company.sources import abrowse_source
 
         source = await self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
-        if source is None or await self.get(source["product_id"]) is None:
+            _require_routine_goal(source["goal_id"])
+        if source is None or await self.get(source["goal_id"]) is None:
             raise LookupError("Source not found")
         return await abrowse_source(source, run_id, path, pattern, offset, limit, content_offset, max_chars)
 
@@ -2003,16 +1997,16 @@ class AsyncCompanyManager:
         validate_task_fields({"executor_type": executor_type, "executor_id": executor_id, "project_id": project_id})
 
         source = await self.get_source(source_id)
-        from agno.company.routines import _require_routine_product
+        from agno.company.routines import _require_routine_goal
 
         if source is not None:
-            _require_routine_product(source["product_id"])
+            _require_routine_goal(source["goal_id"])
         if source is None:
             raise LookupError("Source not found")
         if project_id is not None:
             project = await self.get_project(project_id)
-            if project is None or project["product_id"] != source["product_id"]:
-                raise ValueError("Task and Project must belong to the same Product")
+            if project is None or project["goal_id"] != source["goal_id"]:
+                raise ValueError("Task and Project must belong to the same Goal")
         proposal = IntakeProposal.model_validate(proposal)
         evidence = await self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)
@@ -2021,7 +2015,7 @@ class AsyncCompanyManager:
             {
                 **fields,
                 "id": str(uuid4()),
-                "product_id": source["product_id"],
+                "goal_id": source["goal_id"],
                 "status": "backlog",
                 "executor_type": executor_type,
                 "executor_id": executor_id,
@@ -2037,18 +2031,18 @@ class AsyncCompanyManager:
             }
         )
 
-    async def refresh(self, product_id: str, user_id: Optional[str] = None):
-        """Propose Project completion and apply the Product's archive window."""
-        from agno.company.refresh import arefresh_product
+    async def refresh(self, goal_id: str, user_id: Optional[str] = None):
+        """Propose Project completion and apply the Goal's archive window."""
+        from agno.company.refresh import arefresh_goal
 
-        return await arefresh_product(self, product_id, user_id)
+        return await arefresh_goal(self, goal_id, user_id)
 
     @_serialized_summary
     async def summarize(
-        self, *, product_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
+        self, *, goal_id: str, run_id: str, interfaces: Any, narrative: str, user_id: Optional[str] = None
     ):
-        """Write the observed report to the wiki and deliver using Product configuration."""
-        from agno.company.playbook import _require_product_scope
+        """Write the observed report to the wiki and deliver using Goal configuration."""
+        from agno.company.playbook import _require_goal_scope
         from agno.company.summary import (
             _STATE_PATH,
             _aload_summary_state,
@@ -2059,36 +2053,36 @@ class AsyncCompanyManager:
             adeliver_summary,
         )
 
-        product = await self.get(product_id)
-        if product is None:
-            raise LookupError("Product not found")
-        _require_product_scope(product)
-        delivery = (product.get("metadata") or {}).get("summary") or {}
+        goal = await self.get(goal_id)
+        if goal is None:
+            raise LookupError("Goal not found")
+        _require_goal_scope(goal)
+        delivery = (goal.get("metadata") or {}).get("summary") or {}
         if not delivery.get("interface") or not delivery.get("destination"):
-            raise ValueError("Product summary requires an interface and destination")
-        counts = await self.attention(product_id)
+            raise ValueError("Goal summary requires an interface and destination")
+        counts = await self.attention(goal_id)
         rows = []
         page = 1
         while True:
-            tasks, total = await self.list_tasks(product_id=product_id, limit=100, page=page)
+            tasks, total = await self.list_tasks(goal_id=goal_id, limit=100, page=page)
             rows.extend(tasks)
             if page * 100 >= total:
                 break
             page += 1
         path = "summary.md"
         try:
-            existing = await self.read_wiki(product_id, path)
+            existing = await self.read_wiki(goal_id, path)
         except LookupError:
             existing = None
         state_fs, previous, state_version = await _aload_summary_state(
-            self.db, product_id, existing.content if existing else ""
+            self.db, goal_id, existing.content if existing else ""
         )
-        content = _summary_report(product, counts, rows, narrative, previous)
+        content = _summary_report(goal, counts, rows, narrative, previous)
         report, delivered, marker = _summary_page(previous, run_id, content)
         if delivered:
             return {"path": path, "delivered": True, "quiet": True}
         saved = await self.write_wiki(
-            product_id=product_id,
+            goal_id=goal_id,
             path=path,
             content=report,
             expected_version=existing.metadata.version if existing else 0,
@@ -2103,7 +2097,7 @@ class AsyncCompanyManager:
         completed = _summary_delivered(report, marker)
         await state_fs.awrite(_STATE_PATH, _delivery_state(completed), expected_version=state_version)
         await self.write_wiki(
-            product_id=product_id, path=path, content=completed, expected_version=saved.version, user_id=user_id
+            goal_id=goal_id, path=path, content=completed, expected_version=saved.version, user_id=user_id
         )
         return {"path": path, "delivered": True, "quiet": not rows}
 

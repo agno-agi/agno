@@ -42,20 +42,20 @@ def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
         assert all(m.id != MINI_AGENT_ID for m in os.manager.members)
         leader_tools = [t for t in os.manager.tools if isinstance(t, CompanyTools)]
         assert len(leader_tools) == 1 and leader_tools[0] is not pm.tools.routine[0]
-        assert "summarize_company_product" not in leader_tools[0].functions
-        assert "refresh_company_product" not in leader_tools[0].functions
+        assert "summarize_company_goal" not in leader_tools[0].functions
+        assert "refresh_company_goal" not in leader_tools[0].functions
         assert COMPANY_INSTRUCTIONS in os.manager.instructions.base
     os.resync(os.get_app())
     assert pm not in registry.agents and not registry.tools
     tools = pm.tools.routine[0]
-    assert {"create_company_product", "create_product_routine"} <= tools.functions.keys()
+    assert {"create_company_goal", "create_goal_routine"} <= tools.functions.keys()
     assert tools.registry is registry
     assert not any("schedule" in name or "transition" in name for name in tools.functions)
     assert "log_company_decision" not in tools.functions
     # Summary and refresh Routines run here, so Mini Agent holds both.
-    assert "summarize_company_product" in tools.functions
-    assert "refresh_company_product" in tools.functions
-    assert "summarize_company_product" in CompanyTools(db, summary_tools=True).functions
+    assert "summarize_company_goal" in tools.functions
+    assert "refresh_company_goal" in tools.functions
+    assert "summarize_company_goal" in CompanyTools(db, summary_tools=True).functions
     inherited = AgentOS(db=db, registry=Registry(models=[first, override]), company=CompanyConfig(), telemetry=False)
     assert inherited._mini_agent.model is first
     with pytest.raises(ValueError, match="cron_expr"):
@@ -102,8 +102,8 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     from agno.agent import Agent
 
     manager = CompanyManager(db, registry=Registry(agents=[Agent(id="writer")]))
-    product = manager.create(name="SDK", user_id="alice")
-    project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
+    goal = manager.create(name="SDK", user_id="alice")
+    project = manager.create_project(goal_id=goal["id"], name="Release", user_id="alice")
     tools = CompanyTools(db, user_isolation=True)
     alice = RunContext(run_id="r", session_id="s", user_id="alice")
     bob = RunContext(run_id="r2", session_id="s2", user_id="bob")
@@ -116,7 +116,7 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     assert renamed["name"] == "Launch" and renamed["user_id"] == "alice"
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     task = json.loads(
-        await invoke("propose_company_task", product["id"], "Draft", project_id=project["id"], _agno_run_context=alice)
+        await invoke("propose_company_task", goal["id"], "Draft", project_id=project["id"], _agno_run_context=alice)
     )
     assert task["status"] == "backlog" and task["user_id"] == "alice"
     assert json.loads(await invoke("list_company_tasks", _agno_run_context=bob))["meta"]["total_count"] == 1
@@ -140,7 +140,7 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
     )
     assert accepted_edit["title"] == "changed" and accepted_edit["brief"] == "better"
     assert accepted_edit["status"] == "ready" and accepted_edit["executor_id"] == "writer"
-    await invoke("update_product_status", product["id"], "draft ready", 1, _agno_run_context=alice)
+    await invoke("update_goal_status", goal["id"], "draft ready", 1, _agno_run_context=alice)
     entry = json.loads(
         await invoke("log_company_decision", "Draft first", reasoning="review needed", _agno_run_context=alice)
     )
@@ -153,19 +153,19 @@ async def test_tools_identity_fence_and_learning(tmp_path, use_async):
         if function.name == "log_company_decision":
             assert "agent_id" not in properties
         assert not {"user_id", "_agno_run_context", "owner", "auto_accept", "accepted_by"} & set(properties)
-        if function.name != "create_company_product":
+        if function.name != "create_company_goal":
             assert "sources" not in properties
     with pytest.raises(PermissionError):
-        await invoke("propose_company_task", product["id"], "anonymous", project_id=project["id"])
+        await invoke("propose_company_task", goal["id"], "anonymous", project_id=project["id"])
 
 
 def _task_at(tmp_path, stage):
     db = SqliteDb(db_file=str(tmp_path / "edit.db"))
     manager = CompanyManager(db, registry=Registry(agents=[Agent(id="writer")]))
-    product = manager.create(name="SDK")
-    project = manager.create_project(product_id=product["id"], name="Release")
+    goal = manager.create(name="SDK")
+    project = manager.create_project(goal_id=goal["id"], name="Release")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
-    task = manager.create_task(product_id=product["id"], project_id=project["id"], title="Draft", brief="Original")
+    task = manager.create_task(goal_id=goal["id"], project_id=project["id"], title="Draft", brief="Original")
     if stage != "backlog":
         accept = {"executor_type": "agent", "executor_id": "writer", "accepted_by": "alice"} if stage == "ready" else {}
         manager.transition_task(task_id=task["id"], target=stage, reason="Move", **accept)
@@ -264,7 +264,7 @@ async def test_automatic_task_run_cannot_edit_accepted_task_content(tmp_path, us
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_automated_edit_guard_keeps_permission_and_product_refusals(tmp_path, use_async):
+async def test_automated_edit_guard_keeps_permission_and_goal_refusals(tmp_path, use_async):
     from agno.company.routines import _RoutineAuthorization
     from agno.os.authz.provider import AuthorizationContext
     from agno.os.authz.scope_provider import ScopeAuthorizationProvider
@@ -281,10 +281,10 @@ async def test_automated_edit_guard_keeps_permission_and_product_refusals(tmp_pa
     with pytest.raises(PermissionError) as refused:
         await _edit_task(tools, use_async, context, task["id"])
     assert "Backlog" not in str(refused.value)
-    other = _RoutineAuthorization(None, "routine", product_id="another-product")
+    other = _RoutineAuthorization(None, "routine", goal_id="another-goal")
     context = RunContext(run_id="r", session_id="s", authorization=other)
     with authorization_scope(lambda: other):
-        with pytest.raises(PermissionError, match="configured Product"):
+        with pytest.raises(PermissionError, match="configured Goal"):
             await _edit_task(tools, use_async, context, task["id"])
     assert manager.get_task(task["id"]) == task
     db.close()
@@ -298,8 +298,8 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
     from agno.models.response import ModelResponse
 
     db = SqliteDb(db_file=str(tmp_path / "runtime.db"))
-    product = CompanyManager(db).create(name="SDK", user_id="alice")
-    project = CompanyManager(db).create_project(product_id=product["id"], name="Release", user_id="alice")
+    goal = CompanyManager(db).create(name="SDK", user_id="alice")
+    project = CompanyManager(db).create_project(goal_id=goal["id"], name="Release", user_id="alice")
     CompanyManager(db).transition_project(project_id=project["id"], target="active", reason="Approved")
 
     class PlanningModel(Model):
@@ -316,7 +316,7 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
                     (
                         "propose_company_task",
                         {
-                            "product_id": product["id"],
+                            "goal_id": goal["id"],
                             "title": "Draft notes",
                             "project_id": project["id"],
                             "_agno_run_context": {"user_id": "mallory"},
@@ -325,7 +325,7 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
                     (
                         "write_company_file",
                         {
-                            "path": f"products/{product['id']}/status.md",
+                            "path": f"goals/{goal['id']}/status.md",
                             "content": "Draft proposed",
                             "expected_version": 1,
                         },
@@ -399,7 +399,7 @@ async def test_super_agent_runs_company_tools_with_injected_identity(tmp_path, m
     m = CompanyManager(db)
     tasks, total = m.list_tasks()
     assert total == 1 and tasks[0]["user_id"] == "alice" and tasks[0]["status"] == "backlog"
-    assert m.read_wiki(product["id"], "status.md").content == "Draft proposed"
+    assert m.read_wiki(goal["id"], "status.md").content == "Draft proposed"
     # Super Agent holds no decision-log tools. The log holds what the API wrote.
     held = {name for toolkit in os.manager.tools for name in (getattr(toolkit, "functions", None) or {})}
     assert not {"log_company_decision", "search_company_decisions"} & held
@@ -425,7 +425,7 @@ async def test_tools_and_automatic_recall_require_scopes(tmp_path):
     context = RunContext(run_id="r", session_id="s", user_id="spoofed", authorization=authority)
     with authorization_scope(lambda: authority):
         with pytest.raises(PermissionError):
-            tools.list_company_products(_agno_run_context=context)
+            tools.list_company_goals(_agno_run_context=context)
         with pytest.raises(PermissionError):
             await tools.alog_company_decision("denied", _agno_run_context=context)
         with pytest.raises(PermissionError):
@@ -454,7 +454,7 @@ async def test_served_mini_agent_resolution_and_catalog_fence(tmp_path, fresh):
     db.close()
 
 
-def _owner_less_routine_authority(product_id):
+def _owner_less_routine_authority(goal_id):
     from agno.os.authz.run_context import restore_authorization
 
     # The snapshot the scheduler sends for a company schedule with no owner and no stored grant.
@@ -467,14 +467,14 @@ def _owner_less_routine_authority(product_id):
             "company_routine": True,
             "company_routine_unscoped": True,
             "company_routine_id": "declared-intake",
-            "company_product_id": product_id,
+            "company_goal_id": goal_id,
         },
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_async", [False, True])
-async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(tmp_path, use_async):
+async def test_owner_less_routine_runs_unscoped_on_its_goal_under_isolation(tmp_path, use_async):
     from agno.run.authorization import authorization_scope
 
     db = SqliteDb(db_file=str(tmp_path / "declared.db"))
@@ -484,15 +484,15 @@ async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(t
     tools = CompanyTools(db, user_isolation=True)
     run = RunContext(run_id="r", session_id="s")
 
-    async def status(product_id):
-        version = manager.read_wiki(product_id, "status.md").metadata.version
+    async def status(goal_id):
+        version = manager.read_wiki(goal_id, "status.md").metadata.version
         if use_async:
-            return await tools.aupdate_product_status(product_id, "Checked", version, _agno_run_context=run)
-        return tools.update_product_status(product_id, "Checked", version, _agno_run_context=run)
+            return await tools.aupdate_goal_status(goal_id, "Checked", version, _agno_run_context=run)
+        return tools.update_goal_status(goal_id, "Checked", version, _agno_run_context=run)
 
     with authorization_scope(lambda: _owner_less_routine_authority(declared["id"])):
         assert json.loads(await status(declared["id"]))["path"] == "status.md"
-        with pytest.raises(PermissionError, match="configured Product"):
+        with pytest.raises(PermissionError, match="configured Goal"):
             await status(other["id"])
     with pytest.raises(PermissionError, match="Caller identity is required"):
         await status(declared["id"])
@@ -501,50 +501,50 @@ async def test_owner_less_routine_runs_unscoped_on_its_product_under_isolation(t
 def test_refresh_archives_every_members_finished_work(tmp_path):
     import time
 
-    from agno.company.refresh import refresh_product
+    from agno.company.refresh import refresh_goal
 
     db = SqliteDb(db_file=str(tmp_path / "refresh.db"))
     manager = CompanyManager(db)
-    product = manager.create(name="SDK", user_id="alice", metadata={"archive_window_days": 0})
-    project = manager.create_project(product_id=product["id"], name="Release", user_id="alice")
+    goal = manager.create(name="SDK", user_id="alice", metadata={"archive_window_days": 0})
+    project = manager.create_project(goal_id=goal["id"], name="Release", user_id="alice")
     manager.transition_project(project_id=project["id"], target="active", reason="Approved")
     tasks = {
-        owner: manager.create_task(product_id=product["id"], title=owner, project_id=project["id"], user_id=owner)
+        owner: manager.create_task(goal_id=goal["id"], title=owner, project_id=project["id"], user_id=owner)
         for owner in ("alice", "bob")
     }
     for task in tasks.values():
         manager.transition_task(task_id=task["id"], target="cancelled", reason="Dropped")
     time.sleep(1.1)
 
-    # Refresh is Product housekeeping, so it archives finished work whoever created it.
-    archived = refresh_product(manager, product["id"], user_id="alice")["archived_tasks"]
+    # Refresh is Goal housekeeping, so it archives finished work whoever created it.
+    archived = refresh_goal(manager, goal["id"], user_id="alice")["archived_tasks"]
     assert sorted(archived) == sorted(task["id"] for task in tasks.values())
 
 
 @pytest.mark.asyncio
 async def test_declared_routines_belong_to_their_declarer(tmp_path):
     from agno.agent import Agent
-    from agno.company import Product, Routine
-    from agno.company.bootstrap import arehydrate_product
+    from agno.company import Goal, Routine
+    from agno.company.bootstrap import arehydrate_goal
 
     db = SqliteDb(db_file=str(tmp_path / "setup.db"))
     registry = Registry(agents=[Agent(id="reader")])
 
     def declaration(user_id, routine):
-        return Product(
+        return Goal(
             id="docs",
             name="Docs",
             user_id=user_id,
             routines=[Routine(name=routine, template="intake", executor_type="agent", executor_id="reader")],
         )
 
-    await arehydrate_product(db, declaration("alice", "first"), registry)
-    await arehydrate_product(db, declaration("bob", "retry"), registry)
+    await arehydrate_goal(db, declaration("alice", "first"), registry)
+    await arehydrate_goal(db, declaration("bob", "retry"), registry)
     # A retry by another declarer reuses the existing Routine and keeps its owner.
-    await arehydrate_product(db, declaration("bob", "first"), registry)
-    await arehydrate_product(db, declaration(None, "code"), registry)
+    await arehydrate_goal(db, declaration("bob", "first"), registry)
+    await arehydrate_goal(db, declaration(None, "code"), registry)
     rows = db.get_schedules()[0]
     assert len(rows) == 3
     owners = {row["name"]: row["user_id"] for row in rows}
-    assert db.get_product("docs")["user_id"] == "alice"
+    assert db.get_goal("docs")["user_id"] == "alice"
     assert owners == {"docs.first": "alice", "docs.retry": "bob", "docs.code": "alice"}

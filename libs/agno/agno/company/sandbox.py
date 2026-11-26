@@ -30,7 +30,7 @@ def _accept_sandbox(component: Any, sources: list) -> Dict[str, Any]:
         raise ValueError("Sandboxed executor requires repository=Repository(url, branch)")
     matches = [source for source in sources if source["type"] == "git" and source["reference"] == repository.url]
     if not matches:
-        raise ValueError("Sandboxed executor requires a Product git Source matching repository URL " + repository.url)
+        raise ValueError("Sandboxed executor requires a Goal git Source matching repository URL " + repository.url)
     # A public repository needs no credential. The runtime reads only this variable.
     usable = [source for source in matches if source.get("credential_ref") in {None, "GITHUB_READ_TOKEN"}]
     if not usable:
@@ -77,14 +77,14 @@ async def _project_checkout(
         sources = []
         page = 1
         while True:
-            rows, total = await _call(db, "get_sources", product_id=task["product_id"], limit=100, page=page)
+            rows, total = await _call(db, "get_sources", goal_id=task["goal_id"], limit=100, page=page)
             sources.extend(rows)
             if page * 100 >= total:
                 break
             page += 1
         source = _accept_sandbox(component, sources)
         if pin["url"] != source["reference"]:
-            raise ValueError("Sandboxed run repository pin does not match the Product git Source")
+            raise ValueError("Sandboxed run repository pin does not match the Goal git Source")
         return {"source_id": source["id"], **pin}, result
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return None, {**result, "status": "ERROR", "content": str(exc)}

@@ -276,7 +276,7 @@ def _proposal_fields(source_id: str, proposal: Any, evidence: List[Dict[str, Any
     if any(proposal.evidence_hashes[item["link"]] != item["content_hash"] for item in selected):
         raise ValueError("Proposal evidence changed; read the Source again before proposing work")
     # A stable issue identity survives edits to the evidence or proposal wording.
-    # The database enforces uniqueness within the Product, including completed Tasks.
+    # The database enforces uniqueness within the Goal, including completed Tasks.
     return {
         "title": proposal.title,
         "brief": proposal.brief,

@@ -41,8 +41,8 @@ def wait_for_review(client, path):
 if __name__ == "__main__":
     secret = "local-cookbook-only-secret-at-least-32-bytes"
     scopes = [
-        "products:read",
-        "products:write",
+        "goals:read",
+        "goals:write",
         "projects:read",
         "projects:write",
         "tasks:read",
@@ -95,10 +95,10 @@ if __name__ == "__main__":
         )
         try:
             with TestClient(agent_os.get_app(), headers=headers("alice")) as client:
-                product = client.post("/company/products", json={"name": "SDK"}).json()
+                goal = client.post("/company/goals", json={"name": "SDK"}).json()
                 project = client.post(
                     "/company/projects",
-                    json={"product_id": product["id"], "name": "Release"},
+                    json={"goal_id": goal["id"], "name": "Release"},
                 ).json()
                 client.post(
                     "/company/projects/" + project["id"] + "/transitions",
@@ -107,7 +107,7 @@ if __name__ == "__main__":
                 task = client.post(
                     "/company/tasks",
                     json={
-                        "product_id": product["id"],
+                        "goal_id": goal["id"],
                         "project_id": project["id"],
                         "title": "Release notes",
                         "brief": "Summarize reviewed changes",

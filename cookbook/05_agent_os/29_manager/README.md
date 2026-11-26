@@ -200,7 +200,7 @@ Super Agent holds these tools:
 - Run tools: `list_agents`, `run_agent`, `list_teams`, `run_team`, `list_workflows`, `run_workflow`.
 - Platform tools: `get_run_activity`, `list_schedules`, `run_diagnostics`.
 - Docs tools when `access_docs` is on, and `list_files`, `read_file`, `search_content` when `root` is set.
-- Company tools when `company=CompanyConfig(...)` is set: company details, Products,
+- Company tools when `company=CompanyConfig(...)` is set: company details, Goals,
   Projects, Tasks, Sources, playbook, Routines and decisions. See `30_company`.
 - Anything passed in `OSManager(tools=...)`.
 

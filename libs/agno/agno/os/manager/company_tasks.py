@@ -101,8 +101,8 @@ def _policy_line(policy: Any) -> str:
     if policy.source_ids is not None:
         parts.append("Sources " + (", ".join(policy.source_ids) or "none"))
     scope = policy.work_scope
-    if scope is not None and scope.product_ids is not None:
-        parts.append("Products " + (", ".join(scope.product_ids) or "none"))
+    if scope is not None and scope.goal_ids is not None:
+        parts.append("Goals " + (", ".join(scope.goal_ids) or "none"))
     if scope is not None and scope.project_ids is not None:
         parts.append("Projects " + (", ".join(str(item) for item in scope.project_ids) or "none"))
     if policy.required_checks != ["executor_registered"]:
@@ -313,9 +313,9 @@ class CompanyTaskTools(Toolkit):
         )
 
     async def _named_routine(
-        self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, routine_name: str, product_name: Any
+        self, agent_os: Any, authority: Any, user_id: Any, routine_id: str, routine_name: str, goal_name: Any
     ) -> Any:
-        """Check that the names the person confirmed are the stored Routine's and its Product's.
+        """Check that the names the person confirmed are the stored Routine's and its Goal's.
 
         The person's permissions are checked before anything is read, and the Routine is read as the
         Routine API reads it, so a refusal names nothing the API would not show this person.
@@ -328,8 +328,8 @@ class CompanyTaskTools(Toolkit):
         request = self._routine_request(agent_os, authority, user_id, "GET", routine_id)
         if authority is not None:
             await authority.arequire("routines", "write")
-            if product_name is not None:
-                await authority.arequire("products", "read")
+            if goal_name is not None:
+                await authority.arequire("goals", "read")
         try:
             row = await agent_os._routine_api_read(routine_id, request)
         except HTTPException as exc:
@@ -337,18 +337,16 @@ class CompanyTaskTools(Toolkit):
                 raise LookupError("Routine not found") from exc
             raise
         metadata = row["payload"]["metadata"]
-        stored = row["name"].removeprefix(metadata["product_id"] + ".")
-        # Its schedule is stored under the Product's ID and this name; a listing may show either.
+        stored = row["name"].removeprefix(metadata["goal_id"] + ".")
+        # Its schedule is stored under the Goal's ID and this name; a listing may show either.
         if not (_same_name(routine_name, stored) or _same_name(routine_name, row["name"])):
             raise ValueError(f"Routine {routine_id} is named '{stored}'. Call again with that name.")
-        if product_name is not None:
-            product = await _call(agent_os._company_db, "get_product", metadata["product_id"])
-            if product is None:
-                raise LookupError("The Routine's Product was not found")
-            if not _same_name(product_name, product["name"]):
-                raise ValueError(
-                    f"Routine '{stored}' belongs to Product '{product['name']}'. Call again with that name."
-                )
+        if goal_name is not None:
+            goal = await _call(agent_os._company_db, "get_goal", metadata["goal_id"])
+            if goal is None:
+                raise LookupError("The Routine's Goal was not found")
+            if not _same_name(goal_name, goal["name"]):
+                raise ValueError(f"Routine '{stored}' belongs to Goal '{goal['name']}'. Call again with that name.")
         return stored, row["payload"]
 
     async def _patch_routine(
@@ -705,7 +703,7 @@ class CompanyTaskTools(Toolkit):
     def turn_on_routine_auto_accept(
         self,
         routine_name: str,
-        product_name: str,
+        goal_name: str,
         default_executor: _OptionalString,
         kept_policy: _OptionalString,
         routine_id: str,
@@ -715,7 +713,7 @@ class CompanyTaskTools(Toolkit):
 
         Args:
             routine_name: The Routine's name, as stored.
-            product_name: The name of the Routine's Product, as stored.
+            goal_name: The name of the Routine's Goal, as stored.
             default_executor: ID of the agent, team or workflow. Null unless the person names one.
             kept_policy: Null, unless the Routine already has a policy a person set.
             routine_id: The Routine.
@@ -725,14 +723,14 @@ class CompanyTaskTools(Toolkit):
     async def aturn_on_routine_auto_accept(
         self,
         routine_name: str,
-        product_name: str,
+        goal_name: str,
         default_executor: _OptionalString,
         kept_policy: _OptionalString,
         routine_id: str,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Turn auto-accept on for a Company Routine. The run pauses for the person to confirm the
-        Routine by name, its Product by name, the default executor, and the policy that is kept.
+        Routine by name, its Goal by name, the default executor, and the policy that is kept.
 
         With auto-accept on, the Projects this Routine proposes are approved and its Tasks are accepted
         and run with no person, and finished work waits In review. A Task runs on the executor its
@@ -745,7 +743,7 @@ class CompanyTaskTools(Toolkit):
 
         Args:
             routine_name: The Routine's name, as stored. The person confirms this name.
-            product_name: The name of the Routine's Product, as stored. The person confirms this name.
+            goal_name: The name of the Routine's Goal, as stored. The person confirms this name.
             default_executor: ID of the agent, team or workflow that runs a Task whose proposal
                 suggests no executor. Null unless the person names one: the Routine's policy is then
                 kept as it is, or Mini Agent is used when it has none.
@@ -759,7 +757,7 @@ class CompanyTaskTools(Toolkit):
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "turn a Routine's auto-accept on")
             stored, payload = await self._named_routine(
-                agent_os, authority, user_id, routine_id, routine_name, product_name
+                agent_os, authority, user_id, routine_id, routine_name, goal_name
             )
             # A Routine that has a policy keeps it. The defaults are for a Routine with none.
             raw = payload["metadata"].get("auto_accept")

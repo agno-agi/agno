@@ -24,7 +24,7 @@ class OSManager:
     Super Agent keeps its own files in ``notes/``, stored in the AgentOS database. ``notes/`` is one
     folder shared by everyone who talks to Super Agent, including when user isolation is on, so
     anyone who can chat with Super Agent can read what it noted in another person's chat. With
-    Company on, the same tools read and write the company wiki, each Product's pages and each
+    Company on, the same tools read and write the company wiki, each Goal's pages and each
     Task's files, which are stored in the Company database.
 
     Args:
