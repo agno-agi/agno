@@ -100,6 +100,13 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     return image_messages
 
 
+def _ref_siblings(schema: dict) -> List[str]:
+    """Keywords beside a $ref; $defs and definitions hold the referenced schemas and may stay."""
+    if not isinstance(schema.get("$ref"), str):
+        return []
+    return [key for key in schema if not key.startswith("$") and key != "definitions"]
+
+
 def sanitize_response_schema(schema: dict):
     """
     Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
@@ -113,7 +120,16 @@ def sanitize_response_schema(schema: dict):
     - Moves a "$ref" that has sibling keywords (title, description, examples, default)
       into a single-item "anyOf", since OpenAI rejects any keyword beside "$ref" but
       accepts them beside "anyOf".
+    - A root "$ref" (a RootModel or recursive model) drops those keywords instead, since
+      the root must resolve to an object; the referenced definition keeps its own.
     """
+    if isinstance(schema, dict):
+        for key in _ref_siblings(schema):
+            schema.pop(key)
+    _sanitize_schema_node(schema)
+
+
+def _sanitize_schema_node(schema: Any) -> None:
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
         if schema.get("type") == "object":
@@ -141,15 +157,13 @@ def sanitize_response_schema(schema: dict):
         if "default" in schema and schema["default"] is None:
             schema.pop("default")
 
-        # $defs and definitions hold the referenced schemas and may stay beside $ref
-        if isinstance(schema.get("$ref"), str) and "anyOf" not in schema:
-            if any(not key.startswith("$") and key != "definitions" for key in schema):
-                schema["anyOf"] = [{"$ref": schema.pop("$ref")}]
+        if _ref_siblings(schema) and "anyOf" not in schema:
+            schema["anyOf"] = [{"$ref": schema.pop("$ref")}]
 
         # Recurse into all values
         for value in schema.values():
-            sanitize_response_schema(value)
+            _sanitize_schema_node(value)
 
     elif isinstance(schema, list):
         for item in schema:
-            sanitize_response_schema(item)
+            _sanitize_schema_node(item)

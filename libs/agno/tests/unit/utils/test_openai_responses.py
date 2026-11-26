@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 
 from agno.media import Image
 from agno.utils.media import resolve_image_mime_type
@@ -439,14 +439,38 @@ def test_sanitize_response_schema_keeps_a_recursive_root_ref():
 
 
 def test_sanitize_response_schema_keeps_defs_beside_a_wrapped_ref():
-    schema = {"$defs": {"Actor": {"type": "object"}}, "$ref": "#/$defs/Actor", "description": "The lead actor."}
+    node = {"$defs": {"Actor": {"type": "object"}}, "$ref": "#/$defs/Actor", "description": "The lead actor."}
+    schema = {"type": "object", "properties": {"lead": node}}
 
     sanitize_response_schema(schema)
 
-    assert schema["anyOf"] == [{"$ref": "#/$defs/Actor"}]
-    assert schema["description"] == "The lead actor."
-    assert "Actor" in schema["$defs"]
-    assert "$ref" not in schema
+    assert node["anyOf"] == [{"$ref": "#/$defs/Actor"}]
+    assert node["description"] == "The lead actor."
+    assert "Actor" in node["$defs"]
+    assert "$ref" not in node
+
+
+class _Actor(BaseModel):
+    name: str
+
+
+class _Cast(RootModel[_Actor]):
+    pass
+
+
+class _DocumentedCast(RootModel[_Actor]):
+    """The cast."""
+
+
+@pytest.mark.parametrize("model, siblings", [(_Cast, {"title"}), (_DocumentedCast, {"title", "description"})])
+def test_sanitize_response_schema_keeps_a_root_model_root_an_object_ref(model, siblings):
+    """OpenAI needs the root to resolve to an object, so a root $ref drops its siblings instead of moving into anyOf."""
+    schema = model.model_json_schema()
+    assert set(schema) == {"$defs", "$ref"} | siblings
+
+    sanitize_response_schema(schema)
+
+    assert schema == {"$defs": schema["$defs"], "$ref": "#/$defs/_Actor"}
 
 
 def test_sanitize_response_schema_leaves_a_bare_ref_alone():
