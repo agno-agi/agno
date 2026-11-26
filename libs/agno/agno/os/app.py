@@ -146,10 +146,17 @@ async def mcp_lifespan(_, mcp_tools):
 @asynccontextmanager
 async def manager_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Give Super Agent the served app: its tools start background runs through this app's run routes."""
+    from agno.os.manager.work_update import WorkUpdates
+    from agno.run.background import _requester_listeners
+
     agent_os._manager_app = app
+    # Told when work a conversation started ends, by the durable queue and by runs in this process.
+    work_updates = WorkUpdates(agent_os, app)
+    _requester_listeners.append(work_updates)
     try:
         yield
     finally:
+        _requester_listeners.remove(work_updates)
         agent_os._manager_app = None
 
 

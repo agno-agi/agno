@@ -96,6 +96,22 @@ def _caller_authorization(run_context: Any = None) -> Optional[RunAuthorization]
     return value if isinstance(value, RunAuthorization) else None
 
 
+# What a tool answers in a work update: a run AgentOS started in a conversation to report that work
+# the conversation started has ended. Nobody is present in it.
+WORK_UPDATE_REFUSAL = (
+    "Refused: this is a work update and nobody is present. It reports what ended and what waits on "
+    "the person, and changes nothing. Say what you would do, and the person can ask for it."
+)
+
+
+def in_work_update(run_context: Any = None) -> bool:
+    """Whether this run is a work update, read from the mark the runtime put on its metadata."""
+    from agno.db.schemas.scheduler import WORK_UPDATE_METADATA_KEY
+
+    metadata = getattr(run_context, "metadata", None)
+    return isinstance(metadata, dict) and bool(metadata.get(WORK_UPDATE_METADATA_KEY))
+
+
 def authorization_for(run_context: Any = None) -> Optional[RunAuthorization]:
     """Return authority only when operation checks are active for this execution."""
     authority = _caller_authorization(run_context)

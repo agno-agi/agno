@@ -53,6 +53,8 @@ class OSManager:
             invocation. Defaults to 96; None disables the limit. Each delegation has
             its own budget, not a shared run-wide budget. Offloaded-result read-back
             tools retain their existing exemption from both limits.
+        work_updates: When work a conversation started ends, Super Agent says so in that
+            conversation without being asked. Each one is a model run. On by default.
     """
 
     name: str = MANAGER_TEAM_NAME
@@ -68,6 +70,7 @@ class OSManager:
     num_history_runs: int = 5
     tool_call_limit: Optional[int] = 96
     member_tool_call_limit: Optional[int] = 96
+    work_updates: bool = True
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():

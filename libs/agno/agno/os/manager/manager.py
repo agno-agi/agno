@@ -293,6 +293,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.linked_work import LinkedWork
+    from agno.os.manager.work_update import WorkUpdateBoundary, work_update_gate
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -400,7 +401,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
     # Super Agent can edit the platform, so a Company Routine never runs on it.
-    pre_hooks: List[Any] = [_RoutineBoundary(routine=False), linked_work]
+    # A work update is given its tools before the block is read, and every run is recorded as going.
+    pre_hooks: List[Any] = [_RoutineBoundary(routine=False), WorkUpdateBoundary(), linked_work]
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
         from agno.os.manager.linked_work import alink_proposal, link_proposal
@@ -451,6 +453,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
         pre_hooks=pre_hooks,
+        # In a work update nobody is present: every tool that does not read is refused.
+        tool_hooks=[work_update_gate],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,

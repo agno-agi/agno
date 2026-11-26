@@ -5111,6 +5111,10 @@ class Workflow:
                     user_id=user_id,
                     full_run=True,
                 )
+            finally:
+                from agno.run.background import _notify_run_requester
+
+                _notify_run_requester(workflow_run_response)
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()

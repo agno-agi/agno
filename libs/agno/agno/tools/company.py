@@ -131,6 +131,10 @@ def _require_human_creation(run_context, operation="create Company Goals and Rou
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 
+    from agno.run.authorization import WORK_UPDATE_REFUSAL, in_work_update
+
+    if in_work_update(run_context):
+        raise PermissionError(WORK_UPDATE_REFUSAL)
     authority = _authority(run_context)
     if isinstance(authority, _ExecutorAuthorization) or _automatic_task.get() is not None:
         hint = "; Routines propose work" if operation == "create Company Goals and Routines" else ""
