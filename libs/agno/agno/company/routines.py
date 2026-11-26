@@ -942,6 +942,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     outcomes.append({"task_id": task["id"], "status": "accepted"})
                 if task["status"] != "ready":
                     continue
+                # A Task a person added to be started later is held until someone starts it.
+                acceptances = [
+                    entry
+                    for entry in task.get("transitions") or []
+                    if entry.get("target") == "ready" and not entry.get("action")
+                ]
+                if acceptances and acceptances[-1].get("start_on_request"):
+                    continue
                 result = await self._dispatch(task)
                 outcomes.append({"task_id": task["id"], **result})
             except Exception as exc:

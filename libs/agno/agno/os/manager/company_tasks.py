@@ -322,7 +322,10 @@ class CompanyTaskTools(Toolkit):
                 waits = f"{kind} {name} runs in a sandbox and can push code"
             elif not _take_acceptance(run_id):
                 waits = f"this run already added {ACCEPTED_TASKS_PER_RUN} accepted Tasks"
-            accepted: Dict[str, Any] = {} if waits else {"status": "ready", "accepted_by": user_id}
+            # Asked only to add it, the Task is held for a person to start: the tick leaves it alone.
+            accepted: Dict[str, Any] = (
+                {} if waits else {"status": "ready", "accepted_by": user_id, "start_on_request": not start}
+            )
             saved = replace(authority, enforce_tools=False) if authority is not None else None
             try:
                 with authorization_scope(lambda: saved):

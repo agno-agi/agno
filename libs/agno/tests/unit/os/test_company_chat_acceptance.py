@@ -530,3 +530,63 @@ def test_the_default_policy_leaves_a_task_in_the_default_project_for_a_person(po
     assert outcome["reason"] == "A Task in the Default Project waits for a person to accept it"
     record = policy.db.get_task(stray["id"])
     assert record["status"] == "backlog" and not receipts(record)
+
+
+def test_a_task_added_to_be_started_later_is_not_picked_up_by_the_automation_tick(policy):  # noqa: F811
+    tools = CompanyTaskTools(policy.os)
+    added = asyncio.run(tools.aadd_company_task("Later", "Do it.", False, _agno_run_context=policy_chat()))
+    assert added.endswith("It is Ready and not started."), added
+    held = only_task(policy.db)
+    assert held["transitions"][-1]["start_on_request"] is True
+    # A Task accepted in the Company pages is still picked up, as before.
+    paged = policy.client.post(
+        "/company/tasks",
+        json={
+            "title": "Paged",
+            "brief": "Do it.",
+            "status": "ready",
+            "executor_type": "agent",
+            "executor_id": "writer",
+        },
+        headers=policy_headers(POLICY_SCOPES),
+    ).json()
+    outcomes = policy.tick()
+    assert policy.outcome(outcomes, held["id"]) is None
+    assert policy.db.get_task(held["id"]) == held
+    assert policy.db.get_task(paged["id"])["status"] == "in_progress"
+    assert policy.tick() is not None and policy.db.get_task(held["id"]) == held
+    # The person starts it when they say so.
+    started = asyncio.run(tools.astart_company_task(held["id"], _agno_run_context=policy_chat()))
+    assert started.startswith("Queued"), started
+    assert policy.db.get_task(held["id"])["status"] == "in_progress"
+
+
+def test_a_task_asked_to_be_done_is_not_held(policy):  # noqa: F811
+    tools = CompanyTaskTools(policy.os)
+    asyncio.run(tools.aadd_company_task("Now", "Do it.", True, _agno_run_context=policy_chat()))
+    task = only_task(policy.db)
+    acceptance = next(entry for entry in task["transitions"] if entry.get("target") == "ready")
+    assert "start_on_request" not in acceptance and task["status"] == "in_progress"
+
+
+def test_a_routine_created_in_chat_is_triggered_by_hand_where_authorization_is_off(tmp_path):
+    # A deployment that checks no permissions and knows no caller: the chat's user id is only a label.
+    system = PolicySystem(tmp_path, authorization=False)  # noqa: F811
+    try:
+        goal_id = system.client.post("/company/goals", json={"name": "Docs"}).json()["id"]
+        sam = RunContext(run_id="r", session_id="s", user_id="sam", authorization=None)
+        created = json.loads(
+            asyncio.run(
+                company_tools(system).acreate_goal_routine(
+                    goal_id, "intake", instructions="Read and propose.", _agno_run_context=sam
+                )
+            )
+        )
+        assert created["auto_accept"].startswith("Auto-accept is on")
+        assert system.stored(created["id"])["_agno_company_acceptance"]["user_id"] == "sam"
+        # The request reaches the scheduler, which these tests do not start.
+        for params in ({}, {"user_id": "sam"}, {"user_id": "someone-else"}):
+            triggered = system.client.post(f"/company/routines/{created['id']}/trigger", params=params)
+            assert (triggered.status_code, triggered.json()["detail"]) == (503, "Scheduler is not running")
+    finally:
+        system.db.close()
