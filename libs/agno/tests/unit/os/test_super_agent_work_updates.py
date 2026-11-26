@@ -517,9 +517,11 @@ def test_a_turn_going_when_the_work_ends_means_no_work_update_even_if_it_ends_at
         GATES["writer"].set()
         for _ in range(300):
             await system.work()
-            if system.row(run_id)["status"] == "COMPLETED" and not run_background._requester_notices:
+            if system.row(run_id)["status"] == "COMPLETED":
                 break
             await asyncio.sleep(0.01)
+        # Long enough for the notice to look at the conversation, far less than the wait for other work.
+        await asyncio.sleep(0.1)
         # The person's turn ends right after the work did, well before the wait for other work is over.
         GATES["chat"].set()
         await turn
