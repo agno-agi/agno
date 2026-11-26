@@ -79,10 +79,13 @@ def notify_requester(requested_from: Any, work: Dict[str, Any], authority: Optio
         log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
 
 
-def _notify_run_requester(run: Any) -> None:
-    """Tell the conversation that started this in-process run, if one did, how the run ended."""
+def _notify_run_requester(run: Any, metadata: Any = None) -> None:
+    """Tell the conversation that started this in-process run, if one did, how the run ended.
+
+    metadata is what the run was started with, for a run object that does not hold it.
+    """
     try:
-        metadata = getattr(run, "metadata", None)
+        metadata = metadata if isinstance(metadata, dict) else getattr(run, "metadata", None)
         if not isinstance(metadata, dict) or not _requester_listeners:
             return
         from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
@@ -97,6 +100,23 @@ def _notify_run_requester(run: Any) -> None:
         notify_requester(requested_from, {"kind": "run", "id": run.run_id, "status": status}, authorization_snapshot())
     except Exception:
         log_error("Could not tell a conversation that its background run ended", exc_info=True)
+
+
+async def anotify_continued_run_requester(component: Any, run_id: str, session_id: Optional[str]) -> None:
+    """After a paused run was continued in the foreground, tell the conversation that started it.
+
+    A run continued through the durable queue is told about by the queue. One continued in the
+    request that approved it ends here, so its stored state is read once, and only while something
+    listens. The authority is that of the person who continued it.
+    """
+    if not _requester_listeners:
+        return
+    try:
+        run = await component.aget_run_output(run_id=run_id, session_id=session_id)
+        if run is not None:
+            _notify_run_requester(run)
+    except Exception:
+        log_error(f"Could not tell a conversation that continued run {run_id} ended", exc_info=True)
 
 
 def _spawn_background(coro: Awaitable[None]) -> None:
