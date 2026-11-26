@@ -1,3 +1,88 @@
+# Work asked for in chat starts accepted — November 26, 2026
+
+Branch: `claude/company-chat-acceptance-01415f`, on the optional-Goal branch. Each
+run used a new empty PostgreSQL database and `gpt-5.6-luna`.
+
+### 19_ask_and_start_in_one_message.py
+
+**Status:** PASS
+
+**Description:** A person asks Super Agent, in one message, to do a piece of work as
+a Task. Then they ask it to add a second Task. The script asserts that neither run
+pauses, that the first Task is accepted by the person, runs on Mini Agent and reaches
+In review, and that the second is Ready with no run.
+
+**Result:** Run twice, both pass. The first message called `add_company_task` once
+with `start` true: the Task's history reads `backlog -> ready by sam`, then
+`ready -> in_progress by sam`, and it reached In review. The second message left a
+Ready Task with `accepted_by` sam and no run. No confirmation was asked for.
+
+---
+
+### 14_work_to_done_in_chat.py
+
+**Status:** PASS
+
+**Description:** Run unchanged, to check that the proposal path still works: propose
+a Project and a Task, approve, accept, start, read the result, complete.
+
+**Result:** Run twice, both pass. The Project was proposed and the Task created in
+Backlog. Approve, accept and complete each paused for the confirmation, as before.
+Mini Agent ran the Release Writer.
+
+---
+
+### Live requests to Super Agent
+
+**Status:** PASS, with one wording change made after the first runs
+
+**Description:** Nine requests in a harness that confirms every pause and records
+it, on a Goal with a website Source and one active Project. The harness is kept
+outside the repository.
+
+**Result:** Two full runs on the final wording agree on every request.
+
+| Request | What it created |
+| --- | --- |
+| "Do the breaking-changes task now: write ..." (no such Task exists) | One turn, no confirmation. One Task, accepted by the person, on Mini Agent, started, later In review. |
+| "Turn these upgrade notes into a five-bullet summary ... Do it now." | Answered in chat. No record. A request that does not call its work a task is still done in chat. |
+| "Add a task to write the FAQ section ..." | One Task, Ready, in the fitting active Project, not started, no confirmation. |
+| "Yes, start it." in the same chat, after the reply offered to start the FAQ Task | The Task started in that one turn through `start_company_task`, with no confirmation. Run four more times on the wording that adds the offer: started every time. |
+| "Add a task: fix the typo on the pricing page ..." | One Task, Ready, in the Default Project, not started, no confirmation. |
+| "We want 50 paying customers ... Set this up." | One proposed Project and four Backlog Tasks. Nothing accepted. |
+| "Add seven tasks, one per docs page ..." | Five Tasks Ready. The sixth and seventh were recorded in Backlog, and `accept_company_task` paused once for both. After the confirmation all seven are Ready. |
+| "Every Monday morning, check our developer docs ... and propose fixes." | One Routine, Mondays 09:00 UTC, auto-accept on with the default policy. The reply said it is on and that at most five Tasks are open at once. |
+| "Email the 3.3 upgrade notes to all customers." | Refused. Nothing created. |
+
+On an earlier wording the first request was done in chat with no record in one run
+of three: Super Agent ran a component instead. The instruction now says never to do
+a task's work in chat or with a run tool. With that wording the first request
+created and started the Task in eight runs of eight.
+
+After adding a Task that is not started, Super Agent offers once to start it. In the
+four runs on that wording, seven of eight replies made the offer ("Ask me to start
+it when you're ready"), one only said the Task was not started, and no added Task
+was started before the person said yes.
+
+---
+
+### Move a Task from chat, and a schedule aimed at Super Agent
+
+**Status:** PASS
+
+**Description:** One run on a new PostgreSQL database with `gpt-5.6-luna`,
+authorization off, AgentOS served over HTTP with the scheduler on. First: "Add a
+task: fix the typo on the pricing page", then "Move that task into the 3.3
+migration guide project". Second: a schedule on `/teams/superagent/runs` whose
+message says to add a Task and start it now, triggered once.
+
+**Result:** The added Task was Ready in the Default Project. The second message
+called `move_company_task` once, with no confirmation. The Task was then in the
+named Project, still Ready, with the same brief, executor and accepter, and its
+history ended with a `move` entry naming the person. The scheduled run carried
+`agno_scheduled` in its metadata; `add_company_task` answered that a scheduled
+run has no person present, the reply said nothing was created, and no Task was
+created.
 # Only Mini Agent receives wiki and Goal pages in a Task's input — November 26, 2026
 
 Branch: `fix/company-task-wiki-mini-agent-only`. Run on a new, empty PostgreSQL

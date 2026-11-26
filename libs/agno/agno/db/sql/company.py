@@ -13,7 +13,13 @@ from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
 from agno.db.schemas.projects import is_default_project, refuse_default_project
-from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
+from agno.db.schemas.tasks import (
+    MOVABLE_TASK_STATUSES,
+    OPEN_TASK_STATUSES,
+    TASK_MOVE_REFUSAL,
+    CancelledProjectError,
+    OpenTaskLimitError,
+)
 
 
 def active_parents(stmt: Any, table: Any, goals: Any, projects: Any = None) -> Any:
@@ -130,21 +136,51 @@ def require_project(
         raise ValueError("Cannot add open work to a completed or cancelled Project")
 
 
-def require_move(sess: Any, goals: Any, projects: Any, task_goal_id: Optional[str], project_id: str) -> Dict[str, Any]:
-    """Check a Backlog Task's move into a Project, and return the fields the move also changes.
+def require_move(
+    sess: Any, goals: Any, projects: Any, task: Any, project_id: str, moved_by: Optional[str] = None
+) -> Dict[str, Any]:
+    """Check a Task's move into a Project, and return the fields the move also changes.
 
-    A Task with no Goal that moves into a Project with a Goal takes that Goal. The Goal is locked
-    first, as for every write under it. A Task that has a Goal keeps it, so its Project must have
-    the same one or be the Default Project.
+    task is the stored row's goal_id, status, project_id and transitions. A Task with no Goal that
+    moves into a Project with a Goal takes that Goal. The Goal is locked first, as for every write
+    under it. A Task that has a Goal keeps it, so its Project must have the same one or be the
+    Default Project. A Backlog draft may sit in a proposed Project; an accepted Task moves only
+    into an active one, and not while a policy's acceptance holds it Ready, because the policy
+    accepted it for the Project it was in. A move that changes the Project is added to the Task's
+    history with who made it.
     """
-    adopted: Dict[str, Any] = {}
+    task_goal_id, status = task["goal_id"], task["status"]
+    changed: Dict[str, Any] = {}
+    if status not in MOVABLE_TASK_STATUSES:
+        # The update that follows matches no row in this stage, as for any other frozen field.
+        return changed
     if task_goal_id is None and not is_default_project(project_id):
         goal_id = sess.execute(select(projects.c.goal_id).where(projects.c.id == project_id)).scalar()
         if goal_id is not None:
             lock_goal(sess, goals, goal_id)
-            adopted = {"goal_id": goal_id}
-    require_project(sess, projects, project_id, adopted.get("goal_id", task_goal_id), "backlog")
-    return adopted
+            changed = {"goal_id": goal_id}
+    require_project(sess, projects, project_id, changed.get("goal_id", task_goal_id), "backlog")
+    if project_id == task["project_id"]:
+        return changed
+    history = task["transitions"] or []
+    if status != "backlog":
+        target = sess.execute(select(projects.c.status).where(projects.c.id == project_id)).scalar()
+        if target != "active":
+            raise ValueError(TASK_MOVE_REFUSAL["inactive"])
+        acceptances = [entry for entry in history if entry.get("target") == "ready" and not entry.get("action")]
+        if status == "ready" and acceptances and acceptances[-1].get("auto_accept"):
+            raise ValueError(TASK_MOVE_REFUSAL["policy"])
+    changed["transitions"] = [
+        *history,
+        {
+            "action": "move",
+            "reason": "Moved to another Project",
+            "project": {"from": task["project_id"], "to": project_id},
+            "created_at": int(time.time()),
+            "user_id": moved_by,
+        },
+    ]
+    return changed
 
 
 def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:

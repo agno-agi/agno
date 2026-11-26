@@ -81,6 +81,14 @@ class RoutineResponse(ScheduleResponse):
     schedule_type: Literal["scheduled", "on_demand"]
     last_run: Optional[RoutineLastRun] = None
     deleted_at: Optional[int] = None
+    auto_accept_note: Optional[str] = Field(
+        default=None,
+        description="Returned when a Routine is created: whether auto-accept is on, its limits, and how to change it.",
+    )
+
+
+_TURN_OFF_HOW = 'Turn it off with PATCH /company/routines/{id} and {{"auto_accept": false}}.'
+_TURN_ON_HOW = 'Turn it on with PATCH /company/routines/{id} and {{"auto_accept": true}}.'
 
 
 class RoutineUpdate(BaseModel):
@@ -340,13 +348,22 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         row = await routine(routine_id, request)
         # Automatic acceptance runs on the saved grant, so only the user who granted it may start it
         # manually, whether or not user isolation is on. The grant records the raw caller, so compare that.
-        from agno.company.routines import _DECLARED
-
         grant = row["payload"].get("_agno_company_acceptance") or {}
         # A policy declared in code has no author. It acts only where authorization is off, and there
-        # whoever may run the Routine may trigger it.
-        unauthored = grant == _DECLARED and not agent_os.authorization
-        if row["payload"]["metadata"].get("auto_accept") and not unauthored and not caller_is_admin(request):
+        # whoever may run the Routine may trigger it. The same holds for a request that carries no
+        # identity where the deployment neither checks permissions nor knows who is calling: there
+        # is nothing to compare with the grant's. A service account is always identified.
+        from agno.company.routines import _DECLARED
+        from agno.os.auth import _authorization_enforced
+
+        anonymous = (
+            not _authorization_enforced(request.app)
+            and not getattr(request.app.state, "user_isolation_enabled", False)
+            and getattr(request.state, "user_id", None) is None
+            and getattr(request.state, "service_account_name", None) is None
+        )
+        unchecked = not agent_os.authorization and (grant == _DECLARED or anonymous)
+        if row["payload"]["metadata"].get("auto_accept") and not unchecked and not caller_is_admin(request):
             grantor = grant.get("user_id")
             if getattr(request.state, "user_id", None) != grantor:
                 raise HTTPException(403, "Only the user who authorized automatic acceptance may run this Routine")
@@ -358,14 +375,25 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
     @router.post("/routines", status_code=201, response_model=RoutineResponse)
     async def create_routine(body: RoutineCreate, request: Request, _: bool = Depends(auth)):
         await goal(body.goal_id)
-        fields = await call(_schedule_fields, body.goal_id, body, agent_os.registry, agent_os=agent_os)
-        if body.auto_accept:
-            from agno.company.routines import _authorize_auto_accept, _require_sent_executor_type
+        from agno.company.routines import _authorize_auto_accept, _auto_accept_note, _require_sent_executor_type
 
-            await call(_require_sent_executor_type, agent_os.registry, body.auto_accept)
-            policy = body.auto_accept.model_dump()
-            await _authorize_auto_accept(request, policy, agent_os)
-            fields["payload"]["metadata"]["auto_accept"] = policy
+        fields = await call(_schedule_fields, body.goal_id, body, agent_os.registry, agent_os=agent_os)
+        # A person who creates a Routine and says nothing of auto_accept gets the default policy,
+        # authorized as theirs. A caller who may not authorize it creates the Routine as before, with
+        # auto-accept off. A policy the request names is authorized or refused.
+        defaulted = "auto_accept" not in body.model_fields_set
+        chosen = AutoAccept() if defaulted else body.auto_accept
+        refused: Optional[str] = None
+        if chosen:
+            try:
+                await call(_require_sent_executor_type, agent_os.registry, chosen)
+                policy = chosen.model_dump()
+                await _authorize_auto_accept(request, policy, agent_os)
+                fields["payload"]["metadata"]["auto_accept"] = policy
+            except HTTPException as exc:
+                if not defaulted:
+                    raise
+                chosen, refused = False, str(exc.detail)
         if not body.enabled:
             # Retry matching must distinguish disabled creation from a request to enable it.
             fields["payload"]["metadata"]["initial_enabled"] = False
@@ -377,7 +405,11 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         else:
             # Finish creation without activation so duplicate requests cannot recover this as pending.
             row = await call(handlers["disable_schedule"], row["id"], request)
-        return await routine_response(row)
+        created = await routine_response(row)
+        created["auto_accept_note"] = _auto_accept_note(
+            chosen, refused, _TURN_OFF_HOW.format(id=row["id"]), _TURN_ON_HOW.format(id=row["id"])
+        )
+        return created
 
     @router.patch("/routines/{routine_id}", response_model=RoutineResponse)
     async def update_routine(routine_id: str, body: RoutineUpdate, request: Request, _: bool = Depends(auth)):
@@ -606,7 +638,8 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             if rows:
                 raise HTTPException(409, "Company setup requires a deployment without Goals")
         goal_declaration = Goal(**{**body.model_dump(), "id": "company-setup", "user_id": owner})
-        return await call(
+        before = set(((existing or {}).get("metadata") or {}).get("routine_ids") or [])
+        row = await call(
             arehydrate_goal,
             db,
             goal_declaration,
@@ -614,5 +647,31 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
             schedule_db=schedule_db,
             agent_os=agent_os,
         )
+        # Each Routine this request created that says nothing of auto_accept gets the default policy
+        # through the Routine update route, as the person who sent the request. A Routine stored
+        # before this request keeps its setting.
+        from agno.company.routines import _auto_accept_note
+
+        wanted = {
+            "company-setup." + declaration.name: declaration
+            for declaration in body.routines
+            if "auto_accept" not in declaration.model_fields_set
+        }
+        notes: Dict[str, str] = {}
+        for routine_id in (row.get("metadata") or {}).get("routine_ids") or []:
+            stored = await call(schedule_db.get_schedule, routine_id) if routine_id not in before else None
+            if stored is None or stored["name"] not in wanted:
+                continue
+            declaration = wanted[stored["name"]]
+            policy: Any = AutoAccept()
+            refused: Optional[str] = None
+            try:
+                await update_routine(routine_id, RoutineUpdate(auto_accept=policy), request)
+            except HTTPException as exc:
+                policy, refused = False, str(exc.detail)
+            notes[declaration.name] = _auto_accept_note(
+                policy, refused, _TURN_OFF_HOW.format(id=routine_id), _TURN_ON_HOW.format(id=routine_id)
+            )
+        return {**row, "routines_auto_accept": notes} if notes else row
 
     return router

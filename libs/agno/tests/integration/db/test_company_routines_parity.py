@@ -48,6 +48,9 @@ async def test_trigger_read_pause_and_latest_run(system):
     routine = await create_routine(client, cron_expr="0 * * * *")
     path = "/company/routines/" + routine["id"]
     assert routine["last_run"] is None and routine["schedule_type"] == "scheduled"
+    # The create response also says what the new Routine does with its own proposals.
+    assert routine["auto_accept_note"].startswith("Auto-accept is off: Mini Agent is unavailable")
+    routine["auto_accept_note"] = None
     assert (await client.get(path)).json() == routine
     assert (await client.get("/company/routines")).json()["data"] == [routine]
     worker.authorization_app.state.scheduler_executor = await routine_executor(system)

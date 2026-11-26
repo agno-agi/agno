@@ -2180,9 +2180,17 @@ class BaseDb(ABC):
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -4357,9 +4365,17 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def delete_task(
