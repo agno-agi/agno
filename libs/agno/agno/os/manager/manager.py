@@ -16,7 +16,9 @@ from agno.os.manager.prompts import (
     DOCS_INSTRUCTIONS,
     FOCUSED_EXECUTION_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
+    NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
+    PRIVATE_MEMORY_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
 from agno.registry._reserved import BUILDER_ID, RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS, _listed
@@ -61,6 +63,13 @@ class _Manager:
 
 
 _CATALOG_LIMIT = 20
+
+
+def _remembers_people(learning: Any) -> bool:
+    """Whether Super Agent keeps a memory of each person: learning with a user profile or a user memory."""
+    if learning is True:
+        return True
+    return bool(getattr(learning, "user_profile", False) or getattr(learning, "user_memory", False))
 
 
 class _ManagerInstructions:
@@ -238,12 +247,12 @@ def _raise_if_source_tool_names_taken(tools: Sequence[Any]) -> None:
 
 
 def _holds_files(db: Any) -> bool:
-    """Whether the database can hold a FileSystem namespace: SQLite and PostgreSQL can."""
-    from agno.fs import FileSystem
+    """Whether the database can hold the Company file system: SQLite and PostgreSQL can."""
+    from agno.company.filesystem import company_filesystem
 
     try:
-        FileSystem(db, namespace="company/notes", user_scoped=False)
-    except (TypeError, ValueError):
+        company_filesystem(db)
+    except NotImplementedError:
         return False
     return True
 
@@ -390,19 +399,30 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         from agno.tools.company import CompanyTools
 
         tools.append(
-            # The file tree tools below read and write the wiki and every Product's pages.
-            CompanyTools(company_db, summary_tools=False, refresh_tools=False, wiki_tools=False, agent_id=config.id)
+            # The file tree tools below read and write the wiki and every Goal's pages.
+            CompanyTools(
+                company_db,
+                summary_tools=False,
+                refresh_tools=False,
+                wiki_tools=False,
+                decision_tools=False,
+                agent_id=config.id,
+            )
         )
         tools.append(CompanyTaskTools(agent_os))
         instructions.append(COMPANY_INSTRUCTIONS)
-    # notes/ lives in the OS database with Super Agent's conversations, with or without Company.
-    notes_db = db if _holds_files(db) else None
+    # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
+    notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
         from agno.os.manager.company_tasks import _user_isolation
         from agno.tools.company_files import CompanyFileTools
 
         tools.append(CompanyFileTools(company_db, notes_db=notes_db, user_isolation=_user_isolation(agent_os)))
         instructions.append(COMPANY_FILES_INSTRUCTIONS if company_db is not None else NOTES_INSTRUCTIONS)
+        if notes_db is not None:
+            instructions.append(
+                PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
+            )
     if config.instructions:
         instructions.append(config.instructions)
 

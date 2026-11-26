@@ -291,6 +291,32 @@ def test_stored_authority_uses_current_provider_and_keeps_pat_plane():
     restore_authorization(app, snapshot).require("agents", "run", "restricted")
 
 
+def test_carried_roles_decide_for_the_member_and_survive_the_snapshot(tmp_path):
+    """An application can hand a run its roles, such as an interface's default role: the member stays
+    the principal, the carried roles decide, and the snapshot keeps them only when set."""
+    from agno.os.auth import resolve_authorization_provider
+    from agno.run.authorization import RunAuthorization
+
+    authz = Authorization(verification_keys=[SECRET], algorithm="HS256")
+    authz.define_role("slack-member", ["tasks:write"])
+    db = SqliteDb(db_file=str(tmp_path / "carried.db"))
+    app = AgentOS(id="carried-roles", db=db, agents=[Agent(id="a")], authorization=authz, telemetry=False).get_app()
+    provider = resolve_authorization_provider(app)
+
+    member = RunAuthorization(provider, AuthorizationContext(principal_id="member@co", roles=["slack-member"]))
+    member.require("tasks", "write")
+    with pytest.raises(PermissionError):
+        member.require("goals", "write")
+    # The same member without carried roles holds nothing
+    with pytest.raises(PermissionError):
+        RunAuthorization(provider, AuthorizationContext(principal_id="member@co")).require("tasks", "write")
+
+    restored = restore_authorization(app, member.snapshot())
+    assert (restored.context.principal_id, restored.context.roles) == ("member@co", ["slack-member"])
+    restored.require("tasks", "write")
+    assert "roles" not in RunAuthorization(provider, AuthorizationContext(principal_id="other")).snapshot()["context"]
+
+
 @pytest.mark.parametrize("use_async", [False, True])
 def test_permission_sensitive_tools_do_not_reuse_cached_authorized_results(tmp_path, use_async):
     from agno.run.authorization import requires_permission

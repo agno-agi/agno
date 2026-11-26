@@ -2592,10 +2592,9 @@ class MongoDb(BaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:
@@ -4465,10 +4464,13 @@ class MongoDb(BaseDb):
         limit: int = 20,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("schedule runs collection unavailable")
                 return [], 0
 
             query: Dict[str, Any] = {"schedule_id": schedule_id}
@@ -4477,13 +4479,15 @@ class MongoDb(BaseDb):
             total_count = collection.count_documents(query)
 
             offset = (page - 1) * limit
-            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            cursor = collection.find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit)
             runs = list(cursor)
             for run in runs:
                 run.pop("_id", None)
             return runs, total_count
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     # -- Learning methods (stubs) --

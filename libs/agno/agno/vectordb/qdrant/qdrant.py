@@ -367,12 +367,26 @@ class Qdrant(VectorDb):
             return doc_id
         return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
 
+    @staticmethod
+    def _validate_batch_size(batch_size: Optional[int]) -> None:
+        """Reject a non-positive batch_size before any embedding work is done."""
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}")
+
+    @staticmethod
+    def _batch_points(points: List[Any], batch_size: Optional[int]) -> List[List[Any]]:
+        """Split points into upsert batches; ``None`` keeps them in a single batch."""
+        if not points:
+            return []
+        size = batch_size or len(points)
+        return [points[start : start + size] for start in range(0, len(points), size)]
+
     def insert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
-        batch_size: int = 10,
+        batch_size: Optional[int] = None,
         user_id: Optional[str] = None,
     ) -> None:
         """
@@ -381,9 +395,10 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            batch_size (int): Batch size for inserting documents
+            batch_size (Optional[int]): Max points per upsert request. ``None`` sends all points in one request
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
         """
+        self._validate_batch_size(batch_size)
         # create() only runs for collections that don't exist, so pre-v3 ones are ensured here
         self._ensure_user_id_payload_index_sync()
         log_debug(f"Inserting {len(documents)} documents")
@@ -443,8 +458,8 @@ class Qdrant(VectorDb):
                 )
             )
             log_debug(f"Inserted document: {document.name} ({document.meta_data})")
-        if len(points) > 0:
-            self.client.upsert(collection_name=self.collection, wait=False, points=points)
+        for batch in self._batch_points(points, batch_size):
+            self.client.upsert(collection_name=self.collection, wait=False, points=batch)
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(
@@ -453,6 +468,7 @@ class Qdrant(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> None:
         """
         Insert documents asynchronously.
@@ -461,7 +477,9 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             user_id (Optional[str]): Owner of these chunks. ``None`` writes to the shared bucket
+            batch_size (Optional[int]): Max points per upsert request. ``None`` sends all points in one request
         """
+        self._validate_batch_size(batch_size)
         # See ``insert`` — pre-v3 collections get the tenant index from the write path
         await self._ensure_user_id_payload_index_async()
         log_debug(f"Inserting {len(documents)} documents asynchronously")
@@ -558,8 +576,8 @@ class Qdrant(VectorDb):
         # Process all documents in parallel
         points = await asyncio.gather(*[process_document(doc) for doc in documents])
 
-        if len(points) > 0:
-            await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
+        for batch in self._batch_points(list(points), batch_size):
+            await self.async_client.upsert(collection_name=self.collection, wait=False, points=batch)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
     def upsert(

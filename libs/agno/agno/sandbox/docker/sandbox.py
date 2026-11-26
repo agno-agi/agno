@@ -541,6 +541,13 @@ class DockerSandbox(Sandbox):
                     code, err = 1, b"Creation response timed out"
                 # A concurrent creator or lost response is resolved by the deterministic name.
                 current = await self.aget(name)
+                if current is None and code and b"already in use" in err:
+                    # Docker reserves the name before the container is inspectable; wait for it.
+                    for _ in range(50):
+                        await asyncio.sleep(0.1)
+                        current = await self.aget(name)
+                        if current is not None:
+                            break
                 if current is None:
                     raise SandboxError("Docker creation failed: " + err.decode(errors="replace")[:500])
             except Exception:

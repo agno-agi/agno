@@ -9,6 +9,7 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "ci/split-company-db-tests"
       - "homepage-v2"
+      - "feat/slack-agent-view"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -1371,7 +1372,7 @@ jobs:
           --ignore=./libs/agno/tests/integration/db/test_company_execution_parity.py \
           --ignore=./libs/agno/tests/integration/db/test_company_actor_owner_parity.py \
           --ignore=./libs/agno/tests/integration/db/test_company_archive_parity.py \
-          --ignore=./libs/agno/tests/integration/db/test_company_chat_products.py \
+          --ignore=./libs/agno/tests/integration/db/test_company_chat_goals.py \
           --ignore=./libs/agno/tests/integration/db/test_company_checkout_parity.py \
           --ignore=./libs/agno/tests/integration/db/test_company_failure_recovery.py \
           --ignore=./libs/agno/tests/integration/db/test_company_heartbeat_parity.py \
@@ -1478,7 +1479,7 @@ jobs:
           source .venv/bin/activate
           python -m pytest -rs ./libs/agno/tests/integration/db/test_company_actor_owner_parity.py \
           ./libs/agno/tests/integration/db/test_company_archive_parity.py \
-          ./libs/agno/tests/integration/db/test_company_chat_products.py \
+          ./libs/agno/tests/integration/db/test_company_chat_goals.py \
           ./libs/agno/tests/integration/db/test_company_checkout_parity.py \
           ./libs/agno/tests/integration/db/test_company_failure_recovery.py \
           ./libs/agno/tests/integration/db/test_company_heartbeat_parity.py \

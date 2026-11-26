@@ -11,11 +11,13 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
 from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
     ProjectCreate,
     ProjectResponse,
     ProjectStatus,
     ProjectTransition,
     ProjectUpdate,
+    refuse_product_id,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -23,7 +25,12 @@ from agno.os.settings import AgnoAPISettings
 
 def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings) -> APIRouter:
     """Build Project routes using native async storage or off-thread sync calls."""
-    router = APIRouter(prefix="/company", tags=["Projects"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Projects"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
+    )
     auth_dependency = get_authentication_dependency(settings)
     manager = AsyncCompanyManager(db) if isinstance(db, AsyncBaseDb) else CompanyManager(db) if db is not None else None
 
@@ -79,7 +86,7 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
         include_deleted: bool = Query(False),
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
-        product_id: Optional[str] = Query(None),
+        goal_id: Optional[str] = Query(None),
         status: Optional[ProjectStatus] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ProjectResponse]:
@@ -91,7 +98,7 @@ def get_projects_router(db: Optional[Union[BaseDb, AsyncBaseDb]], settings: Agno
             include_deleted=include_deleted,
             sort_by=sort_by,
             sort_order=sort_order,
-            product_id=product_id,
+            goal_id=goal_id,
             status=status,
         )
         return PaginatedResponse(

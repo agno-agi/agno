@@ -30,6 +30,8 @@ class RunAuthorization:
     # Manager tool execution activates checks for its nested work. Explicit
     # RunAuthorization instances enforce by default for trusted Python callers.
     enforce_tools: bool = True
+    # A schedule fired this run with the saved authority of the person who created it. Nobody is present.
+    scheduled: bool = False
 
     def _decision(self, resource: str, action: str, resource_id: Optional[str]):
         ctx = replace(self.context, resource_type=resource, resource_id=resource_id, action=action)
@@ -59,9 +61,11 @@ class RunAuthorization:
         from dataclasses import asdict
 
         return {
-            "context": asdict(self.context),
+            # Roles an application grants a run are kept only when set, so every other snapshot stays unchanged
+            "context": {k: v for k, v in asdict(self.context).items() if k != "roles" or v is not None},
             "service_account": self.service_account,
             "enforce_tools": self.enforce_tools,
+            **({"scheduled": True} if self.scheduled else {}),
         }
 
 

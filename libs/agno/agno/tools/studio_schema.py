@@ -42,7 +42,7 @@ StudioErrorCode = Literal[
     "ambiguous_reference",
     "schedule_not_found",
     "schedule_conflict",
-    # Company Routines change only through Company, which keeps them linked to their Product.
+    # Company Routines change only through Company, which keeps them linked to their Goal.
     "company_routine",
     "target_not_published",
     "db_not_configured",

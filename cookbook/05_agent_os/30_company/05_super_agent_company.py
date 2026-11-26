@@ -1,7 +1,7 @@
 """Do Company work through Super Agent and exercise its Company tools without a model call.
 
 With CompanyConfig set, Super Agent holds the Company tools itself: company details,
-Products, Projects, Tasks, Sources, playbook, Routines and decisions. A Routine with no
+Goals, Projects, Tasks, Sources, playbook and Routines. A Routine with no
 executor runs on Mini Agent, a restricted agent that can only propose work.
 
 Prerequisites: Install agno, sqlalchemy, openai, fastapi and httpx.
@@ -35,9 +35,11 @@ if __name__ == "__main__":
         tools = next(t for t in super_agent.tools if isinstance(t, CompanyTools))
         # Super Agent does not hold the Routine-only maintenance and summary tools.
         assert "update_company_details" in tools.functions
-        assert "create_product_routine" in tools.functions
-        assert "refresh_company_product" not in tools.functions
-        assert "summarize_company_product" not in tools.functions
+        assert "create_goal_routine" in tools.functions
+        assert "refresh_company_goal" not in tools.functions
+        # The decision log is written through /company/decisions or CompanyTools on your own agents.
+        assert "log_company_decision" not in tools.functions
+        assert "summarize_company_goal" not in tools.functions
         assert not any(
             "transition" in name or "schedule" in name for name in tools.functions
         )
@@ -53,12 +55,12 @@ if __name__ == "__main__":
                 description="We build documentation tools.",
                 _agno_run_context=context,
             )
-            # Chat step: "Set up a Product for our docs site with an intake Routine."
+            # Chat step: "Set up a Goal for our docs site with an intake Routine."
             # These are the tool calls Super Agent makes, without a paid model call.
-            product = json.loads(
-                tools.create_company_product(
+            goal = json.loads(
+                tools.create_company_goal(
                     name="Documentation",
-                    purpose="Help people build reliable agents",
+                    objective="Help people build reliable agents",
                     sources=[{"type": "website", "reference": "https://docs.agno.com"}],
                     routines=[
                         # No executor is named, so the Routine runs on Mini Agent.
@@ -70,12 +72,12 @@ if __name__ == "__main__":
             )
             project = json.loads(
                 tools.propose_company_project(
-                    product["id"], "Release", _agno_run_context=context
+                    goal["id"], "Release", _agno_run_context=context
                 )
             )
             proposal = json.loads(
                 tools.propose_company_task(
-                    product["id"],
+                    goal["id"],
                     "Draft release notes",
                     brief="Summarize reviewed changes",
                     project_id=project["id"],
@@ -83,21 +85,16 @@ if __name__ == "__main__":
                 )
             )
             assert proposal["status"] == "backlog" and proposal["user_id"] == "alice"
-            # The file tree tools write a Product's pages. Status is one of them.
+            # The file tree tools write a Goal's pages. Status is one of them.
             files = next(
                 t
                 for t in super_agent.tools
                 if getattr(t, "name", None) == "company_files"
             )
             files.write_company_file(
-                path="products/" + product["id"] + "/status.md",
+                path="goals/" + goal["id"] + "/status.md",
                 content="# Status\n\nRelease notes proposed.\n",
                 expected_version=1,
-                _agno_run_context=context,
-            )
-            tools.log_company_decision(
-                "Review release notes before publishing",
-                reasoning="Human approval required",
                 _agno_run_context=context,
             )
 
@@ -114,5 +111,5 @@ if __name__ == "__main__":
         schedule = db.get_schedule(routine["id"])
         assert schedule["endpoint"] == "/agents/miniagent/runs"
         db.close()
-        print("Super Agent saved company details, a Product, a Routine and a proposal")
+        print("Super Agent saved company details, a Goal, a Routine and a proposal")
         print("No model call was made")

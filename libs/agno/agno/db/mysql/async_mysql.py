@@ -387,7 +387,13 @@ class AsyncMySQLDb(AsyncBaseDb):
             return table
 
         except Exception as e:
+            # Unregister the failed Table so a retry isn't rejected as "already defined".
+            self._invalidate_table_cache(table_name)
             log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            raise
+        except BaseException:
+            # Cancellation bypasses `except Exception`; unregister the Table here too.
+            self._invalidate_table_cache(table_name)
             raise
 
     async def _create_all_tables(self):
@@ -3129,10 +3135,9 @@ class AsyncMySQLDb(AsyncBaseDb):
         )
 
         if not calculated_dates:
-            log_debug("Metrics already calculated for all relevant dates.")
+            log_debug("Metrics already calculated for all relevant dates.", log_level=2)
             return []
 
-        log_debug("Updated metrics calculations")
         return calculated_dates
 
     def stop_metrics_refresh_on_read(self) -> None:

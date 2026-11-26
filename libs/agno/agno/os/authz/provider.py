@@ -47,6 +47,10 @@ class AuthorizationContext:
             one of those, run the scope provider as a second plane
             (``authorization_provider=[ScopeAuthorizationProvider(), other]``),
             where the OR composition gives you the bypass.
+        roles: Roles the application grants this caller for this run, such as an
+            interface's default role. Never read from a token; managed roles evaluate
+            them in place of the subject's assignments, and a custom provider decides
+            on ``principal_id`` unless it reads them.
     """
 
     principal_id: Optional[str] = None
@@ -56,6 +60,7 @@ class AuthorizationContext:
     resource_id: Optional[str] = None
     action: Optional[str] = None
     admin_scope: Optional[str] = None
+    roles: Optional[List[str]] = None
 
 
 class AuthorizationProvider(ABC):

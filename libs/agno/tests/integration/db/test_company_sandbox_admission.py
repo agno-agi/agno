@@ -53,7 +53,7 @@ async def engineering_task(client, db):
     await _call(
         db,
         "create_source",
-        {"id": task["id"], "product_id": task["product_id"], "type": "git", "reference": URL, "created_at": 1},
+        {"id": task["id"], "goal_id": task["goal_id"], "type": "git", "reference": URL, "created_at": 1},
     )
     ready = await client.post(
         path + "/transitions",
@@ -195,7 +195,9 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
     from agno.db.base import AsyncBaseDb
     from tests.integration.db.test_company_execution_parity import execute
 
-    client, db, worker, os, _ = sandbox_system
+    client, db, worker, os, engineer = sandbox_system
+    # The fixture serves only the engineer's instance under a shared id; the writer runs first.
+    os._register_db_with_validation(os.dbs, db)
     old = await accepted(client)
     other = await engineering_task(client, db)
     path = "/company/tasks/" + old["id"]
@@ -217,6 +219,8 @@ async def test_settled_retired_executor_does_not_block_admission(sandbox_system,
             with db.db_engine.begin() as connection:
                 connection.execute(table.update().where(table.c.id == old["id"]).values(transitions=history))
     os.dbs.pop(db.id, None)
+    # The engineer's runs are read back through its database, so AgentOS must still serve it.
+    os._register_db_with_validation(os.dbs, engineer.db)
     os.registry.agents[:] = [agent for agent in os.registry.agents if agent.id != "writer"]
     started = await client.post("/company/tasks/" + other["id"] + "/runs")
     assert started.status_code == 202, started.text
@@ -301,9 +305,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
     failed = await _call(db, "get_task", task["id"])
     assert failed["result"]["status"] == "ERROR"
     assert (await worker.store.get_job(job["id"]))["status"] == "completed"
-    source = await client.post(
-        "/company/sources", json={"product_id": task["product_id"], "type": "git", "reference": URL}
-    )
+    source = await client.post("/company/sources", json={"goal_id": task["goal_id"], "type": "git", "reference": URL})
     assert source.status_code == 201
     response = await client.post(path + "/runs", json={"attempt": 2})
     assert response.status_code == 202, response.text
@@ -326,7 +328,7 @@ async def test_checkout_projection_error_can_retry_after_source_repair(sandbox_s
         "create_source",
         {
             "id": "other-repo",
-            "product_id": task["product_id"],
+            "goal_id": task["goal_id"],
             "type": "git",
             "reference": agent.repository.url,
             "created_at": 1,

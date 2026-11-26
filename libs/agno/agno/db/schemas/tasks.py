@@ -8,6 +8,14 @@ class CancelledProjectError(ValueError):
     pass
 
 
+class OpenTaskLimitError(ValueError):
+    """An automatic acceptance would exceed its Routine's limit on open Tasks."""
+
+
+# An accepted Task is open until it is Done or Cancelled.
+OPEN_TASK_STATUSES = ("ready", "in_progress", "in_review")
+
+
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
     "backlog": {"ready", "in_review", "done", "cancelled"},
@@ -121,6 +129,17 @@ def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
             {k: v for k, v in entry.items() if k != AUTHORIZATION_KEY} for entry in task.get("transitions", [])
         ],
     }
+
+
+# What each Task status means to a person reading it.
+TASK_STATUS_MEANING = {
+    "backlog": "proposed, not accepted",
+    "ready": "accepted, not started",
+    "in_progress": "started",
+    "in_review": "finished, waiting for review",
+    "done": "done",
+    "cancelled": "cancelled",
+}
 
 
 def task_next_attempt(task: Dict[str, Any]) -> int:
