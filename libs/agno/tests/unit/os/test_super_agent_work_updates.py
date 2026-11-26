@@ -1360,7 +1360,9 @@ def test_work_that_ends_while_a_work_update_is_going_gets_one_of_its_own(held, m
     assert ended == "COMPLETED" and during == 1
     assert 'agent "Writer"' in first_block and "finished" in first_block
     assert first_block.count("Changed since your last turn.") == 1
-    assert 'workflow "Investigator"' in first_block and "Investigator" not in first_block.split("Changed")[0]
+    # It called the second run queued or running. The order of the two lines is not fixed.
+    investigator = next(line for line in first_block.split("\n") if 'workflow "Investigator"' in line)
+    assert "Changed since your last turn." not in investigator and "finished" not in investigator
     assert len(updates) == 2
     assert 'workflow "Investigator"' in sent(updates[1])
     assert last[0].count("Changed since your last turn.") == 1 and 'workflow "Investigator"' in last[0]
