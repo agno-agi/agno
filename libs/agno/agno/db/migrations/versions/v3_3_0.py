@@ -16,6 +16,8 @@ In the database that holds the Company tables (SQLite or PostgreSQL):
 
 In the database that holds the schedules (SQLite, PostgreSQL or MongoDB):
 - ``payload.metadata.product_id`` of a Routine becomes ``goal_id``.
+- A Company tool that ``payload.message`` of a Routine names by its 3.2.0 name gets its current name,
+  for example ``read_product_source`` becomes ``read_goal_source``.
 - ``work_scope.product_ids`` in a Routine's auto-accept policy becomes ``goal_ids``.
 - The ``disabled_reason`` ``company_product_archived`` becomes ``company_goal_archived``.
 - ``automation_failure.product_id`` in the output of a schedule run becomes ``goal_id``.
@@ -51,7 +53,9 @@ namespace is found among the records of this database: the one Goal or Task whos
 have written that way.
 
 Rows are rewritten in place: content, version and timestamps do not change. Only rows of the shared
-partition are Company files; a user's rows are left alone. The files move after the Company tables
+partition are Company files; a user's rows are left alone. Files move only in a database that holds a
+Company table or a session of Super Agent: in any other, a namespace with one of these names belongs
+to the filesystem that wrote it. The files move after the Company tables
 are renamed, on the same session, for any Company table type, in every database that holds a file
 table. On PostgreSQL the tables and the files change in one transaction. The move reads its state
 from the file table, so a second run finds nothing to move and a run that stopped halfway is
@@ -71,12 +75,13 @@ Company file system refuses every use with ``MigrationRequiredError``: files lef
 from before would look like an empty store. AgentOS starts, so the migration can be run through it.
 
 Notes were stored in the AgentOS database. For a deployment with a separate Company database,
-AgentOS moves them into the Company database as it starts, after it has migrated both, with
-``move_company_notes``. Where it could not, notes/ is refused with ``MigrationRequiredError`` until
-that call has run: notes left in the AgentOS database would look empty.
+``move_company_notes`` moves them into the Company database. The migrate endpoints of AgentOS call
+it once both databases are migrated. Until it has run, notes/ is refused with
+``MigrationRequiredError``: notes left in the AgentOS database would look empty.
 """
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -105,6 +110,23 @@ SQL_DB_TYPES = ("PostgresDb", "SqliteDb", "AsyncPostgresDb", "AsyncSqliteDb")
 MONGO_DB_TYPES = ("MongoDb", "AsyncMongoDb")
 # How long a statement of the migration waits for a table lock on PostgreSQL before it fails.
 LOCK_TIMEOUT_SECONDS = 10
+
+# The Company tools under their 3.2.0 names. The instructions saved in a Routine can name them, and
+# a run can call a tool only by its current name.
+TOOLS_3_2_0 = {
+    "add_product_source": "add_goal_source",
+    "create_company_product": "create_company_goal",
+    "create_product_routine": "create_goal_routine",
+    "get_company_product": "get_company_goal",
+    "intake_product_source": "intake_goal_source",
+    "list_company_products": "list_company_goals",
+    "list_product_sources": "list_goal_sources",
+    "read_product_source": "read_goal_source",
+    "refresh_company_product": "refresh_company_goal",
+    "summarize_company_product": "summarize_company_goal",
+    "update_product_status": "update_goal_status",
+}
+_TOOL_3_2_0 = re.compile(r"\b(" + "|".join(TOOLS_3_2_0) + r")\b")
 
 
 class CompanyGoalsMigrationError(RuntimeError):
@@ -510,6 +532,10 @@ def _goal_routine(schedule: Dict[str, Any]) -> Dict[str, Any]:
     if schedule.get("managed_by") != "company":
         return changes
     payload = schedule.get("payload")
+    if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+        message = _TOOL_3_2_0.sub(lambda found: TOOLS_3_2_0[found.group()], payload["message"])
+        if message != payload["message"]:
+            payload = changes["payload"] = {**payload, "message": message}
     if isinstance(payload, dict) and isinstance(payload.get("metadata"), dict):
         renamed = dict(payload["metadata"])
         if "product_id" in renamed and "goal_id" not in renamed:
@@ -684,7 +710,7 @@ def _limit_lock_wait(sess: Any) -> None:
 
     A rename waits for every session that has read the table in an open transaction, and every
     later query on the table waits behind the rename. Without a limit, one session left open keeps
-    the migration, and an AgentOS that migrates as it starts, waiting for as long as it stays open.
+    the migration waiting for as long as it stays open.
     """
     if sess.bind.dialect.name == "postgresql":
         sess.execute(text(f"SET LOCAL lock_timeout = '{int(LOCK_TIMEOUT_SECONDS)}s'"))
@@ -805,11 +831,32 @@ def _old_namespace_names(conn: Any, files: Any) -> List[str]:
     )
 
 
-def _waiting_namespaces(conn: Any, backend: Any) -> List[str]:
+def _company_in_use(conn: Any, db: Any) -> bool:
+    """Whether Company or Super Agent worked on this database: it holds a Company table, or a session of Super Agent.
+
+    Any filesystem can name a namespace as Company named its own. On a database that shows neither,
+    such a namespace belongs to whoever wrote it.
+    """
+    from agno.registry._reserved import MANAGER_TEAM_ID
+
+    tables = _CompanyTables.of(db)
+    sql = _Sql(_OnConnection(conn), type(db).__name__, tables.schema)
+    if any(sql.table_exists(name) for name in tables.all):
+        return True
+    sessions = db.session_table_name
+    if not sql.table_exists(sessions) or "team_id" not in sql.columns(sessions):
+        return False
+    found = conn.execute(
+        text(f"SELECT 1 FROM {sql.ref(sessions)} WHERE team_id = :id LIMIT 1"), {"id": MANAGER_TEAM_ID}
+    )
+    return found.first() is not None
+
+
+def _waiting_namespaces(conn: Any, backend: Any, db: Any) -> List[str]:
     """The namespaces from before 3.3.0 that hold a Company file: a file of the shared partition."""
     files = backend.table
     names = _old_namespace_names(conn, files)
-    if not names or not _has_user_partitions(backend):
+    if not names or not _has_user_partitions(backend) or not _company_in_use(conn, db):
         return []
     rows = conn.execute(
         select(files.c.namespace).where(files.c.user_id == _SHARED, files.c.namespace.in_(names)).distinct()
@@ -915,8 +962,9 @@ def _move(conn: Any, files: Any, folders: Dict[str, str], defaults: Dict[str, Di
 
     A file already at the new path is settled first. The same content means the file is there
     already: of the two rows the one with the higher version stays, so no version a client read
-    is given out again. A default page that nobody edited gives way to the page that moves in.
-    Any other file at the new path stops the move before a row changes.
+    is given out again. A default page that nobody edited gives way to the page that moves in, and
+    one that an older version wrote where it kept its files, after the page it stands for had moved,
+    is removed. Any other file at the new path stops the move before a row changes.
     """
     from sqlalchemy import and_, delete, literal
 
@@ -941,11 +989,13 @@ def _move(conn: Any, files: Any, folders: Dict[str, str], defaults: Dict[str, Di
             .where(old.c.namespace == namespace, old.c.user_id == _SHARED)
         ).all()
         for path, content, version, existing, existing_version in clashes:
-            unedited_default = existing_version == 1 and existing == defaults.get(folder, {}).get(path)
+            default = defaults.get(folder, {}).get(path)
             if existing == content and existing_version > version:
                 already_there.append((namespace, path))
-            elif existing == content or unedited_default:
+            elif existing == content or (existing_version == 1 and existing == default):
                 give_way.append((COMPANY_NAMESPACE, f"{prefix}{path}"))
+            elif version == 1 and content == default:
+                already_there.append((namespace, path))
             else:
                 blocked.append(f"{prefix}{path}")
     if blocked:
@@ -953,7 +1003,7 @@ def _move(conn: Any, files: Any, folders: Dict[str, str], defaults: Dict[str, Di
             "Company files were not moved: a different file is already stored at "
             f"{', '.join(sorted(blocked))}. Rename or delete one of the two, then run the migration again."
         )
-    # Each row removed here has its content in the row that stays.
+    # Each row removed here has its content in the row that stays, or is a default page nobody edited.
     for namespace, path in (*give_way, *already_there):
         conn.execute(
             delete(files).where(files.c.user_id == _SHARED, files.c.namespace == namespace, files.c.path == path)
@@ -1078,7 +1128,7 @@ def _move_company_files(sess: Any, db: Any, owners: Optional[Dict[str, str]] = N
     """
     conn = sess.connection()
     backend = _file_backend(db, conn)
-    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
+    namespaces = _waiting_namespaces(conn, backend, db) if backend is not None else []
     if not namespaces:
         if owners:
             raise CompanyFilesMigrationError(f"No file waits in {', '.join(sorted(owners))}.")
@@ -1113,7 +1163,7 @@ def _files_state(conn: Any, db: Any) -> Tuple[bool, Dict[str, str]]:
     from agno.company.filesystem import folder_name
 
     backend = _file_backend(db, conn)
-    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
+    namespaces = _waiting_namespaces(conn, backend, db) if backend is not None else []
     if not namespaces:
         return False, {}
     plan = _plan(_OnConnection(conn), db, namespaces)
@@ -1133,7 +1183,7 @@ def _files_wait(conn: Any, db: Any) -> bool:
 def _files_left(sess: Any, db: Any) -> List[Dict[str, Any]]:
     conn = sess.connection()
     backend = _file_backend(db, conn)
-    namespaces = _waiting_namespaces(conn, backend) if backend is not None else []
+    namespaces = _waiting_namespaces(conn, backend, db) if backend is not None else []
     left = _plan(sess, db, namespaces).left if namespaces else {}
     return _paths_left(conn, backend.table, left) if left else []
 

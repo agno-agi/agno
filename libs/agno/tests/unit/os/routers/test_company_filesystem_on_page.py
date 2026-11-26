@@ -13,6 +13,7 @@ from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.registry import Registry
+from tests.unit.db.test_v3_3_0_company_files_migration import used_by_company
 from tests.unit.os.test_company_file_tree import call, records, tree
 from tests.unit.os.test_mini_agent_tasks import ScriptedModel, System, headers
 
@@ -930,6 +931,7 @@ def test_a_wiki_page_as_deep_as_3_2_0_allows_is_listed_and_read_after_the_migrat
     from agno.fs._paths import MAX_SEGMENTS
 
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    used_by_company(db)
     # As 3.2.0 stores it: a page of the company wiki, in the wiki's own namespace.
     assert len(DEEP_PAGE.split("/")) == MAX_SEGMENTS
     wiki = FileSystem(db, namespace="company/wiki", user_scoped=False)
@@ -988,6 +990,7 @@ def test_the_migration_reports_nothing_when_every_path_fits(tmp_path, caplog):
     from agno.db.migrations.versions.v3_3_0 import move_company_files
 
     db = SqliteDb(db_file=str(tmp_path / "company.db"))
+    used_by_company(db)
     FileSystem(db, namespace="company/wiki", user_scoped=False).write("a/b/c.md", "Fits")
     FileSystem(db, namespace="company/notes", user_scoped=False).write("ideas.md", "Fits")
     try:

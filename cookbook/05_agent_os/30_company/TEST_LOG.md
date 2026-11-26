@@ -930,6 +930,8 @@ unless the entry names PostgreSQL (the `pgvector` container on port 5532).
 
 **Status:** PASS
 
+**Note (2026-11-25):** This run was made while AgentOS migrated a database as it started. It no longer does: the files move when `MigrationManager(db).up()` or a migrate endpoint runs. The `start` and `concurrent` scenarios below describe the earlier behaviour and were not run again after that change.
+
 **Description:** Run on 2026-11-25, with no model call. The starting databases were written by agno 3.2.0 from PyPI in an environment of its own (`uv venv`, then `uv pip install agno==3.2.0 "sqlalchemy[asyncio]" "psycopg[binary]" fastapi httpx aiosqlite pyyaml openai python-multipart`). There, a 3.2.0 AgentOS with Company started once, and 3.2.0's own `CompanyManager` and `CompanyFiles` wrote four Goals (`this-agentos`, `Docs Team`, `team`, `team/growth`), a Project, a Task and 19 files: 3 wiki pages, 3 pages for each Goal, 2 Task files and 2 notes, several of them written more than once. 3.2.0 stamped every table 3.0.0 and kept the slash of `team/growth` in its namespace (`company/products/team/growth/wiki`).
 
 This branch was then started on a copy of that database with `AgentOS(db=db, company=CompanyConfig())` and nothing else, or `CompanyConfig(db=company_db)` for Company in a database of its own. Each scenario ran on SQLite and on PostgreSQL 18 (`agnohq/pgvector:18`), with one database and with two. The two scripts are session files and are not in the repository:
@@ -948,7 +950,7 @@ venv320/bin/python write_on_3_2_0.py <agentos database> <company database> facts
 | `blocked`: a different page already stored where a 3.2.0 page moves to; AgentOS starts and says why once; the Company file system answers 500 `migration_required_error` naming `MigrationManager(db).up()` and `POST /databases/all/migrate`; with the page removed, that route finishes the move with no restart | PASS | PASS | PASS | PASS |
 | `no-provision`: `auto_provision_dbs=False`; it starts, nothing moves, the Company file system refuses | PASS | PASS | PASS | PASS |
 
-With two databases the log of the first start reads "Moved 2 Company files" for the AgentOS database, "Moved 17 Company files" for the Company database, and "Moved 2 notes from the AgentOS database to the Company database". In the `blocked` scenario with two databases, the notes are not moved at that start, because the Company database was not migrated. After the route finishes the migration, `notes/` still answers with the error that names `move_company_notes`; that call, or the next start, moves them.
+With two databases the log of the first start reads "Moved 2 Company files" for the AgentOS database, "Moved 17 Company files" for the Company database, and "Moved 2 notes from the AgentOS database to the Company database". In the `blocked` scenario with two databases, the notes are not moved at that start, because the Company database was not migrated. After the route finishes the migration it moves the notes too, and `notes/` is served with no restart. (Run again on 2026-11-25 on SQLite with two databases: `GET /company/notes/ideas.md` answered 500 before `POST /databases/all/migrate` and 200 with the note after it.)
 
 The Goal `team/growth` cannot be named in a tree path, so its pages were read through the wiki of that Goal. Its folder in the store is `goals/team%2fgrowth/`.
 

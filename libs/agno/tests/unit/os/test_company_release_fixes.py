@@ -1085,7 +1085,27 @@ def tree_call(*args, **kwargs):
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_a_task_folder_has_no_limit_of_its_own(system, use_async):
+def test_one_task_filling_its_folder_does_not_refuse_another_tasks_or_the_wikis_writes(system, monkeypatch, use_async):
+    import agno.company.files as company_files
+    from agno.company.manager import CompanyManager
+    from agno.fs.errors import QuotaExceededError
+
+    monkeypatch.setattr(company_files, "TASK_FOLDER_BYTES", 1500)
+    ids, files = task_files(system)
+    first, second = f"tasks/{ids['task']}", f"tasks/{ids['stray']}"
+    tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 1000)
+    with pytest.raises(QuotaExceededError, match="folder is full"):
+        tree_call(files, "write_company_file", None, use_async, path=f"{first}/more.md", content="x" * 1000)
+    # A write that does not grow the folder is not refused.
+    smaller = tree_call(files, "write_company_file", None, use_async, path=f"{first}/report.md", content="x" * 10)
+    assert smaller["version"] == 2
+    assert tree_call(files, "write_company_file", None, use_async, path=f"{second}/report.md", content="y" * 1000)
+    wiki = CompanyManager(system.db).write_wiki(goal_id=None, path="people.md", content="Ada\n", expected_version=0)
+    assert wiki.version == 1
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_store_limit_covers_every_task_folder(system, use_async):
     from agno.company.filesystem import set_company_filesystem_bytes
     from agno.fs.errors import QuotaExceededError
 

@@ -22,11 +22,11 @@ from weakref import WeakKeyDictionary, WeakSet
 
 from agno.exceptions import MigrationRequiredError
 from agno.fs import FileSystem
+from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS, normalize_path
 from agno.fs._place import database_place
 from agno.fs._reserved import reserve_namespace
-from agno.fs._paths import MAX_PATH_CHARS, MAX_SEGMENT_CHARS, MAX_SEGMENTS, normalize_path
 from agno.fs.base import BaseFS, partition_kwargs
-from agno.fs.errors import FileSystemError, InvalidPathError
+from agno.fs.errors import FileSystemError, InvalidPathError, QuotaExceededError
 from agno.fs.types import FileData, FileMeta, NamespaceUsage, SearchMatch
 from agno.utils.log import log_warning
 
@@ -201,12 +201,17 @@ def set_company_notes_source(company_db: Any, source_db: Any) -> None:
     _notes_sources[company_db] = source_db
 
 
-def _notes_wait_error() -> MigrationRequiredError:
+def _notes_wait_error(unchecked: bool = False) -> MigrationRequiredError:
+    found = (
+        "Notes may still be in the AgentOS database, and synchronous code cannot check while either database is "
+        "asynchronous: use the async methods, which check, or move them first. "
+        if unchecked
+        else "Notes are stored in the AgentOS database, and from 3.3.0 they belong in the Company database. "
+    )
     return MigrationRequiredError(
         table_name="company/notes",
         message=(
-            "Notes are stored in the AgentOS database, and from 3.3.0 they belong in the Company database. "
-            "Move them once with `move_company_notes(agent_os_db, company_db)` (import it from "
+            found + "Move them once with `move_company_notes(agent_os_db, company_db)` (import it from "
             "`agno.db.migrations.versions.v3_3_0`; use `await amove_company_notes(...)` when either database "
             "is asynchronous). Each note keeps its content, version and timestamps."
         ),
@@ -221,10 +226,9 @@ def require_company_notes_moved(company_db: Any) -> None:
     from agno.db.base import AsyncBaseDb
 
     if isinstance(source, AsyncBaseDb) or isinstance(company_db, AsyncBaseDb):
-        # An asynchronous database cannot be asked from here: what the last asynchronous use found stands.
-        if company_db in _notes_wait:
-            raise _notes_wait_error()
-        return
+        # An asynchronous database cannot be asked from here, so notes/ is refused until an asynchronous check
+        # finds nothing waiting.
+        raise _notes_wait_error(unchecked=True)
     from agno.db.migrations.versions.v3_3_0 import company_notes_to_move
 
     _settle_notes(company_db, company_notes_to_move(source, company_db))
@@ -257,12 +261,12 @@ def reserve_company_namespace(db: Any) -> None:
         return
 
 
-def company_folder(db: Any, folder: str) -> FileSystem:
+def company_folder(db: Any, folder: str, max_folder_bytes: Optional[int] = None) -> FileSystem:
     """One folder of the Company file system, as a file system of its own.
 
     Paths are inside the folder: ``brief.md`` in the folder ``goals/<goal-id>`` is the stored file
-    ``goals/<goal-id>/brief.md``. No path reaches a file outside the folder. The size limit is the
-    limit of the whole store.
+    ``goals/<goal-id>/brief.md``. No path reaches a file outside the folder. The size limit of the
+    whole store holds, and ``max_folder_bytes`` adds a limit for the files of this folder.
     """
     whole = company_filesystem(db)
     whole.backend.company_folder = folder  # type: ignore[attr-defined]
@@ -270,7 +274,7 @@ def company_folder(db: Any, folder: str) -> FileSystem:
         # Without Company the store holds Super Agent's notes alone, and the namespace is not kept for it.
         reserve_namespace(whole.backend, COMPANY_NAMESPACE)
     return FileSystem(
-        backend=_Folder(whole.backend, folder),
+        backend=_Folder(whole.backend, folder, max_folder_bytes),
         namespace=COMPANY_NAMESPACE,
         user_scoped=False,
         max_namespace_bytes=whole.max_namespace_bytes,
@@ -297,15 +301,40 @@ class _Folder(BaseFS):
 
     A path is sent to the backend with the folder in front of it and comes back without it, in a
     result and in an error. ``usage`` is the usage of the whole namespace, so the folder shares the
-    namespace's size limit.
+    namespace's size limit. ``max_bytes`` also holds the folder's own files to a limit.
     """
 
-    def __init__(self, backend: BaseFS, folder: str) -> None:
+    def __init__(self, backend: BaseFS, folder: str, max_bytes: Optional[int] = None) -> None:
         self.backend = backend
         # The folder is named by the caller that opens the view: an area, or an area and a folder name.
         if not folder or folder != folder.strip("/") or any(name in ("", ".", "..") for name in folder.split("/")):
             raise InvalidPathError(f"invalid folder {folder!r}")
         self.folder = folder
+        self.max_bytes = max_bytes
+
+    def _hold_to_limit(self, files: List[FileMeta], stored: str, size: int, replaces: bool) -> None:
+        """Refuse a write that would grow the folder past its own limit."""
+        if self.max_bytes is None:
+            return
+        total = sum(meta.size_bytes for meta in files)
+        existing = next((meta.size_bytes for meta in files if meta.path == stored), 0) if replaces else 0
+        if size - existing > 0 and total + size - existing > self.max_bytes:
+            raise QuotaExceededError(
+                f"folder is full ({total} of {self.max_bytes} bytes)",
+                scope="folder",
+                current=total,
+                limit=self.max_bytes,
+            )
+
+    def _check_room(self, namespace: str, stored: str, size: int, replaces: bool, user_id: str) -> None:
+        if self.max_bytes is not None:
+            files = self.backend.list(namespace, self.folder, **self._kwargs(self.backend.list, user_id))
+            self._hold_to_limit(files, stored, size, replaces)
+
+    async def _acheck_room(self, namespace: str, stored: str, size: int, replaces: bool, user_id: str) -> None:
+        if self.max_bytes is not None:
+            files = await self.backend.alist(namespace, self.folder, **self._kwargs(self.backend.list, user_id))
+            self._hold_to_limit(files, stored, size, replaces)
 
     def _inside(self, path: str) -> str:
         """The stored path of a file in the folder. Only a normalized relative path names one."""
@@ -363,8 +392,10 @@ class _Folder(BaseFS):
         self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None, user_id: str = ""
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.write, user_id, expected_version=expected_version)
+        stored = self._to_write(path)
+        self._check_room(namespace, stored, len(content.encode("utf-8")), True, user_id)
         with self._named_inside():
-            return self._meta(self.backend.write(namespace, self._to_write(path), content, **kwargs))
+            return self._meta(self.backend.write(namespace, stored, content, **kwargs))
 
     def list(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         kwargs = self._kwargs(self.backend.list, user_id)
@@ -381,8 +412,11 @@ class _Folder(BaseFS):
         self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None, user_id: str = ""
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.append, user_id, max_file_bytes=max_file_bytes)
+        stored = self._to_write(path)
+        # The separator is not known here, so it is counted as one byte: over, never under.
+        self._check_room(namespace, stored, len(content.encode("utf-8")) + 1, False, user_id)
         with self._named_inside():
-            return self._meta(self.backend.append(namespace, self._to_write(path), content, **kwargs))
+            return self._meta(self.backend.append(namespace, stored, content, **kwargs))
 
     def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = "") -> FileMeta:
         kwargs = self._kwargs(self.backend.move, user_id, overwrite=overwrite)
@@ -423,8 +457,10 @@ class _Folder(BaseFS):
         self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None, user_id: str = ""
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.write, user_id, expected_version=expected_version)
+        stored = self._to_write(path)
+        await self._acheck_room(namespace, stored, len(content.encode("utf-8")), True, user_id)
         with self._named_inside():
-            return self._meta(await self.backend.awrite(namespace, self._to_write(path), content, **kwargs))
+            return self._meta(await self.backend.awrite(namespace, stored, content, **kwargs))
 
     async def alist(self, namespace: str, directory: str = "", *, user_id: str = "") -> List[FileMeta]:
         kwargs = self._kwargs(self.backend.list, user_id)
@@ -444,8 +480,10 @@ class _Folder(BaseFS):
         self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None, user_id: str = ""
     ) -> FileMeta:
         kwargs = self._kwargs(self.backend.append, user_id, max_file_bytes=max_file_bytes)
+        stored = self._to_write(path)
+        await self._acheck_room(namespace, stored, len(content.encode("utf-8")) + 1, False, user_id)
         with self._named_inside():
-            return self._meta(await self.backend.aappend(namespace, self._to_write(path), content, **kwargs))
+            return self._meta(await self.backend.aappend(namespace, stored, content, **kwargs))
 
     async def amove(
         self, namespace: str, src: str, dst: str, *, overwrite: bool = False, user_id: str = ""

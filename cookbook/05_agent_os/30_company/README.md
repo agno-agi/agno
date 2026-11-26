@@ -33,32 +33,17 @@ whoever created the Goal. User isolation does not restrict Company records.
 
 ### Upgrading from agno 3.2.0
 
-In 3.2.0 a Goal was a Product and its objective was its purpose. To upgrade,
-deploy the new version. AgentOS migrates its databases as it starts: it renames
-the stored tables and columns in place and keeps every id. A deployment written
-for 3.2.0 then starts with no edit.
+In 3.2.0 a Goal was a Product and its objective was its purpose. The new
+version stores Goals under new table and column names, so a 3.2.0 database
+must be migrated once. AgentOS does not migrate it by itself: until you do,
+AgentOS starts, everything outside Company works, and Company answers with
+`MigrationRequiredError` and the command to run.
 
-Stop every process that runs 3.2 first: they fail against a migrated database.
-Processes on the new version can start together; one migrates and the others
-wait. The migration cannot be reversed, and `down()` does not undo it, so back
-up the database if you may need to go back.
-
-If a 3.2 process starts after the migration, it creates its old tables again
-(`agno_company_products` and `agno_company_products_details`). The new version
-does not use them and logs a warning when it starts. Your Goals are not
-changed, but anything the 3.2 process wrote to those tables is not shown. Stop
-the process, copy any row you need, then drop the two tables.
-
-Migrate by hand only in these cases:
-
-- `auto_provision_dbs=False`. AgentOS then does not migrate at the start.
-- The automatic migration failed. AgentOS logs one error that says why.
-- A database has a table from before agno 3.0. AgentOS does not start that
-  older migration by itself.
-
-In each case AgentOS still starts, and Company refuses to work until the
-database is migrated. Run the migration on the Company database, and on the
-AgentOS database when they are different databases:
+1. Stop every process that runs 3.2: they fail against a migrated database.
+2. Back up the database. The migration cannot be reversed, and `down()` does
+   not undo it.
+3. Migrate the Company database, and the AgentOS database when they are
+   different databases. Run it once, from one process:
 
 ```python
 import asyncio
@@ -68,8 +53,23 @@ from agno.db.migrations.manager import MigrationManager
 asyncio.run(MigrationManager(db).up())
 ```
 
-Or call `POST /databases/all/migrate` once AgentOS is up. Company then starts
-without a restart.
+Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
+is up. Company then starts without a restart.
+
+The migration renames the stored tables and columns in place and keeps every
+id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+code that calls the Company Python API by its 3.2.0 names needs the rename
+first: see the names that changed with no alias, below.
+
+A Routine keeps the instructions saved in it. Where they name a Company tool by
+its 3.2.0 name, for example `read_product_source`, the migration writes the
+current name in its place.
+
+If a 3.2 process starts after the migration, it creates its old tables again
+(`agno_company_products` and `agno_company_products_details`). The new version
+does not use them. Your Goals are not changed, but anything the 3.2 process
+wrote to those tables is not shown. Stop the process, copy any row you need,
+then drop the two tables.
 
 These 3.2.0 names are still accepted:
 
@@ -89,9 +89,12 @@ also runs Company, rename yours before you upgrade. Otherwise its holders also
 have access to Company Goals.
 
 These changed with no alias: the routes are `/company/goals`, with the fields
-`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`;
-the Company tools are named for Goals, for example `create_company_goal` and
-`update_goal_status`; and the tree path is `goals/<goal-id>/`. A request that
+`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`
+where it took `purpose=` and `product_id=`, and `discard_product` is
+`discard_goal`; the Company tools and the `CompanyTools` methods are named for
+Goals, for example `create_company_goal` and `update_goal_status`; a row holds
+`goal_id` where it held `product_id`, so a custom check in `acceptance_checks`
+reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
 still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
 with 422.
 
@@ -292,21 +295,28 @@ of letters, digits and `. - _ @ +` is its own folder name. Any other character
 is escaped, so `Docs Team` is stored under `goals/Docs%20Team/` and no two IDs
 share a folder. The tools and the routes still name a Goal by its ID.
 
-**Upgrading from 3.2.** AgentOS moves the files as it starts. The 3.3.0
-migration moves each file to its tree path with its content, version and
-timestamps. With a separate Company database, the notes then move into it from
-the AgentOS database.
+**Upgrading from 3.2.** The 3.3.0 migration above also moves the files: each
+one to its tree path with its content, version and timestamps. AgentOS does not
+move them as it starts.
 
-- When the migration did not run, AgentOS still starts and the Company file
-  system refuses each use with an error that names what to run:
-  `MigrationManager(db).up()` or `POST /databases/all/migrate`. This is the case
-  with `auto_provision_dbs=False`, or when a different file is already stored at
-  a path a file moves to.
+- Until the migration has run, AgentOS starts and the Company file system
+  refuses each use with an error that names what to run:
+  `MigrationManager(db).up()` or `POST /databases/all/migrate`. It also stays
+  refused when a different file is already stored at a path a file moves to.
+- With a separate Company database, the notes move into it from the AgentOS
+  database. `POST /databases/all/migrate` does this once both databases are
+  migrated. After `MigrationManager(db).up()` on each, call
+  `move_company_notes(agent_os_db, company_db)` from
+  `agno.db.migrations.versions.v3_3_0`. Until then `notes/` is refused.
 - The migration never guesses where a file belongs. Files of a Goal or Task it
   cannot be sure of stay where they are and are reported in the log.
   `company_files_left(db)` lists them, and
   `move_company_files(db, owners={namespace: id})` moves a namespace to the
   owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
+- The namespace `company` belongs to the Company file system. On an AgentOS
+  with Company, an agent whose own `FileSystem` uses the shared partition of
+  that namespace in the same database is refused when its run starts. Give that
+  filesystem another namespace, and move its files there.
 
 **On the File System page.** With Company on, the Company file system is one entry
 of the page: namespace `company`, with `wiki/`, `goals/`, `tasks/` and `notes/` under
@@ -404,11 +414,12 @@ the 50 newest Tasks. When there are more, the reply says how many it searched;
 name a folder, `goals/<goal-id>` or `tasks/<task-id>`, to search another.
 
 A file holds at most 1 MB. The Company file system holds 1 GB in total, across
-every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. No
-folder has a limit of its own. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. There are no API
-routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
-outside `notes/`.
+every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. Each
+Task's folder also holds at most 20 MB, so a Task that fills its folder does not
+stop the writes of the wiki, a Goal, the notes or another Task. Nothing removes a
+Task's files, not even archiving the Task, because an archived Task can be
+restored. There are no API routes for `tasks/` and `notes/`, and no tool appends
+to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
