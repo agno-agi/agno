@@ -891,15 +891,16 @@ class Qdrant(VectorDb):
         if filters:
             filter_conditions = []
             for key, value in filters.items():
-                # If key contains a dot already, assume it's in the correct format
-                # Otherwise, assume it's a metadata field and add the prefix
-                if "." not in key and not key.startswith("meta_data."):
-                    # This is a simple field name, assume it's metadata
-                    key = f"meta_data.{key}"
+                # ``meta_data``-rooted keys are explicit paths;
+                # other keys are literal metadata names.
+                if key != "meta_data" and not key.startswith("meta_data."):
+                    key = f'meta_data."{key}"' if "." in key else f"meta_data.{key}"
 
                 if isinstance(value, dict):
                     # Handle nested dictionaries
                     for sub_key, sub_value in value.items():
+                        sub_key = str(sub_key)
+                        sub_key = f'"{sub_key}"' if "." in sub_key else sub_key
                         filter_conditions.append(
                             models.FieldCondition(key=f"{key}.{sub_key}", match=models.MatchValue(value=sub_value))
                         )
@@ -1021,13 +1022,11 @@ class Qdrant(VectorDb):
         try:
             log_info(f"Attempting to delete all points with metadata: {metadata}")
 
-            # Create filter conditions for each metadata key-value pair
+            # Metadata keys live under ``meta_data``; a dot in a key is a literal character.
             filter_conditions = []
             for key, value in metadata.items():
-                # Use the meta_data prefix since that's how metadata is stored in the payload
-                filter_conditions.append(
-                    models.FieldCondition(key=f"meta_data.{key}", match=models.MatchValue(value=value))
-                )
+                key = f'meta_data."{key}"' if "." in key else f"meta_data.{key}"
+                filter_conditions.append(models.FieldCondition(key=key, match=models.MatchValue(value=value)))
 
             # Create a filter that requires ALL metadata conditions to match
             filter_condition = models.Filter(must=filter_conditions)  # type: ignore
