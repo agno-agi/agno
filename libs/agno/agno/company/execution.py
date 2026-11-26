@@ -649,12 +649,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
         payload["review_feedback"] = feedback
         # The result the person answered. The session holds the earlier turns; the result is repeated
         # so executors without session history still see what the feedback is about.
+        # A queued attempt that was withdrawn left no result: the reply is then given without one.
         previous = task.get("result") or {}
-        content = previous.get("content")
-        payload["previous_result"] = {
-            "status": previous.get("status"),
-            "content": content[:4000] if isinstance(content, str) else content,
-        }
+        if previous:
+            content = previous.get("content")
+            payload["previous_result"] = {
+                "status": previous.get("status"),
+                "content": content[:4000] if isinstance(content, str) else content,
+            }
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
@@ -670,7 +672,8 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 "State what you checked and how. If a person must decide before you can continue, "
                 "end with your recommendation and the one question they need to answer."
                 + (
-                    " This continues the same Task: act on review_feedback, a person's reply to previous_result."
+                    " This continues the same Task: act on review_feedback, a person's reply to "
+                    + ("previous_result." if "previous_result" in payload else "its last attempt.")
                     if feedback
                     else ""
                 )

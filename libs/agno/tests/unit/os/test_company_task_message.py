@@ -229,6 +229,10 @@ def test_a_reply_to_a_failed_run_survives_a_withdrawn_attempt_and_shows_in_the_s
     _, sent = sent_input(db, queue, task["id"])
     assert sent["review_feedback"] == "Use the other key"
     assert status_feedback(agent_os, task["id"]) == "Use the other key"
+    # The withdrawn attempt left no result, so the reply is not presented as an answer to an empty one.
+    assert "previous_result" not in sent
+    instructions = sent["execution_context"]["instructions"]
+    assert "a person's reply to its last attempt." in instructions and "previous_result" not in instructions
 
 
 def test_the_note_on_a_withdrawn_queued_attempt_is_not_a_reply(system):  # noqa: F811
