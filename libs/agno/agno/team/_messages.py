@@ -1118,6 +1118,11 @@ def _get_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
+    # Internal: messages the framework's own pre-hooks attached to this run go right before its input.
+    # Team only; a message marked add_to_agent_memory=False is sent and not stored with the run.
+    if run_context._hook_messages:
+        run_messages.messages.extend(run_context._hook_messages.values())
+
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     if _is_roleful_message_list(input_message):
         # 5.1 A list of Message/role dicts is provider input in its own right: keep
@@ -1259,6 +1264,11 @@ async def _aget_run_messages(
 
             # Extend the messages with the history
             run_messages.messages += history_copy
+
+    # Internal: messages the framework's own pre-hooks attached to this run go right before its input.
+    # Team only; a message marked add_to_agent_memory=False is sent and not stored with the run.
+    if run_context._hook_messages:
+        run_messages.messages.extend(run_context._hook_messages.values())
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     if _is_roleful_message_list(input_message):
