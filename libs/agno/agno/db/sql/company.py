@@ -97,6 +97,10 @@ def require_project(
 ) -> None:
     if project_id is None:
         return
+    if goal_id is None:
+        # No Goal row serializes this write with the Project's own transitions, so the Project is
+        # locked before it is read. A move then cannot land in a Project that completes meanwhile.
+        lock_parent(sess, None, projects, None, project_id)
     row = sess.execute(select(projects).where(projects.c.id == project_id)).first()
     if row is None or row._mapping["deleted_at"] is not None:
         raise ValueError("Project is missing or archived")

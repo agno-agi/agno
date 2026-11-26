@@ -572,14 +572,8 @@ async def _manager_call(manager, method, *args, **kwargs):
 
 
 async def _project_active(task, manager):
-    from agno.db.schemas.projects import is_default_project
-
     project = await _manager_call(manager, "get_project", task["project_id"]) if task.get("project_id") else None
-    if not project:
-        return False
-    # The Default Project is always active and holds Tasks of any Goal.
-    same_goal = is_default_project(project["id"]) or project["goal_id"] == task["goal_id"]
-    return same_goal and project["status"] == "active"
+    return bool(project and project["goal_id"] == task["goal_id"] and project["status"] == "active")
 
 
 async def _has_source_evidence(task, manager):
@@ -990,6 +984,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         from agno.company.manager import AsyncCompanyManager, CompanyManager, _routine_project_id
         from agno.company.refresh import _records
         from agno.db.base import AsyncBaseDb
+        from agno.db.schemas.projects import is_default_project
         from agno.os.authz.run_context import restore_authorization
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope
 
@@ -1087,6 +1082,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         approving = None
         if not completing:
             project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and is_default_project(project["id"]):
+                # Nobody approved the Default Project, so a policy does not accept work in it.
+                raise _AutomationSkip("A Task in the Default Project waits for a person to accept it")
             if project and project["status"] == "cancelled":
                 raise _AutomationSkip("Cannot accept Task work in a cancelled Project")
             if project and project["status"] == "proposed":

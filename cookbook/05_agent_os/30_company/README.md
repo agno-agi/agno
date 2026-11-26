@@ -208,6 +208,8 @@ stored when Company starts and on first use. Project responses carry
 `is_default`, true for this Project only. It has no Goal, is always `active`,
 is listed like any Project and never finishes: it is not proposed, approved,
 completed or cancelled, the Refresh Routine and auto-accept never complete it,
+auto-accept never accepts a Task in it (nobody approved it, so such a Task
+waits for a person),
 and archiving a Goal leaves it in place (the Goal's own Tasks in it are archived
 and restored with the Goal). Renaming, editing, a transition and archiving are
 each refused with the reason, by the API (422 for an edit, 409 for a transition
@@ -223,8 +225,8 @@ New Backlog proposals reuse an existing Task with the same key.
 A database created before this change requires a Goal on every Project and
 Task. The 3.3.0 migration removes that requirement; see "Upgrading from agno 3.2.0".
 A Task run with no Goal gets the company wiki pages in its input and no Goal
-pages. It reads and proposes only records with no Goal, and writes only its own
-`tasks/<task-id>/` folder.
+pages, and writes only its own `tasks/<task-id>/` folder. Its list tools still
+read Projects and Tasks company-wide, as they do for any Task run.
 
 Routine instructions can make these two approval steps explicit:
 

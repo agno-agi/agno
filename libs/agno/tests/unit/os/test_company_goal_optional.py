@@ -476,24 +476,58 @@ def test_a_task_run_acts_only_on_records_of_its_tasks_goal():
     _require_routine_goal(None, None)
 
 
-def test_auto_accept_takes_its_routines_task_in_the_default_project(open_system):
+def test_auto_accept_leaves_a_task_in_the_default_project_for_a_person(open_system):
     goal_id, routine_id = open_system.declare(auto_accept=True)
     stray = open_system.manager.create_task(
         goal_id=goal_id, title="Fix the install page", origin="routine", routine_id=routine_id
     )
-    loose = open_system.manager.create_task(title="Fix the typo", origin="routine", routine_id=routine_id)
-    assert stray["project_id"] == loose["project_id"] == DEFAULT_PROJECT_ID
+    assert stray["project_id"] == DEFAULT_PROJECT_ID
+    # The same Routine's Task in a Project of its own is accepted, with the Project approved by the policy.
+    _, filed = open_system.proposes(goal_id, routine_id)
 
     outcomes = open_system.tick()
 
-    assert open_system.outcome(outcomes, stray["id"])["status"] == "accepted"
-    accepted = open_system.manager.get_task(stray["id"])
-    assert accepted["status"] in {"ready", "in_progress"} and receipts(accepted)
-    # A Task with no Goal is outside every Routine's Goal, so no policy accepts it.
-    skipped = open_system.outcome(outcomes, loose["id"])
-    assert skipped["status"] == "skipped" and skipped["reason"] == "Proposal is outside the Routine Goal"
-    assert open_system.manager.get_task(loose["id"])["status"] == "backlog"
+    skipped = open_system.outcome(outcomes, stray["id"])
+    assert skipped["status"] == "skipped"
+    assert skipped["reason"] == "A Task in the Default Project waits for a person to accept it"
+    waiting = open_system.manager.get_task(stray["id"])
+    assert waiting["status"] == "backlog" and not receipts(waiting)
+    assert open_system.outcome(outcomes, filed["id"])["status"] == "accepted"
     assert open_system.manager.get_project(DEFAULT_PROJECT_ID)["transitions"] == []
+    # A person accepts it with no Project approval: the Default Project is always active.
+    accepted = open_system.manager.transition_task(
+        task_id=stray["id"], target="ready", reason="Looks right", executor_type="agent", executor_id="writer"
+    )
+    assert accepted["status"] == "ready"
+
+
+def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
+    from sqlalchemy import event
+
+    manager = system.manager
+    source = manager.create_project(name="Reach 50 customers by March")
+    target = manager.create_project(name="Launch week")
+    task = manager.create_task(title="Count paying customers", project_id=source["id"])
+    locked = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("UPDATE") and "agno_company_projects" in statement:
+            locked.extend(value for value in parameters if value in (source["id"], target["id"]))
+        elif statement.lstrip().upper().startswith("UPDATE") and "agno_company_tasks" in statement:
+            locked.append("task written")
+
+    event.listen(system.db.db_engine, "before_cursor_execute", record)
+    try:
+        moved = manager.update_task(task["id"], project_id=target["id"])
+    finally:
+        event.remove(system.db.db_engine, "before_cursor_execute", record)
+
+    assert moved["project_id"] == target["id"]
+    # Both Projects are locked before the Task is written, so neither can complete in between.
+    assert list(dict.fromkeys(locked)) == [source["id"], target["id"], "task written"]
+    manager.transition_project(project_id=target["id"], target="active", reason="Approved")
+    with pytest.raises(ValueError, match="Project has open Tasks"):
+        manager.transition_project(project_id=target["id"], target="done", reason="Finished")
 
 
 # ------------------------------------------------------------- the Default Project never completes

@@ -233,11 +233,7 @@ async def _seed_default_project(db: Any) -> None:
     except MigrationRequiredError:
         raise
     except Exception as exc:
-        log_warning(
-            f"The Default Project was not stored: {exc} If this database was created by an earlier 3.3.0 "
-            "build, apply the pending migrations with `asyncio.run(MigrationManager(db).up())` or "
-            "`POST /databases/all/migrate`."
-        )
+        log_warning(f"The Default Project was not stored at startup and is stored on its first use: {exc}")
 
 
 async def _start_company(agent_os: Any) -> bool:
