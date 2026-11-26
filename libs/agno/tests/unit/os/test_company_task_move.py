@@ -550,3 +550,39 @@ def test_where_authorization_is_off_anyone_gives_a_ready_task_a_goal(tmp_path):
         assert moved.status_code == 200 and moved.json()["goal_id"] == project["goal_id"], moved.text
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+async def test_a_move_that_gives_a_goal_does_not_carry_an_acceptance_that_landed_meanwhile(tmp_path, use_async):
+    db, manager, goal, (release, launch) = await company(tmp_path, use_async)
+    draft = await do(manager.create_task(title="Loose", brief="Write"))
+    assert (draft["status"], draft["goal_id"], draft["project_id"]) == ("backlog", None, DEFAULT_PROJECT_ID)
+    write = db.update_task
+
+    async def accepted_first(*args, **kwargs):
+        # Another person accepts the Task after the move was checked and before it is written.
+        accept = dict(executor_type="agent", executor_id="writer", accepted_by="alice")
+        await do(db.transition_task(draft["id"], "ready", "Accepted", **accept))
+        return await do(write(*args, **kwargs))
+
+    def accepted_first_sync(*args, **kwargs):
+        db.transition_task(
+            draft["id"], "ready", "Accepted", executor_type="agent", executor_id="writer", accepted_by="alice"
+        )
+        return write(*args, **kwargs)
+
+    with patch.object(db, "update_task", accepted_first if use_async else accepted_first_sync):
+        moved = await do(manager.update_task(draft["id"], moved_by="bob", project_id=launch["id"]))
+    # The move changes nothing, which the route answers with 409 "Task changed while updating".
+    assert moved is None
+    now = await do(db.get_task(draft["id"]))
+    assert (now["status"], now["accepted_by"], now["goal_id"], now["project_id"]) == (
+        "ready",
+        "alice",
+        None,
+        DEFAULT_PROJECT_ID,
+    )
+    assert [entry.get("action") for entry in now["transitions"]] == [None]
+    # A move that gives no Goal is not tied to the stage: it is allowed in each stage that moves.
+    await do(manager.update_task(draft["id"], moved_by="bob", project_id=None))

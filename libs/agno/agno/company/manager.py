@@ -177,12 +177,13 @@ def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]
     return project["goal_id"]
 
 
-def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_by: Optional[str]) -> None:
+def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_by: Optional[str]) -> bool:
     """Refuse a move that gives a Ready Task a Goal unless its accepter makes it.
 
     A Ready Task runs under its accepter's saved authority, and its Goal decides what that run
     reads and may write. Where the deployment checks no permissions every caller is trusted, as
-    for any other write there.
+    for any other write there. Returns whether the move gives the Task a Goal: the caller then
+    writes only if the Task is still in the stage this check saw.
     """
     from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
     from agno.run.authorization import current_authorization
@@ -191,6 +192,7 @@ def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_b
     if task["status"] == "ready" and gains_goal and current_authorization() is not None:
         if moved_by is None or moved_by != task.get("accepted_by"):
             raise PermissionError(TASK_MOVE_REFUSAL["goal"])
+    return gains_goal
 
 
 def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
@@ -716,7 +718,9 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
-            _require_goal_consent(existing, project, moved_by)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
         return self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )
@@ -1757,7 +1761,9 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
-            _require_goal_consent(existing, project, moved_by)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
         return await self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )
