@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -109,7 +111,7 @@ class ArxivTools(Toolkit):
                 }
                 if result.pdf_url:
                     log_debug(f"Downloading: {result.pdf_url}")
-                    pdf_path = result.download_pdf(dirpath=str(download_dir))
+                    pdf_path = self._download_pdf(result, download_dir)
                     log_debug(f"To: {pdf_path}")
                     pdf_reader = PdfReader(pdf_path)
                     article["content"] = []
@@ -125,3 +127,10 @@ class ArxivTools(Toolkit):
             except Exception:
                 logger.exception("Error processing article")
         return json.dumps(articles, indent=4)
+
+    def _download_pdf(self, result: Any, download_dir: Path) -> Path:
+        pdf_path = download_dir.joinpath(f"{result.get_short_id().replace('/', '_')}.pdf")
+        response = httpx.get(result.pdf_url, follow_redirects=True)
+        response.raise_for_status()
+        pdf_path.write_bytes(response.content)
+        return pdf_path
