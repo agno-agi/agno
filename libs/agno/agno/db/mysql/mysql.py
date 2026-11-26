@@ -3858,7 +3858,7 @@ class MySQLDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -3887,7 +3887,9 @@ class MySQLDb(BaseDb):
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
                 if status is not None:
-                    stmt = stmt.where(table.c.eval_data["summary"]["status"].as_string() == status)
+                    stmt = stmt.where(
+                        func.json_unquote(func.json_extract(table.c.eval_data, "$.summary.status")) == status
+                    )
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if eval_type is not None and len(eval_type) > 0:

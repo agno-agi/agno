@@ -145,7 +145,7 @@ def attach_routes(
         summary="List Evaluation Runs",
         description=(
             "Retrieve paginated evaluation runs with filtering and sorting options. "
-            "Filter by agent, team, workflow, model, or evaluation type."
+            "Filter by agent, team, workflow, model, evaluation type, or suite status."
         ),
         responses={
             200: {
@@ -189,8 +189,7 @@ def attach_routes(
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
         status: Optional[EvalRunStatus] = Query(
-            default=None,
-            description="Suite state to filter by (PASS, FAIL, RUNNING or ERROR); only suite runs have one",
+            default=None, description="Filter by suite status (PASS, FAIL, RUNNING or ERROR)"
         ),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
         page: Optional[int] = Query(default=1, description="Page number", ge=1),
@@ -218,10 +217,10 @@ def attach_routes(
                 team_id=team_id,
                 workflow_id=workflow_id,
                 model_id=model_id,
-                status=status,
                 eval_types=eval_types,
                 filter_type=filter_type.value if filter_type else None,
                 headers=headers,
+                status=status,
             )
 
         if isinstance(db, AsyncBaseDb):

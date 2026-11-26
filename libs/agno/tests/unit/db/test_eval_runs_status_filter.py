@@ -1,4 +1,4 @@
-"""GET /eval-runs?status= filters suite runs by their summary status in every db."""
+"""GET /eval-runs?status= filters suite runs by their summary status on SQLite, in-memory and JSON dbs."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,7 +27,12 @@ def _suite(db, run_id, status):
             eval_type=EvalType.SUITE,
             agent_id="assistant",
             eval_data={
-                "summary": {"total": 1, "passed": int(status == "PASS"), "failed": 0, "status": status},
+                "summary": {
+                    "total": 1,
+                    "passed": int(status == "PASS"),
+                    "failed": int(status == "FAIL"),
+                    "status": status,
+                },
                 "cases": [],
             },
             eval_input={},

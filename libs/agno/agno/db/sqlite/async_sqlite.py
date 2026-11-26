@@ -4407,12 +4407,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
-            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of EvalRunRecord objects
-                - When deserialize=False: List of EvalRun dictionaries and total count
+                - When deserialize=False: List of eval run dictionaries and the total count
 
         Raises:
             Exception: If an error occurs during retrieval.

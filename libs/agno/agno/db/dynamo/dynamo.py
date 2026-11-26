@@ -3603,7 +3603,7 @@ class DynamoDb(BaseDb):
         user_id: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        """Get all eval runs from DynamoDB.
+        """Get all eval runs from the database.
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
@@ -3618,7 +3618,7 @@ class DynamoDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             user_id (Optional[str]): If set, only return runs owned by this user.
-            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -3697,12 +3697,12 @@ class DynamoDb(BaseDb):
                 if eval_item:
                     eval_data.append(eval_item)
 
-            # eval_data is stored as a JSON string, so the suite result is filtered after reading.
+            # Filter by status in-memory (stored inside eval_data JSON)
             if status is not None:
                 eval_data = [
-                    item
-                    for item in eval_data
-                    if ((item.get("eval_data") or {}).get("summary") or {}).get("status") == status
+                    eval_item
+                    for eval_item in eval_data
+                    if ((eval_item.get("eval_data") or {}).get("summary") or {}).get("status") == status
                 ]
 
             # Apply sorting

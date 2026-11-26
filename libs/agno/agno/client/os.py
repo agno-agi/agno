@@ -2309,7 +2309,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
-            status: Suite status to filter by (PASS, FAIL, RUNNING or ERROR)
+            status: Filter by suite status (PASS, FAIL, RUNNING or ERROR)
 
         Returns:
             PaginatedResponse[EvalSchema]: Paginated list of evaluation runs
