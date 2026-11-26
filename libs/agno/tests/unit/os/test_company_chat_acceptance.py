@@ -515,3 +515,18 @@ def test_the_default_policy_accepts_the_routines_own_proposal_and_stops_at_five(
     assert record["accepted_by"] == "alice" and record["executor_id"] == MINI_AGENT_ID
     # The Routine's own Project was approved with it, under the same grant.
     assert policy.db.get_project(record["project_id"])["status"] == "active"
+
+
+def test_the_default_policy_leaves_a_task_in_the_default_project_for_a_person(policy):  # noqa: F811
+    goal_id = goal(policy)
+    routine_id = policy.api_routine(goal_id).json()["id"]
+    # A proposal with no Project goes to the Default Project, which nobody approved.
+    stray = policy.manager.create_task(
+        goal_id=goal_id, title="Stray", brief="Fix it.", origin="routine", routine_id=routine_id
+    )
+    assert stray["project_id"] == DEFAULT_PROJECT_ID
+    outcome = policy.outcome(policy.tick(), stray["id"])
+    assert outcome["status"] == "skipped"
+    assert outcome["reason"] == "A Task in the Default Project waits for a person to accept it"
+    record = policy.db.get_task(stray["id"])
+    assert record["status"] == "backlog" and not receipts(record)
