@@ -512,6 +512,24 @@ def test_auto_accept_leaves_a_task_in_the_default_project_for_a_person(open_syst
     assert accepted["status"] == "ready"
 
 
+def test_a_proposal_in_the_default_project_is_not_counted_as_waiting_for_room():
+    from agno.company.declarations import AutoAccept
+    from agno.company.manager import _at_limit
+
+    policy = AutoAccept(default_executor="writer", max_open=1).model_dump()
+    schedule = {"id": "r1", "name": "docs.intake", "enabled": True, "payload": {"metadata": {"auto_accept": policy}}}
+    tasks = [
+        {"routine_id": "r1", "status": "in_review", "project_id": "p1"},
+        {"routine_id": "r1", "status": "backlog", "project_id": "p1"},
+        {"routine_id": "r1", "status": "backlog", "project_id": DEFAULT_PROJECT_ID},
+    ]
+
+    waiting = _at_limit({"id": "docs"}, [schedule], tasks)
+
+    # Finishing the open Task makes room for the one proposal in a Project. The other waits for a person.
+    assert [(item["routine"], item["open_tasks"], item["proposals_waiting"]) for item in waiting] == [("intake", 1, 1)]
+
+
 def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
     from sqlalchemy import event
 
@@ -535,7 +553,17 @@ def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
 
     assert moved["project_id"] == target["id"]
     # Both Projects are locked before the Task is written, so neither can complete in between.
-    assert list(dict.fromkeys(locked)) == [source["id"], target["id"], "task written"]
+    # The lower id is locked first whichever way the Task moves, so opposite moves cannot deadlock.
+    assert locked[-1] == "task written"
+    assert list(dict.fromkeys(locked[:-1])) == sorted([source["id"], target["id"]])
+    locked.clear()
+    event.listen(system.db.db_engine, "before_cursor_execute", record)
+    try:
+        manager.update_task(task["id"], project_id=source["id"])
+    finally:
+        event.remove(system.db.db_engine, "before_cursor_execute", record)
+    assert list(dict.fromkeys(locked[:-1])) == sorted([source["id"], target["id"]])
+    manager.update_task(task["id"], project_id=target["id"])
     manager.transition_project(project_id=target["id"], target="active", reason="Approved")
     with pytest.raises(ValueError, match="Project has open Tasks"):
         manager.transition_project(project_id=target["id"], target="done", reason="Finished")

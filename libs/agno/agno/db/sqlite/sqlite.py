@@ -9938,7 +9938,7 @@ class SqliteDb(BaseDb):
         goals = self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
-            lock_child(sess, goals, projects, table, task_id)
+            lock_child(sess, goals, projects, table, task_id, moving_to=fields.get("project_id"))
             current = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).first()
             if current is not None and fields.get("project_id") is not None:
                 fields.update(require_move(sess, goals, projects, current[0], fields["project_id"]))
