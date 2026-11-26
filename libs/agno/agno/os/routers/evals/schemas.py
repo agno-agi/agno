@@ -260,7 +260,9 @@ class EvalSuiteCaseSchema(BaseModel):
     agent_id: Optional[str] = Field(None, description="Agent ID the case runs")
     team_id: Optional[str] = Field(None, description="Team ID the case runs")
     tags: List[str] = Field(default_factory=list, description="Tags the case can be selected by")
-    timeout_seconds: int = Field(..., description="Per-case timeout in seconds")
+    timeout_seconds: Optional[int] = Field(
+        None, description="Per-case timeout in seconds; null when the case runs with the run's default_timeout"
+    )
 
 
 class EvalSuiteSchema(BaseModel):

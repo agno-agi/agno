@@ -164,7 +164,8 @@ class EvalSuite:
             "id": self.id,
             "name": self.name,
             "description": self.description,
-            "cases": [_case_summary(case, default_timeout=120) for case in self.cases],
+            # No run default exists until a run is started, so a case without its own timeout lists null.
+            "cases": [_case_summary(case, default_timeout=None) for case in self.cases],
         }
 
 
@@ -321,7 +322,7 @@ def _component_id(case: Case) -> str:
     return case.name
 
 
-def _case_summary(case: Case, *, default_timeout: int) -> Dict[str, Any]:
+def _case_summary(case: Case, *, default_timeout: Optional[int]) -> Dict[str, Any]:
     """The case as listed, without running it: the --list payload and the suite route share it."""
     return {
         "name": case.name,

@@ -105,9 +105,9 @@ def test_eval_suites_are_listed_with_their_cases(client):
                     "agent_id": "assistant",
                     "team_id": None,
                     "tags": ["smoke"],
-                    "timeout_seconds": 120,
+                    "timeout_seconds": None,
                 },
-                {"name": "adds", "agent_id": "assistant", "team_id": None, "tags": [], "timeout_seconds": 120},
+                {"name": "adds", "agent_id": "assistant", "team_id": None, "tags": [], "timeout_seconds": None},
             ],
         }
     ]
