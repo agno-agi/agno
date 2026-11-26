@@ -606,8 +606,9 @@ When a person asks Super Agent for work, the ask is the acceptance. `add_company
 creates the Task Ready, with that person as `accepted_by` and on its acceptance
 transition, and the run does not pause. With `start` true, "do X", it also queues the
 run through the same path as `start_company_task`. With `start` false, "add a task to
-do X", the Task stays Ready. With no executor named it runs on agent `miniagent`. With
-no Project named it goes in the Default Project.
+do X", the Task stays Ready, and Super Agent offers once to start it; on a yes it
+starts it with `start_company_task`. With no executor named it runs on agent
+`miniagent`. With no Project named it goes in the Default Project.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created

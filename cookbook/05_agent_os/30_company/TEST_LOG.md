@@ -47,6 +47,7 @@ outside the repository.
 | "Do the breaking-changes task now: write ..." (no such Task exists) | One turn, no confirmation. One Task, accepted by the person, on Mini Agent, started, later In review. |
 | "Turn these upgrade notes into a five-bullet summary ... Do it now." | Answered in chat. No record. A request that does not call its work a task is still done in chat. |
 | "Add a task to write the FAQ section ..." | One Task, Ready, in the fitting active Project, not started, no confirmation. |
+| "Yes, start it." in the same chat, after the reply offered to start the FAQ Task | The Task started in that one turn through `start_company_task`, with no confirmation. Run four more times on the wording that adds the offer: started every time. |
 | "Add a task: fix the typo on the pricing page ..." | One Task, Ready, in the Default Project, not started, no confirmation. |
 | "We want 50 paying customers ... Set this up." | One proposed Project and four Backlog Tasks. Nothing accepted. |
 | "Add seven tasks, one per docs page ..." | Five Tasks Ready. The sixth and seventh were recorded in Backlog, and `accept_company_task` paused once for both. After the confirmation all seven are Ready. |
@@ -57,6 +58,11 @@ On an earlier wording the first request was done in chat with no record in one r
 of three: Super Agent ran a component instead. The instruction now says never to do
 a task's work in chat or with a run tool. With that wording the first request
 created and started the Task in eight runs of eight.
+
+After adding a Task that is not started, Super Agent offers once to start it. In the
+four runs on that wording, seven of eight replies made the offer ("Ask me to start
+it when you're ready"), one only said the Task was not started, and no added Task
+was started before the person said yes.
 
 ---
 

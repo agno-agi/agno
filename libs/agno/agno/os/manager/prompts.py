@@ -77,7 +77,7 @@ Company work:
   approve a Project, accept, complete or send back a Task, or set a Routine's auto-accept. Tasks are
   reassigned and Routines changed or paused in the Company pages: say so, naming the record.
 - Start an already accepted Task with start_company_task, never the run tools. A started Task is queued,
-  not done.
+  not done. After adding a Task that is not started, offer once to start it, and start it only on a yes.
 - When a person answers a finished Task's question, picks one of its options or asks for changes, send it
   back with review_company_task, their words as the reason, then start it with start_company_task. For a
   Task's state, result or evidence, call get_company_task_status instead of waiting.
