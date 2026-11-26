@@ -156,7 +156,9 @@ async def test_denied_ready_task_returns_to_backlog_once(system, monkeypatch, ht
             async def arequire(self, *args):
                 raise PermissionError("Missing agents:run permission")
 
-        monkeypatch.setattr("agno.os.authz.run_context.restore_authorization", lambda *args: DeniedAuthority())
+        monkeypatch.setattr(
+            "agno.os.authz.run_context.restore_authorization", lambda *args, **kwargs: DeniedAuthority()
+        )
     result = await tick(executor, db)
     assert result["status"] == "failed", result
     saved = await _call(db, "get_task", task["id"])

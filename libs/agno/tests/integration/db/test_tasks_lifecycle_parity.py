@@ -488,7 +488,9 @@ async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_a
     m = manager(db)
     task, project = await task_at(m, stage)
     other = await call(m.create_project, goal_id=task["goal_id"], name="Other")
-    for fields in [structural, {"project_id": other["id"]}]:
+    await call(m.transition_project, project_id=other["id"], target="active", reason="Approved")
+    # A change of Project alone is allowed in some stages. Together with a structural field it is not.
+    for fields in [structural, {**structural, "project_id": other["id"]}]:
         with pytest.raises(ValueError, match="Backlog"):
             await call(m.update_task, task["id"], **fields)
         with pytest.raises(ValueError, match="Backlog"):
@@ -496,6 +498,40 @@ async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_a
         assert await call(db.update_task, task["id"], **fields) is None
         assert await call(db.update_task, task["id"], title="Mixed", brief="Mixed", **fields) is None
     assert await call(m.get_task, task["id"]) == task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES[1:])
+async def test_a_project_move_outside_backlog_follows_the_stage(db, stage):
+    from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL
+
+    m = manager(db)
+    task, project = await task_at(m, stage)
+    other = await call(m.create_project, goal_id=task["goal_id"], name="Other")
+    # An accepted Task does not move into a Project nobody approved, whatever its stage.
+    with pytest.raises(ValueError):
+        await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+    assert await call(m.get_task, task["id"]) == task
+    await call(m.transition_project, project_id=other["id"], target="active", reason="Approved")
+    if stage not in MOVABLE_TASK_STATUSES:
+        with pytest.raises(ValueError) as refused:
+            await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+        assert str(refused.value) == TASK_MOVE_REFUSAL[stage]
+        # The storage layer changes nothing in this stage, as for any other frozen field.
+        assert await call(db.update_task, task["id"], moved_by="alice", project_id=other["id"]) is None
+        assert await call(m.get_task, task["id"]) == task
+        return
+    moved = await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+    entry = moved["transitions"][-1]
+    assert (entry["action"], entry["user_id"], entry["project"]) == (
+        "move",
+        "alice",
+        {"from": project["id"], "to": other["id"]},
+    )
+    assert moved["transitions"][:-1] == task["transitions"]
+    for key in ("status", "brief", "executor_type", "executor_id", "accepted_by", "goal_id"):
+        assert moved[key] == task[key], key
+    assert moved["project_id"] == other["id"]
 
 
 @pytest.mark.asyncio

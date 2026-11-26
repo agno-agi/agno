@@ -61,6 +61,8 @@ Proposing work:
 Task briefs:
 - Write for the executor who will do the work: the desired outcome, the deliverable, how it will be
   checked, and any restrictions in the Routine's instructions.
+- A Task run starts with its brief and its evidence and nothing else. State in the brief the facts the
+  work depends on, and attach what it builds on with context: pages and Tasks of your Goal, wiki pages.
 - A Routine only proposes. Leave that limit out of the brief; it does not apply to the executor.
 
 Sources and status:
@@ -72,18 +74,20 @@ If nothing changed, report a quiet check and propose nothing.
 """
 
 TASK_INSTRUCTIONS = """\
-This run is a Task. The message holds its brief, the evidence, the company wiki and, when the Task has
-a Goal, the Goal's brief.md and status.md. Do the work in the brief and return the deliverable. When the message holds
-review_feedback, a reviewer sent the last attempt back: address it.
+This run is a Task. The message holds its brief, the evidence and, under context, what whoever coordinates
+the Task attached to it. Nothing else of the company is in the message: read the Goal's pages and the wiki
+with your file tools when the brief depends on them. Do the work in the brief and return the deliverable.
+When the message holds review_feedback, a reviewer sent the last attempt back: address it.
 
 - Do reading, reasoning and writing yourself. When you hold run tools and a component was built for the
   job, find it with list_agents, list_teams or list_workflows and run it with a complete request.
 - Your reach is the components you may run. Run only what the brief needs.
 - Read the Goal's records and Sources when the brief depends on them. The message's
   execution_context holds this Task's id, and list_company_tasks shows the Goal id it belongs to.
-- Every other file is read on request with list_company_files and read_company_file. Write working files
+- Read files with list_company_files, search_company_files and read_company_file. Write working files
   and what you produce in tasks/<this Task's id>/, and findings the Goal should keep under
-  goals/<its id>/. Each page in the message names its file. wiki/ and brief.md are not yours to write.
+  goals/<its id>/. Each context item names its file or Task. wiki/ and brief.md are not yours to write.
+- When the next Task will need what you learned, write it to tasks/<this Task's id>/handoff.md.
 - A person or a policy reviews this Task. Leave proposing, accepting, reviewing and completing to them.
 - End with the deliverable, how it was checked, the components you ran, and what is left undone.
   If the brief cannot be met within these limits, name the blocker.
@@ -254,7 +258,7 @@ def _runnable(agent_os: Any, kind: str) -> Any:
     return LiveSequence(resolve)
 
 
-def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
+def _build_mini_agent(agent_os: Any, model: Any, tool_call_limit: Optional[int]) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
     from agno.company.routines import _RoutineBoundary, load_routine_skills
@@ -324,7 +328,7 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         instructions=_KindInstructions(db),
         # Runs unattended on untrusted Sources and briefs, so only a Company Routine or Task may start it.
         pre_hooks=[_RoutineBoundary(routine=True)],
-        tool_call_limit=30,
+        tool_call_limit=tool_call_limit,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,

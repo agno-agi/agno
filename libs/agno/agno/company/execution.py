@@ -126,6 +126,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
             **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
+            **({"context_sent": payload["company_context_sent"]} if payload.get("company_context_sent") else {}),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -438,6 +439,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
             **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
+            **({"company_context_sent": submission["context_sent"]} if submission.get("context_sent") else {}),
         },
     }
     try:
@@ -631,12 +633,17 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
 
 
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
-    from agno.company.files import _always_loaded
+    from agno.company.context import _task_context
 
-    # Company-wide read visibility. No Source credentials, Goal metadata, other Tasks or
-    # caller-supplied runtime state are forwarded. Every other file is read on request.
-    pages = await _always_loaded(manager, task["goal_id"])
-    payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
+    # Every executor starts with the brief and the evidence. No wiki page, Goal page, Source credential or
+    # other Task reaches it unless whoever coordinates the Task attached it to the Task's context.
+    payload: Dict[str, Any] = {"brief": task.get("brief")}
+    if task.get("goal_id") is not None and await _call(manager, "get", task["goal_id"]) is None:
+        raise LookupError("Goal not found")
+    context = await _task_context(manager, task)
+    if context is not None:
+        payload["context"] = context
+    payload["evidence"] = task.get("evidence") or []
     feedback = _review_feedback(task)
     if feedback:
         payload["review_feedback"] = feedback

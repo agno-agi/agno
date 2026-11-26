@@ -179,6 +179,9 @@ def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) 
         "started_by": latest.get("started_by"),
         "requested_from": latest.get("requested_from"),
     }
+    if latest.get("context_sent"):
+        # What the latest attempt was shown of the Task's context, with the version of each entry.
+        state["context_sent"] = latest["context_sent"]
     feedback = _review_feedback(value)
     if feedback:
         # A reviewer sent the Task back; the next attempt acts on this.
@@ -468,6 +471,7 @@ class _TaskStarter:
         except ValueError as exc:
             raise HTTPException(409, str(exc))
         from agno.agent import Agent
+        from agno.company.context import context_sent
         from agno.company.execution import _another_executor_ran
         from agno.team import Team
 
@@ -481,6 +485,8 @@ class _TaskStarter:
                 "run_db_id": run_db.id,
                 "started_by": started_by,
                 "requested_from": caller.requested_from,
+                # What this input carries of the Task's context, recorded on the attempt it starts.
+                "context_sent": context_sent(message),
                 "without_history": without_history,
             }
         )

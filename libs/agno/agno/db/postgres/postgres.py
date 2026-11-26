@@ -10978,9 +10978,14 @@ class PostgresDb(BaseDb):
             return [dict(row._mapping) for row in rows], total
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
         from agno.db.sql.company import lock_child, require_move
 
         validate_task_fields(fields)
@@ -10988,8 +10993,11 @@ class PostgresDb(BaseDb):
         if table is None:
             return None
         stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
-        if set(fields) - {"title", "brief"}:
+        # A change of Project is allowed in more stages than the rest of a Task's scope.
+        if set(fields) - {"title", "brief", "project_id"}:
             stmt = stmt.where(table.c.status == "backlog")
+        elif "project_id" in fields:
+            stmt = stmt.where(table.c.status.in_(MOVABLE_TASK_STATUSES))
         if expected_status is not None:
             stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
@@ -10998,9 +11006,17 @@ class PostgresDb(BaseDb):
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
             lock_child(sess, goals, projects, table, task_id, moving_to=fields.get("project_id"))
-            current = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).first()
+            current = (
+                sess.execute(
+                    select(table.c.goal_id, table.c.status, table.c.project_id, table.c.transitions).where(
+                        table.c.id == task_id
+                    )
+                )
+                .mappings()
+                .first()
+            )
             if current is not None and fields.get("project_id") is not None:
-                fields.update(require_move(sess, goals, projects, current[0], fields["project_id"]))
+                fields.update(require_move(sess, goals, projects, current, fields["project_id"], moved_by))
             result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 
@@ -11045,6 +11061,23 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt.values(**task_restore_fields(dict(existing))).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 
+    def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import change_task_context
+
+        table = self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        goals = self._get_table(table_type="goals", create_table_if_not_found=True)
+        projects = self._get_table(table_type="projects", create_table_if_not_found=True)
+        with self.Session() as sess, sess.begin():
+            return change_task_context(sess, goals, projects, table, task_id, add, remove, expected_status)
+
     def start_task_run(
         self,
         task_id: str,
@@ -11054,6 +11087,7 @@ class PostgresDb(BaseDb):
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
         requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
         from agno.db.sql.company import lock_child
@@ -11074,7 +11108,9 @@ class PostgresDb(BaseDb):
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
+            fields = task_run_fields(
+                existing, attempt, user_id, run_db_id, session_user_id, requested_from, context_sent
+            )
             stmt = (
                 table.update()
                 .where(

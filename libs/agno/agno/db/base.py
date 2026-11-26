@@ -2180,9 +2180,17 @@ class BaseDb(ABC):
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
@@ -2191,6 +2199,19 @@ class BaseDb(ABC):
 
     def restore_task(self, task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Restore a deleted Task within the owner scope; otherwise return None."""
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
+    def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Remove context entries by id and add others, on a Task that is not Done or Cancelled.
+
+        Returns None when the Task is missing or archived, or is not in expected_status when one is given.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     def start_task_run(
@@ -2202,6 +2223,7 @@ class BaseDb(ABC):
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
         requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
         raise NotImplementedError("Company execution not supported by this database")
@@ -4357,9 +4379,17 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update descriptive fields on an active Task within the owner scope."""
+        """Update descriptive fields on an active Task within the owner scope.
+
+        moved_by is recorded on the Task's history when the update changes its Project.
+        """
         raise NotImplementedError("Company tasks not supported by the configured database")
 
     async def delete_task(
@@ -4372,6 +4402,19 @@ class AsyncBaseDb(ABC):
         """Restore a deleted Task within the owner scope; otherwise return None."""
         raise NotImplementedError("Company tasks not supported by the configured database")
 
+    async def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Remove context entries by id and add others, on a Task that is not Done or Cancelled.
+
+        Returns None when the Task is missing or archived, or is not in expected_status when one is given.
+        """
+        raise NotImplementedError("Company tasks not supported by the configured database")
+
     async def start_task_run(
         self,
         task_id: str,
@@ -4381,6 +4424,7 @@ class AsyncBaseDb(ABC):
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
         requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Reserve a Task attempt conditionally; user_id records the starting caller."""
         raise NotImplementedError("Company execution not supported by this database")
