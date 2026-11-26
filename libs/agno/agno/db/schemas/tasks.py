@@ -15,6 +15,21 @@ class OpenTaskLimitError(ValueError):
 # An accepted Task is open until it is Done or Cancelled.
 OPEN_TASK_STATUSES = ("ready", "in_progress", "in_review")
 
+# The stages in which a Task may change Project. In progress is left out: a queued or running attempt
+# is fenced against the Task's history, and its input was built from the Project it started in.
+# Cancelled work is closed.
+MOVABLE_TASK_STATUSES = ("backlog", "ready", "in_review", "done")
+# Why a Task cannot change Project now. Each is a conflict with the Task's or the Project's state.
+TASK_MOVE_REFUSAL = {
+    "in_progress": "A Task that is In progress cannot change Project. Move it when its run has ended and it is In review",
+    "cancelled": "A cancelled Task cannot change Project",
+    "inactive": "An accepted Task moves only into an active Project",
+    "policy": "A policy accepted this Task for its Project. Return it to Backlog, or accept it yourself, to move it",
+    "automated": "Routine and Task runs cannot move an accepted Task; a person decides",
+    "goal": "Only the person who accepted this Task may move it into a Goal's Project while it is Ready: its run "
+    "would act for that Goal under their acceptance. Ask them, or return it to Backlog first",
+}
+
 
 # In progress is entered only by starting a run; review and completion need an earlier attempt.
 TASK_TRANSITIONS = {
@@ -116,6 +131,10 @@ def task_transition_fields(
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
         fields["transitions"][-1][AUTHORIZATION_KEY] = authorization_snapshot()
+        # A person asked for this Task to be added, not done, and it waited for their confirmation.
+        # Accepted now, it is held until someone starts it, like a Task that was added accepted.
+        if existing["status"] == "backlog" and (existing.get("metadata") or {}).get("start_on_request"):
+            fields["transitions"][-1]["start_on_request"] = True
     return fields
 
 

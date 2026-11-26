@@ -80,9 +80,12 @@ MOVED_TOOLS = {
 CONFIRMED_TOOL = "confirm_company_details"
 # test_company_file_tree.py checks the confirmed page save, and notes/, which asks for no Company permission.
 FILE_TREE_TOOLS = {"save_company_page", "delete_company_file"}
-# Async only. test_company_task_tools.py checks the two run tools with the Task start route's grants, and
-# test_company_decision_tools.py checks the three decision tools.
+# Async only. test_company_task_tools.py checks the two run tools with the Task start route's grants,
+# test_company_decision_tools.py checks the three decision tools, and test_company_chat_acceptance.py
+# checks adding work a person asked for.
 TASK_RUN_TOOLS = {
+    "add_company_task",
+    "move_company_task",
     "start_company_task",
     "get_company_task_status",
     "approve_company_project",

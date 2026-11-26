@@ -177,6 +177,24 @@ def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]
     return project["goal_id"]
 
 
+def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_by: Optional[str]) -> bool:
+    """Refuse a move that gives a Ready Task a Goal unless its accepter makes it.
+
+    A Ready Task runs under its accepter's saved authority, and its Goal decides what that run
+    reads and may write. Where the deployment checks no permissions every caller is trusted, as
+    for any other write there. Returns whether the move gives the Task a Goal: the caller then
+    writes only if the Task is still in the stage this check saw.
+    """
+    from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
+    from agno.run.authorization import current_authorization
+
+    gains_goal = task["goal_id"] is None and project.get("goal_id") is not None
+    if task["status"] == "ready" and gains_goal and current_authorization() is not None:
+        if moved_by is None or moved_by != task.get("accepted_by"):
+            raise PermissionError(TASK_MOVE_REFUSAL["goal"])
+    return gains_goal
+
+
 def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
     """The id of the Project a Routine proposes under this name in a Goal."""
     from uuid import NAMESPACE_URL, uuid5
@@ -551,8 +569,14 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         status: str = "backlog",
         accepted_by: Optional[str] = None,
+        start_on_request: bool = False,
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
+
+        start_on_request holds a Task created Ready until someone starts it: the automation tick
+        does not pick it up. It is recorded on the acceptance and kept on the Task, so an
+        acceptance that follows a return to Backlog, or a first one of a Task created in Backlog,
+        is held too.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -603,6 +627,12 @@ class CompanyManager:
             if accepting:
                 self._accept_task(task, executor_type, executor_id)
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+            if accepting and start_on_request:
+                task["transitions"][-1]["start_on_request"] = True
+        if start_on_request:
+            # Kept on the Task, so every acceptance from Backlog is held: the first one of a Task
+            # recorded as a proposal, and a later one after a return to Backlog.
+            task["metadata"] = {"start_on_request": True}
         return self.db.create_task(task)
 
     def get_task(
@@ -648,15 +678,23 @@ class CompanyManager:
         )
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+        """Update a Task; outside Backlog only the title and the Project change, the rest requires a
+        return to Backlog.
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into.
+        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
+        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
+        on its history.
         """
-        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
         existing = self.db.get_task(task_id, user_id=user_id)
@@ -666,10 +704,18 @@ class CompanyManager:
             # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
             if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
                 del fields["brief"]
-            if set(fields) - {"title"}:
+            if set(fields) - {"title", "project_id"}:
                 raise ValueError("Accepted task scope requires a return to Backlog")
             if not fields:
                 return existing
+            if "project_id" in fields:
+                from agno.company.execution import _ExecutorAuthorization
+                from agno.run.authorization import current_authorization
+
+                if isinstance(current_authorization(), _ExecutorAuthorization):
+                    raise PermissionError(TASK_MOVE_REFUSAL["automated"])
+                if existing["status"] not in MOVABLE_TASK_STATUSES:
+                    raise ValueError(TASK_MOVE_REFUSAL[existing["status"]])
         elif "brief" in fields and expected_status is None:
             # The write itself checks the stage, so an acceptance that lands first is not overwritten.
             expected_status = "backlog"
@@ -678,7 +724,12 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
-        return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
+        return self.db.update_task(
+            task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
+        )
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
@@ -1567,8 +1618,14 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         status: str = "backlog",
         accepted_by: Optional[str] = None,
+        start_on_request: bool = False,
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
+
+        start_on_request holds a Task created Ready until someone starts it: the automation tick
+        does not pick it up. It is recorded on the acceptance and kept on the Task, so an
+        acceptance that follows a return to Backlog, or a first one of a Task created in Backlog,
+        is held too.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -1619,6 +1676,12 @@ class AsyncCompanyManager:
             if accepting:
                 await self._accept_task(task, executor_type, executor_id)
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
+            if accepting and start_on_request:
+                task["transitions"][-1]["start_on_request"] = True
+        if start_on_request:
+            # Kept on the Task, so every acceptance from Backlog is held: the first one of a Task
+            # recorded as a proposal, and a later one after a return to Backlog.
+            task["metadata"] = {"start_on_request": True}
         return await self.db.create_task(task)
 
     async def get_task(
@@ -1664,15 +1727,23 @@ class AsyncCompanyManager:
         )
 
     async def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        """Update a Task; outside Backlog only the title changes, the rest requires a return to Backlog.
+        """Update a Task; outside Backlog only the title and the Project change, the rest requires a
+        return to Backlog.
 
         A project_id of None moves the Task to the Default Project. A Task that has a Goal keeps it,
         so it moves only to a Project of the same Goal or to the Default Project. A Task with no
-        Goal takes the Goal of the Project it moves into.
+        Goal takes the Goal of the Project it moves into. An accepted Task moves while it is Ready,
+        In review or Done, into an active Project, and only a person moves it: moved_by is recorded
+        on its history.
         """
-        from agno.db.schemas.tasks import validate_task_fields
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL, validate_task_fields
 
         validate_task_fields(fields)
         existing = await self.db.get_task(task_id, user_id=user_id)
@@ -1682,10 +1753,18 @@ class AsyncCompanyManager:
             # An accepted Task runs under its accepter's permissions, so its brief is part of what was accepted.
             if "brief" in fields and _same_text(fields["brief"], existing.get("brief")):
                 del fields["brief"]
-            if set(fields) - {"title"}:
+            if set(fields) - {"title", "project_id"}:
                 raise ValueError("Accepted task scope requires a return to Backlog")
             if not fields:
                 return existing
+            if "project_id" in fields:
+                from agno.company.execution import _ExecutorAuthorization
+                from agno.run.authorization import current_authorization
+
+                if isinstance(current_authorization(), _ExecutorAuthorization):
+                    raise PermissionError(TASK_MOVE_REFUSAL["automated"])
+                if existing["status"] not in MOVABLE_TASK_STATUSES:
+                    raise ValueError(TASK_MOVE_REFUSAL[existing["status"]])
         elif "brief" in fields and expected_status is None:
             # The write itself checks the stage, so an acceptance that lands first is not overwritten.
             expected_status = "backlog"
@@ -1694,7 +1773,12 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
-        return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+            if _require_goal_consent(existing, project, moved_by) and expected_status is None:
+                # An acceptance that lands after this check is not carried into the Goal unseen.
+                expected_status = existing["status"]
+        return await self.db.update_task(
+            task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
+        )
 
     async def delete_task(
         self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None

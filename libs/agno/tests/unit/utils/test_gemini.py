@@ -862,7 +862,7 @@ def test_processed_company_tools_preserve_gemini_nullability(tmp_path, use_async
                     else "ARRAY"
                     if argument in ("sources", "routines")
                     else "BOOLEAN"
-                    if argument == "enabled"
+                    if argument in ("enabled", "leave_auto_accept_off")
                     else "STRING"
                 )
                 assert schema.type == ("OBJECT" if argument == "config" else expected_type), (name, argument)
