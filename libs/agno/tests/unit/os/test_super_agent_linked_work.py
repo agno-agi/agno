@@ -664,7 +664,8 @@ def test_without_tasks_read_the_message_carries_no_block(chat):  # noqa: F811
 
 
 @modes
-def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode):  # noqa: F811
+def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode, monkeypatch):  # noqa: F811
+    from agno.job_queue.store import InMemoryQueueStore
     from tests.unit.os.test_mini_agent_tasks import publish_notes
 
     manager = chat.os.manager.deep_copy()
@@ -685,10 +686,15 @@ def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode):  #
                 manager.run("What's the status?", user_id="alice", session_id="chat")
             else:
                 asyncio.run(manager.arun("What's the status?", user_id="alice", session_id="chat"))
-        (note,) = blocks(model.requests[0])
-        return note.splitlines()[-1]
+        notes = blocks(model.requests[0])
+        return notes[0].splitlines()[-1] if notes else ""
 
     assert next_line().endswith("waiting for a person to approve or answer. " + CHANGED)
+    before = linked(chat)
+    with monkeypatch.context() as patch:
+        patch.setattr(chat.queue, "store", InMemoryQueueStore())
+        assert next_line() == ""
+        assert linked(chat) == before
     assert next_line().endswith("waiting for a person to approve or answer.")
     assert asyncio.run(chat.queue.store.continue_job(task["job_id"], {}))["outcome"] == "queued"
     resumed = next_line()
@@ -697,7 +703,8 @@ def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode):  #
 
 
 @modes
-def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(mode):
+@pytest.mark.parametrize("missing", [True, False], ids=["missing", "error"])
+def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(mode, missing):
     from agno.os.job_queue import _SyncStoreAdapter
 
     task = row(status="in_progress", job_id="run")
@@ -710,6 +717,8 @@ def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(m
             assert strict
             calls.append(job_id)
             if len(calls) == 1:
+                if missing:
+                    return None
                 raise RuntimeError("unavailable")
             return {"status": "paused"}
 
@@ -732,6 +741,33 @@ def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(m
     second = read("second")
     assert "waiting for a person to approve or answer. " + CHANGED in second
     assert calls == ["run", "run"]
+
+
+@pytest.mark.asyncio
+async def test_an_async_chat_reads_paused_tickets_on_the_workers_loop():
+    from agno.job_queue.store import InMemoryQueueStore
+
+    owner = asyncio.get_running_loop()
+
+    class Store(InMemoryQueueStore):
+        async def get_job(self, job_id, strict=False):
+            assert asyncio.get_running_loop() is owner
+            return await super().get_job(job_id, strict=strict)
+
+    store = Store()
+    await store.enqueue_job({"id": "run", "status": "paused"})
+    queue = SimpleNamespace(store=store, _loop=owner)
+    task = row(status="in_progress", job_id="run")
+    provider = LinkedWork(Tasks(task), queue_worker=lambda: queue)
+    started = context("started")
+    link_task(started, task)
+    turn = context("next", linked=started.session_state[LINKED_WORK_KEY])
+
+    def read_from_another_loop():
+        return asyncio.run(provider.aread(turn))
+
+    note = await asyncio.wait_for(asyncio.to_thread(read_from_another_loop), timeout=5)
+    assert note and note.endswith("waiting for a person to approve or answer. " + CHANGED)
 
 
 class Refuses(Scripted):
@@ -1164,6 +1200,53 @@ def test_bedrock_multipart_context_preserves_the_original_blocks():
     sent, _ = model._format_messages(model._with_notes_merged([_MessageContextNote(content="Task update"), question]))
     assert sent == [{"role": "user", "content": [{"text": "Task update"}, *parts]}]
     assert question.content == parts
+
+
+def test_gemini_sends_a_completion_notice_with_an_image_only_turn(tmp_path):
+    import base64
+
+    types = pytest.importorskip("google.genai.types")
+    from agno.db.sqlite import SqliteDb
+    from agno.media import Image
+    from agno.models.google import Gemini
+    from agno.models.message import Message
+    from agno.team import Team
+
+    requests = []
+
+    def generate_content(**kwargs):
+        requests.append(kwargs["contents"])
+        reply = types.Content(role="model", parts=[types.Part.from_text(text="Received")])
+        return types.GenerateContentResponse(candidates=[types.Candidate(content=reply)])
+
+    model = Gemini(client=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content)))
+    db = SqliteDb(db_file=str(tmp_path / "chat.db"))
+    task = row()
+    state = context()
+    link_task(state, task)
+    team = Team(id="chat", model=model, members=[], db=db)
+    team._message_context = LinkedWork(Tasks({**task, "status": "done"}))
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkGQAAAAASUVORK5CYII="
+    )
+    question = Message(role="user", content=[])
+    try:
+        run = team.run(
+            [question],
+            images=[Image(content=png, mime_type="image/png")],
+            session_id="s",
+            session_state=state.session_state,
+        )
+        team.run("Anything else?", session_id="s")
+        assert team.get_session_state(session_id="s")[LINKED_WORK_KEY] == []
+    finally:
+        db.close()
+    first, second = requests
+    (user,) = [message for message in first if message.role == "user"]
+    assert [p.inline_data.data for p in user.parts if p.inline_data] == [png]
+    assert sum(CHANGED in (p.text or "") for p in user.parts) == 1
+    assert all(_HEADER not in (p.text or "") for message in second for p in message.parts)
+    assert [m.content for m in run.messages if m.role == "user"] == [question.content] == [[]]
 
 
 def test_an_os_without_company_is_unchanged(tmp_path):

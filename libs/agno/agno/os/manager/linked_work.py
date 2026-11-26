@@ -152,16 +152,37 @@ def _active_jobs(values: List[Any]) -> List[str]:
     ]
 
 
-async def _aread_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+def _ticket_paused(ticket: Optional[Dict[str, Any]]) -> Optional[bool]:
+    return None if ticket is None else ticket["status"] == "paused"
+
+
+async def _get_ticket_pauses(store: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
     async def paused(job_id: str) -> Optional[bool]:
         try:
-            ticket = await queue.store.get_job(job_id, strict=True)
-            return bool(ticket and ticket["status"] == "paused")
+            return _ticket_paused(await store.get_job(job_id, strict=True))
         except Exception as exc:
             log_warning(f"Linked work could not read ticket {job_id}: {exc}")
             return None
 
     return dict(zip(job_ids, await asyncio.gather(*(paused(job_id) for job_id in job_ids))))
+
+
+async def _aread_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    if not job_ids:
+        return {}
+    from agno.os.job_queue import _SyncStoreAdapter
+
+    worker_loop = getattr(queue, "_loop", None)
+    if (
+        worker_loop is not None
+        and worker_loop is not asyncio.get_running_loop()
+        and worker_loop.is_running()
+        and not isinstance(queue.store, _SyncStoreAdapter)
+    ):
+        # Async stores can have locks or connections bound to the worker's loop.
+        future = asyncio.run_coroutine_threadsafe(_get_ticket_pauses(queue.store, job_ids), worker_loop)
+        return await asyncio.wrap_future(future)
+    return await _get_ticket_pauses(queue.store, job_ids)
 
 
 def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
@@ -173,8 +194,7 @@ def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
         pauses: Dict[str, Optional[bool]] = {}
         for job_id in job_ids:
             try:
-                ticket = queue.store._store.get_job(job_id, strict=True)
-                pauses[job_id] = bool(ticket and ticket["status"] == "paused")
+                pauses[job_id] = _ticket_paused(queue.store._store.get_job(job_id, strict=True))
             except Exception as exc:
                 log_warning(f"Linked work could not read ticket {job_id}: {exc}")
                 pauses[job_id] = None
@@ -185,9 +205,9 @@ def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
         caller_loop = None
     worker_loop = queue._loop
     if worker_loop is not None and worker_loop.is_running() and worker_loop is not caller_loop:
-        return asyncio.run_coroutine_threadsafe(_aread_pauses(queue, job_ids), worker_loop).result()
+        return asyncio.run_coroutine_threadsafe(_get_ticket_pauses(queue.store, job_ids), worker_loop).result()
     if caller_loop is None:
-        return asyncio.run(_aread_pauses(queue, job_ids))
+        return asyncio.run(_get_ticket_pauses(queue.store, job_ids))
     # A synchronous call on the async store's own event loop cannot wait for that store.
     return dict.fromkeys(job_ids)
 

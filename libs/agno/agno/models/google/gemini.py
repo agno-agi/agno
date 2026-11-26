@@ -791,6 +791,10 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {error_message}")
             raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
+    def _with_notes_merged(self, messages: Any) -> Any:
+        # Gemini combines adjacent user messages after converting their text and media to native parts.
+        return messages
+
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
         Converts a list of Message objects to the Gemini-compatible format.
