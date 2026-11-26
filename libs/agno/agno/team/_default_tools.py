@@ -18,6 +18,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Type,
     Union,
     cast,
 )
@@ -117,6 +118,65 @@ def _member_run_kwargs(team: "Team", member: Any) -> Dict[str, Any]:
     if isinstance(member, BaseExternalAgent):
         return {"_team_id": team.id}
     return {}
+
+
+# Bounds on a JSON Schema the leader writes at run time, checked before it reaches a provider
+_RESPONSE_SCHEMA_MAX_BYTES = 4096
+_RESPONSE_SCHEMA_MAX_DEPTH = 5
+_RESPONSE_SCHEMA_MAX_PROPERTIES = 32
+# Composition and references would let a schema hide nesting from the bounds above, so they are refused
+_RESPONSE_SCHEMA_REFUSED_KEYWORDS = ("$ref", "$defs", "definitions", "anyOf", "oneOf", "allOf")
+
+
+def _response_schema_to_model(member: Any, response_schema: str) -> Type[BaseModel]:
+    """Turn a leader-written JSON Schema into the output_schema for one member run.
+
+    The leader sends the schema as a JSON string: a free-form object parameter cannot be expressed
+    in a strict tool schema, which would leave the leader only an empty object to send. The schema
+    is model-generated, so its size, nesting and property count are bounded first. It then goes
+    through the same Pydantic path as a hand-written output_schema, so every provider applies it
+    the same way. Raises ValueError with a message the leader can act on.
+    """
+    from agno.agents.base import BaseExternalAgent
+    from agno.utils.models.json_schema_model import json_schema_to_model
+
+    size = len(response_schema.encode())
+    if size > _RESPONSE_SCHEMA_MAX_BYTES:
+        raise ValueError(f"response_schema is {size} bytes; the limit is {_RESPONSE_SCHEMA_MAX_BYTES}")
+    try:
+        schema = json.loads(response_schema)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"response_schema is not valid JSON: {e}") from e
+    if not isinstance(schema, dict):
+        raise ValueError("response_schema must be a JSON Schema object")
+
+    property_count = 0
+
+    def _check(node: Dict[str, Any], depth: int) -> None:
+        nonlocal property_count
+        if depth > _RESPONSE_SCHEMA_MAX_DEPTH:
+            raise ValueError(f"response_schema nests deeper than {_RESPONSE_SCHEMA_MAX_DEPTH} levels")
+        refused = [keyword for keyword in _RESPONSE_SCHEMA_REFUSED_KEYWORDS if keyword in node]
+        if refused:
+            raise ValueError(f"response_schema may not use {', '.join(refused)}; write the shape out inline")
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            property_count += len(properties)
+            if property_count > _RESPONSE_SCHEMA_MAX_PROPERTIES:
+                raise ValueError(f"response_schema has more than {_RESPONSE_SCHEMA_MAX_PROPERTIES} properties")
+            for child in properties.values():
+                if isinstance(child, dict):
+                    _check(child, depth + 1)
+        for keyword in ("items", "additionalProperties"):
+            child_schema = node.get(keyword)
+            if isinstance(child_schema, dict):
+                _check(child_schema, depth + 1)
+
+    _check(schema, 0)
+    model = json_schema_to_model(schema, name=schema.get("title") or "MemberResponse")
+    if isinstance(member, BaseExternalAgent):
+        member._check_output_schema(model)
+    return model
 
 
 def _cascading_cancel_run(run_id: str) -> bool:
@@ -687,16 +747,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
-    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-        """Use this function to delegate a task to the selected team member.
-
-        Args:
-            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
-            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
-        Returns:
-            str: The result of the delegated task.
-        """
-
+    def _delegate_core(
+        member_id: str, task: str, response_schema: Optional[str] = None
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         # Find the member agent using the helper function
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
@@ -704,6 +757,15 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
+        # A per-call output_schema is only sent when the leader asked for one, so the member's own stays in force
+        schema_kwargs: Dict[str, Any] = {}
+        # Strict tool schemas make the argument required, so an empty string stands for "no schema"
+        if response_schema and response_schema.strip():
+            try:
+                schema_kwargs["output_schema"] = _response_schema_to_model(member_agent, response_schema)
+            except ValueError as e:
+                yield f"Invalid response_schema, the task was not delegated: {e}"
+                return
         member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
         # Make sure for the member agent, we are using the agent logger
@@ -738,6 +800,7 @@ def _get_delegate_task_function(
                     run_id=member_run_id,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
+                    **schema_kwargs,
                 )
                 draining_after_cancel = False
                 for member_agent_run_output_event in member_agent_run_response_stream:
@@ -796,6 +859,7 @@ def _get_delegate_task_function(
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     **_member_run_kwargs(team, member_agent),
+                    **schema_kwargs,
                 )
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -863,17 +927,9 @@ def _get_delegate_task_function(
             member_session_state_copy,  # type: ignore
         )
 
-    async def adelegate_task_to_member(
-        member_id: str, task: str
+    async def _adelegate_core(
+        member_id: str, task: str, response_schema: Optional[str] = None
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-        """Use this function to delegate a task to the selected team member.
-
-        Args:
-            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
-            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
-        Returns:
-            str: The result of the delegated task.
-        """
 
         # Let the team's cancel handler await this task so add_member_run lands
         # on run_response before _acleanup_and_store persists.
@@ -888,6 +944,15 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
+        # A per-call output_schema is only sent when the leader asked for one, so the member's own stays in force
+        schema_kwargs: Dict[str, Any] = {}
+        # Strict tool schemas make the argument required, so an empty string stands for "no schema"
+        if response_schema and response_schema.strip():
+            try:
+                schema_kwargs["output_schema"] = _response_schema_to_model(member_agent, response_schema)
+            except ValueError as e:
+                yield f"Invalid response_schema, the task was not delegated: {e}"
+                return
         member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
         # Make sure for the member agent, we are using the agent logger
@@ -922,6 +987,7 @@ def _get_delegate_task_function(
                     run_id=member_run_id,
                     yield_run_output=True,
                     **_member_run_kwargs(team, member_agent),
+                    **schema_kwargs,
                 )
                 draining_after_cancel = False
                 async for member_agent_run_response_event in member_agent_run_response_stream:
@@ -980,6 +1046,7 @@ def _get_delegate_task_function(
                     knowledge_filters=member_knowledge_filters(member_agent, run_context),
                     run_id=member_run_id,
                     **_member_run_kwargs(team, member_agent),
+                    **schema_kwargs,
                 )
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
                 # Also check if the parent team's run was cancelled while the member was executing
@@ -1042,6 +1109,79 @@ def _get_delegate_task_function(
             task,  # type: ignore
             member_session_state_copy,  # type: ignore
         )
+
+    # Bounds concurrent member runs within this team run; parallel tool calls are otherwise unbounded
+    delegation_slots = (
+        asyncio.Semaphore(team.max_concurrent_delegations) if team.max_concurrent_delegations is not None else None
+    )
+
+    async def _adelegate_bounded(
+        member_id: str, task: str, response_schema: Optional[str] = None
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+        if delegation_slots is None:
+            async for event in _adelegate_core(member_id, task, response_schema):
+                yield event
+            return
+        async with delegation_slots:
+            # The team run may have been cancelled while this call waited for a slot
+            if run_response.run_id is not None:
+                await araise_if_cancelled(run_response.run_id)
+            async for event in _adelegate_core(member_id, task, response_schema):
+                yield event
+
+    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+        """Use this function to delegate a task to the selected team member.
+
+        Args:
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
+        Returns:
+            str: The result of the delegated task.
+        """
+        yield from _delegate_core(member_id, task)
+
+    async def adelegate_task_to_member(
+        member_id: str, task: str
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+        """Use this function to delegate a task to the selected team member.
+
+        Args:
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
+        Returns:
+            str: The result of the delegated task.
+        """
+        async for event in _adelegate_bounded(member_id, task):
+            yield event
+
+    def delegate_task_to_member_with_schema(
+        member_id: str, task: str, response_schema: Optional[str] = None
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+        """Use this function to delegate a task to the selected team member.
+
+        Args:
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
+            response_schema (str): Optional JSON Schema, written as a JSON string, with an object root that the member's answer must follow, e.g. '{"type": "object", "properties": {"score": {"type": "integer"}}, "required": ["score"]}'. Set it when you will compare, rank or merge results, so each one comes back as JSON with the same fields. Pass an empty string for a plain-text answer.
+        Returns:
+            str: The result of the delegated task.
+        """
+        yield from _delegate_core(member_id, task, response_schema)
+
+    async def adelegate_task_to_member_with_schema(
+        member_id: str, task: str, response_schema: Optional[str] = None
+    ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+        """Use this function to delegate a task to the selected team member.
+
+        Args:
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
+            response_schema (str): Optional JSON Schema, written as a JSON string, with an object root that the member's answer must follow, e.g. '{"type": "object", "properties": {"score": {"type": "integer"}}, "required": ["score"]}'. Set it when you will compare, rank or merge results, so each one comes back as JSON with the same fields. Pass an empty string for a plain-text answer.
+        Returns:
+            str: The result of the delegated task.
+        """
+        async for event in _adelegate_bounded(member_id, task, response_schema):
+            yield event
 
     # When the task should be delegated to all members
     def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
@@ -1497,10 +1637,12 @@ def _get_delegate_task_function(
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_members")
     else:
+        # respond_directly parses the reply with the member's own schema, so a per-call one would clash
+        with_schema = team.enable_member_response_schema and not team.respond_directly
         if async_mode:
-            delegate_function = adelegate_task_to_member  # type: ignore
+            delegate_function = adelegate_task_to_member_with_schema if with_schema else adelegate_task_to_member  # type: ignore
         else:
-            delegate_function = delegate_task_to_member  # type: ignore
+            delegate_function = delegate_task_to_member_with_schema if with_schema else delegate_task_to_member  # type: ignore
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
 

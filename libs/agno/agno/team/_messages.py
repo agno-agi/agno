@@ -247,6 +247,12 @@ def _get_mode_instructions(team: "Team", has_sub_team: bool = False) -> str:
             "- Write one answer. Resolve contradictions, add structure, and fill gaps only where you can "
             "state the basis for it. Never concatenate member outputs.\n"
         )
+        if team.enable_member_response_schema:
+            content += (
+                "- When you will compare, rank or merge results, pass `response_schema` (a JSON Schema "
+                "with an object root, written as a JSON string) so every member answers as JSON with the "
+                "same fields.\n"
+            )
 
     # The delegate tools send the raw user input instead of the leader's task text when
     # determine_input_for_members is off. Task execution always delivers the leader's text.

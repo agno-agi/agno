@@ -7,6 +7,7 @@ Coordinate mode examples demonstrate member selection, explicit routing instruct
 - `01_basic.py` - Basic coordination with specialist members.
 - `02_with_tools.py` - Coordination with tool-enabled members.
 - `03_structured_output.py` - Structured output examples for coordinated responses.
+- `04_typed_parallel_delegation.py` - Parallel fan-out with a per-delegation `response_schema` and a cap on concurrent member runs.
 
 ## Running
 

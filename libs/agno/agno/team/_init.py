@@ -79,6 +79,8 @@ def __init__(
     determine_input_for_members: bool = True,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
+    enable_member_response_schema: bool = False,
+    max_concurrent_delegations: Optional[int] = None,
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
@@ -206,6 +208,10 @@ def __init__(
     team.determine_input_for_members = determine_input_for_members
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
+    if max_concurrent_delegations is not None and max_concurrent_delegations < 1:
+        raise ValueError("max_concurrent_delegations must be a positive integer or None")
+    team.enable_member_response_schema = enable_member_response_schema
+    team.max_concurrent_delegations = max_concurrent_delegations
 
     # Resolve TeamMode: explicit mode wins, otherwise infer from booleans
     from agno.team.mode import TeamMode
@@ -229,6 +235,17 @@ def __init__(
             team.mode = TeamMode.broadcast
         else:
             team.mode = TeamMode.coordinate
+
+    # Both settings act on delegate_task_to_member, which only coordinate mode gives the leader
+    if team.mode != TeamMode.coordinate:
+        if enable_member_response_schema:
+            log_warning(
+                f"enable_member_response_schema has no effect in {team.mode.value} mode; it applies to coordinate mode only"
+            )
+        if max_concurrent_delegations is not None:
+            log_warning(
+                f"max_concurrent_delegations has no effect in {team.mode.value} mode; it applies to coordinate mode only"
+            )
 
     team.user_id = user_id
     team.session_id = session_id

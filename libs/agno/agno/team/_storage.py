@@ -520,6 +520,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["mode"] = team.mode.value if hasattr(team.mode, "value") else str(team.mode)
     if team.max_iterations != 10:
         config["max_iterations"] = team.max_iterations
+    if team.enable_member_response_schema:
+        config["enable_member_response_schema"] = True
+    if team.max_concurrent_delegations is not None:
+        config["max_concurrent_delegations"] = team.max_concurrent_delegations
 
     # --- Execution settings (only if non-default) ---
     if team.respond_directly:
@@ -1316,6 +1320,8 @@ def from_dict(
             # --- Mode ---
             mode=_parse_team_mode(config.get("mode")),
             max_iterations=config.get("max_iterations", 10),
+            enable_member_response_schema=config.get("enable_member_response_schema", False),
+            max_concurrent_delegations=config.get("max_concurrent_delegations"),
             # --- Execution settings ---
             respond_directly=config.get("respond_directly", False),
             delegate_to_all_members=config.get("delegate_to_all_members", False),

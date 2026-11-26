@@ -122,6 +122,11 @@ class Team:
     determine_input_for_members: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
     max_iterations: int = 10
+    # Coordinate mode only. If True, delegate_task_to_member takes an optional JSON Schema the member's
+    # answer must follow. A member that pauses for human input resumes without it.
+    enable_member_response_schema: bool = False
+    # Coordinate mode only. Cap on member runs delegated at the same time in one async run. None means no cap
+    max_concurrent_delegations: Optional[int] = None
 
     # --- User settings ---
     # Default user ID for this team
@@ -480,6 +485,8 @@ class Team:
         determine_input_for_members: bool = True,
         delegate_to_all_members: bool = False,
         max_iterations: int = 10,
+        enable_member_response_schema: bool = False,
+        max_concurrent_delegations: Optional[int] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -599,6 +606,8 @@ class Team:
             determine_input_for_members=determine_input_for_members,
             delegate_to_all_members=delegate_to_all_members,
             max_iterations=max_iterations,
+            enable_member_response_schema=enable_member_response_schema,
+            max_concurrent_delegations=max_concurrent_delegations,
             user_id=user_id,
             session_id=session_id,
             session_state=session_state,
