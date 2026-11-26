@@ -11198,7 +11198,13 @@ class PostgresDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, lock_parent, require_open_room, require_project
+        from agno.db.sql.company import (
+            lock_adopted_goal,
+            lock_child,
+            lock_parent,
+            require_open_room,
+            require_project,
+        )
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -11237,11 +11243,14 @@ class PostgresDb(BaseDb):
                 visible = sess.execute(stmt).fetchone()
                 if visible is None:
                     return None
-                lock_parent(sess, goals, projects, visible._mapping["goal_id"], visible._mapping["project_id"])
+                locked_goal_id = visible._mapping["goal_id"]
+                lock_parent(sess, goals, projects, locked_goal_id, visible._mapping["project_id"])
             row = sess.execute(stmt).fetchone()
             if row is None:
                 return None
             existing = dict(row._mapping)
+            if auto_accept is None:
+                lock_adopted_goal(sess, goals, locked_goal_id, existing["goal_id"])
             if expected_status is not None and existing["status"] != expected_status:
                 return None
             if expected_job_id is not None and existing["job_id"] != expected_job_id:

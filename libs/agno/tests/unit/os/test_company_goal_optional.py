@@ -541,6 +541,42 @@ def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
         manager.transition_project(project_id=target["id"], target="done", reason="Finished")
 
 
+def test_a_write_that_waited_behind_a_goal_taking_move_follows_the_task_to_its_goal(system, monkeypatch):
+    import agno.db.sql.company as company
+
+    manager = system.manager
+    goal = manager.create(name="Developer docs")
+    under_goal = manager.create_project(goal_id=goal["id"], name="3.3 migration guide")
+    task = manager.create_task(title="Fix the typo on the pricing page")
+    tasks = system.db._get_table(table_type="tasks")
+    original_parent, original_goal = company.lock_parent, company.lock_goal
+    locked = []
+
+    def move_wins_first(sess, goals, projects, goal_id, project_id=None):
+        # The move into the Goal's Project finishes while this write waits for its lock.
+        original_parent(sess, goals, projects, goal_id, project_id)
+        if goal_id is None and project_id == DEFAULT_PROJECT_ID and not locked:
+            moved = tasks.update().where(tasks.c.id == task["id"])
+            sess.execute(moved.values(goal_id=goal["id"], project_id=under_goal["id"]))
+
+    def record(sess, goals, goal_id):
+        locked.append(goal_id)
+        return original_goal(sess, goals, goal_id)
+
+    monkeypatch.setattr(company, "lock_parent", move_wins_first)
+    monkeypatch.setattr(company, "lock_goal", record)
+
+    # The edit is not refused as a Goal mismatch, and it takes the lock of the Goal the Task now has.
+    edited = system.db.update_task(task["id"], title="Fix the pricing page typo")
+
+    assert locked == [goal["id"]]
+    assert (edited["title"], edited["goal_id"], edited["project_id"]) == (
+        "Fix the pricing page typo",
+        goal["id"],
+        under_goal["id"],
+    )
+
+
 # ------------------------------------------------------------- the Default Project never completes
 
 
