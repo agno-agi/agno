@@ -212,6 +212,11 @@ class FileSystemSummary(BaseModel):
     user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
     max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+    description: Optional[str] = Field(
+        None,
+        description="What the store is for, as written for the model. When several stores share an entry, "
+        "the declared one's, else the first agent's by id",
+    )
 
 
 class FileSystemAgent(BaseModel):
@@ -285,6 +290,7 @@ def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[st
         user_isolation=user_isolation,
         max_file_bytes=filesystem.max_file_bytes,
         max_namespace_bytes=filesystem.max_namespace_bytes,
+        description=filesystem.description,
     )
 
 
