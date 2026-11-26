@@ -258,9 +258,9 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         assert (await client.post("/company/tasks/0/runs")).status_code == 404
     active = await call(manager, "get_task", "open")
-    # Only Mini Agent's input carries pages.
+    # No executor's input carries a page that was not attached to its Task.
     context = json.loads(await _task_input(manager, {**active, "executor_type": "agent", "executor_id": MINI_AGENT_ID}))
-    assert not any(page["path"] == "summary.md" for page in context["wiki"])
+    assert set(context) == {"brief", "evidence"}
     assert (await call(manager, "read_wiki", goal["id"], "brief.md")).content == brief.content
     assert (await call(manager, "read_wiki", goal["id"], "status.md")).content == status_page.content
     assert (await call(manager, "read_wiki", goal["id"], "notes.md")).content == "Keep human notes"

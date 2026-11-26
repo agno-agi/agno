@@ -14,6 +14,7 @@ from weakref import ReferenceType
 
 from pydantic import BeforeValidator
 
+from agno.company.context import ContextRef, read_permissions
 from agno.company.declarations import Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_goal, _RoutineAuthorization, _run_kind
@@ -44,6 +45,19 @@ _OptionalString = Annotated[Optional[str], BeforeValidator(_empty_to_none)]
 _OptionalInt = Annotated[Optional[int], BeforeValidator(_empty_to_none)]
 _OptionalBool = Annotated[Optional[bool], BeforeValidator(_empty_to_none)]
 _OptionalSourceConfig = Annotated[Optional[Dict[str, List[str]]], BeforeValidator(_empty_to_none)]
+_OptionalContext = Annotated[Optional[List[ContextRef]], BeforeValidator(_empty_to_none)]
+
+# What each kind of context reference brings into a Task run. The tools that take references share it.
+_CONTEXT_KINDS = """\
+A run of a Task starts with its brief and evidence only: no wiki page, Goal page or earlier Task
+                reaches it unless it is attached here. Each reference is {kind, ref}, read when the run starts:
+                - kind "task", ref a Task id: that Task's title, status and result, the names of the files in its
+                  folder, and its handoff note tasks/<id>/handoff.md when it wrote one. Attach the earlier Task
+                  whenever this one builds on its work. It brings file names, not file text: when the work needs
+                  what a file says, attach that file too.
+                - kind "file", ref tasks/<task-id>/<path>: one file a Task wrote.
+                - kind "wiki", ref wiki/<page>.md: one wiki page.
+                - kind "goal", ref goals/<goal-id>/<page>.md: one page of a Goal, such as brief.md or status.md."""
 
 
 def _authority(run_context):
@@ -346,6 +360,7 @@ class CompanyTools(Toolkit):
             "propose_company_task",
             "edit_company_project",
             "edit_company_task",
+            "update_company_task_context",
         ]
         if wiki_tools:
             names += ["list_company_wiki", "read_company_wiki", "update_goal_status"]
@@ -950,6 +965,7 @@ class CompanyTools(Toolkit):
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Backlog proposal with an optional suggested executor; never accept work.
@@ -959,9 +975,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
-                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
-                carry what it needs.
                 Null leaves it unspecified.
+            context: What the run is given beside the brief; null attaches nothing. CONTEXT_KINDS
             project_id: The Project this Task is part of: check list_company_projects for the one it
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
@@ -976,9 +991,12 @@ class CompanyTools(Toolkit):
         goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            _permission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
             self._sync().create_task(
+                context=context,
                 goal_id=goal_id,
                 title=title,
                 brief=brief,
@@ -1026,6 +1044,30 @@ class CompanyTools(Toolkit):
         stage = _automated_edit_stage(row, _agno_run_context)
         edited = manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
         return _public_json(_require_edited(edited, stage))
+
+    @requires_permission()
+    def update_company_task_context(
+        self,
+        task_id: str,
+        add: _OptionalContext = None,
+        remove: Annotated[Optional[List[str]], BeforeValidator(_empty_to_none)] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Attach context to a Task, or remove it, at any status before Done or Cancelled.
+
+        Returns the Task with its context list. A reference that does not exist, or that you may not
+        read, is refused and nothing is attached. A Task run cannot call this.
+
+        Args:
+            add: References to attach; null adds none. CONTEXT_KINDS
+            remove: The id of each entry to remove, as the Task's context list shows it; null removes none.
+        """
+        _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(add):
+            _permission(resource, action, _agno_run_context)
+        self._scoped_user(_agno_run_context)
+        user_id = _identity(_agno_run_context)
+        return _public_json(self._sync().change_task_context(task_id, add=add, remove=remove, user_id=user_id))
 
     @requires_permission()
     def list_company_wiki(
@@ -1293,6 +1335,7 @@ class CompanyTools(Toolkit):
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Backlog proposal with an optional suggested executor; never accept work.
@@ -1302,9 +1345,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
-                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
-                carry what it needs.
                 Null leaves it unspecified.
+            context: What the run is given beside the brief; null attaches nothing. CONTEXT_KINDS
             project_id: The Project this Task is part of: check list_company_projects for the one it
                 serves. Null only when none fits, which puts the Task in the Default Project, the place
                 for a single piece of work. A proposed Project can hold Backlog drafts; human approval
@@ -1319,9 +1361,12 @@ class CompanyTools(Toolkit):
         goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            await _apermission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
             await self._async().create_task(
+                context=context,
                 goal_id=goal_id,
                 title=title,
                 brief=brief,
@@ -1373,6 +1418,21 @@ class CompanyTools(Toolkit):
         stage = _automated_edit_stage(row, _agno_run_context)
         edited = await manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
         return _public_json(_require_edited(edited, stage))
+
+    @requires_permission()
+    async def aupdate_company_task_context(
+        self,
+        task_id: str,
+        add: _OptionalContext = None,
+        remove: Annotated[Optional[List[str]], BeforeValidator(_empty_to_none)] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(add):
+            await _apermission(resource, action, _agno_run_context)
+        self._scoped_user(_agno_run_context)
+        user_id = _identity(_agno_run_context)
+        return _public_json(await self._async().change_task_context(task_id, add=add, remove=remove, user_id=user_id))
 
     @requires_permission()
     async def alist_company_wiki(
@@ -1624,6 +1684,7 @@ class CompanyTools(Toolkit):
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
         project_id: _OptionalString = None,
+        context: _OptionalContext = None,
     ) -> str:
         """Propose actionable work backed by selected Source links.
 
@@ -1638,16 +1699,21 @@ class CompanyTools(Toolkit):
             project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
                 with that Goal. A proposed Project can hold Backlog drafts; human approval is required
                 before accepting or running them.
+            context: What the run is given beside the brief; null attaches nothing. A Routine attaches only
+                pages and Tasks of its Goal, and wiki pages. CONTEXT_KINDS
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
         _permission("sources", "read", _agno_run_context)
         _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            _permission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         run_id = self._source_context(source_id, _agno_run_context)
         return _public_json(
             self._sync().intake(
+                context=context,
                 source_id=source_id,
                 run_id=run_id,
                 proposal={
@@ -1824,6 +1890,7 @@ class CompanyTools(Toolkit):
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
         project_id: _OptionalString = None,
+        context: _OptionalContext = None,
     ) -> str:
         """Propose actionable work backed by selected Source links.
 
@@ -1838,16 +1905,21 @@ class CompanyTools(Toolkit):
             project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
                 with that Goal. A proposed Project can hold Backlog drafts; human approval is required
                 before accepting or running them.
+            context: What the run is given beside the brief; null attaches nothing. A Routine attaches only
+                pages and Tasks of its Goal, and wiki pages. CONTEXT_KINDS
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
         await _apermission("sources", "read", _agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            await _apermission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         run_id = self._source_context(source_id, _agno_run_context)
         return _public_json(
             await self._async().intake(
+                context=context,
                 source_id=source_id,
                 run_id=run_id,
                 proposal={
@@ -1976,3 +2048,10 @@ def _public_json(value, **kwargs):
         return item
 
     return json.dumps(clean(value), **kwargs)
+
+
+for _name in ("propose_company_task", "intake_goal_source", "update_company_task_context"):
+    _tool = getattr(CompanyTools, _name)
+    # A run with docstrings stripped (python -OO) has none to fill in.
+    _tool.__doc__ = (_tool.__doc__ or "").replace("CONTEXT_KINDS", _CONTEXT_KINDS)
+    getattr(CompanyTools, "a" + _name).__doc__ = _tool.__doc__

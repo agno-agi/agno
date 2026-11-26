@@ -19,6 +19,7 @@ from agno.db.schemas.tasks import (
     TASK_MOVE_REFUSAL,
     CancelledProjectError,
     OpenTaskLimitError,
+    task_context_after,
 )
 
 
@@ -239,6 +240,31 @@ def lock_child(
             status,
             reject_cancelled=reject_cancelled,
         )
+
+
+def change_task_context(
+    sess: Any,
+    goals: Any,
+    projects: Any,
+    tasks: Any,
+    task_id: str,
+    add: Optional[List[Dict[str, Any]]],
+    remove: Optional[List[str]],
+    expected_status: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Change a Task's context list under the lock its other writes take, so two changes never lose one."""
+    lock_child(sess, goals, projects, tasks, task_id)
+    # The row lock covers a Task that has neither a Goal nor a Project to lock on.
+    found = select(tasks).where(tasks.c.id == task_id, tasks.c.deleted_at.is_(None)).with_for_update()
+    row = sess.execute(found).first()
+    if row is None or (expected_status is not None and row._mapping["status"] != expected_status):
+        return None
+    context = task_context_after(dict(row._mapping), add, remove)
+    if context == (row._mapping["context"] or []):
+        # Nothing changed, so the Task keeps its updated_at and a decision made on that version still applies.
+        return dict(row._mapping)
+    stmt = tasks.update().where(tasks.c.id == task_id).values(context=context, updated_at=int(time.time()))
+    return dict(sess.execute(stmt.returning(tasks)).one()._mapping)
 
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:

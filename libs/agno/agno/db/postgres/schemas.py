@@ -412,6 +412,8 @@ TASKS_TABLE_SCHEMA = {
     "session_id": {"type": String, "nullable": True, "index": True},
     "job_id": {"type": String, "nullable": True, "index": True},
     "evidence": {"type": JSONB, "nullable": True},
+    # What a run of this Task is given beside its brief: a list of references, each with who added it and when.
+    "context": {"type": JSONB, "nullable": True},
     "result": {"type": JSONB, "nullable": True},
     "origin": {"type": String, "nullable": True},
     "routine_id": {"type": String, "nullable": True},
