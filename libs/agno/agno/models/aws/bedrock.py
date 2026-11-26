@@ -331,6 +331,9 @@ class AwsBedrock(Model):
 
         return {k: v for k, v in request_kwargs.items() if v is not None}
 
+    def _context_text_block(self, text: str) -> Dict[str, str]:
+        return {"text": text}
+
     def _format_messages(
         self, messages: List[Message], compress_tool_results: bool = False
     ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:

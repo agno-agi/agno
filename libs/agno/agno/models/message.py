@@ -488,3 +488,11 @@ class Message(BaseModel):
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""
         return self.content is not None and len(self.content) > 0
+
+
+class _MessageContextNote(Message):
+    """Framework context sent as a prefix to the following user input."""
+
+    role: str = "user"
+    content: str
+    add_to_agent_memory: bool = False

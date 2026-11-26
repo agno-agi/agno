@@ -28,7 +28,7 @@ from typing_extensions import TypeGuard
 
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
-from agno.models.message import Message, MessageReferences
+from agno.models.message import Message, MessageReferences, _MessageContextNote
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.messages import RunMessages
@@ -1016,6 +1016,16 @@ def _attach_media_to_last_user_message(
     log_warning("Input messages contain no user message; media passed to the run was not sent to the model")
 
 
+def _context_input_index(messages: List[Message], input_start: int) -> Optional[int]:
+    # Response chaining can omit everything through the last assistant reply.
+    for index in range(len(messages) - 1, input_start - 1, -1):
+        if messages[index].role == "user":
+            return index
+        if messages[index].role == "assistant":
+            break
+    return None
+
+
 def _get_run_messages(
     team: "Team",
     *,
@@ -1125,12 +1135,8 @@ def _get_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    if team._message_context is not None:
-        text = team._message_context.read(run_context, session)
-        if text is not None:
-            run_messages.messages.append(Message(role="user", content=text, add_to_agent_memory=False))
-
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
+    input_start = len(run_messages.messages)
     if _is_roleful_message_list(input_message):
         # 5.1 A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
@@ -1157,6 +1163,13 @@ def _get_run_messages(
         if user_message is not None:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
+
+    if team._message_context is not None:
+        index = _context_input_index(run_messages.messages, input_start)
+        if index is not None:
+            text = team._message_context.read(run_context, session)
+            if text is not None:
+                run_messages.messages.insert(index, _MessageContextNote(content=text))
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1272,12 +1285,8 @@ async def _aget_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    if team._message_context is not None:
-        text = await team._message_context.aread(run_context, session)
-        if text is not None:
-            run_messages.messages.append(Message(role="user", content=text, add_to_agent_memory=False))
-
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
+    input_start = len(run_messages.messages)
     if _is_roleful_message_list(input_message):
         # 5.1 A list of Message/role dicts is provider input in its own right: keep
         # every message and its role, as the Agent builder does, instead of
@@ -1304,6 +1313,13 @@ async def _aget_run_messages(
         if user_message is not None:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
+
+    if team._message_context is not None:
+        index = _context_input_index(run_messages.messages, input_start)
+        if index is not None:
+            text = await team._message_context.aread(run_context, session)
+            if text is not None:
+                run_messages.messages.insert(index, _MessageContextNote(content=text))
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
