@@ -1509,3 +1509,65 @@ async def test_a_sqlite_run_that_stops_while_making_the_goal_optional(databases,
     for name in ("agno_company_projects", "agno_company_tasks"):
         assert described[name]["indexes"] == expected[name]["indexes"], name
         assert described[name]["unique"] == expected[name]["unique"], name
+
+
+# ------------------------------------------------------------------------------- a Task's context
+
+
+async def _assert_task_context(database: _Database) -> None:
+    """The tasks table holds a context column. A Task from before has none, and a context is stored and changed."""
+    assert "context" in database.describe(rows=False)["agno_company_tasks"]["columns"]
+    db = database.db()
+    manager = _manager(db)
+    existing = await _call(db.get_task, BACKLOG_TASK)
+    assert existing["context"] is None
+    task = await _call(
+        manager.create_task, title="Write the summary", user_id="alice", context=[{"kind": "task", "ref": BACKLOG_TASK}]
+    )
+    (entry,) = task["context"]
+    assert (entry["kind"], entry["ref"], entry["added_by"]) == ("task", BACKLOG_TASK, "alice")
+    changed = await _call(
+        manager.change_task_context, BACKLOG_TASK, add=[{"kind": "task", "ref": task["id"]}], user_id="alice"
+    )
+    assert [item["ref"] for item in changed["context"]] == [task["id"]]
+    removed = await _call(manager.change_task_context, BACKLOG_TASK, remove=[changed["context"][0]["id"]])
+    assert removed["context"] == [] and (await _call(db.get_task, BACKLOG_TASK))["context"] == []
+
+
+async def test_a_3_2_0_database_gets_the_task_context_column(database):
+    _write_3_2_0(database)
+    assert "context" not in database.describe(rows=False)["agno_company_tasks"]["columns"]
+
+    await MigrationManager(database.db()).up()
+
+    await _assert_carried_over(database)
+    await _assert_task_context(database)
+    described = database.describe()
+    await MigrationManager(database.db()).up()
+    assert database.describe() == described
+
+
+async def test_a_database_of_a_development_build_gets_the_task_context_column(database):
+    """A 3.3.0 development build created the tasks table before a Task had a context."""
+    with pytest.MonkeyPatch.context() as patch:
+        for module in (sqlite_schemas, postgres_schemas):
+            schema = {key: value for key, value in module.TASKS_TABLE_SCHEMA.items() if key != "context"}
+            patch.setattr(module, "TASKS_TABLE_SCHEMA", schema)
+        db = database.sync_db()
+        for kind in ("goals", "company", "sources", "projects", "tasks"):
+            db._get_table(table_type=kind, create_table_if_not_found=True)
+        manager = CompanyManager(db)
+        manager.create(name="AgentOS", id=GOAL)
+        created = manager.create_task(goal_id=GOAL, title="Read the release notes")
+    assert "context" not in database.describe(rows=False)["agno_company_tasks"]["columns"]
+    # The table is stamped 3.3.0, so only the missing column says it waits.
+    assert await MigrationManager(database.db())._company_rename_pending() is True
+
+    await MigrationManager(database.db()).up()
+
+    assert await MigrationManager(database.db())._company_rename_pending() is False
+    assert "context" in database.describe(rows=False)["agno_company_tasks"]["columns"]
+    db = database.db()
+    assert (await _call(db.get_task, created["id"]))["context"] is None
+    changed = await _call(_manager(db).change_task_context, created["id"], add=[{"kind": "task", "ref": created["id"]}])
+    assert [item["ref"] for item in changed["context"]] == [created["id"]]

@@ -13,7 +13,12 @@ from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
 from agno.db.schemas.projects import is_default_project, refuse_default_project
-from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
+from agno.db.schemas.tasks import (
+    OPEN_TASK_STATUSES,
+    CancelledProjectError,
+    OpenTaskLimitError,
+    task_context_after,
+)
 
 
 def active_parents(stmt: Any, table: Any, goals: Any, projects: Any = None) -> Any:
@@ -154,6 +159,26 @@ def lock_child(
         require_project(
             sess, projects, row._mapping["project_id"], record["goal_id"], status, reject_cancelled=reject_cancelled
         )
+
+
+def change_task_context(
+    sess: Any,
+    goals: Any,
+    projects: Any,
+    tasks: Any,
+    task_id: str,
+    add: Optional[List[Dict[str, Any]]],
+    remove: Optional[List[str]],
+    expected_status: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Change a Task's context list under the lock its other writes take, so two changes never lose one."""
+    lock_child(sess, goals, projects, tasks, task_id)
+    row = sess.execute(select(tasks).where(tasks.c.id == task_id, tasks.c.deleted_at.is_(None))).first()
+    if row is None or (expected_status is not None and row._mapping["status"] != expected_status):
+        return None
+    context = task_context_after(dict(row._mapping), add, remove)
+    stmt = tasks.update().where(tasks.c.id == task_id).values(context=context, updated_at=int(time.time()))
+    return dict(sess.execute(stmt.returning(tasks)).one()._mapping)
 
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:

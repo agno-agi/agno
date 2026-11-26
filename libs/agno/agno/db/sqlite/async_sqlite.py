@@ -7534,6 +7534,25 @@ class AsyncSqliteDb(AsyncBaseDb):
             ).fetchone()
             return dict(result._mapping) if result else None
 
+    async def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import change_task_context
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                change_task_context, goals, projects, table, task_id, add, remove, expected_status
+            )
+
     async def start_task_run(
         self,
         task_id: str,
@@ -7543,6 +7562,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
         requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
         from agno.db.sql.company import lock_child
@@ -7565,7 +7585,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
+            fields = task_run_fields(
+                existing, attempt, user_id, run_db_id, session_user_id, requested_from, context_sent
+            )
             stmt = (
                 table.update()
                 .where(
