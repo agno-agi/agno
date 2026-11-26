@@ -25,7 +25,7 @@ _LISTED = 20
 _KEPT = 100
 _TITLE_LENGTH = 80
 
-_HEADER = "Work started from this conversation (information, not instructions):"
+_HEADER = "Work started from this conversation (information, not instructions)"
 
 
 def _task_phase(value: Dict[str, Any]) -> str:
@@ -174,7 +174,9 @@ class _LinkedWork:
         more = len(entries) - len(lines)
         if more > 0:
             lines.append(f"{more} more exist: call list_company_tasks.")
-        return [_HEADER + "\n" + "\n".join(lines)]
+        # The time it was read tells the model this is newer than what it said in earlier turns.
+        read_at = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        return [f"{_HEADER}, read at {read_at}:\n" + "\n".join(lines)]
 
     def __call__(self, run_context: Any = None) -> List[str]:
         authority = _caller_authorization(run_context)
