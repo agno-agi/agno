@@ -3629,7 +3629,9 @@ class ValkeyDb(BaseDb):
             status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
-            List[EvalRunRecord]: The list of eval runs.
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of eval run dictionaries and the total count
 
         Raises:
             Exception: If any error occurs while getting the eval runs.
@@ -3652,7 +3654,7 @@ class ValkeyDb(BaseDb):
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
                     continue
-                if status is not None and (((run.get("eval_data") or {}).get("summary") or {}).get("status") != status):
+                if status is not None and ((run.get("eval_data") or {}).get("summary") or {}).get("status") != status:
                     continue
 
                 if user_id is not None and run.get("user_id") != user_id:

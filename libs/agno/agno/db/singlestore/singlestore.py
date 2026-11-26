@@ -3821,7 +3821,7 @@ class SingleStoreDb(BaseDb):
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of EvalRunRecord objects
-                - When deserialize=False: List of dictionaries
+                - When deserialize=False: List of eval run dictionaries and the total count
 
         Raises:
             Exception: If an error occurs during retrieval.
