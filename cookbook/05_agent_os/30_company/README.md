@@ -105,6 +105,11 @@ evidence and no page, and its input no longer has a `wiki` key. If such an
 executor relied on a page, put what it needs in the Task's brief, or accept the
 Task for Mini Agent and let it run the component. See "One file tree".
 
+This holds for an input built after the upgrade. A retry that was already queued
+on 3.2.0 keeps the input it was queued with, and an agent or team with
+`add_history_to_context=True` reads its own earlier attempts of the same Task,
+so an attempt that ran on 3.2.0 can bring its pages back.
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so

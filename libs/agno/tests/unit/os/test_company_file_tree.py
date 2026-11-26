@@ -711,6 +711,33 @@ def test_a_start_that_names_the_executor_sends_that_executors_input(system):
     assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" in sent
 
 
+def test_a_start_for_another_executor_sends_no_page_when_mini_agent_was_suggested(system):
+    """A Backlog Task can hold Mini Agent as a suggestion; a start that names another executor decides the input."""
+    ids = records(system)
+    marked_pages(system, ids)
+    manager = CompanyManager(system.db, system.os.registry)
+    project = system.db.get_task(ids["task"])["project_id"]
+    suggested = manager.create_task(goal_id=ids["goal"], title="Suggested", project_id=project, **MINI_AGENT)
+    assert (suggested["status"], suggested["executor_id"]) == ("backlog", MINI_AGENT_ID)
+    sent = queued_input(system, suggested["id"], executor_type="agent", executor_id="writer")
+    assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
+
+
+def test_a_named_executors_task_input_needs_no_file_store(system):
+    """Building the input for another executor reads and writes no page, and still refuses a missing Goal."""
+    ids = records(system)
+    task = {**system.db.get_task(ids["stray"]), "executor_type": "agent", "executor_id": "writer"}
+    store = company_filesystem(system.db)
+    before = sorted(meta.path for meta in store.list())
+    assert not any(path.startswith(f"goals/{ids['other']}/") for path in before)
+    manager = CompanyManager(system.db, system.os.registry)
+    manager.get_wiki = None  # type: ignore[method-assign]
+    assert "wiki" not in json.loads(asyncio.run(_task_input(manager, task)))
+    with pytest.raises(LookupError, match="Goal not found"):
+        asyncio.run(_task_input(manager, {**task, "goal_id": "missing"}))
+    assert sorted(meta.path for meta in store.list()) == before
+
+
 def test_an_accepted_task_sends_its_stored_executors_input(system):
     ids = records(system)
     marked_pages(system, ids)

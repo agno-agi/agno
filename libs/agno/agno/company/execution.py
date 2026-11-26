@@ -639,9 +639,9 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
     # send its input outside AgentOS, so the pages people save do not reach it; its brief carries what it needs.
     if (task.get("executor_type"), task.get("executor_id")) == ("agent", MINI_AGENT_ID):
         payload["wiki"] = await _always_loaded(manager, task["goal_id"])
-    else:
-        # Reading the pages also refuses a Task whose Goal is gone. Keep that refusal without reading a page.
-        await _call(manager, "get_wiki", task["goal_id"])
+    elif task.get("goal_id") is not None and await _call(manager, "get", task["goal_id"]) is None:
+        # Reading the pages also refuses a Task whose Goal is gone. Keep that refusal without the file store.
+        raise LookupError("Goal not found")
     payload["evidence"] = task.get("evidence") or []
     feedback = _review_feedback(task)
     if feedback:
