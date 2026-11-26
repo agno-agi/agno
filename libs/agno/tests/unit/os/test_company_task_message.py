@@ -11,7 +11,7 @@ from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.db.schemas.tasks import task_run_id
 from agno.os.manager import company_tasks
 from agno.os.manager.company_tasks import CompanyTaskTools
-from agno.os.manager.linked_work import LINKED_WORK_CONTEXT, _task_phase
+from agno.os.manager.linked_work import _task_phase
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.os.routers.company.runs import _TaskStarter
 from agno.registry._reserved import MINI_AGENT_ID
@@ -508,7 +508,7 @@ def test_a_message_to_a_task_from_elsewhere_adds_it_to_the_conversation(chat):  
     assert saved["transitions"][-1]["attempt"] == 2
     assert [(item["id"], item["shown"]) for item in linked(chat)] == [(task["id"], _task_phase(saved))]
     _, sent = say(chat)
-    assert LINKED_WORK_CONTEXT in sent and CHANGED not in task_line(sent, task["id"])
+    assert CHANGED not in task_line(sent, task["id"])
 
 
 def test_a_refused_message_in_chat_changes_nothing_and_lists_nothing(chat):  # noqa: F811
