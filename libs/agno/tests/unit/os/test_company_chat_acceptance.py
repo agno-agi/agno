@@ -573,6 +573,34 @@ def test_a_task_asked_to_be_done_is_not_held(policy):  # noqa: F811
     assert "start_on_request" not in acceptance and task["status"] == "in_progress"
 
 
+@pytest.mark.parametrize("start", [False, True])
+def test_a_task_past_five_added_to_be_started_later_is_still_held_once_it_is_accepted(policy, start):  # noqa: F811
+    tools = CompanyTaskTools(policy.os)
+    for number in range(ACCEPTED_TASKS_PER_RUN):
+        asyncio.run(tools.aadd_company_task(f"Task {number}", "Do it.", False, _agno_run_context=policy_chat()))
+    reply = asyncio.run(tools.aadd_company_task("Sixth", "Do it.", start, _agno_run_context=policy_chat()))
+    assert reply.startswith("Recorded") and "as a proposal, not accepted" in reply, reply
+    sixth = next(row for row in policy.db.get_tasks(limit=100)[0] if row["title"] == "Sixth")
+    assert sixth["status"] == "backlog"
+
+    # The person confirms it. What they asked for decides whether it waits for a start.
+    assert accept(policy.os, policy_chat(), sixth, executor=("agent", MINI_AGENT_ID)).startswith("Accepted")
+    accepted = policy.db.get_task(sixth["id"])
+    acceptance = accepted["transitions"][-1]
+    assert (accepted["status"], acceptance["target"]) == ("ready", "ready")
+    assert acceptance.get("start_on_request") is (None if start else True)
+    policy.tick()
+    after = policy.db.get_task(sixth["id"])
+    if start:
+        # Asked to be done, it is picked up like any accepted Task.
+        assert after["status"] == "in_progress"
+    else:
+        # Asked only to be added, it is held like the five before it.
+        assert after == accepted
+        started = asyncio.run(tools.astart_company_task(sixth["id"], _agno_run_context=policy_chat()))
+        assert started.startswith("Queued"), started
+
+
 def test_a_routine_created_in_chat_is_triggered_by_hand_where_authorization_is_off(tmp_path):
     # A deployment that checks no permissions and knows no caller: the chat's user id is only a label.
     system = PolicySystem(tmp_path, authorization=False)  # noqa: F811

@@ -574,7 +574,8 @@ class CompanyManager:
         """Create a Task. With no project_id it goes into the Default Project.
 
         start_on_request holds a Task created Ready until someone starts it: the automation tick
-        does not pick it up. It is recorded on the acceptance.
+        does not pick it up. It is recorded on the acceptance. A Task created in Backlog with it
+        keeps it for the acceptance that follows.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -627,6 +628,9 @@ class CompanyManager:
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
             if accepting and start_on_request:
                 task["transitions"][-1]["start_on_request"] = True
+        elif start_on_request:
+            # Recorded as a proposal for now. Its acceptance, when it comes, is held the same way.
+            task["metadata"] = {"start_on_request": True}
         return self.db.create_task(task)
 
     def get_task(
@@ -1617,7 +1621,8 @@ class AsyncCompanyManager:
         """Create a Task. With no project_id it goes into the Default Project.
 
         start_on_request holds a Task created Ready until someone starts it: the automation tick
-        does not pick it up. It is recorded on the acceptance.
+        does not pick it up. It is recorded on the acceptance. A Task created in Backlog with it
+        keeps it for the acceptance that follows.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
@@ -1670,6 +1675,9 @@ class AsyncCompanyManager:
             task.update(task_transition_fields(task, status, "Created in " + status, accepted_by, **accepting))
             if accepting and start_on_request:
                 task["transitions"][-1]["start_on_request"] = True
+        elif start_on_request:
+            # Recorded as a proposal for now. Its acceptance, when it comes, is held the same way.
+            task["metadata"] = {"start_on_request": True}
         return await self.db.create_task(task)
 
     async def get_task(

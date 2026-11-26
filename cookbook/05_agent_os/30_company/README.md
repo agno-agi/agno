@@ -608,7 +608,9 @@ creates the Task Ready, with that person as `accepted_by` and on its acceptance
 transition, and the run does not pause. With `start` true, "do X", it also queues the
 run through the same path as `start_company_task`. With `start` false, "add a task to
 do X", the Task stays Ready and is held: its acceptance records `start_on_request`,
-and the automation tick, which starts other Ready Tasks, leaves it alone. Super Agent
+and the automation tick, which starts other Ready Tasks, leaves it alone. A Task that
+was recorded as a proposal instead, for an executor that pushes code or past five in
+one request, is held the same way once the person accepts it. Super Agent
 offers once to start it; on a yes it starts it with `start_company_task`. With no executor named it runs on agent
 `miniagent`. With no Project named it goes in the Default Project.
 
