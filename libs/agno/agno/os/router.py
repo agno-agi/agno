@@ -343,7 +343,7 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
             role_store is not None and audit_sink is not None and hasattr(audit_sink, "read_decisions")
         ),
     )
-    # The policy the public middleware admits anonymous requests by; absent without a public surface.
+    # The policy the public middleware admits outside requests by; absent without a public surface.
     policy = getattr(state, "public_route_policy", None)
     selected = policy.selected if policy is not None else {}
     report.public = PublicStatus(

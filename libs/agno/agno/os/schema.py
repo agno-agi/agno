@@ -554,12 +554,18 @@ class AuditStatus(FeatureStatus):
 
 
 class PublicStatus(FeatureStatus):
-    """The public surface: components that anonymous callers can run, within public limits."""
+    """The public surface: components served to outside callers under public input and rate limits."""
 
     agents: Optional[List[str]] = Field(None, description="IDs of the agents anonymous callers can run")
     teams: Optional[List[str]] = Field(None, description="IDs of the teams anonymous callers can run")
-    workflows: Optional[List[str]] = Field(None, description="IDs of the workflows anonymous callers can run")
-    mcp: Optional[bool] = Field(None, description="Anonymous callers can use the MCP server")
+    workflows: Optional[List[str]] = Field(
+        None, description="IDs of the public workflows. Callers still need a bearer token, unlike agents and teams"
+    )
+    mcp: Optional[bool] = Field(
+        None,
+        description="The MCP server is on the public surface. Anonymous only without mcp_auth; "
+        "/info carries the OAuth details when sign-in is required",
+    )
 
 
 class FeaturesReport(BaseModel):
@@ -578,7 +584,7 @@ class FeaturesReport(BaseModel):
         None, description="The MCP server is served; /info carries its path and OAuth details"
     )
     public: Optional[PublicStatus] = Field(
-        None, description="Components anonymous callers can run. Administrators only"
+        None, description="Components served under public limits. Administrators only"
     )
 
 
