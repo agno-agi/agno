@@ -1,6 +1,6 @@
 # Super Agent is told about the work a conversation started — November 26, 2026
 
-Branch: `claude/super-agent-linked-work-674b92`, on the Task context branch. Starting
+Branch: `claude/super-agent-linked-work-674b92`. Starting
 a Task no longer ends Super Agent's turn, and each message reaches it with the state
 of the Tasks the conversation started. The live run used a new, empty PostgreSQL
 database and `gpt-5.6-luna`, with this branch's `agno` on the path.
