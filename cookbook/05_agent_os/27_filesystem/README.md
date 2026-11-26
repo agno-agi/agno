@@ -210,6 +210,24 @@ stored in the database. Each entry includes its `id`, its `namespace`, whether i
 linked agents with access in `agents`. `namespace` filters it to one namespace and
 `agent_id` to one agent. An agent that cannot be loaded is left out of the list.
 
+The list is sorted by `id` and paged like `/filesystem/entries`: `page` (from 1) and
+`limit` (50 by default, at most 100), with a `meta` block beside `namespaces`.
+`query` keeps the entries whose `id` or `namespace` contains it, ignoring case, so a
+search covers every page and not only the one shown:
+
+```bash
+curl "http://localhost:7777/filesystem/namespaces?query=notes&page=1&limit=20"
+```
+
+```json
+{
+  "namespaces": [{"id": "notes-agent", "namespace": "notes-agent", "file_count": 1, "...": "..."}],
+  "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 1, "search_time_ms": 0.0}
+}
+```
+
+Without `limit`, a caller gets the first 50 entries; read `meta.total_pages` for the rest.
+
 `GET /config` carries the same entries in `filesystem.namespaces` for the AgentOS
 `filesystem` setting, the Company filesystem and concrete local agents. Factory and
 stored agents are not included there. When identity is unavailable, placeholders
@@ -229,6 +247,8 @@ as on the Company routes. Without `wiki:read` it is not listed.
 Every entry of `GET /filesystem/namespaces` carries `file_count`, `folder_count` and
 `total_bytes`. They cover every file the caller can read, at any depth: `notes/2026/b.md`
 is one file in two folders. They are left out when the filesystem cannot be read.
+Counting reads every path of a filesystem, so only the entries of the returned page are
+counted.
 
 Stores that share every name are numbered, as `notes:main:agno_fs:1` and `:2`, and a number
 depends on every agent. While an agent cannot be loaded, such an entry carries
