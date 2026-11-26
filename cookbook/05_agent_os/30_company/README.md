@@ -693,9 +693,10 @@ several Tasks and answer the rest of the message.
 Super Agent is told about the work a conversation started. The Tasks it added,
 proposed, accepted or started from a chat are kept in that chat's session state under
 `linked_work`. When the Team builds a fresh run's messages, it reads those Tasks
-under the person's own `tasks:read` permission. The model sees the update at the
-start of the current user message, including when the caller supplies earlier
-conversation turns or sends images. A typical update looks like this.
+under the person's own `tasks:read` permission and sends the update as a user message
+of its own, right before the person's message. When the caller supplies earlier
+conversation turns, it goes before the last user message. A typical update looks like
+this.
 
 ```
 Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.
@@ -717,6 +718,11 @@ not in the instructions because a model that continues from its previous respons
 OpenAI's Responses API does by default, is sent a conversation's instructions on the
 first run only. With that kind of model the provider keeps the blocks sent on earlier
 turns as part of the conversation it holds.
+
+Linked work needs a model provider that accepts two user messages in a row, or whose
+formatter merges them. OpenAI does; the Claude and Gemini formatters merge them. A
+provider that requires strictly alternating roles and does not merge, such as AWS
+Bedrock's Converse API, refuses a turn that carries the block.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created
