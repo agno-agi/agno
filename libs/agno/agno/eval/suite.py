@@ -455,6 +455,14 @@ async def _run_case_body(
                     # it once and stop forwarding for the rest of this case.
                     forward_events = False
                     _append_error(result, f"hook: on_run_event {type(exc).__name__}: {exc}")
+    except asyncio.CancelledError:
+        # A tool can raise CancelledError while the task is not cancelled: record it on the case. A real
+        # cancel (the case timeout, a shutdown) goes on; below Python 3.11 it cannot be told apart.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        if cancelling is None or cancelling() > 0:
+            raise
+        _append_error(result, f"{component_label}: CancelledError")
+        return
     except Exception as exc:
         # Only pre-stream failures (e.g. input validation) raise out of arun.
         _append_error(result, f"{component_label}: {type(exc).__name__}: {exc}")
@@ -621,7 +629,7 @@ async def arun_cases(
     """Run the selected cases sequentially and return a SuiteResult.
 
     Args:
-        cases: The cases to select from.
+        cases: The cases to select from, or an EvalSuite.
         tag: Keep only cases with this tag.
         name: Keep only the case with this name.
         default_timeout: Per-case timeout in seconds, when Case.timeout_seconds is None.

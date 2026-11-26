@@ -40,4 +40,6 @@
 
 **Result:** The list shows the suite with both cases. The tag run reported `summary: {"total": 1, "passed": 1}` with `tools_called: ["factorial"]`; the full run `{"total": 2, "passed": 2}`. Each run is one eval run of type `suite` stamped `agent_id: "math-tutor"`, with no per-case rows beside it.
 
+Re-run with `?background=true` on `POST /eval-suites/math-tutor-quality/runs`: it answered 202 with `summary: {"total": 2, "passed": 0, "failed": 0, "status": "RUNNING"}`, and polling `GET /eval-runs/{id}` returned `{"total": 2, "passed": 2, "status": "PASS"}` with both cases once they finished.
+
 ---

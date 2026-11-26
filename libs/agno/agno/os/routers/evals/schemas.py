@@ -209,7 +209,6 @@ class EvalSchema(BaseModel):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
     ) -> "EvalSchema":
-        """A background suite run before its cases finish: the summary says RUNNING and no case has a result."""
         return cls(
             id=run_id,
             name=eval_suite.name or eval_suite.id,

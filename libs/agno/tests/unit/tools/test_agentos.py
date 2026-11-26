@@ -665,6 +665,32 @@ class TestGetEvalHistory:
         assert run["status"] == "MEASURED"
         assert run["avg_run_time"] == pytest.approx(2.0)
 
+    def test_suite_reports_pass_rate_only_once_finished(self, db, toolkit):
+        db.create_eval_run(
+            EvalRunRecord(
+                run_id="eval-suite-done",
+                eval_type=EvalType.SUITE,
+                eval_data={"summary": {"total": 4, "passed": 3, "failed": 1, "status": "FAIL"}, "cases": []},
+                agent_id="agent-1",
+            )
+        )
+        db.create_eval_run(
+            EvalRunRecord(
+                run_id="eval-suite-running",
+                eval_type=EvalType.SUITE,
+                eval_data={"summary": {"total": 4, "passed": 0, "failed": 0, "status": "RUNNING"}, "cases": []},
+                agent_id="agent-1",
+            )
+        )
+
+        out = _loads(toolkit.get_eval_history())
+
+        runs = {run["id"]: run for run in out["eval_runs"]}
+        assert runs["eval-suite-done"]["status"] == "FAIL"
+        assert runs["eval-suite-done"]["pass_rate"] == 75
+        assert runs["eval-suite-running"]["status"] == "RUNNING"
+        assert "pass_rate" not in runs["eval-suite-running"]
+
     def test_performance_eval_tolerates_flat_rows(self, db, toolkit):
         db.create_eval_run(
             EvalRunRecord(

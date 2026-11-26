@@ -413,6 +413,21 @@ def test_cancelled_run_is_not_judged(monkeypatch):
     assert reliability_instances == []
 
 
+def test_cancelled_error_raised_inside_a_case_fails_only_that_case(monkeypatch):
+    # A tool can raise CancelledError while the task itself is not cancelled; the suite goes on.
+    _install_fake_evals(monkeypatch)
+    cases = [
+        _make_case(name="raises", agent=StubAgent(error=asyncio.CancelledError())),
+        _make_case(name="answers", agent=StubAgent(output=_output(content="ok"))),
+    ]
+
+    results = run_cases(cases).results
+
+    assert results[0].error == "agent: CancelledError"
+    assert results[0].passed is False
+    assert results[1].error is None
+
+
 def test_team_labels_errors_as_team(monkeypatch):
     # A team reports failures as 'team:', not 'agent:' - the label follows team=.
     _install_fake_evals(monkeypatch)

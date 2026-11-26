@@ -10,6 +10,8 @@ python cookbook/09_evals/suite/suite_agent_os.py
 Try:
     curl http://localhost:7777/eval-suites
     curl -X POST http://localhost:7777/eval-suites/math-tutor-quality/runs -H "Content-Type: application/json" -d '{}'
+    curl -X POST "http://localhost:7777/eval-suites/math-tutor-quality/runs?background=true" -H "Content-Type: application/json" -d '{}'
+    curl http://localhost:7777/eval-runs/<id from the 202 response>
     curl -X POST http://localhost:7777/eval-suites -H "Content-Type: application/json" -d '{"name": "posted", "cases": [{"name": "adds", "agent_id": "math-tutor", "input": "What is 2 + 2?", "expected_tool_calls": ["add"]}]}'
     curl "http://localhost:7777/eval-runs?agent_id=math-tutor&eval_types=suite"
 """
