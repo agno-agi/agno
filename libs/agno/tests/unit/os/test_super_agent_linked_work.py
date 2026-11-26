@@ -663,6 +663,77 @@ def test_without_tasks_read_the_message_carries_no_block(chat):  # noqa: F811
     assert sent != ""
 
 
+@modes
+def test_a_paused_executor_is_announced_until_its_ticket_resumes(chat, mode):  # noqa: F811
+    from tests.unit.os.test_mini_agent_tasks import publish_notes
+
+    manager = chat.os.manager.deep_copy()
+    chat.writer.tools = [publish_notes]
+    chat.writer.model = ScriptedModel([("publish_notes", {})])
+    say(chat, [("add_company_task", {**ADD, "start": True})])
+    work(chat)
+    task = only_task(chat)
+    assert task["status"] == "in_progress"
+    ticket = asyncio.run(chat.queue.store.get_job(task["job_id"]))
+    assert ticket["status"] == "paused"
+
+    def next_line():
+        model = Scripted()
+        manager.model = model
+        with authorization_scope(person):
+            if mode == "sync":
+                manager.run("What's the status?", user_id="alice", session_id="chat")
+            else:
+                asyncio.run(manager.arun("What's the status?", user_id="alice", session_id="chat"))
+        (note,) = blocks(model.requests[0])
+        return note.splitlines()[-1]
+
+    assert next_line().endswith("waiting for a person to approve or answer. " + CHANGED)
+    assert next_line().endswith("waiting for a person to approve or answer.")
+    assert asyncio.run(chat.queue.store.continue_job(task["job_id"], {}))["outcome"] == "queued"
+    resumed = next_line()
+    assert "started" in resumed and "waiting" not in resumed and resumed.endswith(CHANGED)
+    assert CHANGED not in next_line()
+
+
+@modes
+def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(mode):
+    from agno.os.job_queue import _SyncStoreAdapter
+
+    task = row(status="in_progress", job_id="run")
+    other = row("other", status="ready")
+    db = Tasks(task, other)
+    calls = []
+
+    class Store:
+        def get_job(self, job_id, strict=False):
+            assert strict
+            calls.append(job_id)
+            if len(calls) == 1:
+                raise RuntimeError("unavailable")
+            return {"status": "paused"}
+
+    provider = LinkedWork(
+        db, user_isolation=True, queue_worker=lambda: SimpleNamespace(store=_SyncStoreAdapter(Store()))
+    )
+    original = context("start")
+    link_task(original, task)
+    link_task(original, other)
+
+    def read(run_id, user="alice", scopes=None):
+        current = context(run_id, user=user, scopes=scopes, linked=original.session_state[LINKED_WORK_KEY])
+        return provider.read(current) if mode == "sync" else asyncio.run(provider.aread(current))
+
+    assert read("denied", scopes=[]) is None
+    assert read("different-user", user="bob") is None
+    assert not calls
+    first = read("first")
+    assert "id other" in first and "id task-1" not in first
+    second = read("second")
+    assert "waiting for a person to approve or answer. " + CHANGED in second
+    assert calls == ["run", "run"]
+
+
 class Refuses(Scripted):
     """A model that is away: every request fails."""
 

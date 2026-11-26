@@ -417,7 +417,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.append(company_tools)
         tools.append(CompanyTaskTools(agent_os))
         instructions.extend([COMPANY_INSTRUCTIONS, LINKED_WORK_INSTRUCTIONS])
-        message_context = LinkedWork(company_db, _user_isolation(agent_os))
+
+        # The queue worker is installed when the Company app starts.
+        def company_queue():
+            app = getattr(agent_os, "_company_app", None)
+            return getattr(app.state, "queue_worker", None) if app is not None else None
+
+        message_context = LinkedWork(company_db, _user_isolation(agent_os), company_queue)
     # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
     notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:

@@ -693,8 +693,9 @@ several Tasks and answer the rest of the message.
 Super Agent is told about the work a conversation started. The Tasks it added,
 proposed, accepted or started from a chat are kept in that chat's session state under
 `linked_work`. When the Team builds a fresh run's messages, it reads those Tasks
-under the person's own `tasks:read` permission. For a text message, the model sees
-the current task state followed by the person's words. A typical update looks like this.
+under the person's own `tasks:read` permission. The model sees the update at the
+start of the current user message, including when the caller supplies earlier
+conversation turns or sends images. A typical update looks like this.
 
 ```
 Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.
@@ -706,6 +707,9 @@ A state that differs from the one shown last is marked as changed in one run, so
 the person's next message Super Agent says what finished while they talked, without
 being asked. The list holds this conversation's work only, shows the 20 newest, and
 drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
+If a worker pauses for approval or input, the next turn says it is waiting for a
+person. If a confirmation completes a Task and the chat reply fails, the next
+fresh turn still announces the completion.
 
 The block is sent and not stored. The stored run holds the person's message as they
 wrote it, so the chat history, the history tools and later turns carry no block. It is

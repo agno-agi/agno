@@ -12,7 +12,7 @@ import asyncio
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
@@ -31,11 +31,14 @@ _TITLE_LENGTH = 80
 _HEADER = "Work started from this conversation"
 
 
-def _task_phase(value: Dict[str, Any]) -> str:
-    """A Task's state as one comparable value: its stage, its latest run, and how that run ended."""
+def _result_status(value: Dict[str, Any]) -> Optional[str]:
     result = value.get("result") or {}
-    ended = result.get("status") if result.get("run_id") == value.get("job_id") else None
-    return f"{value.get('status')}:{value.get('job_id') or ''}:{ended or ''}"
+    return result.get("status") if result.get("run_id") == value.get("job_id") else None
+
+
+def _task_phase(value: Dict[str, Any], paused: bool = False) -> str:
+    run_status = "PAUSED" if paused else _result_status(value)
+    return f"{value.get('status')}:{value.get('job_id') or ''}:{run_status or ''}"
 
 
 def _task_words(value: Dict[str, Any]) -> str:
@@ -43,8 +46,7 @@ def _task_words(value: Dict[str, Any]) -> str:
     status = value.get("status")
     words = TASK_STATUS_MEANING.get(str(status), str(status))
     if status == "in_progress":
-        result = value.get("result") or {}
-        ended = result.get("status") if result.get("run_id") == value.get("job_id") else None
+        ended = _result_status(value)
         if ended == "ERROR":
             return "started, its run ended in error"
         if ended == "CANCELLED":
@@ -110,10 +112,8 @@ def _since(value: Dict[str, Any]) -> str:
     steps. A proposal is dated by its creation. A run's failure or cancellation is not dated.
     """
     status = value.get("status")
-    result = value.get("result") or {}
-    if status == "in_progress" and result.get("run_id") == value.get("job_id"):
-        if result.get("status") in ("ERROR", "CANCELLED"):
-            return ""
+    if status == "in_progress" and _result_status(value) in ("ERROR", "CANCELLED"):
+        return ""
     steps = [
         step.get("created_at")
         for step in value.get("transitions") or []
@@ -134,20 +134,71 @@ def _one_line(text: Any) -> str:
     return cleaned if len(cleaned) <= _TITLE_LENGTH else cleaned[: _TITLE_LENGTH - 3] + "..."
 
 
-def _line(value: Dict[str, Any], changed: bool) -> str:
+def _line(value: Dict[str, Any], changed: bool, paused: bool) -> str:
     title = _one_line(value.get("title"))
     # A proposal can name any text as its executor.
     executor = f", {_one_line(value['executor_id'])}" if value.get("executor_id") else ""
-    line = f'- Task "{title}" (id {value["id"]}{executor}): {_task_words(value)}{_since(value)}.'
+    # The Task's start transition predates its pause.
+    state = "waiting for a person to approve or answer" if paused else _task_words(value) + _since(value)
+    line = f'- Task "{title}" (id {value["id"]}{executor}): {state}.'
     return line + (" Changed since your last turn." if changed else "")
+
+
+def _active_jobs(values: List[Any]) -> List[str]:
+    return [
+        task["job_id"]
+        for task in values
+        if task and task.get("status") == "in_progress" and task.get("job_id") and not _result_status(task)
+    ]
+
+
+async def _aread_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    async def paused(job_id: str) -> Optional[bool]:
+        try:
+            ticket = await queue.store.get_job(job_id, strict=True)
+            return bool(ticket and ticket["status"] == "paused")
+        except Exception as exc:
+            log_warning(f"Linked work could not read ticket {job_id}: {exc}")
+            return None
+
+    return dict(zip(job_ids, await asyncio.gather(*(paused(job_id) for job_id in job_ids))))
+
+
+def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    if not job_ids:
+        return {}
+    from agno.os.job_queue import _SyncStoreAdapter
+
+    if isinstance(queue.store, _SyncStoreAdapter):
+        pauses: Dict[str, Optional[bool]] = {}
+        for job_id in job_ids:
+            try:
+                ticket = queue.store._store.get_job(job_id, strict=True)
+                pauses[job_id] = bool(ticket and ticket["status"] == "paused")
+            except Exception as exc:
+                log_warning(f"Linked work could not read ticket {job_id}: {exc}")
+                pauses[job_id] = None
+        return pauses
+    try:
+        caller_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        caller_loop = None
+    worker_loop = queue._loop
+    if worker_loop is not None and worker_loop.is_running() and worker_loop is not caller_loop:
+        return asyncio.run_coroutine_threadsafe(_aread_pauses(queue, job_ids), worker_loop).result()
+    if caller_loop is None:
+        return asyncio.run(_aread_pauses(queue, job_ids))
+    # A synchronous call on the async store's own event loop cannot wait for that store.
+    return dict.fromkeys(job_ids)
 
 
 class LinkedWork:
     """Supply the current state of the conversation's Tasks under the caller's read permissions."""
 
-    def __init__(self, db: Any, user_isolation: bool = False):
+    def __init__(self, db: Any, user_isolation: bool = False, queue_worker: Optional[Callable[[], Any]] = None):
         self.db = db
         self.user_isolation = user_isolation
+        self.queue_worker = queue_worker
 
     def _head(self, run_context: Any) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
         """The newest entries to read, the owner the reads are limited to, and whether to read at all."""
@@ -182,7 +233,9 @@ class LinkedWork:
                 return completed and (tool_receipt or not getattr(run, "requirements", None))
         return False
 
-    def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any) -> Optional[str]:
+    def _block(
+        self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any, pauses: Dict[str, Optional[bool]]
+    ) -> Optional[str]:
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
 
         A change is marked with the run it was first shown in. A retry builds the block again under
@@ -198,7 +251,18 @@ class LinkedWork:
                 # Deleted, or not readable by this caller.
                 entries.remove(entry)
                 continue
-            phase = _task_phase(value)
+            paused = pauses.get(value.get("job_id"), False)
+            if (
+                value.get("job_id") not in pauses
+                and not _result_status(value)
+                and entry.get("shown") == _task_phase(value, paused=True)
+            ):
+                # The worker is unavailable. Only an observed ticket or a new Task phase can end its pause.
+                continue
+            if paused is None:
+                # An unavailable ticket cannot establish a change. Keep the entry for the next turn.
+                continue
+            phase = _task_phase(value, paused)
             receipt_in = entry.get("receipt_in")
             shown_in = receipt_in or entry.get("changed_in")
             unheard = (
@@ -218,7 +282,7 @@ class LinkedWork:
                 if receipt_in is None or receipt_in != run_id:
                     entries.remove(entry)
                 continue
-            lines.append(_line(value, changed))
+            lines.append(_line(value, changed, paused))
         run_context.session_state[LINKED_WORK_KEY] = entries
         if not lines:
             return None
@@ -243,8 +307,10 @@ class LinkedWork:
             head, owner, found = self._head(run_context)
             if not found:
                 return None
-            read = [(entry, self.db.get_task(entry["id"], user_id=owner)) for entry in head]
-            return self._block(run_context, read, session)
+            values = [self.db.get_task(entry["id"], user_id=owner) for entry in head]
+            queue = self.queue_worker() if self.queue_worker else None
+            pauses = _read_pauses(queue, _active_jobs(values)) if queue is not None else {}
+            return self._block(run_context, list(zip(head, values)), session, pauses)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:
@@ -265,7 +331,9 @@ class LinkedWork:
                 values = await asyncio.to_thread(
                     lambda: [self.db.get_task(entry["id"], user_id=owner) for entry in head]
                 )
-            return self._block(run_context, list(zip(head, values)), session)
+            queue = self.queue_worker() if self.queue_worker else None
+            pauses = await _aread_pauses(queue, _active_jobs(values)) if queue is not None else {}
+            return self._block(run_context, list(zip(head, values)), session, pauses)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:
