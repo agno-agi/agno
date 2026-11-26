@@ -18,6 +18,13 @@ class EvalFilterType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class EvalRunStatus(str, Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    RUNNING = "RUNNING"
+    ERROR = "ERROR"
+
+
 class EvalRunRecord(BaseModel):
     """Evaluation run results stored in the database"""
 

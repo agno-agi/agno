@@ -3557,6 +3557,7 @@ class AsyncMongoDb(AsyncBaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -3573,6 +3574,7 @@ class AsyncMongoDb(AsyncBaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -3596,6 +3598,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["workflow_id"] = workflow_id
             if model_id is not None:
                 query["model_id"] = model_id
+            if status is not None:
+                query["eval_data.summary.status"] = status
             if user_id is not None:
                 query["user_id"] = user_id
             if eval_type is not None and len(eval_type) > 0:

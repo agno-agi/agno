@@ -7,7 +7,7 @@ from httpx import ConnectError, ConnectTimeout, TimeoutException
 from pydantic import BaseModel
 
 from agno.db.base import SessionType
-from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunStatus, EvalType
 from agno.exceptions import RemoteServerUnavailableError
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -2291,6 +2291,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        status: Optional[EvalRunStatus] = None,
     ) -> PaginatedResponse[EvalSchema]:
         """List evaluation runs with filtering and pagination.
 
@@ -2308,6 +2309,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            status: Filter by suite status (PASS, FAIL, RUNNING or ERROR)
 
         Returns:
             PaginatedResponse[EvalSchema]: Paginated list of evaluation runs
@@ -2326,6 +2328,7 @@ class AgentOSClient:
             "model_id": model_id,
             "type": filter_type.value if filter_type else None,
             "eval_types": ",".join(et.value for et in eval_types) if eval_types else None,
+            "status": status.value if status else None,
             "db_id": db_id,
             "table": table,
         }

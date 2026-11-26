@@ -3601,7 +3601,33 @@ class DynamoDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of eval run dictionaries and the total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             table_name = self._get_table("evals")
             if table_name is None:
@@ -3670,6 +3696,14 @@ class DynamoDb(BaseDb):
                 eval_item = deserialize_from_dynamodb_item(item)
                 if eval_item:
                     eval_data.append(eval_item)
+
+            # Filter by status in-memory (stored inside eval_data JSON)
+            if status is not None:
+                eval_data = [
+                    eval_item
+                    for eval_item in eval_data
+                    if ((eval_item.get("eval_data") or {}).get("summary") or {}).get("status") == status
+                ]
 
             # Apply sorting
             eval_data = apply_sorting(eval_data, sort_by, sort_order)

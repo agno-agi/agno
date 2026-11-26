@@ -2427,8 +2427,33 @@ class JsonDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-        """Get all eval runs from the JSON file with filtering and pagination."""
+        """Get all eval runs from the JSON file with filtering and pagination.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of eval run dictionaries and the total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             eval_runs = self._read_json_file(self.eval_table_name)
 
@@ -2442,6 +2467,10 @@ class JsonDb(BaseDb):
                 if workflow_id is not None and run_data.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run_data.get("model_id") != model_id:
+                    continue
+                if status is not None and (
+                    ((run_data.get("eval_data") or {}).get("summary") or {}).get("status") != status
+                ):
                     continue
                 if user_id is not None and run_data.get("user_id") != user_id:
                     continue

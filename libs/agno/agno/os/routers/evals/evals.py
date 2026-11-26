@@ -11,7 +11,7 @@ from starlette._utils import get_route_path
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalRunStatus, EvalType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.eval.suite import Case, EvalSuite, JudgeMode, arun_cases
 from agno.eval.utils import async_log_eval
@@ -145,7 +145,7 @@ def attach_routes(
         summary="List Evaluation Runs",
         description=(
             "Retrieve paginated evaluation runs with filtering and sorting options. "
-            "Filter by agent, team, workflow, model, or evaluation type."
+            "Filter by agent, team, workflow, model, evaluation type, or suite status."
         ),
         responses={
             200: {
@@ -188,6 +188,9 @@ def attach_routes(
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
+        status: Optional[EvalRunStatus] = Query(
+            default=None, description="Filter by suite status (PASS, FAIL, RUNNING or ERROR)"
+        ),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
         page: Optional[int] = Query(default=1, description="Page number", ge=1),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -198,6 +201,9 @@ def attach_routes(
         db = await get_db(dbs, db_id, table)
 
         scope = apply_scope_to_kwargs(request)
+        # Passed only when set, as user_id is, so a db written before this filter keeps working.
+        if status is not None:
+            scope["status"] = status.value
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -214,6 +220,7 @@ def attach_routes(
                 eval_types=eval_types,
                 filter_type=filter_type.value if filter_type else None,
                 headers=headers,
+                status=status,
             )
 
         if isinstance(db, AsyncBaseDb):

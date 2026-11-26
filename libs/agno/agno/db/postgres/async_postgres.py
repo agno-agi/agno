@@ -4192,6 +4192,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -4208,11 +4209,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
             user_id (Optional[str]): If set, only return runs owned by this user.
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of EvalRunRecord objects
-                - When deserialize=False: List of dictionaries
+                - When deserialize=False: List of eval run dictionaries and the total count
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -4237,6 +4239,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
+                if status is not None:
+                    stmt = stmt.where(table.c.eval_data["summary"]["status"].as_string() == status)
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:

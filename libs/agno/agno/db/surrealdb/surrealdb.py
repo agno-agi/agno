@@ -2877,6 +2877,7 @@ class SurrealDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2893,6 +2894,7 @@ class SurrealDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            status (Optional[str]): The suite status to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2915,6 +2917,8 @@ class SurrealDb(BaseDb):
             where.and_("workflow", RecordID(self._get_table("workflows"), workflow_id))
         if model_id is not None:
             where.and_("model_id", model_id)
+        if status is not None:
+            where.and_("eval_data.summary.status", status)
         if eval_type is not None and len(eval_type) > 0:
             where.and_("eval_type", [et.value for et in eval_type], "IN")
         if filter_type is not None:
