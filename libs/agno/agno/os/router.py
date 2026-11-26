@@ -41,11 +41,11 @@ from agno.os.schema import (
     AuthorizationReport,
     BadRequestResponse,
     ConfigResponse,
-    FeaturesReport,
     FeatureStatus,
     InfoResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
+    KnowledgeReport,
     McpInfo,
     MediaStorageStatus,
     Model,
@@ -53,6 +53,7 @@ from agno.os.schema import (
     PublicStatus,
     QueueCapabilities,
     TeamSummaryResponse,
+    TracesReport,
     UnauthenticatedResponse,
     UserDirectoryStatus,
     ValidationErrorResponse,
@@ -230,13 +231,13 @@ def get_base_router(
                 user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
                 agents=agents_in_scope,
             ),
-            knowledge=os._get_knowledge_config(),
+            knowledge=_knowledge_report(os),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             agents=agent_summaries,
             teams=team_summaries,
             workflows=workflow_summaries,
-            traces=os._get_traces_config(),
+            traces=TracesReport(**os._get_traces_config().model_dump(), enabled=_agno_tracing_is_active()),
             queue=QueueCapabilities(
                 durable=bool(os.queue is not None and os.queue.durable),
                 queue_per_session=bool(
@@ -248,9 +249,10 @@ def get_base_router(
                         os.queue.queue_per_session,
                     )
                 ),
+                cross_container=_cross_container(),
             ),
             authorization=await _authorization_report(os, request, is_admin),
-            features=_features_report(os, request, is_admin),
+            **_feature_blocks(os, request, is_admin),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -360,12 +362,26 @@ def _telemetry_is_on(os: "AgentOS") -> bool:
     return any(flags)
 
 
-def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> FeaturesReport:
-    """The /config features block: what runs on this AgentOS. Directory and audit status are admin-only."""
-    report = FeaturesReport(
-        # tracing=True alone is not enough: the spans reach this AgentOS only while its own
-        # tracer provider is the active one.
-        tracing=FeatureStatus(enabled=_agno_tracing_is_active()),
+def _knowledge_report(os: "AgentOS") -> KnowledgeReport:
+    knowledge = os._get_knowledge_config()
+    return KnowledgeReport(**knowledge.model_dump(), enabled=bool(knowledge.knowledge_instances))
+
+
+def _cross_container() -> bool:
+    """Both transports are process-wide and a custom one wins over QueueConfig(redis=...), so read what is installed."""
+    from agno.os.event_streams import get_event_stream
+    from agno.os.event_streams.in_memory import InMemoryEventStream
+    from agno.run.cancel import get_cancellation_manager
+    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+
+    return not isinstance(get_event_stream(), InMemoryEventStream) and not isinstance(
+        get_cancellation_manager(), InMemoryRunCancellationManager
+    )
+
+
+def _feature_blocks(os: "AgentOS", request: Request, is_admin: bool) -> Dict[str, Any]:
+    """The /config feature blocks without a detail block of their own. Directory, audit and public are admin-only."""
+    blocks: Dict[str, Any] = dict(
         # The poller starts only with a database to read schedules from.
         scheduler=FeatureStatus(enabled=bool(os._scheduler_enabled and os.db is not None)),
         mcp=FeatureStatus(enabled=bool(os.mcp)),
@@ -377,11 +393,11 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
         telemetry=FeatureStatus(enabled=_telemetry_is_on(os)),
     )
     if not is_admin:
-        return report
+        return blocks
 
     state = request.app.state
     directory_on = getattr(state, "user_store", None) is not None
-    report.user_directory = UserDirectoryStatus(
+    blocks["user_directory"] = UserDirectoryStatus(
         enabled=directory_on,
         auto_provision=bool(directory_on and getattr(state, "user_auto_provision", False)),
         fail_closed=bool(directory_on and getattr(state, "user_directory_fail_closed", False)),
@@ -389,7 +405,7 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
     audit_sink = getattr(state, "authz_audit", None)
     # Both audit trails are served by the /authz router, which is mounted only with managed roles.
     role_store = os._authz_role_store
-    report.audit = AuditStatus(
+    blocks["audit"] = AuditStatus(
         enabled=audit_sink is not None,
         changes_readable=bool(role_store is not None and role_store._audit_readable),
         decisions_readable=bool(
@@ -399,14 +415,14 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
     # The policy the public middleware admits outside requests by; absent without a public surface.
     policy = getattr(state, "public_route_policy", None)
     selected = policy.selected if policy is not None else {}
-    report.public = PublicStatus(
+    blocks["public"] = PublicStatus(
         enabled=policy is not None,
         agents=sorted(selected.get("agents", ())),
         teams=sorted(selected.get("teams", ())),
         workflows=sorted(selected.get("workflows", ())),
         mcp=bool(policy is not None and policy.mcp),
     )
-    return report
+    return blocks
 
 
 def _collect_unique_models(os: "AgentOS") -> List[Model]:

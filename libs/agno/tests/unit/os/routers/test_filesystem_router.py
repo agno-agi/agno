@@ -394,6 +394,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
     assert response.status_code == 200
     agents = {entry["id"]: entry for entry in response.json()["agents"]}
     assert response.json()["filesystem"] == {
+        "enabled": True,
         "namespaces": [
             {
                 "backend_type": "db",

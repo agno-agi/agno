@@ -47,19 +47,21 @@ session and memory domains. The interface list was empty.
 
 **Test mode:** LOCAL (in-process client, no model call)
 
-**Description:** Tested on 2026-11-25. Built the checked-in AgentOS with managed
+**Description:** Tested on 2026-11-26. Built the checked-in AgentOS with managed
 roles, a user directory and audit on SQLite, then read `GET /config` as the
 admin `alice` and as the member `bob`, and `GET /authz/audit` as `alice`.
 
 **Result:** `alice` received the full `authorization` block (`enabled` true,
 `mode` `jwt`, `managed_roles` true, `default_role` `member`,
-`roles_from_token` false, `token_scopes_trusted` false, `audience_verified` true). `bob` received only
-`enabled`, `mode` and `user_isolation`. `alice` received the full `features`
-block: user directory on with `auto_provision` and `fail_closed` true, audit on
-with both trails readable, tracing, scheduler, MCP, the public surface, the OS
-Manager and media storage off, and telemetry on (the AgentOS default). `bob`
-received only tracing, scheduler, MCP, manager, media storage and telemetry.
-`GET /authz/audit` returned 200, matching `changes_readable`.
+`roles_from_token` false, `token_scopes_trusted` false, `audience_verified`
+true) and every feature block: user directory on with `auto_provision` and
+`fail_closed` true, audit on with both trails readable, the public surface,
+scheduler, MCP, OS Manager and media storage off, telemetry on (the AgentOS
+default), `traces.enabled` false, and `queue` with `durable`,
+`queue_per_session` and `cross_container` false. `bob` received only
+`enabled`, `mode` and `user_isolation` in `authorization`, and no
+`user_directory`, `audit` or `public` block. `GET /authz/audit` returned 200,
+matching `changes_readable`.
 
 ---
 

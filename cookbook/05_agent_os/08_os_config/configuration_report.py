@@ -1,20 +1,20 @@
 """
 Configuration Report - read how an AgentOS is set up
 
-`GET /config` carries two blocks a settings page can show without probing routes:
+`GET /config` tells a settings page how the AgentOS is set up without probing routes:
 
 - `authorization`: how requests are authenticated and authorized.
   Every caller sees `enabled`, `mode` and `user_isolation`.
   An administrator also sees `managed_roles`, `default_role`, `roles_from_token`,
   `token_scopes_trusted` and `audience_verified`.
-- `features`: which optional features are running, for the opt-ins without a block
-  of their own (company, filesystem, knowledge, interfaces and queue keep theirs).
-  Every caller sees tracing, the scheduler, the MCP server, the OS Manager, media
-  storage and telemetry.
-  An administrator also sees the user directory, audit and the public surface.
+- One top-level block per optional feature, each saying whether it is on:
+  `scheduler`, `mcp`, `manager`, `media_storage`, `telemetry`, and `enabled` on
+  `traces`, `filesystem` and `knowledge`. `company` is null when off, `interfaces`
+  is empty and `queue.durable` is false.
+  Only an administrator sees `user_directory`, `audit` and `public`.
 
-Both blocks report what the running AgentOS does, not the arguments it was given,
-and neither holds a key, an audience, a database location or a role's scopes.
+These blocks report what the running AgentOS does, not the arguments it was given,
+and none holds a key, an audience or a role's scopes.
 
 This file builds an AgentOS with managed roles, a user directory and audit, then
 reads `/config` as an administrator and as a regular member and prints both.
@@ -104,12 +104,25 @@ if __name__ == "__main__":
         response = client.get("/config", headers=auth(sub))
         response.raise_for_status()
         body = response.json()
-        return {"authorization": body["authorization"], "features": body["features"]}
+        keys = (
+            "authorization",
+            "user_directory",
+            "audit",
+            "public",
+            "scheduler",
+            "mcp",
+            "manager",
+        )
+        keys += ("media_storage", "telemetry")
+        report = {key: body[key] for key in keys if key in body}
+        report["traces"] = {"enabled": body["traces"]["enabled"]}
+        report["queue"] = body["queue"]
+        return report
 
     print("\nalice (admin) sees the full report:")
     print(json.dumps(report("alice"), indent=2))
 
-    print("\nbob (member) sees the mode and the public features, not the admin detail:")
+    print("\nbob (member) sees the mode and the feature blocks, not the admin detail:")
     print(json.dumps(report("bob"), indent=2))
 
     # The audit flags describe the routes that serve the trails.
