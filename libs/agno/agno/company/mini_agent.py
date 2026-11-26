@@ -258,7 +258,7 @@ def _runnable(agent_os: Any, kind: str) -> Any:
     return LiveSequence(resolve)
 
 
-def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
+def _build_mini_agent(agent_os: Any, model: Any, tool_call_limit: Optional[int]) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
     from agno.company.routines import _RoutineBoundary, load_routine_skills
@@ -328,7 +328,7 @@ def _build_mini_agent(agent_os: Any, model: Any) -> Optional[Agent]:
         instructions=_KindInstructions(db),
         # Runs unattended on untrusted Sources and briefs, so only a Company Routine or Task may start it.
         pre_hooks=[_RoutineBoundary(routine=True)],
-        tool_call_limit=30,
+        tool_call_limit=tool_call_limit,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,
