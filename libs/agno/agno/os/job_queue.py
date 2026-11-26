@@ -2386,8 +2386,7 @@ class QueueWorker:
                 with authorization_scope(lambda: authority):
                     await self._execute_claimed_inner(job, ownership)
             finally:
-                if self._requested_from(job) is not None:
-                    self._notify_requester(job)
+                self._notify_requester(job)
 
     async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:
         """asyncio.wait_for with cause attribution: the cancellation cause is
