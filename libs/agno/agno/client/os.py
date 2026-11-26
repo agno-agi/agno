@@ -2284,7 +2284,6 @@ class AgentOSClient:
         model_id: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_types: Optional[List[EvalType]] = None,
-        status: Optional[EvalRunStatus] = None,
         limit: int = 20,
         page: int = 1,
         sort_by: str = "created_at",
@@ -2292,6 +2291,7 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        status: Optional[EvalRunStatus] = None,
     ) -> PaginatedResponse[EvalSchema]:
         """List evaluation runs with filtering and pagination.
 
@@ -2302,7 +2302,6 @@ class AgentOSClient:
             model_id: Filter by model ID
             filter_type: Filter type (agent, team, workflow)
             eval_types: List of eval types to filter by (accuracy, performance, reliability)
-            status: Suite result to filter by (PASS or FAIL)
             limit: Number of eval runs per page
             page: Page number
             sort_by: Field to sort by
@@ -2310,6 +2309,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            status: Suite status to filter by (PASS, FAIL, RUNNING or ERROR)
 
         Returns:
             PaginatedResponse[EvalSchema]: Paginated list of evaluation runs

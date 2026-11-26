@@ -3795,11 +3795,11 @@ class SingleStoreDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -3816,6 +3816,7 @@ class SingleStoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -3844,7 +3845,7 @@ class SingleStoreDb(BaseDb):
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
                 if status is not None:
-                    stmt = stmt.where(table.c.eval_data["summary"]["status"].as_string() == status)
+                    stmt = stmt.where(func.JSON_EXTRACT_STRING(table.c.eval_data, "summary", "status") == status)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if eval_type is not None and len(eval_type) > 0:

@@ -3212,11 +3212,11 @@ class RedisDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Redis.
 
@@ -3225,6 +3225,15 @@ class RedisDb(BaseDb):
             page (Optional[int]): The page number to return.
             sort_by (Optional[str]): The field to sort by.
             sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
+            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
 
         Returns:
             List[EvalRunRecord]: The list of eval runs.

@@ -19,10 +19,12 @@ class EvalFilterType(str, Enum):
 
 
 class EvalRunStatus(str, Enum):
-    """Result of a suite run, from eval_data.summary.status."""
+    """State of a suite run, from eval_data.summary.status: RUNNING until a background run finishes."""
 
     PASS = "PASS"
     FAIL = "FAIL"
+    RUNNING = "RUNNING"
+    ERROR = "ERROR"
 
 
 class EvalRunRecord(BaseModel):

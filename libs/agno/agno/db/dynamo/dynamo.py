@@ -3597,12 +3597,37 @@ class DynamoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        status: Optional[str] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
         user_id: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from DynamoDB.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            deserialize (Optional[bool]): Whether to deserialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
+            status (Optional[str]): The suite state to filter by (PASS, FAIL, RUNNING or ERROR).
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of dictionaries
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             table_name = self._get_table("evals")
             if table_name is None:
@@ -3671,6 +3696,7 @@ class DynamoDb(BaseDb):
                 eval_item = deserialize_from_dynamodb_item(item)
                 if eval_item:
                     eval_data.append(eval_item)
+
             # eval_data is stored as a JSON string, so the suite result is filtered after reading.
             if status is not None:
                 eval_data = [
