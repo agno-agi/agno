@@ -675,12 +675,19 @@ def test_stored_runs_decide_busy_and_the_count():
 
     assert work_update._busy([row("COMPLETED"), row("ERROR"), row("CANCELLED")], now) is False
     for status in ("PENDING", "RUNNING", "PAUSED"):
-        assert work_update._busy([row("COMPLETED"), row(status)], now) is True
+        assert work_update._busy([row(status), row("COMPLETED")], now) is True
     # A run its server lost is stored as going for ever. A paused run waits for a person however long.
     old = now - work_update._LOST_AFTER_SECONDS - 1
     assert work_update._busy([row("RUNNING", created_at=old)], now) is False
     assert work_update._busy([row("PENDING", created_at=old, updated_at=old)], now) is False
     assert work_update._busy([row("PAUSED", created_at=old)], now) is True
+    # A paused turn waits only until the person speaks again. A work update after it is not the person.
+    spoke = row("COMPLETED", run_data={"input": {"input_content": "Hello"}})
+    update = row("COMPLETED", run_data={"metadata": {WORK_UPDATE_METADATA_KEY: {"kind": "run"}}})
+    member = row("COMPLETED", run_data={}, parent_run_id="a-member-run")
+    assert work_update._busy([spoke, row("PAUSED")], now) is False
+    assert work_update._busy([update, member, row("PAUSED")], now) is True
+    assert work_update._busy([row("RUNNING"), spoke, row("PAUSED")], now) is True
 
     marked = {"metadata": {WORK_UPDATE_METADATA_KEY: {"kind": "run"}}}
     labelled = {"input": {"input_content": WORK_UPDATE_LABEL + ". The person did not write this"}}
@@ -808,7 +815,6 @@ def test_the_gate_is_on_a_work_updates_own_team_and_never_on_the_served_one(comp
     team = company.os.manager
     boundary = next(hook for hook in team.pre_hooks if isinstance(hook, work_update.WorkUpdateBoundary))
     assert team.tool_hooks is None and boundary.served() is team
-    assert any(isinstance(hook, work_update.WorkUpdateState) for hook in team.post_hooks)
     assert not company.writer.tool_hooks and not company.os._manager.builder.tool_hooks
     # A work update runs on a copy of the Team, as every request and queued run does: the copy gets the gate.
     copy = team.deep_copy()
@@ -816,11 +822,14 @@ def test_the_gate_is_on_a_work_updates_own_team_and_never_on_the_served_one(comp
     assert copied.served() is team
     copied.check(run_context=marked(), team=copy)
     assert copy.tool_hooks == [work_update.work_update_gate] and team.tool_hooks is None
+    # The copy also reads the stored state again each time it saves; the served Team saves as it always did.
+    assert {"save_session", "asave_session"} <= set(vars(copy)) and "asave_session" not in vars(team)
     # A turn of the person on a copy, and a work update run on the served Team itself, leave hooks alone.
     other = team.deep_copy()
     copied.check(run_context=RunContext(run_id="r", session_id=CHAT, user_id="alice", session_state={}), team=other)
     boundary.check(run_context=marked(), team=team)
     assert other.tool_hooks is None and team.tool_hooks is None
+    assert "asave_session" not in vars(other) and "asave_session" not in vars(team)
 
 
 @pytest.mark.parametrize("updates", [True, False], ids=["work updates on", "work updates off"])
@@ -1215,47 +1224,118 @@ def test_the_state_a_work_update_saves_is_the_stored_one_with_its_own_marks():
                 "other": "kept",
                 LINKED_WORK_KEY: [
                     {"kind": "run", "id": "a", "shown": "LIVE", "changed_in": None, "name": "stored name"},
+                    {"kind": "run", "id": "b", "shown": "COMPLETED", "changed_in": "the-persons-turn"},
                     {"kind": "run", "id": "new", "shown": "LIVE", "changed_in": None},
                 ],
             }
         }
     }
-    update = marked()
-    update.session_state = {
-        "other": "stale",
-        LINKED_WORK_KEY: [
-            {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update", "ended": True, "name": "old"},
-            {"kind": "run", "id": "gone", "shown": "COMPLETED", "changed_in": None},
-        ],
-    }
-    work_update.WorkUpdateState._merge(update, stored)
-    assert update.session_state == {
+
+    class Session:
+        session_data = {
+            "kept": True,
+            "session_state": {
+                "other": "stale",
+                LINKED_WORK_KEY: [
+                    # Shown by this work update.
+                    {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update", "name": "old"},
+                    # Loaded as running and not marked by it: a turn of the person has since reported it.
+                    {"kind": "run", "id": "b", "shown": "LIVE", "changed_in": None},
+                    {"kind": "run", "id": "gone", "shown": "COMPLETED", "changed_in": None},
+                ],
+            },
+        }
+
+    session = Session()
+    loaded = session.session_data["session_state"]
+    work_update._keep_stored_state(session, stored, "update")
+    # The same dictionary, which the run also holds, now has the stored state with this run's marks.
+    assert session.session_data["session_state"] is loaded and session.session_data["kept"] is True
+    assert loaded == {
         "other": "kept",
         LINKED_WORK_KEY: [
-            {
-                "kind": "run",
-                "id": "a",
-                "shown": "COMPLETED",
-                "changed_in": "update",
-                "ended": True,
-                "name": "stored name",
-            },
+            {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update", "name": "stored name"},
+            {"kind": "run", "id": "b", "shown": "COMPLETED", "changed_in": "the-persons-turn"},
             {"kind": "run", "id": "new", "shown": "LIVE", "changed_in": None},
         ],
     }
     # Nothing readable stored: the run's own state stands.
-    before = dict(update.session_state)
-    work_update.WorkUpdateState._merge(update, None)
-    work_update.WorkUpdateState._merge(update, {"session_data": {}})
-    assert update.session_state == before
+    before = dict(loaded)
+    work_update._keep_stored_state(session, None, "update")
+    work_update._keep_stored_state(session, {"session_data": {}}, "update")
+    assert loaded == before
 
 
-def test_a_turn_of_the_person_saves_its_state_as_before(plain):
-    hook = next(h for h in plain.os.manager.post_hooks if isinstance(h, work_update.WorkUpdateState))
-    person = RunContext(run_id="r", session_id=CHAT, user_id="alice", session_state={"a": 1})
-    hook.check(run_context=person, team=plain.os.manager)
-    asyncio.run(hook.async_check(run_context=person, team=plain.os.manager))
-    assert person.session_state == {"a": 1}
+class FailingUpdates(HeldUpdates):
+    """Holds a work update, then fails it where its reply would be."""
+
+    async def ainvoke(self, messages, tools=None, **kwargs):
+        fresh = [m for m in messages if not m.from_history and m.role == "user"]
+        update = any(str(m.content).startswith(WORK_UPDATE_LABEL) for m in fresh)
+        result = await super().ainvoke(messages, tools=tools, **kwargs)
+        if update and SEEN.get("update_fails"):
+            raise RuntimeError("the model broke")
+        return result
+
+
+@pytest.mark.parametrize("ending", ["fails", "is cancelled"])
+def test_a_work_update_that_does_not_finish_keeps_the_work_a_turn_started(held, monkeypatch, ending):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+    held.chat = FailingUpdates()
+    held.os.manager.model = held.chat
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        SEEN["update_fails"] = ending == "fails"
+        await held.start()
+        await held.finish("writer")
+        second = await held.start("workflow", "investigator")
+        if ending == "is cancelled":
+            update = held.updates_stored()[0]["run_id"]
+            await held.os.manager.acancel_run(update)
+        GATES["update"].set()
+        await held.settle()
+        SEEN["update_fails"] = False
+        ended = [row["status"] for row in held.updates_stored()]
+        after = listed(held)
+        await held.finish("investigator")
+        await asyncio.sleep(0.2)
+        await held.settle()
+        check = await held.say("Did it finish?", ("check_background_run", {"run_id": second}))
+        return ended, after, json.loads(check.tools[0].result)
+
+    ended, after, checked = scenario(steps)
+    assert ended[0] in ("ERROR", "CANCELLED")
+    assert after.get("investigator") == "LIVE"
+    assert checked.get("status") == "COMPLETED", checked
+
+
+def test_a_finish_the_person_was_told_in_their_own_turn_is_not_reported_again(held, monkeypatch):
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        await held.start("workflow", "investigator")
+        await held.finish("writer")
+        # The second run ends while the work update for the first is going, and the person asks.
+        await held.finish("investigator")
+        await held.say("Status?")
+        told = held.chat.runs[-1]["sent"][0].count("Changed since your last turn.")
+        GATES["update"].set()
+        await held.settle()
+        await asyncio.sleep(0.3)
+        await held.settle()
+        after = listed(held)
+        await held.say("Thanks")
+        return told, after, len(held.updates_stored()), held.chat.runs[-1]["sent"]
+
+    told, after, updates, last = scenario(steps)
+    assert told == 2
+    # The work update loaded the second run as running. It did not put that back over the turn's mark.
+    assert after == {"writer": "COMPLETED", "investigator": "COMPLETED"}
+    assert updates == 1
+    assert not any("Changed since your last turn." in message for message in last)
 
 
 def test_work_that_ends_while_a_work_update_is_going_gets_one_of_its_own(held, monkeypatch):
@@ -1424,3 +1504,182 @@ def test_an_in_memory_workflow_with_a_workflow_agent_is_reported(plain):
     assert status == "COMPLETED"
     assert updates == [next(iter(updates), "")] and updates[0].startswith('Background run of workflow "Answerer"')
     assert updates[0].endswith("finished.")
+
+
+# ----------------------------------------------------------------- round two of the review
+
+
+def notices(system):
+    """How each stored work update worded what ended."""
+    return [sent(update).split("\n")[1].split("): ")[-1] for update in system.updates_stored()]
+
+
+def test_a_workflow_agent_that_runs_its_workflow_is_reported(plain):
+    from agno.workflow.agent import WorkflowAgent
+
+    async def step(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="stepped")
+
+    flow = Workflow(
+        id="answerer",
+        name="Answerer",
+        db=plain.db,
+        agent=WorkflowAgent(model=ScriptedModel([("run_workflow", {"query": "go"})])),
+        steps=[Step(name="s", executor=step)],
+    )
+    plain.os.workflows.append(flow)
+    plain.os.registry.workflows.append(flow)
+
+    async def steps():
+        run_id = await plain.start("workflow", "answerer")
+        await plain.settle()
+        await asyncio.sleep(0.2)
+        await plain.settle()
+        row = plain.row(run_id)
+        return row["status"], str(row["run_data"].get("content")), notices(plain)
+
+    assert scenario(steps) == ("COMPLETED", "stepped", ["finished."])
+
+
+def confirmations():
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def publish() -> str:
+        """Publish the page."""
+        return "published"
+
+    @tool(requires_confirmation=True)
+    def announce() -> str:
+        """Announce it."""
+        return "announced"
+
+    return [publish, announce]
+
+
+async def approve(system, run_id, **form):
+    """Approve what a paused Writer run waits on, through its continue route."""
+    import httpx
+
+    paused = system.row(run_id)
+    tools = [{**item, "confirmed": True} for item in paused["run_data"]["tools"]]
+    if system.queue is not None:
+        # The queue owns the continuation of a run it executed.
+        form = {"background": "true", **form}
+    transport = httpx.ASGITransport(app=system.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://agentos") as client:
+        response = await client.post(
+            f"/agents/writer/runs/{run_id}/continue",
+            data={"tools": json.dumps(tools), "session_id": paused["session_id"], "stream": "false", **form},
+        )
+    # Answered in the request without the queue, accepted for the queue with it.
+    assert response.status_code in (200, 202), response.text
+
+
+def test_a_run_that_pauses_again_after_an_approval_is_reported_again(system):
+    plain = system
+
+    async def steps():
+        plain.writer.tools = confirmations()
+        plain.writer.model.script = [("publish", {}), ("announce", {})]
+        run_id = await plain.start()
+        await plain.finish()
+        await approve(plain, run_id)
+        await plain.settle()
+        await asyncio.sleep(0.2)
+        await plain.settle()
+        second = plain.row(run_id)["status"], notices(plain)
+        await approve(plain, run_id)
+        await plain.settle()
+        await asyncio.sleep(0.2)
+        await plain.settle()
+        return second, plain.row(run_id)["status"], notices(plain)
+
+    second, ended, updates = scenario(steps)
+    assert second == ("PAUSED", ["paused for a person.", "paused for a person."])
+    assert ended == "COMPLETED" and updates[-1] == "finished." and len(updates) == 3
+
+
+def test_a_pause_told_twice_without_a_continue_is_reported_once(plain):
+    async def steps():
+        plain.writer.tools = confirmations()[:1]
+        plain.writer.model.script = [("publish", {})]
+        run_id = await plain.start()
+        await plain.finish()
+        asked = {"session_id": CHAT, "run_id": "r", "team_id": "superagent", "user_id": "alice"}
+        await plain.updates(asked, {"kind": "run", "id": run_id, "status": "PAUSED"}, None)
+        await plain.settle()
+        return notices(plain)
+
+    assert scenario(steps) == ["paused for a person."]
+
+
+def test_an_approval_through_the_resumable_streaming_continue_is_reported(plain):
+    async def steps():
+        plain.writer.tools = confirmations()[:1]
+        plain.writer.model.script = [("publish", {})]
+        run_id = await plain.start()
+        await plain.finish()
+        await approve(plain, run_id, stream="true", background="true")
+        for _ in range(200):
+            if plain.row(run_id)["status"] == "COMPLETED":
+                break
+            await asyncio.sleep(0.02)
+        await plain.settle()
+        await asyncio.sleep(0.3)
+        await plain.settle()
+        return plain.row(run_id)["status"], notices(plain)
+
+    assert scenario(steps) == ("COMPLETED", ["paused for a person.", "finished."])
+
+
+def test_an_application_tool_named_like_a_read_is_not_offered_in_a_work_update(tmp_path):
+    from agno.tools import tool
+
+    called = []
+
+    @tool
+    def read_file(path: str) -> str:
+        """Read a file, the application's own way."""
+        called.append(path)
+        return "content of " + path
+
+    system = System(tmp_path, tools=[read_file])
+
+    async def steps():
+        await system.say("Read", ("read_file", {"path": "a"}))
+        await system.start()
+        system.chat.scripts.append([("read_file", {"path": "b"})])
+        await system.finish()
+        return system.chat.runs[-1]["offered"], content(system.updates_stored()[0])
+
+    offered, reply = scenario(steps)
+    system.close()
+    # It ran on the person's turn. A work update is offered the framework's own reads only.
+    assert called == ["a"]
+    assert "read_file" not in offered and "check_background_run" in offered
+    assert "The requested tool does not exist or is not available." in reply
+
+
+def test_a_confirmation_the_person_talked_past_does_not_silence_the_conversation(tmp_path):
+    from agno.tools import tool
+
+    @tool(requires_confirmation=True)
+    def decide() -> str:
+        """Decide it."""
+        return "decided"
+
+    system = System(tmp_path, tools=[decide])
+
+    async def steps():
+        paused = await system.say("Decide it", ("decide", {}))
+        # The person says something else: they have moved on, and work that ends is reported.
+        await system.say("Never mind, leave it")
+        await system.start()
+        await system.finish()
+        return paused.status.value, [row["status"] for row in system.turns()][:1], len(system.updates_stored())
+
+    paused, first, updates = scenario(steps)
+    system.close()
+    assert (paused, first) == ("PAUSED", ["PAUSED"])
+    assert updates == 1
