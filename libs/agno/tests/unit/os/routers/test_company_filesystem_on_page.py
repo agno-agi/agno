@@ -416,12 +416,45 @@ def test_the_list_is_sorted_by_id_paged_and_searched_and_counts_only_the_page(tm
             assert listed(query="nothing") == ([], (1, 50, 0, 0))
             # It narrows the exact namespace filter, never widens it.
             assert listed(query="a", namespace="gamma") == (["gamma"], (1, 50, 1, 1))
-            for params in ({"limit": 0}, {"limit": 101}, {"page": 0}, {"query": ""}):
+            # Sorted by namespace, either way, and paged in that order.
+            assert listed(sort_order="desc", limit=2) == (ordered[::-1][:2], (1, 2, 3, 5))
+            assert listed(sort_by="namespace", sort_order="desc", limit=2, page=2) == (ordered[::-1][2:4], (2, 2, 3, 5))
+            for params in (
+                {"limit": 0},
+                {"limit": 101},
+                {"page": 0},
+                {"query": ""},
+                {"sort_by": "file_count"},
+                {"sort_order": "up"},
+            ):
                 assert client.get("/filesystem/namespaces", params=params).status_code == 422, params
             entry = client.get("/filesystem/namespaces", params={"query": "zeta"}).json()["namespaces"][0]
             assert (entry["file_count"], entry["folder_count"], entry["total_bytes"]) == (1, 0, 1)
     finally:
         db.close()
+
+
+def test_the_list_sorts_by_namespace_where_it_differs_from_the_id(tmp_path):
+    main = SqliteDb(id="main-db", db_file=str(tmp_path / "main.db"))
+    archive = SqliteDb(id="archive-db", db_file=str(tmp_path / "archive.db"))
+    # The namespace "a" is in two databases, so its ids add the database and sort after "a-b".
+    stores = [FileSystem(main, namespace="a"), FileSystem(archive, namespace="a"), FileSystem(main, namespace="a-b")]
+    try:
+        with TestClient(AgentOS(db=main, filesystem=stores, telemetry=False).get_app()) as client:
+
+            def listed(**params) -> list:
+                entries = client.get("/filesystem/namespaces", params=params).json()["namespaces"]
+                return [(entry["namespace"], entry["id"]) for entry in entries]
+
+            by_id = [("a-b", "a-b"), ("a", "a:archive-db"), ("a", "a:main-db")]
+            by_namespace = [("a", "a:archive-db"), ("a", "a:main-db"), ("a-b", "a-b")]
+            assert listed() == by_id
+            assert listed(sort_by="namespace") == by_namespace
+            assert listed(sort_by="namespace", sort_order="desc") == by_namespace[::-1]
+            assert listed(sort_by="namespace", limit=1, page=3) == by_namespace[2:]
+    finally:
+        main.close()
+        archive.close()
 
 
 def test_the_list_counts_files_and_folders_at_every_depth(tmp_path):

@@ -212,6 +212,7 @@ linked agents with access in `agents`. `namespace` filters it to one namespace a
 
 The list is sorted by `id` and paged like `/filesystem/entries`: `page` (from 1) and
 `limit` (50 by default, at most 100), with a `meta` block beside `namespaces`.
+`sort_by=namespace` sorts by namespace instead, and `sort_order=desc` reverses either.
 `query` keeps the entries whose `id` or `namespace` contains it, ignoring case, so a
 search covers every page and not only the one shown:
 

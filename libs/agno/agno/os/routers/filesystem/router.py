@@ -68,6 +68,7 @@ if TYPE_CHECKING:
 _MAX_PREVIEW_CHARS = 100_000
 
 FileSortField = Literal["type", "size", "updated_at"]
+NamespaceSortField = Literal["id", "namespace"]
 _Entry = TypeVar("_Entry", bound=Union[FileSystemEntry, FileSystemTableEntry])
 
 
@@ -756,7 +757,7 @@ def get_filesystem_router(
             "can name two filesystems here. file_count, folder_count and total_bytes cover every file the "
             "caller can read in it, at any depth; they are left out when the filesystem cannot be read. "
             "available is false on an entry whose id cannot be opened until every agent loads. "
-            "Entries are sorted by id and paged; query keeps those whose id or namespace contains it, and the "
+            "Entries are sorted by id, or by namespace with sort_by, and paged; query keeps those whose id or namespace contains it, and the "
             "counts are computed for the returned page only."
         ),
     )
@@ -769,6 +770,8 @@ def get_filesystem_router(
         ),
         page: int = Query(1, ge=1, description="1-indexed page number"),
         limit: int = Query(50, ge=1, le=100, description="Page size"),
+        sort_by: NamespaceSortField = Query("id", description="Sort by id or namespace"),
+        sort_order: SortOrder = _SORT_ORDER_QUERY,
     ) -> FileSystemNamespacesResponse:
         # An empty agent_id names no agent.
         agent_id = agent_id or None
@@ -818,7 +821,12 @@ def get_filesystem_router(
             if entry.id in unsettled:
                 # The id may name another filesystem once every agent loads, so the other routes refuse it.
                 entry.available = False
-        ordered = sorted(entries.items(), key=lambda item: (item[1].id, item[1].namespace))
+        # The other field breaks a tie, so a page boundary is stable.
+        ordered = sorted(
+            entries.items(),
+            key=lambda item: (item[1].id, item[1].namespace) if sort_by == "id" else (item[1].namespace, item[1].id),
+            reverse=sort_order == SortOrder.DESC,
+        )
         total_count = len(ordered)
         start = (page - 1) * limit
         shown = ordered[start : start + limit]
