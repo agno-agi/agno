@@ -206,6 +206,61 @@ def _with_source_note(row, routine, sources):
     return row
 
 
+_AUTO_ACCEPT_OFF_HOW = "Turn it off with turn_off_routine_auto_accept."
+_AUTO_ACCEPT_ON_HOW = "Turn it on with turn_on_routine_auto_accept."
+
+
+def _auto_accept_left_off(asked_off):
+    """What a person is told when a new Routine keeps auto-accept off.
+
+    A synchronous run cannot reach the Routine API, which authorizes the policy and stamps the grant.
+    """
+    from agno.company.routines import _auto_accept_note
+
+    reason = None if _empty_to_none(asked_off) else "turning it on needs an asynchronous run"
+    return _auto_accept_note(None, reason, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+
+
+async def _adefault_auto_accept(agent_os, row, asked_off, run_context):
+    """Give a Routine a person just created in chat the default auto-accept policy, as that person.
+
+    The policy is authorized and stamped by the Routine API's own handler, exactly as when the person
+    turns it on afterwards. Where that is refused, the Routine stays as created, with auto-accept
+    off. Returns what to tell the person.
+    """
+    from agno.company.declarations import AutoAccept
+    from agno.company.routines import _auto_accept_note, _set_auto_accept_as
+
+    if _empty_to_none(asked_off):
+        return _auto_accept_note(None, None, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+    reason = "the Routine API is not running here"
+    if agent_os is not None:
+        from fastapi import HTTPException
+
+        from agno.os.manager.company_tasks import _unsigned
+
+        authority, user_id = _authority(run_context), _identity(run_context)
+        policy = AutoAccept()
+        try:
+            if _unsigned(agent_os, authority, user_id):
+                raise PermissionError("a signed-in person is required")
+            await _set_auto_accept_as(agent_os, authority, user_id, row["id"], policy)
+        except HTTPException as exc:
+            reason = str(exc.detail)
+        except (PermissionError, LookupError, ValueError) as exc:
+            reason = str(exc)
+        else:
+            row["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"]}}
+            row["payload"]["metadata"]["auto_accept"] = policy.model_dump()
+            return _auto_accept_note(policy, None, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+    return _auto_accept_note(None, reason, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+
+
+def _with_auto_accept_notes(goal, notes):
+    """A created Goal, with what each of its new Routines does with its own proposals."""
+    return {**goal, "routines_auto_accept": notes} if notes else goal
+
+
 def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
@@ -497,6 +552,7 @@ class CompanyTools(Toolkit):
         objective: _OptionalString = None,
         sources: Annotated[Optional[List[Source]], BeforeValidator(_empty_to_none)] = None,
         routines: Annotated[Optional[List[Routine]], BeforeValidator(_empty_to_none)] = None,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_agent: Optional[Any] = None,
         _agno_team: Optional[Any] = None,
         _agno_run_context: Optional[Any] = None,
@@ -506,7 +562,13 @@ class CompanyTools(Toolkit):
         Args:
             objective: Goal objective; null leaves it unspecified.
             sources: Source declarations as in config; null adds no Sources. Websites only.
-            routines: Routine declarations as in config; null adds no Routines.
+            routines: Routine declarations as in config; null adds no Routines. Leave auto_accept out of
+                each. Each Routine is created with auto-accept on, under the calling human's
+                permissions: the Tasks it proposes are accepted and run with no person, at most five
+                open at once, and finished work waits In review. The result's routines_auto_accept
+                says so for each. Tell the person.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routines'
+                proposals then wait for a person.
         """
         from agno.company.routines import _declared_schedule_fields
 
@@ -549,7 +611,8 @@ class CompanyTools(Toolkit):
         except Exception:
             manager.discard_goal(goal_id, source_ids=source_ids, schedule_ids=schedule_ids, user_id=identity)
             raise
-        return _public_json(manager.get(goal_id))
+        notes = {routine.name: _auto_accept_left_off(leave_auto_accept_off) for routine, _ in plans}
+        return _public_json(_with_auto_accept_notes(manager.get(goal_id), notes))
 
     @requires_permission()
     def create_goal_routine(
@@ -563,9 +626,14 @@ class CompanyTools(Toolkit):
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
         enabled: _OptionalBool = True,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
+
+        The Routine is created with auto-accept on, under the calling human's permissions: the Tasks
+        it proposes are accepted and run with no person. The result's auto_accept says whether it is
+        on, its limits and how to turn it off. Tell the person.
 
         Args:
             executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
@@ -575,6 +643,9 @@ class CompanyTools(Toolkit):
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
+                proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
+                open at once, on Mini Agent, and finished work waits In review.
         """
         _require_human_creation(_agno_run_context)
         _permission("goals", "write", _agno_run_context)
@@ -593,7 +664,8 @@ class CompanyTools(Toolkit):
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
         _, sources = manager.list_sources(goal_id=goal_id, limit=1)
-        return _public_json(_with_source_note(row, routine, sources))
+        note = _auto_accept_left_off(leave_auto_accept_off)
+        return _public_json({**_with_source_note(row, routine, sources), "auto_accept": note})
 
     @requires_permission()
     async def acreate_company_goal(
@@ -602,6 +674,7 @@ class CompanyTools(Toolkit):
         objective: _OptionalString = None,
         sources: Annotated[Optional[List[Source]], BeforeValidator(_empty_to_none)] = None,
         routines: Annotated[Optional[List[Routine]], BeforeValidator(_empty_to_none)] = None,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_agent: Optional[Any] = None,
         _agno_team: Optional[Any] = None,
         _agno_run_context: Optional[Any] = None,
@@ -611,7 +684,13 @@ class CompanyTools(Toolkit):
         Args:
             objective: Goal objective; null leaves it unspecified.
             sources: Source declarations as in config; null adds no Sources. Websites only.
-            routines: Routine declarations as in config; null adds no Routines.
+            routines: Routine declarations as in config; null adds no Routines. Leave auto_accept out of
+                each. Each Routine is created with auto-accept on, under the calling human's
+                permissions: the Tasks it proposes are accepted and run with no person, at most five
+                open at once, and finished work waits In review. The result's routines_auto_accept
+                says so for each. Tell the person.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routines'
+                proposals then wait for a person.
         """
         from agno.company.routines import _declared_schedule_fields
 
@@ -649,12 +728,19 @@ class CompanyTools(Toolkit):
                     _agno_run_context=_agno_run_context,
                 )
                 source_ids.append(json.loads(row)["id"])
+            written = []
             for routine, fields in plans:
-                schedule_ids.append((await manager._write_routine(goal_id, routine, fields, identity))["id"])
+                written.append((routine, await manager._write_routine(goal_id, routine, fields, identity)))
+                schedule_ids.append(written[-1][1]["id"])
         except Exception:
             await manager.discard_goal(goal_id, source_ids=source_ids, schedule_ids=schedule_ids, user_id=identity)
             raise
-        return _public_json(await manager.get(goal_id))
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        notes = {
+            routine.name: await _adefault_auto_accept(agent_os, row, leave_auto_accept_off, _agno_run_context)
+            for routine, row in written
+        }
+        return _public_json(_with_auto_accept_notes(await manager.get(goal_id), notes))
 
     @requires_permission()
     async def acreate_goal_routine(
@@ -668,9 +754,14 @@ class CompanyTools(Toolkit):
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
         enabled: _OptionalBool = True,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
+
+        The Routine is created with auto-accept on, under the calling human's permissions: the Tasks
+        it proposes are accepted and run with no person. The result's auto_accept says whether it is
+        on, its limits and how to turn it off. Tell the person.
 
         Args:
             executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
@@ -680,6 +771,9 @@ class CompanyTools(Toolkit):
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
+                proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
+                open at once, on Mini Agent, and finished work waits In review.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("goals", "write", _agno_run_context)
@@ -704,7 +798,9 @@ class CompanyTools(Toolkit):
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
         _, sources = await manager.list_sources(goal_id=goal_id, limit=1)
-        return _public_json(_with_source_note(row, routine, sources))
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        note = await _adefault_auto_accept(agent_os, row, leave_auto_accept_off, _agno_run_context)
+        return _public_json({**_with_source_note(row, routine, sources), "auto_accept": note})
 
     @requires_permission()
     def list_company_goals(
