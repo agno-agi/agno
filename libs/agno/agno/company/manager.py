@@ -177,6 +177,22 @@ def _task_goal(goal_id: Optional[str], project: Dict[str, Any]) -> Optional[str]
     return project["goal_id"]
 
 
+def _require_goal_consent(task: Dict[str, Any], project: Dict[str, Any], moved_by: Optional[str]) -> None:
+    """Refuse a move that gives a Ready Task a Goal unless its accepter makes it.
+
+    A Ready Task runs under its accepter's saved authority, and its Goal decides what that run
+    reads and may write. Where the deployment checks no permissions every caller is trusted, as
+    for any other write there.
+    """
+    from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
+    from agno.run.authorization import current_authorization
+
+    gains_goal = task["goal_id"] is None and project.get("goal_id") is not None
+    if task["status"] == "ready" and gains_goal and current_authorization() is not None:
+        if moved_by is None or moved_by != task.get("accepted_by"):
+            raise PermissionError(TASK_MOVE_REFUSAL["goal"])
+
+
 def _routine_project_id(goal_id: str, routine_id: Optional[str], name: str) -> str:
     """The id of the Project a Routine proposes under this name in a Goal."""
     from uuid import NAMESPACE_URL, uuid5
@@ -700,6 +716,7 @@ class CompanyManager:
             project = self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            _require_goal_consent(existing, project, moved_by)
         return self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )
@@ -1740,6 +1757,7 @@ class AsyncCompanyManager:
             project = await self._task_project(fields["project_id"], None)
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
+            _require_goal_consent(existing, project, moved_by)
         return await self.db.update_task(
             task_id, user_id=user_id, expected_status=expected_status, moved_by=moved_by, **fields
         )

@@ -26,6 +26,8 @@ TASK_MOVE_REFUSAL = {
     "inactive": "An accepted Task moves only into an active Project",
     "policy": "A policy accepted this Task for its Project. Return it to Backlog, or accept it yourself, to move it",
     "automated": "Routine and Task runs cannot move an accepted Task; a person decides",
+    "goal": "Only the person who accepted this Task may move it into a Goal's Project while it is Ready: its run "
+    "would act for that Goal under their acceptance. Ask them, or return it to Backlog first",
 }
 
 

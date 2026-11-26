@@ -505,3 +505,48 @@ def test_a_schedule_aimed_at_super_agent_adds_nothing_where_authorization_is_off
         assert task["accepted_by"] == "alice" and task["status"] in ("ready", "in_progress")
     finally:
         chat.db.close()
+
+
+def test_only_its_accepter_gives_a_ready_task_a_goal(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, _ = records(client)
+    loose = client.post("/company/tasks", json={"title": "Loose", "brief": "Write"}, headers=headers()).json()
+    task = accepted(client, loose)
+    assert (task["goal_id"], task["accepted_by"]) == (None, "alice")
+    path = f"/company/tasks/{task['id']}"
+    # Its run would act for the Goal under alice's acceptance, so bob cannot make that move.
+    refused = client.patch(path, json={"project_id": project["id"]}, headers=headers(user="bob"))
+    assert refused.status_code == 403 and refused.json()["detail"] == TASK_MOVE_REFUSAL["goal"], refused.text
+    assert move(agent_os, context(user="bob"), task["id"], project["id"]) == "Not done: " + TASK_MOVE_REFUSAL["goal"]
+    assert db.get_task(task["id"])["project_id"] == DEFAULT_PROJECT_ID
+    # alice can, from the API or from chat.
+    moved = client.patch(path, json={"project_id": project["id"]}, headers=headers())
+    assert moved.status_code == 200 and moved.json()["goal_id"] == project["goal_id"], moved.text
+    # A move that changes no Goal is anyone's with tasks:write, as is a move of finished work.
+    launch = second_project(client, project["goal_id"])
+    assert client.patch(path, json={"project_id": launch["id"]}, headers=headers(user="bob")).status_code == 200
+    other = accepted(
+        client, client.post("/company/tasks", json={"title": "Two", "brief": "W"}, headers=headers()).json()
+    )
+    in_review(client, db, queue, records(client)[1]["id"])
+    assert client.post(f"/company/tasks/{other['id']}/runs", headers=headers()).status_code == 202
+    from tests.unit.os.test_company_decision_tools import finish
+
+    finish(db, queue, other["id"])
+    reviewed = client.patch(
+        f"/company/tasks/{other['id']}", json={"project_id": project["id"]}, headers=headers(user="bob")
+    )
+    assert reviewed.status_code == 200 and reviewed.json()["goal_id"] == project["goal_id"], reviewed.text
+
+
+def test_where_authorization_is_off_anyone_gives_a_ready_task_a_goal(tmp_path):
+    client, db, agent_os, queue = build(tmp_path, authorization=None)
+    try:
+        project, _ = records(client)
+        person = RunContext(run_id="chat", session_id="s", user_id="sam", authorization=None)
+        assert call(agent_os, "add_company_task", person, title="Typo", brief="Fix.", start=False).startswith("Added")
+        task = next(row for row in db.get_tasks(limit=100)[0] if row["title"] == "Typo")
+        moved = client.patch(f"/company/tasks/{task['id']}", json={"project_id": project["id"]})
+        assert moved.status_code == 200 and moved.json()["goal_id"] == project["goal_id"], moved.text
+    finally:
+        db.close()

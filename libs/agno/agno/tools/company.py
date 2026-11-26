@@ -650,7 +650,8 @@ class CompanyTools(Toolkit):
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
             leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
                 proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
-                open at once, on Mini Agent, and finished work waits In review.
+                open at once, on Mini Agent unless a proposal names another executor, and finished work
+                waits In review.
         """
         _require_human_creation(_agno_run_context)
         _permission("goals", "write", _agno_run_context)
@@ -778,7 +779,8 @@ class CompanyTools(Toolkit):
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
             leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
                 proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
-                open at once, on Mini Agent, and finished work waits In review.
+                open at once, on Mini Agent unless a proposal names another executor, and finished work
+                waits In review.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("goals", "write", _agno_run_context)

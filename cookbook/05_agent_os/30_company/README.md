@@ -650,15 +650,17 @@ of an accepted Task stays frozen, as before.
 | Backlog | Yes, as before | A draft. It may also sit in a proposed Project. |
 | Ready | Yes | Nothing is running. A Task a policy accepted is the exception: the policy accepted it for its Project, so return it to Backlog or accept it yourself first. |
 | In progress | No, 409 | A queued or running attempt is checked against the Task's history, and its input was built from the Project it started in. Move it once it is In review. |
-| In review | Yes | The run has ended. A review confirmation requested before the move is refused, because the Task changed. |
+| In review | Yes | The run has ended. A review confirmation requested before the move still decides the Task: it is bound to the Task and its run, not to its Project. |
 | Done | Yes | The record moves to the Project it belongs with. |
 | Cancelled | No, 409 | Closed work. |
 
 An accepted Task moves only into an active Project; the Default Project always is. The
 Goal rule is the same as for a Backlog move: a Task with a Goal moves only to a Project
 of that Goal or the Default Project, and a Task with no Goal takes the Goal of the
-Project it moves into. Only a person moves an accepted Task: a Routine or Task run is
-refused. The move is added to the Task's `transitions` as
+Project it moves into. While a Task is Ready, only the person who accepted it may make a
+move that gives it a Goal, because its run would act for that Goal under their
+acceptance; anyone else gets 403. Where authorization is off every caller is trusted.
+Only a person moves an accepted Task: a Routine or Task run is refused. The move is added to the Task's `transitions` as
 `{"action": "move", "project": {"from": ..., "to": ...}, "user_id": ..., "created_at": ...}`.
 It has no `from` or `target` stage, because the stage does not change.
 

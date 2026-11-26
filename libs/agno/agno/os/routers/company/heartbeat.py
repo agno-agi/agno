@@ -350,14 +350,17 @@ def get_heartbeat_router(agent_os: Any) -> APIRouter:
         # manually, whether or not user isolation is on. The grant records the raw caller, so compare that.
         grant = row["payload"].get("_agno_company_acceptance") or {}
         # A policy declared in code has no author. It acts only where authorization is off, and there
-        # whoever may run the Routine may trigger it. The same holds for any policy where the
-        # deployment neither checks permissions nor knows who is calling: its requests carry no
-        # identity to compare with the grant's.
+        # whoever may run the Routine may trigger it. The same holds for a request that carries no
+        # identity where the deployment neither checks permissions nor knows who is calling: there
+        # is nothing to compare with the grant's. A service account is always identified.
         from agno.company.routines import _DECLARED
         from agno.os.auth import _authorization_enforced
 
-        anonymous = not _authorization_enforced(request.app) and not getattr(
-            request.app.state, "user_isolation_enabled", False
+        anonymous = (
+            not _authorization_enforced(request.app)
+            and not getattr(request.app.state, "user_isolation_enabled", False)
+            and getattr(request.state, "user_id", None) is None
+            and getattr(request.state, "service_account_name", None) is None
         )
         unchecked = not agent_os.authorization and (grant == _DECLARED or anonymous)
         if row["payload"]["metadata"].get("auto_accept") and not unchecked and not caller_is_admin(request):

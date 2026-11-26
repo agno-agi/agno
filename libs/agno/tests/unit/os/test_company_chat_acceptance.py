@@ -315,7 +315,11 @@ def test_a_routine_a_person_creates_through_the_api_accepts_its_own_proposals(po
     )
     first, second = grant(policy, body["id"]), grant(policy, later["id"])
     assert first["user_id"] == second["user_id"] == "alice"
-    assert first[AUTHORIZATION_KEY] == second[AUTHORIZATION_KEY] and first[AUTHORIZATION_KEY] is not None
+    # The two requests carry tokens minted at different moments, so the saved claims differ in expiry only.
+    saved = [value[AUTHORIZATION_KEY]["context"] for value in (first, second)]
+    assert saved[0]["principal_id"] == saved[1]["principal_id"] == "alice"
+    assert saved[0]["scopes"] == saved[1]["scopes"]
+    assert first[AUTHORIZATION_KEY].keys() == second[AUTHORIZATION_KEY].keys()
 
 
 def test_a_routine_created_with_auto_accept_off_stays_off(policy):  # noqa: F811
