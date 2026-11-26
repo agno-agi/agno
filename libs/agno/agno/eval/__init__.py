@@ -1,4 +1,23 @@
+from typing import TYPE_CHECKING
+
 from agno.eval.base import BaseEval
+
+if TYPE_CHECKING:
+    from agno.eval.accuracy import AccuracyAgentResponse, AccuracyEval, AccuracyEvaluation, AccuracyResult
+    from agno.eval.agent_as_judge import AgentAsJudgeEval, AgentAsJudgeEvaluation, AgentAsJudgeResult
+    from agno.eval.performance import PerformanceEval, PerformanceResult
+    from agno.eval.reliability import ReliabilityEval, ReliabilityResult
+    from agno.eval.suite import (
+        Case,
+        CaseResult,
+        EvalSuite,
+        JudgeMode,
+        SuiteResult,
+        acli,
+        arun_cases,
+        cli,
+        run_cases,
+    )
 
 __all__ = [
     "AccuracyAgentResponse",
