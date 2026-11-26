@@ -845,6 +845,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
+                carry what it needs.
                 Null leaves it unspecified.
             project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
                 proposed Project can hold Backlog drafts; human approval is required before accepting or
@@ -1173,6 +1175,8 @@ class CompanyTools(Toolkit):
             executor_id: Suggested executor ID; null leaves selection to acceptance.
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
+                An executor other than Mini Agent receives only the brief and the evidence, so the brief must
+                carry what it needs.
                 Null leaves it unspecified.
             project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
                 proposed Project can hold Backlog drafts; human approval is required before accepting or
