@@ -5456,6 +5456,7 @@ class Workflow:
         workflow_run_response = WfRunOutput(
             run_id=run_id,
             input=input,
+            additional_data=additional_data,
             session_id=session_id,
             user_id=user_id,
             workflow_id=self.id,
@@ -7044,6 +7045,9 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
+                if i == start_step_index and (user_input or rejection_feedback or kwargs.get("previous_output")):
+                    step_input.additional_data = dict(step_input.additional_data or {})
+
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
                     if step_input.additional_data is None:
@@ -7891,6 +7895,9 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                if i == start_step_index and (user_input or rejection_feedback or kwargs.get("previous_output")):
+                    step_input.additional_data = dict(step_input.additional_data or {})
 
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
@@ -9111,6 +9118,9 @@ class Workflow:
                     shared_files=shared_files,
                 )
 
+                if i == start_step_index and (user_input or rejection_feedback or kwargs.get("previous_output")):
+                    step_input.additional_data = dict(step_input.additional_data or {})
+
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
                     if step_input.additional_data is None:
@@ -9655,6 +9665,9 @@ class Workflow:
                     shared_audio=shared_audio,
                     shared_files=shared_files,
                 )
+
+                if i == start_step_index and (user_input or rejection_feedback or kwargs.get("previous_output")):
+                    step_input.additional_data = dict(step_input.additional_data or {})
 
                 # Inject user input into step_input for the first step (the one that was paused)
                 if i == start_step_index and user_input:
