@@ -544,12 +544,14 @@ class CompanyManager:
         executor_id: Optional[str] = None,
         status: str = "backlog",
         accepted_by: Optional[str] = None,
+        context: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
         none. scoped_user_id filters the Goal and the Project while user_id records the creator.
+        context lists what a run of the Task is given beside its brief, as {kind, ref} references.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
@@ -574,6 +576,11 @@ class CompanyManager:
         project = self._task_project(project_id, scoped_user_id)
         goal_id = _task_goal(goal_id, project)
         fields["project_id"] = project["id"]
+        if context:
+            from agno.company.context import context_entries, require_context_writer
+
+            require_context_writer(None)
+            fields["context"] = context_entries(self.db, context, user_id)
         task = {
             **fields,
             "goal_id": goal_id,
@@ -671,6 +678,30 @@ class CompanyManager:
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
         return self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+
+    def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Any]] = None,
+        remove: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach {kind, ref} references to a Task and remove entries by id, at any status before Done or Cancelled.
+
+        A Task run is refused. A Routine changes only Backlog Tasks of its Goal, with references to its
+        Goal's pages and Tasks and to wiki/. A reference that names nothing is refused. user_id records who added.
+        """
+        from agno.company.context import context_entries, require_context_writer
+
+        existing = self.db.get_task(task_id)
+        if existing is None:
+            raise LookupError("Task not found")
+        stage = require_context_writer(existing)
+        entries = context_entries(self.db, add, user_id)
+        changed = self.db.change_task_context(task_id, add=entries, remove=remove, expected_status=stage)
+        if changed is None:
+            raise ValueError("Task changed while its context was changing")
+        return changed
 
     def delete_task(self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None) -> bool:
         """Soft-delete a visible task."""
@@ -1086,11 +1117,13 @@ class CompanyManager:
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        context: Optional[List[Any]] = None,
     ):
         """Persist an explicit proposal with verified evidence and a stable Source-local identity.
 
         The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
-        the Default Project when none is named.
+        the Default Project when none is named. context lists what a run of the Task is given beside
+        its brief; a proposal that already exists keeps the context it has.
         """
         from agno.company.declarations import IntakeProposal
         from agno.company.sources import _proposal_fields
@@ -1113,6 +1146,11 @@ class CompanyManager:
         evidence = self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)
         routine_id = _proposal_origin().get("routine_id", routine_id)
+        if context:
+            from agno.company.context import context_entries, require_context_writer
+
+            require_context_writer(None)
+            fields["context"] = context_entries(self.db, context, user_id)
         return self.db.create_task(
             {
                 **fields,
@@ -1559,12 +1597,14 @@ class AsyncCompanyManager:
         executor_id: Optional[str] = None,
         status: str = "backlog",
         accepted_by: Optional[str] = None,
+        context: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """Create a Task. With no project_id it goes into the Default Project.
 
         In a Project other than the Default one the Task carries that Project's Goal, and a
         goal_id that differs is refused. In the Default Project it carries the goal_id given, or
         none. scoped_user_id filters the Goal and the Project while user_id records the creator.
+        context lists what a run of the Task is given beside its brief, as {kind, ref} references.
         """
         from agno.company.routines import _RoutineAuthorization
         from agno.run.authorization import current_authorization
@@ -1589,6 +1629,11 @@ class AsyncCompanyManager:
         project = await self._task_project(project_id, scoped_user_id)
         goal_id = _task_goal(goal_id, project)
         fields["project_id"] = project["id"]
+        if context:
+            from agno.company.context import acontext_entries, require_context_writer
+
+            require_context_writer(None)
+            fields["context"] = await acontext_entries(self.db, context, user_id)
         task = {
             **fields,
             "goal_id": goal_id,
@@ -1686,6 +1731,30 @@ class AsyncCompanyManager:
             fields["project_id"] = project["id"]
             _task_goal(existing["goal_id"], project)
         return await self.db.update_task(task_id, user_id=user_id, expected_status=expected_status, **fields)
+
+    async def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Any]] = None,
+        remove: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach {kind, ref} references to a Task and remove entries by id, at any status before Done or Cancelled.
+
+        A Task run is refused. A Routine changes only Backlog Tasks of its Goal, with references to its
+        Goal's pages and Tasks and to wiki/. A reference that names nothing is refused. user_id records who added.
+        """
+        from agno.company.context import acontext_entries, require_context_writer
+
+        existing = await self.db.get_task(task_id)
+        if existing is None:
+            raise LookupError("Task not found")
+        stage = require_context_writer(existing)
+        entries = await acontext_entries(self.db, add, user_id)
+        changed = await self.db.change_task_context(task_id, add=entries, remove=remove, expected_status=stage)
+        if changed is None:
+            raise ValueError("Task changed while its context was changing")
+        return changed
 
     async def delete_task(
         self, task_id: str, user_id: Optional[str] = None, updated_before: Optional[int] = None
@@ -2109,11 +2178,13 @@ class AsyncCompanyManager:
         executor_type: Optional[str] = None,
         executor_id: Optional[str] = None,
         project_id: Optional[str] = None,
+        context: Optional[List[Any]] = None,
     ):
         """Persist an explicit proposal with verified evidence and a stable Source-local identity.
 
         The Task carries the Source's Goal. It goes into project_id, a Project of that Goal, or into
-        the Default Project when none is named.
+        the Default Project when none is named. context lists what a run of the Task is given beside
+        its brief; a proposal that already exists keeps the context it has.
         """
         from agno.company.declarations import IntakeProposal
         from agno.company.sources import _proposal_fields
@@ -2136,6 +2207,11 @@ class AsyncCompanyManager:
         evidence = await self.read_source(source_id, run_id, links=proposal.evidence_links)
         fields = _proposal_fields(source_id, proposal, evidence)
         routine_id = _proposal_origin().get("routine_id", routine_id)
+        if context:
+            from agno.company.context import acontext_entries, require_context_writer
+
+            require_context_writer(None)
+            fields["context"] = await acontext_entries(self.db, context, user_id)
         return await self.db.create_task(
             {
                 **fields,
