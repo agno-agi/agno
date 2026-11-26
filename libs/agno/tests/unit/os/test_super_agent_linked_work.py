@@ -603,7 +603,7 @@ def test_the_block_joins_the_context_a_caller_sent_with_the_run(chat):  # noqa: 
     assert set(run_context.dependencies) == {"page", LINKED_WORK_CONTEXT}
 
 
-def test_an_os_without_company_is_unchanged(tmp_path):
+def test_an_os_without_company_reads_no_tasks(tmp_path):
     from agno.db.sqlite import SqliteDb
     from agno.os import AgentOS, OSManager
 
@@ -611,10 +611,11 @@ def test_an_os_without_company_is_unchanged(tmp_path):
     model = Scripted()
     agent_os = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     manager = agent_os.manager
-    assert not any(isinstance(hook, LinkedWork) for hook in manager.pre_hooks)
-    assert not manager.add_dependencies_to_context
+    # The hook is there for the runs a conversation starts in the background. It has no Tasks to read.
+    assert [hook.db for hook in manager.pre_hooks if isinstance(hook, LinkedWork)] == [None]
+    assert manager.add_dependencies_to_context
     assert not any(isinstance(tool, CompanyTaskTools) for tool in manager.tools)
-    # A list in the session state of such an OS is never read, and nothing is added to the message.
+    # A Task in the session state of such an OS is never read, and nothing is added to the message.
     state = {LINKED_WORK_KEY: [{"kind": "task", "id": "task-1", "added_at": 1, "shown": "ready::"}]}
     run = asyncio.run(manager.arun("Hello", user_id="alice", session_id="chat", session_state=state))
     assert model.input == "Hello" and run.content
