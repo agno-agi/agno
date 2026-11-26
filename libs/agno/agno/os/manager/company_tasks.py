@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.tools import Toolkit
-from agno.tools.company import _OptionalInt, _OptionalString
+from agno.tools.company import _CONTEXT_KINDS, _OptionalContext, _OptionalInt, _OptionalString
 
 
 def _run_context_identity(run_context: Any):
@@ -217,6 +217,7 @@ class CompanyTaskTools(Toolkit):
         goal_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Add a Company Task the person asked for, already accepted, and start it when they asked for it to be done.
@@ -229,6 +230,7 @@ class CompanyTaskTools(Toolkit):
             goal_id: The Goal this Task belongs to; null for none.
             executor_type: agent, team or workflow; null with a null executor_id uses Mini Agent.
             executor_id: ID of that component; null with a null executor_type.
+            context: What the run is given beside the brief; null attaches nothing.
         """
         return "Adding accepted work needs an asynchronous run. Add the Task from AgentOS instead."
 
@@ -241,6 +243,7 @@ class CompanyTaskTools(Toolkit):
         goal_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Add a Company Task the person asked for, already accepted, and start it when they asked for it
@@ -262,8 +265,7 @@ class CompanyTaskTools(Toolkit):
             title: The Task's title.
             brief: The Task brief. A brief the person dictated is saved in their words. Otherwise write
                 it for the executor: the outcome, the deliverable, how it is checked and any restrictions
-                the person gave. An executor other than Mini Agent is given only this brief, so put in it
-                everything the work needs.
+                the person gave.
             start: True when the person asked for the work to be done, which queues its run now. False
                 when they asked to add a Task: it stays Ready until someone starts it.
             project_id: The active Project this Task is part of: check list_company_projects for the one
@@ -275,8 +277,12 @@ class CompanyTaskTools(Toolkit):
                 null executor_id runs it on Mini Agent, which does the work itself or runs the components
                 the person may run.
             executor_id: ID of the component the person named; null when they named none.
+            context: What the run is given beside the brief; null attaches nothing. With start true the
+                run is queued by this call, so attach here: there is no later moment. CONTEXT_KINDS
         """
         from dataclasses import replace
+
+        from agno.company.context import read_permissions
 
         from agno.company.routines import _manager_call
         from agno.company.sandbox import _is_sandboxed
@@ -296,6 +302,9 @@ class CompanyTaskTools(Toolkit):
                 return "Not done: executor_type is agent, team or workflow."
             if authority is not None:
                 await authority.arequire("tasks", "write")
+                # Attaching a reference asks for the permission that reads it.
+                for resource, action in read_permissions(context):
+                    await authority.arequire(resource, action)
             starter = _TaskStarter(agent_os)
             project = _named(project_id)
             if project is not None and not is_default_project(project):
@@ -334,6 +343,8 @@ class CompanyTaskTools(Toolkit):
                         project_id=project,
                         user_id=user_id,
                         origin="human",
+                        # Stored whether the Task is accepted or held back for confirmation.
+                        context=context,
                         **executor,
                         **accepted,
                     )
@@ -1009,3 +1020,8 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
     if status == "RUNNING":
         return f"'{title}' is already running {run}."
     return f"'{title}' already has this attempt, now {status} {run}."
+
+
+CompanyTaskTools.aadd_company_task.__doc__ = (CompanyTaskTools.aadd_company_task.__doc__ or "").replace(
+    "CONTEXT_KINDS", _CONTEXT_KINDS
+)

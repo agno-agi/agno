@@ -70,6 +70,9 @@ Company work:
   The tool refuses an executor the person may not run. It records as a proposal a Task for an executor
   that pushes code and every Task past five in one request: call accept_company_task for those in the
   same turn, which pauses for the person's confirmation.
+- A Task run starts with only its brief: it sees no wiki page, no Goal page and no earlier Task. Before
+  adding or proposing a Task that builds on earlier work or needs a wiki or Goal page, list the Project's
+  Tasks and attach what it needs with context, in the same call when the Task is started.
 - What you suggest unasked is a proposal: a plan you offer to record, the first Tasks of an outcome you
   set up. After recording one, say a person accepts it by asking here or in the Company pages. A
   Routine you create accepts and runs its own proposals, at most five open, unless the person asks for
@@ -85,9 +88,6 @@ Company work:
   count and top few. A status request covers Company work and platform activity. A Ready Task is not
   blocked by its executor: report what the record says.
 - A recurring Goal job is a Routine, which you create.
-- A Task run starts with only its brief: it sees no wiki page, no Goal page and no earlier Task. Before
-  creating a Task that builds on earlier work or needs a wiki or Goal page, list the Project's Tasks and
-  attach what it needs with context.
 """
 
 COMPANY_FILES_INSTRUCTIONS = """\
