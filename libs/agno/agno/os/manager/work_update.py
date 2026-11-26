@@ -15,9 +15,8 @@ Three things live here:
 - work_update_gate is a tool hook. In a work update it lets a tool that reads execute and answers
   for every other tool with one sentence. It is never on the Team that serves the person's turns:
   a Team's hooks replace each tool's own.
-- WorkUpdateState is a post-hook of Super Agent. A work update saves the conversation's state as it
-  is stored when the update ends, with its own marks, so it does not undo what a turn of the person
-  stored while it ran.
+- A work update saves the conversation's state as it is stored at that moment, with its own marks,
+  so it does not undo what a turn of the person stored while it ran.
 """
 
 import asyncio
@@ -153,19 +152,24 @@ class WorkUpdateBoundary(BaseGuardrail):
 
     @staticmethod
     def _reads(team: Any, async_mode: bool) -> List[Any]:
-        from agno.tools import Toolkit
-        from agno.tools.function import Function
+        """The read tools of the toolkits AgentOS itself gives Super Agent.
 
+        READ_TOOLS names tools, and a name says nothing about a tool an application wrote. A tool
+        passed in OSManager.tools is not offered in a work update, whatever it is called.
+        """
+        from agno.os.manager.company_tasks import CompanyTaskTools
+        from agno.tools.agentos import AgentOSTools
+        from agno.tools.company import CompanyTools
+        from agno.tools.company_files import CompanyFileTools
+        from agno.tools.studio_runner import StudioRunnerTools
+        from agno.tools.workspace import Workspace
+
+        own = (StudioRunnerTools, AgentOSTools, CompanyTools, CompanyTaskTools, CompanyFileTools, Workspace)
         reads: List[Any] = []
         for tool in getattr(team, "tools", None) or []:
-            if isinstance(tool, Toolkit):
+            if isinstance(tool, own):
                 functions = tool.get_async_functions() if async_mode else tool.get_functions()
                 reads.extend(function for name, function in functions.items() if name in READ_TOOLS)
-            elif isinstance(tool, Function):
-                if tool.name in READ_TOOLS:
-                    reads.append(tool)
-            elif callable(tool) and getattr(tool, "__name__", None) in READ_TOOLS:
-                reads.append(tool)
         return reads
 
     def _enter(self, run_context: Any, team: Any, async_mode: bool) -> None:
@@ -175,6 +179,7 @@ class WorkUpdateBoundary(BaseGuardrail):
             run_context.members = []
             if team is not None and (self.served is None or self.served() is not team):
                 team.tool_hooks = [work_update_gate]
+                _save_over_stored_state(team, run_context)
 
     def check(self, run_input: Any = None, run_context: Any = None, team: Any = None) -> None:
         self._enter(run_context, team, False)
@@ -183,60 +188,73 @@ class WorkUpdateBoundary(BaseGuardrail):
         self._enter(run_context, team, True)
 
 
-class WorkUpdateState(BaseGuardrail):
-    """After a work update: save the conversation's state as it is stored now, with this run's marks.
+def _keep_stored_state(session: Any, stored: Any, run_id: Any) -> None:
+    """Make the state a work update is about to save the stored one, with this run's own marks.
 
-    A post-hook. A run saves the whole session state it loaded when it started. The person cannot see
-    that a work update is going, so they may send a message while it runs, and that turn may store
-    work it started. Saved as loaded, the work update would undo that. So it reads the stored state
-    again and carries over only what it changed itself: what it showed of each piece of work.
-    What is stored between this read and the save a moment later can still be lost.
+    A run saves the whole session state it loaded when it started. The person cannot see that a work
+    update is going, so they may send a message while it runs, and that turn may store work it
+    started. Saved as loaded, the work update would undo that. Only what this run showed is carried
+    over: an entry it did not mark keeps what the conversation stored, so a finish a turn of the
+    person already reported is not put back to unreported.
     """
+    data = getattr(session, "session_data", None)
+    state = (stored.get("session_data") or {}).get("session_state") if isinstance(stored, dict) else None
+    loaded = data.get("session_state") if isinstance(data, dict) else None
+    if not isinstance(state, dict) or not isinstance(loaded, dict):
+        return
+    mine = {
+        (entry.get("kind"), entry.get("id")): entry
+        for entry in loaded.get(LINKED_WORK_KEY) or []
+        if isinstance(entry, dict) and run_id is not None and entry.get("changed_in") == run_id
+    }
+    listed = []
+    for entry in state.get(LINKED_WORK_KEY) or []:
+        own = mine.get((entry.get("kind"), entry.get("id"))) if isinstance(entry, dict) else None
+        if own is not None:
+            entry = {**entry, "shown": own.get("shown"), "changed_in": own.get("changed_in")}
+        listed.append(entry)
+    # Changed in place: the run and its session object hold this same dictionary.
+    merged = {**state, LINKED_WORK_KEY: listed}
+    loaded.clear()
+    loaded.update(merged)
 
-    @staticmethod
-    def _merge(run_context: Any, stored: Any) -> None:
-        state = (stored.get("session_data") or {}).get("session_state") if isinstance(stored, dict) else None
-        if not isinstance(state, dict) or not isinstance(getattr(run_context, "session_state", None), dict):
-            return
-        mine = {
-            (entry.get("kind"), entry.get("id")): entry
-            for entry in run_context.session_state.get(LINKED_WORK_KEY) or []
-        }
-        listed = []
-        for entry in state.get(LINKED_WORK_KEY) or []:
-            own = mine.get((entry.get("kind"), entry.get("id"))) if isinstance(entry, dict) else None
-            if own is not None:
-                entry = {**entry, **{key: own[key] for key in ("shown", "changed_in", "ended") if key in own}}
-            listed.append(entry)
-        # Changed in place: the session object the run saves holds this same dictionary.
-        merged = {**state, LINKED_WORK_KEY: listed}
-        run_context.session_state.clear()
-        run_context.session_state.update(merged)
 
-    def check(self, run_context: Any = None, team: Any = None) -> None:  # type: ignore[override]
-        if not in_work_update(run_context) or team is None or isinstance(team.db, AsyncBaseDb):
-            return
+def _save_over_stored_state(team: Any, run_context: Any) -> None:
+    """Have this run's own Team read the stored state again each time it saves the session.
+
+    Done at the save, not before: a run saves when it ends, when it fails and when it is cancelled,
+    and it can wait on other work between its last step and the save. What is stored between the
+    read here and the write right after it can still be lost.
+    """
+    session_id, run_id = getattr(run_context, "session_id", None), getattr(run_context, "run_id", None)
+    if not isinstance(session_id, str):
+        return
+    save, asave = team.save_session, team.asave_session
+
+    def read() -> Any:
+        return team.db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
+
+    def save_session(session: Any) -> Any:
         try:
-            stored = team.db.get_session(run_context.session_id, session_type=SessionType.TEAM, deserialize=False)
-            self._merge(run_context, stored)
+            if not isinstance(team.db, AsyncBaseDb):
+                _keep_stored_state(session, read(), run_id)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
+        return save(session=session)
 
-    async def async_check(self, run_context: Any = None, team: Any = None) -> None:  # type: ignore[override]
-        if not in_work_update(run_context) or team is None:
-            return
+    async def asave_session(session: Any) -> Any:
         try:
             if isinstance(team.db, AsyncBaseDb):
-                stored = await team.db.get_session(
-                    run_context.session_id, session_type=SessionType.TEAM, deserialize=False
-                )
+                stored = await team.db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
             else:
-                stored = await asyncio.to_thread(
-                    team.db.get_session, run_context.session_id, session_type=SessionType.TEAM, deserialize=False
-                )
-            self._merge(run_context, stored)
+                stored = await asyncio.to_thread(read)
+            _keep_stored_state(session, stored, run_id)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
+        return await asave(session=session)
+
+    team.save_session = save_session
+    team.asave_session = asave_session
 
 
 def _status(row: Dict[str, Any]) -> str:
@@ -260,16 +278,24 @@ def _is_work_update(row: Dict[str, Any]) -> bool:
 
 
 def _going(rows: List[Dict[str, Any]], now: float) -> List[Dict[str, Any]]:
-    """The stored runs of the conversation that are queued, running or paused for a person."""
+    """The stored runs of the conversation that are queued, running or paused for a person.
+
+    rows are newest first. A run paused for a person keeps the conversation waiting only until the
+    person speaks again: a confirmation they left unanswered and talked past is not waited for.
+    """
     going = []
+    spoken_since = False
     for row in rows:
         status = _status(row)
         if status == "PAUSED":
-            going.append(row)
+            if not spoken_since:
+                going.append(row)
         elif status in ("PENDING", "RUNNING"):
             at = row.get("updated_at") or row.get("created_at")
             if not isinstance(at, (int, float)) or now - at < _LOST_AFTER_SECONDS:
                 going.append(row)
+        if row.get("parent_run_id") is None and not _is_work_update(row):
+            spoken_since = True
     return going
 
 
@@ -420,7 +446,8 @@ class WorkUpdates:
                     # A Task's shown state ends with its latest run and how that run ended.
                     seen = shown.endswith(f":{work.get('run_id')}:{status}")
                 else:
-                    seen = shown == status
+                    # A run paused again after it was continued waits on something new.
+                    seen = shown == status and not (status == "PAUSED" and work.get("continued"))
                 return None if entry.get("ended") or seen else entry
         return None
 

@@ -294,7 +294,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.linked_work import LinkedWork
-    from agno.os.manager.work_update import WorkUpdateBoundary, WorkUpdateState
+    from agno.os.manager.work_update import WorkUpdateBoundary
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -455,8 +455,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
         pre_hooks=pre_hooks,
-        # A work update keeps what a turn of the person stored while it ran.
-        post_hooks=[WorkUpdateState()],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
