@@ -50,7 +50,7 @@ async def test_owner_without_run_scope_can_delegate_start_and_cancel(
 ):
     _, db, worker, _, components = system
     secret = "actor-owner-regression-secret-at-least-32-bytes"
-    common = [f"{r}:{a}" for r in ("products", "projects", "tasks") for a in ("read", "write")] + ["wiki:read"]
+    common = [f"{r}:{a}" for r in ("goals", "projects", "tasks") for a in ("read", "write")] + ["wiki:read"]
     runner = common + [kind + "s:run"]
     auth_db = SqliteDb(db_file=str(tmp_path / "actors.db"))
     auth = Authorization(db=auth_db if managed else None, verification_keys=[secret], algorithm="HS256")
@@ -73,16 +73,14 @@ async def test_owner_without_run_scope_can_delegate_start_and_cancel(
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test", headers=headers("alice")
         ) as client:
-            product = (await client.post("/company/products", json={"name": "Product"})).json()
-            project = (
-                await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})
-            ).json()
+            goal = (await client.post("/company/goals", json={"name": "Goal"})).json()
+            project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Project"})).json()
             approval = {"target": "active", "reason": "Approved"}
             await client.post("/company/projects/" + project["id"] + "/transitions", json=approval)
             task = (
                 await client.post(
                     "/company/tasks",
-                    json={"product_id": product["id"], "project_id": project["id"], "title": "Task", "brief": "Draft"},
+                    json={"goal_id": goal["id"], "project_id": project["id"], "title": "Task", "brief": "Draft"},
                 )
             ).json()
             path = "/company/tasks/" + task["id"]

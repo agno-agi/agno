@@ -118,7 +118,7 @@ def test_the_lists_hold_the_agreed_scopes():
     for component_id, resource in MANAGER_RESOURCES.items():
         family = resource.split("/")[0]
         assert f"{family}:{component_id}:read" in PLATFORM and f"{family}:{component_id}:run" in PLATFORM
-    for resource in ("products", "projects", "tasks", "sources", "routines", "schedules", "components"):
+    for resource in ("goals", "projects", "tasks", "sources", "routines", "schedules", "components"):
         assert {f"{resource}:read", f"{resource}:write", f"{resource}:delete"} <= set(PLATFORM)
     for scope in ("company:read", "company:write", "wiki:read", "wiki:write", "decisions:read", "decisions:write"):
         assert scope in PLATFORM

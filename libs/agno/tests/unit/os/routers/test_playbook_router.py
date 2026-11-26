@@ -50,16 +50,16 @@ def test_unsupported_wiki_database_reports_unavailable():
 
 
 @pytest.mark.parametrize("use_async", [False, True])
-def test_company_wiki_cannot_be_redirected_by_product_query(tmp_path, use_async):
+def test_company_wiki_cannot_be_redirected_by_goal_query(tmp_path, use_async):
     cls = AsyncSqliteDb if use_async else SqliteDb
     db = cls(db_file=str(tmp_path / "wiki.db"))
     os = AgentOS(db=db, company=CompanyConfig(), telemetry=False)
     with TestClient(os.get_app()) as client:
-        product = client.post("/company/products", json={"name": "SDK"}).json()
-        product_url = "/company/products/" + product["id"] + "/wiki"
-        original = client.get(product_url + "/status.md").json()
+        goal = client.post("/company/goals", json={"name": "SDK"}).json()
+        goal_url = "/company/goals/" + goal["id"] + "/wiki"
+        original = client.get(goal_url + "/status.md").json()
         company = client.get("/company/wiki/status.md").json()
-        query = "?product_id=" + product["id"]
+        query = "?goal_id=" + goal["id"]
         assert client.get("/company/wiki/status.md" + query).json() == company
         assert client.get("/company/wiki" + query).json() == client.get("/company/wiki").json()
         assert (
@@ -69,11 +69,11 @@ def test_company_wiki_cannot_be_redirected_by_product_query(tmp_path, use_async)
             ).status_code
             == 200
         )
-        assert client.get(product_url + "/status.md").json() == original
+        assert client.get(goal_url + "/status.md").json() == original
         assert client.get("/company/wiki/status.md").json()["content"] == "Company only"
         paths = client.get("/openapi.json").json()["paths"]
         for route, methods in paths.items():
             if route.startswith("/company/wiki"):
                 for operation in methods.values():
-                    assert all(param["name"] != "product_id" for param in operation.get("parameters", []))
+                    assert all(param["name"] != "goal_id" for param in operation.get("parameters", []))
     asyncio.run(db.close()) if use_async else db.close()

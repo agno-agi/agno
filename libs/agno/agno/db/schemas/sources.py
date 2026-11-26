@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 
 def validate_source_fields(fields: Dict[str, Any]) -> None:
-    unknown = set(fields) - {"product_id", "type", "reference", "credential_ref", "config"}
+    unknown = set(fields) - {"goal_id", "type", "reference", "credential_ref", "config"}
     if unknown:
         raise ValueError(f"Unsupported source fields: {sorted(unknown)}")
     if "type" in fields and fields["type"] not in {"git", "markdown", "website"}:

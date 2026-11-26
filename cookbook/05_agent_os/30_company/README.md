@@ -1,39 +1,106 @@
-# Company Products
+# Company Goals
 
 Manage standing responsibilities with SQLite for development.
 PostgreSQL is supported for production, with the same sync and async methods.
 
 | File | What it teaches |
 | --- | --- |
-| `01_manage_products.py` | Create two owners' Products, list unscoped or by owner, soft-delete, inspect and restore. |
+| `01_manage_goals.py` | Create two owners' Goals, list unscoped or by owner, soft-delete, inspect and restore. |
 | [`10_customer_feedback/`](10_customer_feedback/README.md) | Live GPT-6.1 Sol feedback review, human acceptance, and a saved product brief through the AgentOS UI. |
 
 Run with the development environment:
 
 ```bash
-.venv/bin/python cookbook/05_agent_os/30_company/01_manage_products.py
+.venv/bin/python cookbook/05_agent_os/30_company/01_manage_goals.py
 ```
 
 For HTTP access, configure `AgentOS(db=db, company=CompanyConfig())` using
 `AgentOS` and `CompanyConfig` from `agno.os`. An explicit `CompanyConfig(db=...)`
 overrides the OS database. Omitting Company leaves its routes and scopes absent.
 
-The routes are `GET` and `POST /company/products`, `GET`, `PATCH` and
-`DELETE /company/products/{id}`, and `POST /company/products/{id}/restore`.
+The routes are `GET` and `POST /company/goals`, `GET`, `PATCH` and
+`DELETE /company/goals/{id}`, and `POST /company/goals/{id}/restore`.
 Lists return `{data, meta}` with `limit` and `page`; reads accept
-`include_deleted=true`. Restore requires `products:delete`, like deletion.
-Read and create/update require `products:read` and `products:write` respectively.
+`include_deleted=true`. Restore requires `goals:delete`, like deletion.
+Read and create/update require `goals:read` and `goals:write` respectively.
 
 `CompanyManager` takes a sync database; `AsyncCompanyManager` takes an async
 database and exposes the same methods as coroutines. `list()` returns rows and
 a total. `user_id=None` is unscoped; a string filters by owner before paging.
 The HTTP layer records the authenticated caller as the creator. Company records
 are shared: reads need the read scope and writes need the write or delete scope,
-whoever created the Product. User isolation does not restrict Company records.
+whoever created the Goal. User isolation does not restrict Company records.
+
+### Upgrading from agno 3.2.0
+
+In 3.2.0 a Goal was a Product and its objective was its purpose. The new
+version stores Goals under new table and column names, so a 3.2.0 database
+must be migrated once. AgentOS does not migrate it by itself: until you do,
+AgentOS starts, everything outside Company works, and Company answers with
+`MigrationRequiredError` and the command to run.
+
+1. Stop every process that runs 3.2: they fail against a migrated database.
+2. Back up the database. The migration cannot be reversed, and `down()` does
+   not undo it.
+3. Migrate the Company database, and the AgentOS database when they are
+   different databases. Run it once, from one process:
+
+```python
+import asyncio
+
+from agno.db.migrations.manager import MigrationManager
+
+asyncio.run(MigrationManager(db).up())
+```
+
+Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
+is up. Company then starts without a restart.
+
+The migration renames the stored tables and columns in place and keeps every
+id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+code that calls the Company Python API by its 3.2.0 names needs the rename
+first: see the names that changed with no alias, below.
+
+A Routine keeps the instructions saved in it. Where they name a Company tool by
+its 3.2.0 name, for example `read_product_source`, the migration writes the
+current name in its place.
+
+If a 3.2 process starts after the migration, it creates its old tables again
+(`agno_company_products` and `agno_company_products_details`). The new version
+does not use them. Your Goals are not changed, but anything the 3.2 process
+wrote to those tables is not shown. Stop the process, copy any row you need,
+then drop the two tables.
+
+These 3.2.0 names are still accepted:
+
+| 3.2.0 | Now |
+| --- | --- |
+| `from agno.company import Product` | `Goal` |
+| `Product(purpose=...)` | `Goal(objective=...)` |
+| `CompanyConfig(products=[...])` and `company: products:` in `config.yaml` | `goals` |
+| `AcceptanceScope(product_ids=[...])` | `goal_ids` |
+| `products_table=` on `SqliteDb` and `PostgresDb` | `goals_table=` |
+| `rehydrate_product` and `arehydrate_product` | `rehydrate_goal` and `arehydrate_goal` |
+| The scopes `products:read`, `products:write`, `products:delete` | `goals:read`, `goals:write`, `goals:delete` |
+
+`products` and `goals` are one permission under two names, in a token and in a
+stored role. If your application has a `products` permission of its own and
+also runs Company, rename yours before you upgrade. Otherwise its holders also
+have access to Company Goals.
+
+These changed with no alias: the routes are `/company/goals`, with the fields
+`goal_id` and `objective`; `CompanyManager` takes `objective=` and `goal_id=`
+where it took `purpose=` and `product_id=`, and `discard_product` is
+`discard_goal`; the Company tools and the `CompanyTools` methods are named for
+Goals, for example `create_company_goal` and `update_goal_status`; a row holds
+`goal_id` where it held `product_id`, so a custom check in `acceptance_checks`
+reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
+still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
+with 422.
 
 ## Weekly Mini Agent review
 
-`10_weekly_product_review.py` declares a Company Routine with no executor, so
+`10_weekly_goal_review.py` declares a Company Routine with no executor, so
 it runs on Mini Agent. Naming `executor_type="agent"`, `executor_id="miniagent"` does
 the same. It reads Sources and existing work, proposes only evidence-backed
 Backlog Tasks, and updates status without accepting work. Mini Agent is a
@@ -53,8 +120,8 @@ and a Routine that names Super Agent or any other framework ID is refused.
 Check both configurations without model calls or an active scheduler:
 
 ```bash
-.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check
-.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_product_review.py --check --with-os-manager
+.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_goal_review.py --check
+.venv/bin/python cookbook/05_agent_os/30_company/10_weekly_goal_review.py --check --with-os-manager
 ```
 
 Start the local server with `--enable-weekly-review` to opt in to Monday reviews
@@ -80,7 +147,7 @@ permission. For a Routine on Mini Agent these are `agents:miniagent:run` and
 `agents:miniagent:read`. A grant on Super Agent is not a grant on Mini Agent. Grant only the Company tools the review uses: Sources and existing
 work reads, proposal writes and wiki reads/writes. Delegation
 retains those grants and Routine restrictions. Company-wide collaborative reads
-keep their existing visibility; Source contents and mutations retain Product
+keep their existing visibility; Source contents and mutations retain Goal
 checks, and private sessions retain the deployment's ownership isolation.
 
 Any caller with `routines:write`, `schedules:write` and the executor's run
@@ -100,12 +167,12 @@ run the Routine can trigger it.
 
 | File | Demonstrates |
 | --- | --- |
-| `02_manage_projects.py` | Product-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
+| `02_manage_projects.py` | Goal-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
 | `03_manage_tasks.py` | Backlog proposals, executor acceptance, frozen scope, rescoping, review and completion. |
 | `09_sandboxed_engineers.py` | Claude and Codex execute a Task from a public repository in Docker, with durable checkpoints and checkout pinning. |
 
-A Product contains Projects and Routines. Every new Task belongs to a Project
-in that Product: `project_id` is required by Task creation and proposal/Intake
+A Goal contains Projects and Routines. Every new Task belongs to a Project
+in that Goal: `project_id` is required by Task creation and proposal/Intake
 tools. HTTP rejects omission with 422; Python managers and tools raise
 `ValueError`. Backlog drafts can be created under a `proposed` Project so people
 can review the plan. The Project must be approved before its Tasks move to Ready
@@ -141,7 +208,7 @@ requires an earlier run attempt.
 A done or cancelled Task cannot reopen inside a done or cancelled Project.
 
 The HTTP routes use `/company/projects` and `/company/tasks`, with the same
-CRUD, paging, soft delete and restore conventions as Products, plus
+CRUD, paging, soft delete and restore conventions as Goals, plus
 `POST /{id}/transitions`. Task Ready requests include `executor_type` and
 `executor_id`; the API applies the scheduler's caller run-permission check.
 Acceptance also validates the executor against the registry, then the published
@@ -149,7 +216,7 @@ Studio components in the AgentOS catalog, like the ordinary run routes. Direct P
 callers pass `registry=Registry(...)` to their Company manager.
 
 Project and Task HTTP reads are company-wide for callers with the resource's
-read scope, matching Products. Edits and transitions are collaborative: callers with the resource write
+read scope, matching Goals. Edits and transitions are collaborative: callers with the resource write
 scope can update or transition another creator's work, even with user isolation
 enabled. This includes cancellation and returning Tasks to Backlog. The creator
 stays unchanged, and transition history records the acting caller. Ready still
@@ -158,8 +225,8 @@ Project, evidence and executor until returned to Backlog, because an accepted
 Task runs under its accepter's permissions. The title stays editable at any
 stage (Company tools run by Routines and executors edit Backlog Tasks only).
 Delete and restore need the delete scope, not ownership.
-New work can use another owner's Product or Project, with the Task and
-Project still required to belong to the same Product. Manager and storage
+New work can use another owner's Goal or Project, with the Task and
+Project still required to belong to the same Goal. Manager and storage
 methods retain explicit owner filters for direct callers.
 
 
@@ -167,21 +234,21 @@ methods retain explicit owner filters for direct callers.
 
 | File | Demonstrates |
 | --- | --- |
-| `04_manage_playbook.py` | Sync/async wiki namespaces, atomic page creation, version conflicts and the learning decision log without a model. |
-| `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Product with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
-| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Product brief, a Product page, a Task file, a note, and what a Task's input loads. |
+| `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
+| `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
 
-Each Product has a durable wiki namespace with `brief.md` (human direction) and
-`status.md` (current work). A second namespace holds company context. Default
-pages are created on first access and never reset. GET `/company/products/{id}/wiki`
-lists pages; GET and PUT `/company/products/{id}/wiki/{path}` read and write them.
-The company namespace has the same surface at `/company/wiki`. Writes require the
+Each Goal has a durable wiki folder with `brief.md` (human direction) and
+`status.md` (current work). A second folder holds company context. Default
+pages are created on first access and never reset. GET `/company/goals/{id}/wiki`
+lists pages; GET and PUT `/company/goals/{id}/wiki/{path}` read and write them.
+The company wiki has the same surface at `/company/wiki`. Writes require the
 filesystem `expected_version` read with the page; zero means create only. Conflicts
 return 409. Pages are Markdown and paths must be relative and normalized.
 
-Wiki reads require `wiki:read`; writes require `wiki:write`. Product and company
+Wiki reads require `wiki:read`; writes require `wiki:write`. Goal and company
 pages are shared documents, so any caller with `wiki:write` can change them, and
-every caller with read permission can read both namespaces. Company services use FileSystem;
+every caller with read permission can read both. Company services use FileSystem;
 its existing backend owns storage and version checks.
 
 GET and POST `/company/decisions` use `decisions:read` and `decisions:write`.
@@ -202,35 +269,62 @@ decision.
 
 ### One file tree
 
-Super Agent and Mini Agent see the wiki, each Product's pages, each Task's files
+Super Agent and Mini Agent see the wiki, each Goal's pages, each Task's files
 and Super Agent's notes as one tree, addressed by path:
 
 ```
 wiki/                   agreed direction: brief.md and status.md by default
-products/<product-id>/  brief.md and status.md by default, and what agents found
+goals/<goal-id>/        brief.md and status.md by default, and what agents found
 tasks/<task-id>/        what one Task was given and what it produced
 notes/                  Super Agent's own notes
 ```
 
 `priorities.md`, `people.md` and `how-we-work.md` are the names Super Agent uses
-in `wiki/`. Each is created when there is something to put in it. A Product is
-addressed by ID, and listing `products/` shows each name beside its ID. Pages in
-`wiki/` and `products/` are Markdown; `tasks/` and `notes/` take any text file.
+in `wiki/`. Each is created when there is something to put in it. A Goal is
+addressed by ID, and listing `goals/` shows each name beside its ID. Pages in
+`wiki/` and `goals/` are Markdown; `tasks/` and `notes/` take any text file.
 
-**Where it is stored.** `wiki/`, `products/` and `tasks/` are in the Company
-database. `notes/` is in the AgentOS database, so it exists with Super Agent on
-whether or not Company is on. The two are the same database unless
-`CompanyConfig(db=...)` names another. The stored namespaces of the wiki and of
-each Product are the ones 3.1 created, so existing pages are read where they are,
-and the wiki API above serves the same pages.
+**Where it is stored.** Every Company file is in the Company file system: one
+store in the Company database, the namespace `company`, with each file at its
+path in the tree. `notes/` is a folder of it. Without Company, Super Agent still
+has `notes/`: the same store in the AgentOS database holds it. The wiki API above
+serves the same pages.
+
+The folder of a Goal or a Task is its ID written as one path segment. An ID made
+of letters, digits and `. - _ @ +` is its own folder name. Any other character
+is escaped, so `Docs Team` is stored under `goals/Docs%20Team/` and no two IDs
+share a folder. The tools and the routes still name a Goal by its ID.
+
+**Upgrading from 3.2.** The 3.3.0 migration above also moves the files: each
+one to its tree path with its content, version and timestamps. AgentOS does not
+move them as it starts.
+
+- Until the migration has run, AgentOS starts and the Company file system
+  refuses each use with an error that names what to run:
+  `MigrationManager(db).up()` or `POST /databases/all/migrate`. It also stays
+  refused when a different file is already stored at a path a file moves to.
+- With a separate Company database, the notes move into it from the AgentOS
+  database. `POST /databases/all/migrate` does this once both databases are
+  migrated. After `MigrationManager(db).up()` on each, call
+  `move_company_notes(agent_os_db, company_db)` from
+  `agno.db.migrations.versions.v3_3_0`. Until then `notes/` is refused.
+- The migration never guesses where a file belongs. Files of a Goal or Task it
+  cannot be sure of stay where they are and are reported in the log.
+  `company_files_left(db)` lists them, and
+  `move_company_files(db, owners={namespace: id})` moves a namespace to the
+  owner you name. Both are in `agno.db.migrations.versions.v3_3_0`.
+- The namespace `company` belongs to the Company file system. On an AgentOS
+  with Company, an agent whose own `FileSystem` uses the shared partition of
+  that namespace in the same database is refused when its run starts. Give that
+  filesystem another namespace, and move its files there.
 
 **Nothing in the tree is isolated by user.** `notes/` is one folder shared by
 everyone who talks to Super Agent, including when user isolation is on. A note
 Super Agent saved in one person's chat can be read in another person's chat.
-Listing `products/` and searching the tree show every Product, as the Product
+Listing `goals/` and searching the tree show every Goal, as the Goal
 listing does.
 
-**Reading it over the API.** `wiki/` and each Product's pages have the wiki routes
+**Reading it over the API.** `wiki/` and each Goal's pages have the wiki routes
 above. A Task's files and the notes have read routes, so the Company pages can
 show what Super Agent and its workers wrote:
 
@@ -261,17 +355,17 @@ tools (`list_files`, `read_file`, `search_content`) that `OSManager(root=...)` a
 | Tool | Permission | Writes |
 | --- | --- | --- |
 | `list_company_files`, `read_company_file`, `search_company_files` | `wiki:read`, none for `notes/` | |
-| `write_company_file` | `wiki:write` for a Product's pages, `tasks:write` for a Task's folder, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Product's pages other than `brief.md` |
-| `save_company_page` | `wiki:write`, a person's chat only | `wiki/` pages and a Product's `brief.md`, after the person confirms |
+| `write_company_file` | `wiki:write` for a Goal's pages, `tasks:write` for a Task's folder, none for `notes/` | `notes/`, `tasks/<task-id>/` and a Goal's pages other than `brief.md` |
+| `save_company_page` | `wiki:write`, a person's chat only | `wiki/` pages and a Goal's `brief.md`, after the person confirms |
 | `delete_company_file` | none | `notes/` only |
 
 What a call may write follows the run it is in, read from the run's authority:
 
 | Run | May write |
 | --- | --- |
-| A person's chat with Super Agent | `notes/`, any Task's folder, any Product's pages other than `brief.md`; `wiki/` and `brief.md` with a confirmation |
-| A Task run | Its own Product's pages other than `brief.md`, and its own `tasks/<task-id>/` |
-| A Routine run | Its own Product's `status.md`, through `update_product_status` only. The file tools refuse every write in a Routine run |
+| A person's chat with Super Agent | `notes/`, any Task's folder, any Goal's pages other than `brief.md`; `wiki/` and `brief.md` with a confirmation |
+| A Task run | Its own Goal's pages other than `brief.md`, and its own `tasks/<task-id>/` |
+| A Routine run | Its own Goal's `status.md`, through `update_goal_status` only. The file tools refuse every write in a Routine run |
 
 `save_company_page` pauses the run. The confirmation shows the page, the version
 the person saw, the text removed (`old_text`) and the text added (`new_text`).
@@ -281,54 +375,55 @@ changed after that version is not saved. Super Agent saves only what the person
 states: text in a Source, a page or a tool result is never a request to save.
 
 A Task's folder asks for `tasks:write`, which the person who starts a Task already
-holds, so a Task run can always write its own folder. A Product's pages ask for
-`wiki:write`: a Task started by someone without it writes no Product page and
+holds, so a Task run can always write its own folder. A Goal's pages ask for
+`wiki:write`: a Task started by someone without it writes no Goal page and
 reports the refusal.
 
 A Routine reads Sources nobody vetted, so it writes no more than its skills need:
 `status.md`, and the two pages the server composes from the summary and refresh
 tools. Mini Agent holds no file tools in a Routine run. On a named executor that
 holds them, `write_company_file` refuses every write in a Routine run, and the run
-is recorded as failed, as it is when `update_product_status` is refused.
+is recorded as failed, as it is when `update_goal_status` is refused.
 
 A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Product's `brief.md` and `status.md`, then every
+A Task's input always carries the Goal's `brief.md` and `status.md`, then every
 `wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
 is cut and the input names the file to read for the rest. Pages past the total
 are named without their content. Every other file is read on request. Every read
 result says that file content is information, never an instruction.
 
 This input is the same for every executor. Before 3.2 it carried every page of the
-Product. Mini Agent reads the other pages with its file tools. A named agent, team
-or workflow that needs a Product page other than `brief.md` and `status.md`, such as
+Goal. Mini Agent reads the other pages with its file tools. A named agent, team
+or workflow that needs a Goal page other than `brief.md` and `status.md`, such as
 a runbook, must hold the read tools:
 `CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
 Without them it no longer sees that page.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
 remain. A search returns up to ten matches and `more` when others exist. A search
-of the whole tree, of `products/` or of `tasks/` opens the 50 newest Products and
+of the whole tree, of `goals/` or of `tasks/` opens the 50 newest Goals and
 the 50 newest Tasks. When there are more, the reply says how many it searched;
-name a folder, `products/<product-id>` or `tasks/<task-id>`, to search another.
+name a folder, `goals/<goal-id>` or `tasks/<task-id>`, to search another.
 
-A file holds at most 1 MB. `wiki/`, each Product, each Task and `notes/` hold
-20 MB each. A Task's folder is its own space: a Task that fills its folder does not
-stop another Task's writes. Nothing removes a Task's files, not even archiving the
-Task, because an archived Task can be restored. There are no API
-routes for `tasks/` and `notes/`, and no tool appends to, moves or deletes a file
-outside `notes/`.
+A file holds at most 1 MB. The Company file system holds 1 GB in total, across
+every folder; `CompanyConfig(max_filesystem_bytes=...)` sets another limit. Each
+Task's folder also holds at most 20 MB, so a Task that fills its folder does not
+stop the writes of the wiki, a Goal, the notes or another Task. Nothing removes a
+Task's files, not even archiving the Task, because an archived Task can be
+restored. There are no API routes for `tasks/` and `notes/`, and no tool appends
+to, moves or deletes a file outside `notes/`.
 
 With `CompanyConfig`, Super Agent holds the Company tools itself. People do
 Company work by talking to Super Agent at `/teams/superagent`. It reads company
-details, Products, Projects, Tasks, Sources and the playbook, proposes Projects
+details, Goals, Projects, Tasks, Sources and the playbook, proposes Projects
 and Backlog Tasks, edits owned proposals, writes `status.md` with a version check,
 saves company details and creates Routines. It can add website
-Sources with permission and Product ownership. When the person asks, it approves
+Sources with permission and Goal ownership. When the person asks, it approves
 a Project, accepts a Task and reviews a finished one; see "Decisions from chat
-and Mini Agent Tasks". Ownership changes, local Source additions, Product
+and Mini Agent Tasks". Ownership changes, local Source additions, Goal
 maintenance and outbound summaries are
 not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
 otherwise Super Agent's model, otherwise the first registry model. If none exists,
@@ -436,7 +531,7 @@ including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
 Executor input contains only the Task brief, its evidence, every company wiki
-page and the Product's `brief.md` and `status.md`; see "One file tree" for the
+page and the Goal's `brief.md` and `status.md`; see "One file tree" for the
 size limit. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
@@ -444,8 +539,8 @@ has attempts left. An exhausted, permanent or cancelled run leaves the Task
 In progress with a visible `ERROR` or `CANCELLED` result. It can start another numbered attempt or return to
 Backlog for replanning. Executors cannot acquire scheduler mutation authority.
 
-GET `/company/attention?product_id=...` returns `proposals`, `in_review` and
-`failed` counts using the Task list filters. Omitting Product counts all work.
+GET `/company/attention?goal_id=...` returns `proposals`, `in_review` and
+`failed` counts using the Task list filters. Omitting Goal counts all work.
 Attention and run reads are company-wide with `tasks:read`; Task lists also
 accept `failed=true`. Failed work means an In progress Task whose latest result
 is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready, In review or Done
@@ -512,7 +607,7 @@ What Mini Agent may do follows the kind of run:
 
 | | Routine run | Task a person accepted | Task a policy accepted |
 | --- | --- | --- | --- |
-| Company tools | read, propose, intake, status, refresh, summary | read the Product, its Projects, Tasks and Sources; update `status.md`. A Source read or a status update for another Product is refused | the same as a person-accepted Task |
+| Company tools | read, propose, intake, status, refresh, summary | read the Goal, its Projects, Tasks and Sources; update `status.md`. A Source read or a status update for another Goal is refused | the same as a person-accepted Task |
 | Run tools (`list_*`, `run_*`) | none | yes, for components both the accepting person and the starter may run | none |
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
@@ -528,7 +623,7 @@ holds run tools; the starter's permissions still apply. A Task a policy
 accepted runs no other component, on any executor. No Task run starts a
 sandboxed agent through the run tools: a sandboxed agent runs only as a Task's
 own executor. Task runs
-can use `read_company_file` to read `products/<product-id>/status.md` and its
+can use `read_company_file` to read `goals/<goal-id>/status.md` and its
 version before writing it with `write_company_file`, and reread it after a
 version conflict to preserve concurrent edits.
 
@@ -555,20 +650,20 @@ the API or chat.
 | --- | --- |
 | `07_cascading_archive.py` | Active-work refusal, moving a Backlog Task, cascading archive, hidden children, and exact restore with sync and async managers. Add `--postgres` for PostgreSQL. |
 
-Archiving a Product archives all its active Projects and Tasks. Archiving a
+Archiving a Goal archives all its active Projects and Tasks. Archiving a
 Project archives its active Tasks. Every cascaded child's `transitions` history
 records an `action: "archive"` event with `archived_by: {type, id}` naming the
 parent. Lifecycle status stays unchanged. Restore brings back only those
 children; records archived separately or before the parent stay archived.
 Restore the parent before restoring individual children.
 
-A Product or Project with Ready, In progress, or In review Tasks refuses archive.
+A Goal or Project with Ready, In progress, or In review Tasks refuses archive.
 Tasks that were separately archived don't count, since lists and counts hide them.
 The API returns 409 with `detail.message` and `detail.tasks`, an array of `{id,
 title}` objects. Managers raise `ValueError` with the same detail dictionary.
 Finish or cancel that work first. Backlog Tasks may move to another active
-Project in the same Product using `PATCH /company/tasks/{id}` with `project_id`;
-Product membership is immutable.
+Project in the same Goal using `PATCH /company/tasks/{id}` with `project_id`;
+Goal membership is immutable.
 
 Project and Task lists always hide children of archived parents, including when
 `include_deleted=true`. Totals and pagination follow the same visibility rule.
@@ -585,16 +680,16 @@ the parent before editing or restoring those children; individual reads remain
 available with `include_deleted=true`.
 
 Cascade writes currently update each child inside one transaction. Large archives
-hold the Product lock until all child updates finish; bulk-update optimization is
+hold the Goal lock until all child updates finish; bulk-update optimization is
 a separate follow-up. The list-page query bound is independent of archive size.
 
-Product and Project reads also carry `counts`. A Product has `counts.projects`
+Goal and Project reads also carry `counts`. A Goal has `counts.projects`
 (the number of proposed or active Projects) and `counts.tasks` with integer
 `backlog`, `ready`, `in_progress`, `in_review`, `done`, and `cancelled` fields.
 A Project has the same `counts.tasks` object. Missing statuses are zero.
 Archived children and children of archived parents contribute nothing, even
 when the parent's own read includes archived records. Managers and HTTP use
-`BaseDb.get_product_counts(ids)` or `get_project_counts(ids)` and their async
+`BaseDb.get_goal_counts(ids)` or `get_project_counts(ids)` and their async
 twins, issuing one grouped query for the entire returned page. A warmed list
 page uses three SQL statements in total, regardless of the number of cards.
 
@@ -602,18 +697,18 @@ page uses three SQL statements in total, regardless of the number of cards.
 
 | File | Demonstrates |
 | --- | --- |
-| `07_heartbeat.py` | Code-declared Products, a reader Source, an Intake Skill, scheduler rows and duplicate-free scans without a model call. |
+| `07_heartbeat.py` | Code-declared Goals, a reader Source, an Intake Skill, scheduler rows and duplicate-free scans without a model call. |
 | `11_disabled_routine.py` | A visible, initially disabled Routine that a human enables through the API used by the UI; activation survives restart. |
 
-Declare `Product`, `Source` and `Routine` from `agno.company`, then pass
-`CompanyConfig(products=[...])`. The same declarations work in OS configuration:
+Declare `Goal`, `Source` and `Routine` from `agno.company`, then pass
+`CompanyConfig(goals=[...])`. The same declarations work in OS configuration:
 
 ```yaml
 company:
-  products:
+  goals:
     - id: documentation
       name: Documentation
-      purpose: Keep docs current
+      objective: Keep docs current
       sources:
         - type: markdown
           reference: /workspace/docs
@@ -634,25 +729,25 @@ human edits. The same flag is accepted when creating a routine through the API
 or the sync/async `CompanyManager` and Company tools.
 
 The executor must already be registered; an invalid declared target fails startup
-with an error naming the Product, the Routine and the executor. Give it `CompanyTools(db)` and
+with an error naming the Goal, the Routine and the executor. Give it `CompanyTools(db)` and
 `load_routine_skills()` for reader, Intake and Summary tools. AgentOS binds its
 interfaces to custom `CompanyTools(db)` executors automatically; an explicit
 `interfaces=` override is preserved, and `summary_tools=False` disables delivery.
 Super Agent has no outbound Summary tool; Mini Agent does. Enable the existing AgentOS scheduler and queue to run schedules; the
 cookbook only creates and inspects them. Scheduling alone never grants acceptance.
 The OS scheduler database owns Routine definitions/history even with a separate
-Company database. `metadata.routine_ids` links them to Products.
+Company database. `metadata.routine_ids` links them to Goals.
 
 The templates are packaged `SKILL.md` files under `agno/company/skills`, loaded
 through `LocalSkills`. Creation snapshots the selected Skill's instructions into
-the schedule, with the Product id explicitly included in the model message.
+the schedule, with the Goal id explicitly included in the model message.
 Following scheduler behavior, restarting or editing a Skill or code declaration
 never overwrites saved schedule instructions.
 
 ### Update saved Routine instructions
 
 For an existing Routine, inspect its saved instructions before upgrading a
-proposal workflow. Keep its custom purpose, evidence requirements and constraints,
+proposal workflow. Keep its custom objective, evidence requirements and constraints,
 and add the Project approval step: create Backlog proposals in a suitable Project,
 then wait for human approval before accepting or running its Tasks.
 
@@ -666,7 +761,7 @@ Content-Type: application/json
 ```
 
 The `instructions` field replaces the saved text; it does not append a paragraph.
-Supply the instruction text only, without the stored Product-context prefix;
+Supply the instruction text only, without the stored Goal-context prefix;
 the endpoint adds that context. Do not send the schedule's raw payload or
 delete/recreate the Routine. An instructions-only update retains its ID, owner,
 executor, cadence, run history and acceptance policy. Keep customized instructions
@@ -689,7 +784,7 @@ report without disclosing values. These readers use local files or an unauthenti
 website GET: `credential_ref` is a diagnostic prerequisite, not an authentication
 adapter, and its value is never passed to an executor or reader.
 Source reads require `sources:read`, not a separate filesystem grant.
-`read_product_source` without `path` returns a content-free index (`data`,
+`read_goal_source` without `path` returns a content-free index (`data`,
 `total_count`, `next_offset`). Use a filename glob in `pattern` and `offset`/`limit`
 to page through it. Discovery does not open document contents. Pass a returned
 `path` to read one document; the response contains evidence and up to 8,000
@@ -703,10 +798,10 @@ configured URL. The programmatic whole-Source `read_source` API still skips
 undecodable/oversized directory entries and reports `skipped_paths`; explicit
 selected-file reads fail on reader errors.
 Source reads produce evidence with the run id,
-a SHA-256 hash of reader content, and a link. Task deduplication is per Product,
+a SHA-256 hash of reader content, and a link. Task deduplication is per Goal,
 including completed and soft-deleted proposals. Failed reads create no proposals.
 Reader failures fail the executor and Routine run, appear in Routine history,
-and contribute to the Product's failed attention count. Routine authority uses
+and contribute to the Goal's failed attention count. Routine authority uses
 the configured Source's confined reader under `sources:read`; the human creating
 the Routine does not need an additional `filesystem:read` grant.
 Reading files creates no Tasks. The reader first decides whether useful work is
@@ -717,42 +812,42 @@ Intake rereads only the selected links, verifies their hashes, and rejects
 evidence changed since observation. Read again and reconsider the proposal after
 such a rejection. It stores hashes and links, without copying document content
 into the Task. Reuse the issue key across content and wording edits; a distinct issue
-has a distinct key. Database uniqueness remains scoped to the Product.
+has a distinct key. Database uniqueness remains scoped to the Goal.
 Routines must use evidence-backed Intake: plain `propose_company_task` and
 Company service Task creation reject Routine authority. Human and Super Agent
 proposals retain their normal behavior.
 
 `/company/routines` wraps the scheduler. Writes require both `routines:write`
 and `schedules:write`; histories require `routines:read` and `schedules:read`.
-Routine creation saves the schedule disabled, links its id to the Product, then
+Routine creation saves the schedule disabled, links its id to the Goal, then
 activates it through the scheduler. If linking or activation fails, retrying the
 same request as the same creator resumes the pending creation. Edited requests
 and already-created schedules still return 409; a retry never undoes a deliberate
-pause. Resume also repairs a missing Product link before activation.
+pause. Resume also repairs a missing Goal link before activation.
 
 Routine reads and histories are company-wide, including under user isolation.
 Like Projects and Tasks, any caller with the Routine write scopes can add a
-Routine to any active Product, including an unowned declared Product, and edit,
+Routine to any active Goal, including an unowned declared Goal, and edit,
 pause or resume any Routine; the creator stays recorded on the schedule.
 Pause/resume use scheduler disable/enable and its filtered state response; saved
 authorization claims are never returned. Routine schedule names follow scheduler
-validation, including the 255-character limit on `product_id + "." + name`.
+validation, including the 255-character limit on `goal_id + "." + name`.
 Invalid names return 422 before creation, including setup. Sources use `sources:read`,
-`sources:write` and `sources:delete` on any Product.
-`POST /company/setup` uses `products:write` to seed a blank deployment; nested
+`sources:write` and `sources:delete` on any Goal.
+`POST /company/setup` uses `goals:write` to seed a blank deployment; nested
 Sources and Routines also require their own write permissions. Retries and
 restarts repair interrupted creation and linking, retain existing edits and do not
 restore archived records. Setup returns 201 for creation and 200 for a retry.
-If the deployment already has Products other than this setup identity, setup
+If the deployment already has Goals other than this setup identity, setup
 returns 409.
 
-Summary uses Product metadata such as
+Summary uses Goal metadata such as
 `{"summary": {"interface": "slack", "destination": "C012345"}}` and the matching
 interface configured on AgentOS. The executor supplies its narrative to
-`summarize_company_product`; the page includes counts, that narrative, changes
+`summarize_company_goal`; the page includes counts, that narrative, changes
 since the last delivered summary, and failed-Task details. Summary updates the versioned
-`summary.md` Product wiki page before delivery. Delivery receipts and the last
-delivered snapshot persist in a separate Product filesystem namespace, outside
+`summary.md` Goal wiki page before delivery. Delivery receipts and the last
+delivered snapshot persist in a separate Goal filesystem namespace, outside
 the wiki and executor input, so report retention cannot resend a delivered run or
 reset the change baseline. Existing report receipts migrate before expiry.
 A repeated run does not resend after intervening successful runs;
@@ -854,8 +949,8 @@ PostgreSQL queue without a model call.
 Starting AgentOS without Company disables an existing automation schedule with
 `disabled_reason="company_off"`. Enabling Company again re-enables that row;
 other disabled reasons are preserved. GET `/config` exposes `company.dbs` with
-the configured Company database id and its Product, Project, Task, and Source
-tables. The `company` key is null when Company is off. YAML Product declarations
+the configured Company database id and its Goal, Project, Task, and Source
+tables. The `company` key is null when Company is off. YAML Goal declarations
 can share their `company` section with optional `display_name` and `dbs` display
 overrides.
 
@@ -899,7 +994,7 @@ the IDs below with real records and PATCH this body:
     "executors": ["writer"],
     "source_ids": ["release-notes"],
     "work_scope": {
-      "product_ids": ["documentation"],
+      "goal_ids": ["documentation"],
       "project_ids": ["release-documentation"]
     },
     "required_checks": ["project_active", "has_source_evidence", "executor_registered"],
@@ -913,9 +1008,9 @@ proposal with no executor runs on the policy's executor. A proposal that names a
 executor runs on that one, when it is registered and passes the executor checks;
 otherwise it waits for a person. A policy saved before `approve_projects` existed
 keeps its earlier rule: its executor is fixed, and a proposal that names another
-waits for a person. A proposal must belong to the Routine's Product and
+waits for a person. A proposal must belong to the Routine's Goal and
 carry the framework's Routine origin. `propose_company_task` and
-`intake_product_source` can create Backlog drafts in a proposed Project and name a
+`intake_goal_source` can create Backlog drafts in a proposed Project and name a
 proposed executor; neither can accept work. Source IDs and work scope are optional bounds. Omitted Source/scope
 bounds impose no additional restriction; an empty allowed-ID list permits no matching work.
 `project_ids` can include `null` for legacy Tasks without a Project; new Tasks require a Project. Unknown fields and
@@ -928,8 +1023,8 @@ Automatic executors must be local and have a database for durable run storage.
 
 | Built-in required check | Server-side fact checked |
 | --- | --- |
-| `project_active` | The proposal's Project exists, belongs to the same Product, and is active. Independent Tasks fail this check. |
-| `has_source_evidence` | Evidence names an existing Source in this Product; a fresh read through its configured reader matches each content hash and link. An asserted hash or `passed` field is insufficient. |
+| `project_active` | The proposal's Project exists, belongs to the same Goal, and is active. Independent Tasks fail this check. |
+| `has_source_evidence` | Evidence names an existing Source in this Goal; a fresh read through its configured reader matches each content hash and link. An asserted hash or `passed` field is insufficient. |
 | `executor_registered` | The proposed executor exists in the current registry, or as a published Studio component, and passes the ordinary Company executor checks. Registry validation is also mandatory for every acceptance and dispatch. |
 
 `limits.max_acceptances` defaults to **1**. Each distinct Task counts at most
@@ -939,7 +1034,7 @@ is a fingerprint of the executor, Source/work scope, checks and limits. Editing
 that content (including raising a limit) starts a new version with its own budget.
 Re-sending the same policy, refreshing a token, changing instructions or restarting
 does not change the version or revoke its in-flight acceptances. The existing
-Product row serializes accounting on SQLite and PostgreSQL so concurrent ticks
+Goal row serializes accounting on SQLite and PostgreSQL so concurrent ticks
 cannot exceed the limit. An early budget check skips exhausted proposals before
 reading Sources or running application checks; the transaction still checks the
 limit again. Changing the policy opens the new version's budget on the next tick.
@@ -975,14 +1070,14 @@ checking the caller's authority.
 In a local deployment with authentication disabled, API callers are trusted
 operators, as for the existing scheduler. A Routine declared in the deployment's
 own code or YAML may carry `auto_accept`; see "auto_accept: one switch" below.
-`POST /company/setup` and the chat tools that create Products cannot.
+`POST /company/setup` and the chat tools that create Goals cannot.
 Executors and Mini Agent hold no `schedules:write` or SchedulerTools.
 Private authorization is removed from public payloads and executor input;
 Routine metadata is data, never a source of broader executor authority.
 
 ### Refresh, completion and retention
 
-`refresh_company_product` proposes completion for active Projects with at least
+`refresh_company_goal` proposes completion for active Projects with at least
 one Task and only terminal Tasks. Each proposal is a versioned page under
 `project-completion/`; unchanged scans do not rewrite it. New open work withdraws
 the proposal. A human accepts it through the existing Project transition route.
@@ -991,7 +1086,7 @@ the open Task names and ids until every visible Task is Done or Cancelled. Tasks
 archived while still open don't count, and restoring one into a Done or
 Cancelled Project is refused as open work.
 
-Products store `metadata.archive_window_days`, default 14. Refresh soft-archives
+Goals store `metadata.archive_window_days`, default 14. Refresh soft-archives
 Done and Cancelled Projects and Tasks whose last update is strictly older than
 that window, falling back to creation time when no update exists. The delete
 transaction rechecks age and terminal state. Project retention uses the same
@@ -1012,14 +1107,14 @@ through version-guarded filesystem deletion; a concurrent replacement is kept.
 Human pages, `brief.md` and `status.md`
 are protected. The Refresh Skill updates status.md to reflect the remaining work.
 
-The maintenance tool requires Routine authority, Product ownership when
-isolation applies, `products:read`, `projects:read`, `projects:delete`,
+The maintenance tool requires Routine authority, Goal ownership when
+isolation applies, `goals:read`, `projects:read`, `projects:delete`,
 `tasks:read`, `tasks:delete`, `wiki:read` and `wiki:write` on the saved caller.
 No scheduler-write grant is added. Super Agent does not receive maintenance
 or outbound Summary tools; Routines use them on Mini Agent. Existing schedule instructions retain the scheduler's
 snapshot behavior; apply the revised Refresh Skill through an authorized PATCH.
 
-Products, Projects and Tasks list routes accept `sort_by=updated_at` and
+Goals, Projects and Tasks list routes accept `sort_by=updated_at` and
 `sort_order=asc|desc`. Activity ordering uses creation time for records without
 an update and a deterministic id tie-breaker, before pagination. Omitting these
 parameters preserves the existing creation-time descending order.
@@ -1068,9 +1163,9 @@ Every field has a default:
   are open, the next proposal waits in Backlog until a person completes or
   cancels one. A Task whose run failed stays In progress, so it still counts
   until a person retries it, returns it to Backlog or cancels it.
-  `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return
+  `get_company_goal` and a Backlog or unfiltered listing from `list_company_tasks` return
   `auto_accept_at_limit` for a Routine that is waiting this way.
-- **Projects.** A Routine's Project takes its ID from the Product, the Routine
+- **Projects.** A Routine's Project takes its ID from the Goal, the Routine
   and the name. Only such a Project is approved, and only at the moment one of
   its Tasks is accepted. A Project a person or another Routine proposed, or one
   renamed since, waits for a person.
@@ -1112,7 +1207,7 @@ declared in code has no person behind it, so the two kinds of deployment differ:
 | At startup | The Routine runs on its schedule and its policy acts | The Routine and its policy wait. Code cannot give a Routine a person's grant, so its runs are refused and the tick accepts nothing |
 | What a person does | Nothing | One action, once: turn auto-accept on for the Routine. In chat that is "turn on auto-accept for the feedback-intake Routine" and one confirmation. Through the API it is `PATCH /company/routines/{id}` with `auto_accept` |
 | After that | | The Routine runs on its schedule and its declared policy acts, both under that person's saved permissions |
-| While it waits | | `get_company_product` and a Backlog or unfiltered listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Product's status or for what needs a decision |
+| While it waits | | `get_company_goal` and a Backlog or unfiltered listing from `list_company_tasks` return `auto_accept_waiting_for_a_person` with the Routine, so Super Agent says it is waiting when asked for the Goal's status or for what needs a decision |
 | Who each decision is recorded as | The Routine and the policy version, with `declared` | The Routine, the policy version and that person |
 
 - **Turning it on from chat keeps the Routine's policy.** A Routine that has a
@@ -1123,14 +1218,14 @@ declared in code has no person behind it, so the two kinds of deployment differ:
   send the fields to keep them.
 - **With authorization off**, every caller is a trusted operator. The tick
   checks that the Routine is enabled and its policy unchanged, that the proposal
-  is this Routine's own and in its Product, that the executor is registered and
+  is this Routine's own and in its Goal, that the executor is registered and
   passes the executor checks, the bound, and the policy's server checks. The
   Task run has no person's permissions to check against. It still cannot change
   schedules, approve, accept, review or complete work, turn auto-accept on,
-  create Products or Routines, or edit company details. A Task run on any
-  executor is bound to its Task's Product for Company writes. On Mini Agent it
+  create Goals or Routines, or edit company details. A Task run on any
+  executor is bound to its Task's Goal for Company writes. On Mini Agent it
   holds the Company read tools and can update the status page of its own
-  Product. With a named executor, that executor's other tools are its own.
+  Goal. With a named executor, that executor's other tools are its own.
 - **The declared marker** is written only when the deployment's own declaration
   first creates the Routine, in the same write as the Routine. A Routine that
   already exists under the name keeps its grant. The Routine API and the chat
@@ -1141,7 +1236,7 @@ declared in code has no person behind it, so the two kinds of deployment differ:
   tools take no payload.
 
 **From chat.** `turn_on_routine_auto_accept` pauses and shows the Routine's name,
-its Product's name and the default executor when the person named one; it
+its Goal's name and the default executor when the person named one; it
 refuses when a name is not the stored one. For a Routine that already has a
 policy a person set, the confirmation also shows that policy on one line in
 `kept_policy`. A call without it changes nothing and replies with the line, so
@@ -1160,9 +1255,9 @@ that reads them keeps working.
 **On the record.** Each automatic approval and acceptance carries `auto_accept`
 with the Routine ID and the policy version, `declared` for a declared policy,
 and on an acceptance whether the executor came from the proposal or the default.
-`get_company_product` returns the latest 20 as `automatic_decisions`, read from
-the Product's 100 most recently changed Projects and Tasks. It reads them only
-for a Product that has a Routine with a policy.
+`get_company_goal` returns the latest 20 as `automatic_decisions`, read from
+the Goal's 100 most recently changed Projects and Tasks. It reads them only
+for a Goal that has a Routine with a policy.
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/30_company/15_policy_source_to_done.py
@@ -1177,7 +1272,7 @@ proposals. The human author must also hold `projects:write`. Refresh itself only
 proposes completion and archives eligible terminal work; it never accepts Tasks
 or transitions a Project to Done.
 
-Completion uses the same executor/run permission, Source and Product/Project
+Completion uses the same executor/run permission, Source and Goal/Project
 scope, required checks, expiry and count as Task acceptance. The proposed
 Project must still be active, its Tasks (including archived Tasks) must all be
 terminal, and its stored Refresh proposal must still match those facts. Checks
@@ -1205,23 +1300,23 @@ to keep the byte bound meaningful. These restrictions apply to human-added and
 agent-added website Sources; local files remain human-configured Sources.
 
 Team executors record the team's injected id in `config.metadata.agent_id`.
-Routine authority is bound to its Product even with isolation disabled. Ordinary
+Routine authority is bound to its Goal even with isolation disabled. Ordinary
 schedule mutation routes refuse Company-managed rows; use `/company/routines`.
-An archived Product cannot dispatch its Routine: the scheduler records the refusal
-and disables the schedule. Owners can still pause it; restore the Product before
+An archived Goal cannot dispatch its Routine: the scheduler records the refusal
+and disables the schedule. Owners can still pause it; restore the Goal before
 explicitly resuming the Routine.
 
-Repeated Routine Project proposals reuse an identity derived from Product,
+Repeated Routine Project proposals reuse an identity derived from Goal,
 Routine and proposal name, preserving human edits and archives. Intake's Task
 dedupe survives completion and archive; a returned row with `deleted_at` set is
 an archived existing proposal, not newly created work.
 
-Supply Product declarations in code or YAML, not both. An explicit `CompanyConfig`
-with no Products can still provide the database/model while YAML declares them.
+Supply Goal declarations in code or YAML, not both. An explicit `CompanyConfig`
+with no Goals can still provide the database/model while YAML declares them.
 Conflicting declaration lists fail clearly at startup instead of silently losing
 one list.
 
-Summary serializes delivery per Product with a versioned lease. A live overlapping
+Summary serializes delivery per Goal with a versioned lease. A live overlapping
 delivery is refused; retry after it finishes. A lost worker's lease expires after
 ten minutes. Transport is bounded to one minute. Delivery remains at least once
 across a crash after sending but before recording its receipt; interfaces do not
@@ -1245,8 +1340,8 @@ when its policy sets `complete_projects: true`.
 A custom Routine does maintenance only when it calls the Refresh tool, and
 Summary bookkeeping only when it calls the Summary tool.
 
-Super Agent and executors can call `add_product_source(product_id, reference, config=None)`
-when granted `sources:write` and permitted to write the Product. Repository and
+Super Agent and executors can call `add_goal_source(goal_id, reference, config=None)`
+when granted `sources:write` and permitted to write the Goal. Repository and
 path Sources remain human-added. Source storage has a single existing JSON
 field, `config`: server-stamped `config.metadata.agent_id` or
 `config.metadata.team_id`, plus `config.metadata.run_id`, identify the first discovery.
@@ -1283,12 +1378,12 @@ On-demand Routines cannot be paused, and resume returns 409 while one is enabled
 a disabled on-demand Routine resumes.
 
 `POST /company/routines/{id}/archive` archives a Routine: it is paused, records
-`deleted_at`, keeps its run history, leaves the Product's Routine list, and is hidden
+`deleted_at`, keeps its run history, leaves the Goal's Routine list, and is hidden
 from reads, lists and attention counts unless `include_deleted=true`.
-`POST /company/routines/{id}/restore` relinks it under an active Product; a
+`POST /company/routines/{id}/restore` relinks it under an active Goal; a
 scheduled Routine comes back paused, an on-demand one comes back enabled.
 `DELETE /company/routines/{id}`
-removes the Routine, active or archived, with its run history and its Product
+removes the Routine, active or archived, with its run history and its Goal
 link. Archive and delete return 409 while a run is executing; cancel it first.
 Archive and restore need `routines:delete` and `schedules:delete`; delete needs
 `agent_os:admin`, set in the scope mapping. A Routine declared in code is created again on the next
@@ -1321,7 +1416,7 @@ The long `CompanyManager` and `AsyncCompanyManager` mutation methods require
 keyword arguments: `create`, `create_project`, `create_task`, `transition_project`,
 `transition_task`, `write_wiki`, `log_decision`, `create_source`, `add_source`,
 `intake`, and `summarize`. Name the fields explicitly, for example
-`manager.create_project(product_id=product["id"], name="Release")`. The sync and
+`manager.create_project(goal_id=goal["id"], name="Release")`. The sync and
 async signatures match; short lookup and update methods retain their existing
 calling convention.
 
@@ -1346,7 +1441,7 @@ with `--executor claude` or `--executor codex`. Both use the public
 `octocat/Hello-World` repository, Docker `network="isolated"`, and an explicit
 `checkpoints=FileCheckpointStore(...)`. `--config-only` makes no model calls.
 
-The Product has a matching git Source URL and `config.branch` names its default
+The Goal has a matching git Source URL and `config.branch` names its default
 branch. The agent's Repository config selects the checkout branch. Acceptance
 checks the URL; the sandbox resolves and publishes the commit on its first turn.
 The first successful completion records the pin, including a successful retry

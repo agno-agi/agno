@@ -75,7 +75,7 @@ async def test_patch_fields_and_restart(edit):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("confirmed", [False, True])
-@pytest.mark.parametrize("scopes", [["company:read"], ["products:write"], []])
+@pytest.mark.parametrize("scopes", [["company:read"], ["goals:write"], []])
 async def test_missing_write_scope_cannot_change_details(edit, scopes, confirmed):
     db, invoke = edit
     original = db.get_company()
@@ -213,11 +213,11 @@ async def test_pending_confirmation_cannot_overwrite_intervening_edit(edit):
     assert db.get_company()["name"] == "Another human's edit"
 
 
-@pytest.mark.parametrize("operation", ["create Company Products and Routines", "edit company details"])
+@pytest.mark.parametrize("operation", ["create Company Goals and Routines", "edit company details"])
 def test_automated_creation_retains_routine_hint(operation):
     from agno.tools.company import _require_human_creation
 
     context = RunContext(run_id="routine", session_id="routine", authorization=_RoutineAuthorization(None))
     with pytest.raises(PermissionError) as exc:
         _require_human_creation(context, operation)
-    assert ("Routines propose work" in str(exc.value)) == (operation == "create Company Products and Routines")
+    assert ("Routines propose work" in str(exc.value)) == (operation == "create Company Goals and Routines")

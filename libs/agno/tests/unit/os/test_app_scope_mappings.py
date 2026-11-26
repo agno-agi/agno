@@ -63,7 +63,7 @@ def test_assembly_builds_one_map_for_all_consumers(tmp_path, monkeypatch, compan
     app = os.get_app()
     mappings = app.state.scope_mappings
     build.assert_called_once_with(company=company)
-    assert ("GET /company/products" in mappings) is company
+    assert ("GET /company/goals" in mappings) is company
     assert mappings["GET /custom-interface/status"] == ["custom:read"]
     assert "GET /signed-interface/status" not in mappings
 
@@ -87,8 +87,8 @@ def test_assembly_builds_one_map_for_all_consumers(tmp_path, monkeypatch, compan
         assert response.status_code == 200
         catalog = {item["raw"] for item in response.json()}
         assert "custom:read" in catalog
-        assert {scope for scope in catalog if scope.startswith("products:")} == (
-            {"products:read", "products:write", "products:delete"} if company else set()
+        assert {scope for scope in catalog if scope.startswith("goals:")} == (
+            {"goals:read", "goals:write", "goals:delete"} if company else set()
         )
         middleware = app.middleware_stack
         while not isinstance(middleware, AuthMiddleware):
@@ -120,7 +120,7 @@ def test_shared_map_does_not_enable_jwt_authorization(tmp_path):
         telemetry=False,
     ).get_app()
     with TestClient(app) as client:
-        assert client.get("/company/products", headers={"Authorization": "Bearer test-key"}).status_code == 200
+        assert client.get("/company/goals", headers={"Authorization": "Bearer test-key"}).status_code == 200
         middleware = app.middleware_stack
         while not isinstance(middleware, AuthMiddleware):
             middleware = middleware.app

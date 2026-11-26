@@ -25,6 +25,8 @@ Built-in components:
 Backwards compatibility:
 - Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
+- Legacy ``products:*`` scopes are accepted as aliases for ``goals:*`` in the same way:
+  a Company Goal was a Product in agno 3.2. The two names are one permission.
 """
 
 import fnmatch
@@ -38,6 +40,7 @@ from typing import Collection, Dict, FrozenSet, List, Optional, Set, Tuple
 # Keys are the legacy resource names, values are the current names.
 LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
+    "products": "goals",
 }
 
 
@@ -77,6 +80,36 @@ def accessible_ids_cover(
     return "*" in accessible_ids and not is_built_in(resource_type, resource_id)
 
 
+# Route paths that were renamed, by their old prefix. A scope mapping written for the old path
+# also guards the route under its current path. Without it the route has no mapping, and a
+# route with no mapping is open to any authenticated caller.
+RENAMED_ROUTE_PREFIXES: Dict[str, str] = {
+    "/company/products": "/company/goals",
+}
+
+
+def _under_prefix(path: str, prefix: str) -> bool:
+    """Whether ``path`` starts with ``prefix``, ending at a segment or at a wildcard that continues it."""
+    return path.startswith(prefix) and path[len(prefix) : len(prefix) + 1] in ("", "/", "*", "?", "[", "{")
+
+
+def without_renamed_defaults(
+    defaults: Dict[str, List[str]], scope_mappings: Dict[str, List[str]]
+) -> Dict[str, List[str]]:
+    """``defaults`` without each current-path mapping that a mapping in ``scope_mappings`` overrides under its old path.
+
+    The caller's old-path mapping then guards the route, as it overrode the default before the rename.
+    """
+    dropped = set()
+    for key in scope_mappings:
+        method, _, path = key.partition(" ")
+        for old, new in RENAMED_ROUTE_PREFIXES.items():
+            current = f"{method} {new}{path[len(old) :]}"
+            if _under_prefix(path, old) and current not in scope_mappings:
+                dropped.add(current)
+    return {key: scopes for key, scopes in defaults.items() if key not in dropped}
+
+
 class AgentOSScope(str, Enum):
     """
     Enum of all available AgentOS permission scopes.
@@ -105,7 +138,7 @@ class AgentOSScope(str, Enum):
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
-    - filesystem:read - Browse, read and search agent filesystems
+    - filesystem:read - Browse, read and search AgentOS and agent filesystems
     - metrics:read - View metrics
     - metrics:write - Refresh metrics
     - evals:read - View evaluation runs
@@ -351,6 +384,11 @@ def has_required_scopes(
     if not required_scopes:
         return True
 
+    # The resource type is part of what is required, so a legacy name reads as the current one,
+    # the same as in a scope.
+    if resource_type is not None:
+        resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
+
     # Parse user scopes once
     parsed_user_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
@@ -437,6 +475,8 @@ def get_accessible_resource_ids(
     """
     # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
     allowed_actions = [action] if action else ["read", "run"]
+    # A legacy name for the resource type reads as the current one, the same as in a scope.
+    resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
 
     accessible_ids: Set[str] = set()
     for scope in (parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes):
@@ -580,8 +620,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /knowledge/remote-content": ["knowledge:write"],
         "GET /knowledge/*/sources": ["knowledge:read"],
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
-        # Filesystem browser (read-only). The router further limits results to the
-        # agents the caller may read.
+        # Filesystem browser (read-only). Filesystems declared on the AgentOS need
+        # only this scope; agent-held ones are further limited to the agents the
+        # caller may read.
         "GET /filesystem/*": ["filesystem:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
@@ -604,11 +645,11 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         mappings.update(
             {
                 # Company playbook and learning-decision endpoints. Keep nested
-                # wiki routes before products/*: matching is first-match and *
-                # spans slashes, so the generic Product pattern also matches wiki.
-                "GET /company/products/*/wiki": ["wiki:read"],
-                "GET /company/products/*/wiki/*": ["wiki:read"],
-                "PUT /company/products/*/wiki/*": ["wiki:write"],
+                # wiki routes before goals/*: matching is first-match and *
+                # spans slashes, so the generic Goal pattern also matches wiki.
+                "GET /company/goals/*/wiki": ["wiki:read"],
+                "GET /company/goals/*/wiki/*": ["wiki:read"],
+                "PUT /company/goals/*/wiki/*": ["wiki:write"],
                 "GET /company/details": ["company:read"],
                 "GET /company/details/access": ["company:read"],
                 "PATCH /company/details": ["company:write"],
@@ -620,8 +661,8 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "GET /company/notes/*": ["wiki:read"],
                 "GET /company/decisions": ["decisions:read"],
                 "POST /company/decisions": ["decisions:write"],
-                # Company Product endpoints
-                # Company Sources, scheduler-backed Routines and first-Product setup.
+                # Company Goal endpoints
+                # Company Sources, scheduler-backed Routines and first-Goal setup.
                 "GET /company/sources": ["sources:read"],
                 "POST /company/sources": ["sources:write"],
                 "DELETE /company/sources/*": ["sources:delete"],
@@ -638,13 +679,13 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 "POST /company/routines/*/archive": ["routines:delete", "schedules:delete"],
                 "DELETE /company/routines/*": ["agent_os:admin"],
                 "POST /company/routines/*/restore": ["routines:delete", "schedules:delete"],
-                "POST /company/setup": ["products:write"],
-                "GET /company/products": ["products:read"],
-                "GET /company/products/*": ["products:read"],
-                "POST /company/products": ["products:write"],
-                "PATCH /company/products/*": ["products:write"],
-                "DELETE /company/products/*": ["products:delete"],
-                "POST /company/products/*/restore": ["products:delete"],
+                "POST /company/setup": ["goals:write"],
+                "GET /company/goals": ["goals:read"],
+                "GET /company/goals/*": ["goals:read"],
+                "POST /company/goals": ["goals:write"],
+                "PATCH /company/goals/*": ["goals:write"],
+                "DELETE /company/goals/*": ["goals:delete"],
+                "POST /company/goals/*/restore": ["goals:delete"],
                 # Company Project endpoints
                 "GET /company/projects": ["projects:read"],
                 "GET /company/projects/*": ["projects:read"],
@@ -674,26 +715,12 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
     return mappings
 
 
-def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
-    """
-    Look up the required scopes for a method and path in a scope-mappings dict.
-
-    Args:
-        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
-        method: HTTP method (GET, POST, etc.)
-        path: Request path
-
-    Returns:
-        List of required scopes. Empty list [] means no scopes required (allow access).
-        Routes not present in scope_mappings also return [], allowing access.
-    """
+def _first_mapping(scope_mappings: Dict[str, List[str]], method: str, path: str) -> Optional[Tuple[str, List[str]]]:
+    """The first mapping that matches ``method`` and ``path``, with its key; an exact key first."""
     route_key = f"{method} {path}"
-
-    # First, try exact match
     if route_key in scope_mappings:
-        return scope_mappings[route_key]
+        return route_key, scope_mappings[route_key]
 
-    # Then try pattern matching
     for pattern, scopes in scope_mappings.items():
         pattern_method, pattern_path = pattern.split(" ", 1)
 
@@ -707,9 +734,34 @@ def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: 
             normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
 
         if fnmatch.fnmatch(path, normalized_pattern):
-            return scopes
+            return pattern, scopes
+    return None
 
-    return []
+
+def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
+    """
+    Look up the required scopes for a method and path in a scope-mappings dict.
+
+    For a renamed route, a mapping written for its current path decides. Without one, a mapping
+    written for its old path decides, ahead of a broader mapping such as ``GET /company/*``.
+
+    Args:
+        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+
+    Returns:
+        List of required scopes. Empty list [] means no scopes required (allow access).
+        Routes not present in scope_mappings also return [], allowing access.
+    """
+    found = _first_mapping(scope_mappings, method, path)
+    for old, new in RENAMED_ROUTE_PREFIXES.items():
+        if not _under_prefix(path, new) or (found is not None and _under_prefix(found[0].split(" ", 1)[1], new)):
+            continue
+        legacy = _first_mapping(scope_mappings, method, old + path[len(new) :])
+        if legacy is not None and _under_prefix(legacy[0].split(" ", 1)[1], old):
+            return legacy[1]
+    return found[1] if found is not None else []
 
 
 def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[str]]:
