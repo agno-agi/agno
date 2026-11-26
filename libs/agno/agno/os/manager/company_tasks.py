@@ -171,6 +171,7 @@ class CompanyTaskTools(Toolkit):
         self._agent_os: ReferenceType[Any] = ref(agent_os)
         names = [
             "add_company_task",
+            "move_company_task",
             "start_company_task",
             "get_company_task_status",
             "approve_company_project",
@@ -356,6 +357,68 @@ class CompanyTaskTools(Toolkit):
             if app is None:
                 return f"{added} Not started: Company execution is not running here. Start it from AgentOS."
             return f"{added} " + await self._start(agent_os, app, authority, user_id, _agno_run_context, task["id"])
+
+        return await self._decide(call)
+
+    def move_company_task(
+        self, task_id: str, project_id: _OptionalString, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Move a Company Task into another Project.
+
+        Args:
+            task_id: The Task to move.
+            project_id: The Project it moves into; null moves it to the Default Project.
+        """
+        return "Moving a Task needs an asynchronous run. Move it from AgentOS instead."
+
+    async def amove_company_task(
+        self, task_id: str, project_id: _OptionalString, _agno_run_context: Optional[Any] = None
+    ) -> str:
+        """Move a Company Task into another Project. The move is the person's and is recorded on the
+        Task's history with their name. It does not pause.
+
+        Call this only when the person asked to move this Task. A Task moves while it is Backlog,
+        Ready, In review or Done, and not while it is In progress or once it is cancelled. An
+        accepted Task moves only into an active Project. A Task with a Goal moves only into a
+        Project of that Goal or the Default Project; a Task with no Goal takes the Goal of the
+        Project it moves into. Nothing else about the Task changes: its brief, executor and
+        acceptance stay as they are.
+
+        Args:
+            task_id: The Task to move.
+            project_id: The Project it moves into: check list_company_projects. Null moves it to the
+                Default Project.
+        """
+        from dataclasses import replace
+
+        from agno.company.routines import _manager_call
+        from agno.os.routers.company.runs import _TaskStarter
+        from agno.run.authorization import authorization_scope
+
+        async def call(agent_os: Any) -> str:
+            authority, user_id = self._person(agent_os, _agno_run_context, "move Company work")
+            if authority is not None:
+                await authority.arequire("tasks", "write")
+            starter = _TaskStarter(agent_os)
+            value = await starter.task(task_id)
+            title = value.get("title") or task_id
+            saved = replace(authority, enforce_tools=False) if authority is not None else None
+            with authorization_scope(lambda: saved):
+                moved = await _manager_call(
+                    starter.manager,
+                    "update_task",
+                    task_id,
+                    user_id=None,
+                    moved_by=user_id,
+                    project_id=_named(project_id),
+                )
+            if moved is None:
+                return f"Not done: '{title}' changed while it was being moved. Read it again."
+            if moved["project_id"] == value["project_id"]:
+                return f"'{title}' (Task {task_id}) is already in that Project."
+            project = await _manager_call(starter.manager, "get_project", moved["project_id"])
+            name = (project or {}).get("name") or moved["project_id"]
+            return f"Moved '{title}' (Task {task_id}) into Project '{name}'. Nothing else about it changed."
 
         return await self._decide(call)
 

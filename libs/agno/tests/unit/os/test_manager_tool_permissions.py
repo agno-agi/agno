@@ -85,6 +85,7 @@ FILE_TREE_TOOLS = {"save_company_page", "delete_company_file"}
 # checks adding work a person asked for.
 TASK_RUN_TOOLS = {
     "add_company_task",
+    "move_company_task",
     "start_company_task",
     "get_company_task_status",
     "approve_company_project",
