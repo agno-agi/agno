@@ -99,3 +99,71 @@ Earlier config output in this log records the previous schema.
 **Result:** `/config` listed the same four entries. `agent_id=editor` opened `drafts`, and `agent_id=editor&filesystem_id=shared` opened `shared` with `agent_ids` `editor`, the agent the request names. `agent_id=editor&filesystem_id=handbook` returned 404: the editor does not hold the handbook. `/filesystem/files?agent_id=editor` listed the editor's two files under the ids `drafts` and `shared`, the ids the unfiltered listing gives them.
 
 ---
+
+### multiple_stores_agent.py (store descriptions)
+
+**Status:** PASS
+
+**Description:** Imported the module on 2026-11-25 and resolved the analyst's tools (no server, no model call). `analyst/drafts` and `team/handbook` each carry a `description`.
+
+**Result:** Every tool of a store starts its description with the namespace and the description, for example `fs_2_team_handbook_read_file`: `Filesystem namespace: 'team/handbook'. Description: The team handbook. Read the style guide here before writing.` Each store's instructions start with the namespace line, then the `Description:` line. The drafts store resolved seven tools and the handbook three. The runs against a model are the two entries below.
+
+---
+
+### multiple_stores_agent.py (model run, read and write)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25 with `.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py`, served on port 7777, model `gpt-5.6-luna`. This run was on an earlier commit of the change, when the line read `Purpose:` and not `Description:`. Two requests to `POST /agents/analyst/runs`, each in its own session. Read: "What does our style guide say about numbers? Quote the rule." Write: "Revenue grew 12% in Q3 to 4.1M dollars (source: finance close report). Finish the Q3 review in two sentences and save it."
+
+**Result:** Eleven tool calls, all successful.
+
+Read request, five calls. The agent read from `team/handbook` and quoted the rule correctly. It also wrote to `analyst/drafts`, which the request did not ask for.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_2_team_handbook_search_content` for "numbers"
+3. `fs_2_team_handbook_search_content` for "numerals"
+4. `fs_2_team_handbook_read_file` on `style.md`
+5. `fs_1_analyst_drafts_write_file` on `style-guide-numbers.md`
+
+Write request, six calls. The agent read from both stores and wrote to `analyst/drafts`.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_1_analyst_drafts_list_files`
+3. `fs_2_team_handbook_read_file` on `style.md`
+4. `fs_1_analyst_drafts_read_file` on `q3-review.md`
+5. `fs_1_analyst_drafts_read_file` on `style-guide-numbers.md`
+6. `fs_1_analyst_drafts_replace_lines` on `q3-review.md`
+
+`team/handbook` still held only `style.md`, unchanged. No call named a tool its store does not have. The agent's instructions in this cookbook also name the two stores, so this run does not show what the descriptions do on their own.
+
+---
+
+### multiple_stores_agent.py (model run with the Description line)
+
+**Status:** PASS
+
+**Description:** Run on 2026-11-25 with `.venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py`, served on port 7777, model `gpt-5.6-luna`, on a new database file. Each store's description reached the model as written, on a `Description:` line. The same two requests as the entry above, each in its own session.
+
+**Result:** Eleven tool calls, all successful.
+
+Read request, five calls. The agent read from `team/handbook` and quoted the rule correctly. As in the first run, it also wrote to `analyst/drafts`, which the request did not ask for.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_2_team_handbook_search_content` for "number"
+3. `fs_2_team_handbook_search_content` for "numeral"
+4. `fs_2_team_handbook_read_file` on `style.md`
+5. `fs_1_analyst_drafts_write_file` on `notes/style-guide.md`
+
+Write request, six calls. The agent read from both stores and wrote to `analyst/drafts`.
+
+1. `fs_2_team_handbook_list_files`
+2. `fs_1_analyst_drafts_list_files`
+3. `fs_2_team_handbook_read_file` on `style.md`
+4. `fs_1_analyst_drafts_read_file` on `q3-review.md`
+5. `fs_1_analyst_drafts_read_file` on `notes/style-guide.md`
+6. `fs_1_analyst_drafts_replace_lines` on `q3-review.md`
+
+`team/handbook` still holds only `style.md`, unchanged. `analyst/drafts` holds `q3-review.md` with the two sentences and `notes/style-guide.md`. The agent's instructions in this cookbook also name the two stores, so this run does not show what the descriptions do on their own.
+
+---
