@@ -60,6 +60,16 @@ def lock_parent(sess: Any, goals: Any, projects: Any, goal_id: Optional[str], pr
         sess.execute(projects.update().where(projects.c.id == project_id).values(updated_at=projects.c.updated_at))
 
 
+def lock_adopted_goal(sess: Any, goals: Any, locked_goal_id: Optional[str], goal_id: Optional[str]) -> None:
+    """Lock the Goal a Task took in a move that finished while this write waited for its lock.
+
+    The write locked the parent the Task had when it was first read. A Task with no Goal can take
+    its new Project's Goal in between, and from then on its writes are serialized on that Goal.
+    """
+    if goal_id is not None and goal_id != locked_goal_id:
+        lock_goal(sess, goals, goal_id)
+
+
 def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
     """Refuse an automatic acceptance when its Routine already has max_open Tasks open.
 
@@ -164,12 +174,18 @@ def lock_child(
     lock_parent(
         sess, goals, projects, record["goal_id"], record["project_id"] if "project_id" in table.c else record_id
     )
-    # Read the Project again after taking the Goal lock: a move may have won it.
+    # Read the Task again after taking the lock: a move may have won it, and given the Task a Goal.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
+        lock_adopted_goal(sess, goals, record["goal_id"], row._mapping["goal_id"])
         status = row._mapping["status"] if restoring else None
         require_project(
-            sess, projects, row._mapping["project_id"], record["goal_id"], status, reject_cancelled=reject_cancelled
+            sess,
+            projects,
+            row._mapping["project_id"],
+            row._mapping["goal_id"],
+            status,
+            reject_cancelled=reject_cancelled,
         )
 
 
