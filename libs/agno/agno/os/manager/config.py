@@ -47,7 +47,8 @@ class OSManager:
         required_env: Environment variables to check during diagnostics.
         num_history_runs: Number of past runs to include in the manager's context.
         tool_call_limit: Maximum ordinary tool executions per manager run,
-            including delegations. Defaults to 96; None disables the limit.
+            including delegations. Defaults to 96; None disables the limit. With
+            Company on, each Mini Agent run is under the same limit.
         member_tool_call_limit: Maximum ordinary tool executions per Platform Builder
             invocation. Defaults to 96; None disables the limit. Each delegation has
             its own budget, not a shared run-wide budget. Offloaded-result read-back

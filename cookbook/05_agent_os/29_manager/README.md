@@ -167,8 +167,10 @@ report verified progress and gaps. These limits do not bound model turns, tokens
 latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
-restore unlimited ordinary tool executions for that level. Ordinary application
-agents and Mini Agent are not affected. Model choices still
+restore unlimited ordinary tool executions for that level. With Company on, Mini
+Agent runs under `tool_call_limit` too, so `None` there also removes the limit from
+its unattended Routine and Task runs. `member_tool_call_limit` does not bound Mini
+Agent, and ordinary application agents are not affected by either limit. Model choices still
 determine routing and answer quality; prompt guidance is not a guarantee.
 
 ## When to use a registry
@@ -389,8 +391,18 @@ When upgrading:
   `AgentOS.manager` or talk to Super Agent at `/teams/superagent`.
 - Routines run on Mini Agent by default: `executor_type="agent", executor_id="miniagent"`, or leave
   the executor out. A Routine cannot name Super Agent.
-- `OSManager.tool_call_limit` defaults to 96 and `num_history_runs` to 5.
+- `OSManager.tool_call_limit` defaults to 24 and `num_history_runs` to 5.
 
 Before upgrading, audit existing components, sessions and authorization grants for the newly reserved names. Rename custom components and migrate their references; do not let a grant intended for a custom component authorize a built-in manager. Catalog collisions fail at startup, but external token scopes and custom policy stores require an operator audit.
 
 Drain queued or paused manager runs before upgrading. Mixed pre-3.2 and 3.2 servers sharing manager state are unsupported; do not roll back without restoring or migrating the corresponding state and policies. Updating template code does not rewrite already-saved Routine endpoints.
+
+## Upgrading from 3.2: tool call limits
+
+- `OSManager.tool_call_limit` and `member_tool_call_limit` default to 96, up from 24.
+  Each delegation gives Platform Builder its own allowance, so a Super Agent run that
+  delegates on every call can reach 96 × 96 Platform Builder tool executions, up from 24 × 24.
+- With Company on, Mini Agent runs under `OSManager.tool_call_limit`. Its limit was 30 and
+  could not be changed. If you set `tool_call_limit=None`, Mini Agent's unattended Routine
+  and Task runs now have no limit either, and a low value stops them early. Set a number
+  to keep a limit on those runs.

@@ -2428,7 +2428,7 @@ def test_instruction_sections_follow_the_attached_tools(db, company_enabled, acc
     assert not {MANAGER_INSTRUCTIONS, DOCS_INSTRUCTIONS, COMPANY_INSTRUCTIONS} & set(builder)
 
 
-@pytest.mark.parametrize("limit", [7, None])
+@pytest.mark.parametrize("limit", [7, 0, None])
 def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
     from agno.os import CompanyConfig
 
@@ -2445,7 +2445,7 @@ def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
 
 
 @pytest.mark.parametrize("with_manager", [False, True])
-def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
+def test_mini_agent_ignores_the_member_limit_and_manager_instructions(db, with_manager):
     from agno.os import CompanyConfig
     from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
 

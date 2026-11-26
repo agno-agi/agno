@@ -256,7 +256,7 @@ def _runnable(agent_os: Any, kind: str) -> Any:
     return LiveSequence(resolve)
 
 
-def _build_mini_agent(agent_os: Any, model: Any, tool_call_limit: Optional[int] = 96) -> Optional[Agent]:
+def _build_mini_agent(agent_os: Any, model: Any, tool_call_limit: Optional[int]) -> Optional[Agent]:
     if agent_os._company_db is None or model is None:
         return None
     from agno.company.routines import _RoutineBoundary, load_routine_skills
