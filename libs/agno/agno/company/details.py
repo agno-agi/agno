@@ -6,6 +6,7 @@ from typing import Any, Callable, List
 
 from agno.company.execution import _call
 from agno.db.base import AsyncBaseDb
+from agno.exceptions import MigrationRequiredError
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_info, log_warning
 
@@ -70,12 +71,14 @@ def _company_instructions(db: Any, base: List[str]) -> Callable:
 
 
 async def _seed_company(agent_os: Any) -> None:
-    """Apply CompanyConfig at startup; failure only leaves managers without company context."""
+    """Apply CompanyConfig at startup; other than a pending migration, failure only leaves out company context."""
     config = agent_os.company
     try:
         row = await _call(agent_os._company_db, "initialize_company", config.name, config.description)
     except NotImplementedError:
         return
+    except MigrationRequiredError:
+        raise
     except Exception as exc:
         log_warning(f"Company details were not initialized: {exc}")
         return

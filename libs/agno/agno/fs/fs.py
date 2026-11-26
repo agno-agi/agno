@@ -145,6 +145,15 @@ class FileSystem:
     different access to one store, create one FileSystem per access level on
     the same backend and namespace.
 
+    ``description`` is one sentence on what the store is for and when to use
+    it. It leads the toolkit's instructions, and when an agent holds several
+    stores it is also copied onto every tool of the store, so the agent can
+    tell the stores apart by more than their namespace. It is shown as written:
+    to point at a tool, write the name the agent sees, which with several stores
+    is the prefixed one, such as ``fs_1_drafts_write_file``.
+    ``Agent(filesystem=...)`` adds those instructions to the prompt; with a
+    manually attached toolkit, compose ``toolkit.instructions`` yourself.
+
     Cheap to construct and holds no connections; the backend owns the
     engine/pool and is shared across instances.
     """
@@ -162,6 +171,7 @@ class FileSystem:
         allow_delete: bool = False,
         include_tools: Optional[List[str]] = None,
         instructions: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         if (backend is None) == (db is None):
             raise ValueError("Provide exactly one of backend or db")
@@ -192,6 +202,7 @@ class FileSystem:
         self.include_tools = list(include_tools) if include_tools is not None else None
         # Stored privately: ``instructions()`` is the method that renders the default text.
         self._instructions = instructions
+        self.description = description
 
     def _copy_tool_options(self, target: "FileSystem") -> "FileSystem":
         """Carry the agent tool options onto a derived instance."""
@@ -199,6 +210,7 @@ class FileSystem:
         target.allow_delete = self.allow_delete
         target.include_tools = list(self.include_tools) if self.include_tools is not None else None
         target._instructions = self._instructions
+        target.description = self.description
         return target
 
     @classmethod
@@ -228,6 +240,7 @@ class FileSystem:
         instance.allow_delete = False
         instance.include_tools = None
         instance._instructions = None
+        instance.description = None
         return instance
 
     @property
@@ -329,6 +342,8 @@ class FileSystem:
             config["include_tools"] = list(self.include_tools)
         if self._instructions is not None:
             config["instructions"] = self._instructions
+        if self.description:
+            config["description"] = self.description
         return config
 
     @classmethod
@@ -368,6 +383,7 @@ class FileSystem:
         allow_delete = bool(data.get("allow_delete", False))
         include_tools: Optional[List[str]] = data.get("include_tools")
         instructions: Optional[str] = data.get("instructions")
+        description: Optional[str] = data.get("description")
         if data.get("namespace_is_normalized") is True:
             restored = cls._from_normalized(
                 backend=backend,
@@ -382,6 +398,7 @@ class FileSystem:
             restored.allow_delete = allow_delete
             restored.include_tools = list(include_tools) if include_tools is not None else None
             restored._instructions = instructions
+            restored.description = description
             return restored
         return cls(
             backend=backend,
@@ -393,6 +410,7 @@ class FileSystem:
             allow_delete=allow_delete,
             include_tools=include_tools,
             instructions=instructions,
+            description=description,
         )
 
     # ------------------------------------------------------------------
@@ -482,6 +500,14 @@ class FileSystem:
             team_id=team_id if team_id is not None else getattr(team, "id", None),
         )
         resolved._require_resolved()
+        if (run_context is not None or agent is not None or team is not None) and not resolved._partition():
+            from agno.fs._reserved import is_reserved
+
+            if is_reserved(resolved.backend, resolved.namespace):
+                raise InvalidPathError(
+                    f"the namespace {resolved.namespace!r} of this database belongs to the Company file system. "
+                    "Give this filesystem another namespace."
+                )
         return resolved
 
     # ------------------------------------------------------------------
@@ -491,12 +517,14 @@ class FileSystem:
     def read(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return self.backend.read(namespace, normalize_path(path), **self._pk(self.backend.read))
+        return self.backend.read(namespace, normalize_path(path, limits=False), **self._pk(self.backend.read))
 
     def read_with_meta(self, path: str) -> Optional[FileData]:
         """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
-        return self.backend.read_with_meta(namespace, normalize_path(path), **self._pk(self.backend.read_with_meta))
+        return self.backend.read_with_meta(
+            namespace, normalize_path(path, limits=False), **self._pk(self.backend.read_with_meta)
+        )
 
     def write(
         self,
@@ -634,7 +662,11 @@ class FileSystem:
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
         return self.backend.move(
-            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+            namespace,
+            normalize_path(src, limits=False),
+            normalize_path(dst),
+            overwrite=overwrite,
+            **self._pk(self.backend.move),
         )
 
     def delete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
@@ -643,7 +675,7 @@ class FileSystem:
         kwargs = self._pk(self.backend.delete)
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
-        return self.backend.delete(namespace, normalize_path(path), **kwargs)
+        return self.backend.delete(namespace, normalize_path(path, limits=False), **kwargs)
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
@@ -693,13 +725,13 @@ class FileSystem:
     async def aread(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return await self.backend.aread(namespace, normalize_path(path), **self._pk(self.backend.read))
+        return await self.backend.aread(namespace, normalize_path(path, limits=False), **self._pk(self.backend.read))
 
     async def aread_with_meta(self, path: str) -> Optional[FileData]:
         """Return content and metadata from one consistent backend read."""
         namespace = self._require_resolved()
         return await self.backend.aread_with_meta(
-            namespace, normalize_path(path), **self._pk(self.backend.read_with_meta)
+            namespace, normalize_path(path, limits=False), **self._pk(self.backend.read_with_meta)
         )
 
     async def awrite(
@@ -840,7 +872,11 @@ class FileSystem:
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
         return await self.backend.amove(
-            namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite, **self._pk(self.backend.move)
+            namespace,
+            normalize_path(src, limits=False),
+            normalize_path(dst),
+            overwrite=overwrite,
+            **self._pk(self.backend.move),
         )
 
     async def adelete(self, path: str, *, expected_version: Optional[int] = None) -> bool:
@@ -849,7 +885,7 @@ class FileSystem:
         kwargs = self._pk(self.backend.delete)
         if expected_version is not None:
             kwargs["expected_version"] = expected_version
-        return await self.backend.adelete(namespace, normalize_path(path), **kwargs)
+        return await self.backend.adelete(namespace, normalize_path(path, limits=False), **kwargs)
 
     async def alist(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
@@ -905,6 +941,11 @@ class FileSystem:
         whole attach: the tools arrive with no instructions of their own, and the
         system prompt stays the developer's to order and edit. Pass
         ``add_instructions=True`` to have the toolkit carry them instead.
+
+        ``fs.instructions()`` is the usage text alone. On a store with a
+        ``description``, compose the toolkit's own text, which leads with it:
+        ``toolkit = fs.tools()`` then
+        ``Agent(tools=[toolkit], instructions=[..., toolkit.instructions])``.
 
         The default surface is the notes seven: ``read_file``, ``write_file``,
         ``append_file``, ``replace_lines``, ``list_files``, ``search_content``,

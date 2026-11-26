@@ -156,7 +156,9 @@ async def test_denied_ready_task_returns_to_backlog_once(system, monkeypatch, ht
             async def arequire(self, *args):
                 raise PermissionError("Missing agents:run permission")
 
-        monkeypatch.setattr("agno.os.authz.run_context.restore_authorization", lambda *args: DeniedAuthority())
+        monkeypatch.setattr(
+            "agno.os.authz.run_context.restore_authorization", lambda *args, **kwargs: DeniedAuthority()
+        )
     result = await tick(executor, db)
     assert result["status"] == "failed", result
     saved = await _call(db, "get_task", task["id"])
@@ -205,9 +207,10 @@ async def test_managed_role_revocation_withdraws_ready_task(system, tmp_path, is
     _, db, worker, _, components = system
     auth_db = SqliteDb(db_file=str(tmp_path / "revocation.db"))
     secret = "ready-revocation-tests-secret-at-least-32-bytes"
-    scopes = [
-        f"{resource}:{action}" for resource in ("products", "projects", "tasks") for action in ("read", "write")
-    ] + ["agents:writer:run", "wiki:read"]
+    scopes = [f"{resource}:{action}" for resource in ("goals", "projects", "tasks") for action in ("read", "write")] + [
+        "agents:writer:run",
+        "wiki:read",
+    ]
     authz = Authorization(db=auth_db, verification_keys=[secret], algorithm="HS256")
     authz.define_role("admin", ["agent_os:admin"])
     authz.define_role("runner", scopes)

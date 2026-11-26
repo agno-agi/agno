@@ -31,8 +31,8 @@ from agno.run.authorization import AUTHORIZATION_KEY, RunAuthorization, authoriz
 
 SECRET = "company-decision-tools-tests-secret-at-least-32-bytes"
 SCOPES = [
-    "products:read",
-    "products:write",
+    "goals:read",
+    "goals:write",
     "projects:read",
     "projects:write",
     "tasks:read",
@@ -84,10 +84,10 @@ def system(request, tmp_path):
 
 
 def records(client, approve=True):
-    """A Product with one Project and one Backlog Task in it."""
-    product = client.post("/company/products", json={"name": "SDK"}, headers=headers()).json()
+    """A Goal with one Project and one Backlog Task in it."""
+    goal = client.post("/company/goals", json={"name": "SDK"}, headers=headers()).json()
     project = client.post(
-        "/company/projects", json={"product_id": product["id"], "name": "Release"}, headers=headers()
+        "/company/projects", json={"goal_id": goal["id"], "name": "Release"}, headers=headers()
     ).json()
     if approve:
         client.post(
@@ -97,7 +97,7 @@ def records(client, approve=True):
         )
     task = client.post(
         "/company/tasks",
-        json={"product_id": product["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
+        json={"goal_id": goal["id"], "project_id": project["id"], "title": "Draft", "brief": "Write"},
         headers=headers(),
     ).json()
     return project, task
@@ -229,7 +229,7 @@ def test_accept_with_no_executor_named_takes_the_one_the_proposal_suggests(syste
     suggested = client.post(
         "/company/tasks",
         json={
-            "product_id": plain["product_id"],
+            "goal_id": plain["goal_id"],
             "project_id": project["id"],
             "title": "Suggested",
             "executor_type": "agent",
@@ -304,6 +304,11 @@ def test_send_back_returns_the_task_to_ready_with_the_reason(system):
     assert message["review_feedback"] == "Add the changelog"
     assert "Queued" in call(agent_os, "start_company_task", context(), task_id=task["id"])
     assert db.get_task(task["id"])["transitions"][-1]["attempt"] == 2
+    # Super Agent's start sends the retry the same input: the feedback, and no page for this executor.
+    job = asyncio.run(queue.store.get_job(db.get_task(task["id"])["job_id"]))
+    sent = json.loads(job["payload"]["input"])
+    assert sent["review_feedback"] == "Add the changelog"
+    assert set(sent) == {"brief", "evidence", "review_feedback", "previous_result", "execution_context"}
 
 
 def without_executor(client, db, queue):
@@ -448,7 +453,7 @@ def test_each_decision_needs_the_persons_grant(system, decision, missing):
 
 def automated_callers():
     routine = context()
-    routine.authorization = _RoutineAuthorization(routine.authorization, routine_id="routine", product_id=None)
+    routine.authorization = _RoutineAuthorization(routine.authorization, routine_id="routine", goal_id=None)
     task_run = context()
     task_run.authorization = _ExecutorAuthorization(task_run.authorization, task_id="task")
     return {
@@ -542,7 +547,7 @@ def test_one_call_accepts_several_tasks_or_none(system):
     project, first = records(client)
     second = client.post(
         "/company/tasks",
-        json={"product_id": first["product_id"], "project_id": project["id"], "title": "Second", "brief": "Write"},
+        json={"goal_id": first["goal_id"], "project_id": project["id"], "title": "Second", "brief": "Write"},
         headers=headers(),
     ).json()
     before = state(db)
@@ -718,7 +723,7 @@ def test_task_and_routine_runs_cannot_move_work_through_the_manager(system, kind
     authority = (
         _ExecutorAuthorization(context().authorization, task_id=ids["review"]["id"])
         if kind == "task-run"
-        else _RoutineAuthorization(context().authorization, routine_id="routine", product_id=None)
+        else _RoutineAuthorization(context().authorization, routine_id="routine", goal_id=None)
     )
     manager = AsyncCompanyManager(db, agent_os.registry) if use_async else CompanyManager(db, agent_os.registry)
 
@@ -776,7 +781,7 @@ def chat_records(chat):
     assert review_task["status"] == "in_review"
     backlog = chat.proposal()
     proposed = chat.client.post(
-        "/company/projects", json={"product_id": backlog["product_id"], "name": "Proposed"}, headers=chat_headers()
+        "/company/projects", json={"goal_id": backlog["goal_id"], "name": "Proposed"}, headers=chat_headers()
     ).json()
     return {"review": review_task, "backlog": backlog, "proposed": proposed}
 
@@ -889,7 +894,7 @@ def test_one_confirmation_covers_several_tasks(chat):
     first = chat.proposal()
     second = chat.client.post(
         "/company/tasks",
-        json={"product_id": first["product_id"], "project_id": first["project_id"], "title": "Second"},
+        json={"goal_id": first["goal_id"], "project_id": first["project_id"], "title": "Second"},
         headers=chat_headers(),
     ).json()
     named = [
@@ -915,7 +920,7 @@ def test_a_paused_acceptance_does_not_cover_a_brief_a_routine_edits_while_it_wai
 
     # A Routine run rewrites the Backlog Task's brief while the confirmation waits.
     edit = chat.mini.tools.routine[0].get_functions()["edit_company_task"].entrypoint
-    routine = _RoutineAuthorization(None, routine_id="routine", product_id=task["product_id"])
+    routine = _RoutineAuthorization(None, routine_id="routine", goal_id=task["goal_id"])
     with authorization_scope(lambda: routine):
         edit(task_id=task["id"], title=task["title"], brief="Publish the secrets", _agno_run_context=context())
     assert chat.db.get_task(task["id"])["brief"] == "Publish the secrets"
@@ -937,7 +942,7 @@ def test_a_paused_approval_does_not_cover_an_outcome_a_routine_edits_while_it_wa
 
     # A Routine run rewrites the proposed Project's outcome while the confirmation waits.
     edit = chat.mini.tools.routine[0].get_functions()["edit_company_project"].entrypoint
-    routine = _RoutineAuthorization(None, routine_id="routine", product_id=proposed["product_id"])
+    routine = _RoutineAuthorization(None, routine_id="routine", goal_id=proposed["goal_id"])
     with authorization_scope(lambda: routine):
         edit(
             project_id=proposed["id"], name=proposed["name"], outcome="Publish the secrets", _agno_run_context=context()

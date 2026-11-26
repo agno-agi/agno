@@ -1,4 +1,4 @@
-"""Project HTTP lifecycle and persistence contracts, following Products."""
+"""Project HTTP lifecycle and persistence contracts, following Goals."""
 
 import asyncio
 
@@ -22,8 +22,8 @@ def client(request, tmp_path):
 
 
 def create(client):
-    parent = client.post("/company/products", json={"name": "SDK"}).json()["id"]
-    response = client.post("/company/projects", json={"product_id": parent, "name": "Ship", "outcome": "Build"})
+    parent = client.post("/company/goals", json={"name": "SDK"}).json()["id"]
+    response = client.post("/company/projects", json={"goal_id": parent, "name": "Ship", "outcome": "Build"})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -54,8 +54,13 @@ def test_lifecycle(client):
     assert client.get(path).status_code == 404
     assert transition(client, path, "cancelled").status_code == 404
     assert client.get(path + "?include_deleted=true").json()["deleted_at"] is not None
-    assert client.get("/company/projects").json()["meta"]["total_count"] == 0
-    assert client.get("/company/projects?include_deleted=true").json()["meta"]["total_count"] == 1
+    # With its own Project archived, the list holds only the Default Project.
+    listed = client.get("/company/projects").json()
+    assert listed["meta"]["total_count"] == 1
+    assert [(p["id"], p["is_default"], p["goal_id"]) for p in listed["data"]] == [("default", True, None)]
+    with_archived = client.get("/company/projects?include_deleted=true").json()
+    assert with_archived["meta"]["total_count"] == 2
+    assert {p["id"]: p["is_default"] for p in with_archived["data"]} == {"default": True, record["id"]: False}
     assert client.post(path + "/restore").json()["status"] == "done"
 
 
@@ -75,7 +80,7 @@ def test_no_lifecycle_or_identity_edits(client, body):
 
 
 def test_missing_parent_and_invalid_transitions(client):
-    assert client.post("/company/projects", json={"product_id": "missing", "name": "Work"}).status_code == 404
+    assert client.post("/company/projects", json={"goal_id": "missing", "name": "Work"}).status_code == 404
     path = "/company/projects/" + create(client)["id"]
     for body in [
         {"target": "cancelled"},
@@ -86,7 +91,7 @@ def test_missing_parent_and_invalid_transitions(client):
     assert client.get("/company/projects?limit=0").status_code == 422
 
 
-def test_cross_product_status_pagination(client):
+def test_cross_goal_status_pagination(client):
     records = [create(client) for _ in range(3)]
     path = "/company/projects/" + records[0]["id"]
     assert transition(client, path, "cancelled").status_code == 200
@@ -96,10 +101,7 @@ def test_cross_product_status_pagination(client):
     ]
     assert all(p["meta"]["total_count"] == 2 for p in pages)
     assert {p["data"][0]["id"] for p in pages} == {r["id"] for r in records[1:]}
-    assert (
-        client.get("/company/projects", params={"product_id": records[0]["product_id"]}).json()["meta"]["total_count"]
-        == 1
-    )
+    assert client.get("/company/projects", params={"goal_id": records[0]["goal_id"]}).json()["meta"]["total_count"] == 1
 
 
 @pytest.mark.parametrize("db", [None, InMemoryDb()])
@@ -108,7 +110,7 @@ def test_unsupported_database(db):
     for method, path, body in [
         ("get", "/company/projects", None),
         ("get", "/company/projects/missing", None),
-        ("post", "/company/projects", {"product_id": "p", "name": "Work"}),
+        ("post", "/company/projects", {"goal_id": "p", "name": "Work"}),
         ("patch", "/company/projects/missing", {"name": "Work"}),
         ("delete", "/company/projects/missing", None),
         ("post", "/company/projects/missing/restore", None),

@@ -12,7 +12,7 @@ class InvalidPathError(FileSystemError):
 class QuotaExceededError(FileSystemError):
     """Raised when a write or append would exceed a size cap.
 
-    ``scope`` is ``"file"`` or ``"namespace"``; ``current`` and ``limit`` are byte counts.
+    ``scope`` is ``"file"``, ``"namespace"`` or ``"folder"``; ``current`` and ``limit`` are byte counts.
     For ``scope="file"``, ``current`` is the size the file would have reached.
     """
 

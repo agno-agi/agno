@@ -5,11 +5,20 @@ from typing import Any, Dict, List, Literal, Optional, Union, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.company.context import ContextRef
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id
-from agno.os.routers.company.schema import TaskCreate, TaskResponse, TaskStatus, TaskTransition, TaskUpdate
+from agno.os.routers.company.schema import (
+    MIGRATION_REQUIRED_RESPONSE,
+    TaskCreate,
+    TaskResponse,
+    TaskStatus,
+    TaskTransition,
+    TaskUpdate,
+    refuse_product_id,
+)
 from agno.os.routers.run_permissions import _require_endpoint_permission
 from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.settings import AgnoAPISettings
@@ -20,7 +29,12 @@ def get_tasks_router(
     db: Optional[Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings, registry: Any = None
 ) -> APIRouter:
     """Build Task routes using native async storage or off-thread sync calls."""
-    router = APIRouter(prefix="/company", tags=["Tasks"], dependencies=[Depends(get_scoped_user_id)])
+    router = APIRouter(
+        prefix="/company",
+        responses=MIGRATION_REQUIRED_RESPONSE,
+        tags=["Tasks"],
+        dependencies=[Depends(get_scoped_user_id), Depends(refuse_product_id)],
+    )
     auth_dependency = get_authentication_dependency(settings)
     manager = (
         AsyncCompanyManager(db, registry=registry)
@@ -32,7 +46,14 @@ def get_tasks_router(
 
     async def _call(
         method: Literal[
-            "create_task", "get_task", "list_tasks", "update_task", "delete_task", "restore_task", "transition_task"
+            "create_task",
+            "get_task",
+            "list_tasks",
+            "update_task",
+            "delete_task",
+            "restore_task",
+            "transition_task",
+            "change_task_context",
         ],
         *args: Any,
         **kwargs: Any,
@@ -58,9 +79,12 @@ def get_tasks_router(
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except ValueError as exc:
+            from agno.db.schemas.tasks import TASK_MOVE_REFUSAL
+
             conflict = (
                 method in {"transition_task", "restore_task", "delete_task"}
                 or str(exc) == "Accepted task scope requires a return to Backlog"
+                or str(exc) in TASK_MOVE_REFUSAL.values()
             )
             raise HTTPException(status_code=409 if conflict else 422, detail=str(exc))
 
@@ -84,6 +108,7 @@ def get_tasks_router(
             "run_id": task["job_id"],
             "session_id": task.get("session_id"),
             "attempt": history[index]["attempt"],
+            "context_sent": history[index].get("context_sent") or [],
         }
         if ticket is not None and _pending_task_attempt(task) is not None:
             status = ticket_status_to_api(ticket["status"]) or ticket["status"].upper()
@@ -192,7 +217,10 @@ def get_tasks_router(
         include_deleted: bool = Query(False),
         sort_by: Literal["created_at", "updated_at"] = Query("created_at"),
         sort_order: Literal["asc", "desc"] = Query("desc"),
-        product_id: Optional[str] = Query(None),
+        goal_id: Optional[str] = Query(None),
+        has_goal: Optional[bool] = Query(
+            None, description="false lists only records with no Goal, true only records with one"
+        ),
         status: Optional[TaskStatus] = Query(None),
         project_id: Optional[str] = Query(None),
         failed: Optional[bool] = Query(None),
@@ -206,7 +234,8 @@ def get_tasks_router(
             include_deleted=include_deleted,
             sort_by=sort_by,
             sort_order=sort_order,
-            product_id=product_id,
+            goal_id=goal_id,
+            has_goal=has_goal,
             status=status,
             project_id=project_id,
             failed=failed,
@@ -221,10 +250,25 @@ def get_tasks_router(
         resource = {"agent": "agents", "team": "teams", "workflow": "workflows"}[executor_type]
         await _require_endpoint_permission(request, f"/{resource}/{executor_id}/runs", "POST", action="accept")
 
+    async def _require_readable(request: Request, refs: Optional[List[ContextRef]]) -> None:
+        """Attaching a reference asks for the permission that reads it, as the wiki and file routes do."""
+        from agno.company.context import read_permissions
+        from agno.os.authz.run_context import request_authorization
+
+        authority = request_authorization(request)
+        if authority is None:
+            return
+        for resource, action in read_permissions(refs):
+            try:
+                await authority.arequire(resource, action)
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
+
     @router.post("/tasks", response_model=TaskResponse, status_code=201)
     async def create_task(body: TaskCreate, request: Request, _: bool = Depends(auth_dependency)) -> Dict[str, Any]:
         if body.status == "ready":
             await _require_accept(request, body.executor_type, body.executor_id)
+        await _require_readable(request, body.context)
         task = await _call(
             "create_task",
             **body.model_dump(),
@@ -250,9 +294,35 @@ def get_tasks_router(
         fields = body.model_dump(exclude_unset=True)
         if not fields:
             return await task_response(request, existing)
-        task = await _call("update_task", task_id, user_id=None, **fields)
+        task = await _call(
+            "update_task", task_id, user_id=None, moved_by=getattr(request.state, "user_id", None), **fields
+        )
         if task is None:
             raise HTTPException(status_code=409, detail="Task changed while updating")
+        return await task_response(request, task)
+
+    async def _context_open(task_id: str) -> None:
+        existing = await _existing(task_id)
+        if existing["status"] in {"done", "cancelled"}:
+            raise HTTPException(status_code=409, detail=f"The context of a {existing['status']} Task cannot change")
+
+    @router.post("/tasks/{task_id}/context", response_model=TaskResponse)
+    async def add_task_context(
+        task_id: str, body: ContextRef, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        """Attach one reference to a Task. Its run is given what the reference names when it starts."""
+        await _context_open(task_id)
+        await _require_readable(request, [body])
+        task = await _call("change_task_context", task_id, add=[body], user_id=resolve_run_user_id(request))
+        return await task_response(request, task)
+
+    @router.delete("/tasks/{task_id}/context/{entry_id}", response_model=TaskResponse)
+    async def remove_task_context(
+        task_id: str, entry_id: str, request: Request, _: bool = Depends(auth_dependency)
+    ) -> Dict[str, Any]:
+        """Remove one entry from a Task's context by its id."""
+        await _context_open(task_id)
+        task = await _call("change_task_context", task_id, remove=[entry_id])
         return await task_response(request, task)
 
     @router.delete("/tasks/{task_id}", status_code=204)

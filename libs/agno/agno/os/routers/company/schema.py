@@ -1,16 +1,59 @@
-"""Product request and response schemas."""
+"""Goal request and response schemas."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
+from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.company.context import ContextRef
+from agno.db.schemas.tasks import MAX_TASK_CONTEXT_ENTRIES
+from agno.os.schema import InternalServerErrorResponse
 from agno.registry._reserved import MINI_AGENT_ID
 
+# Every Company route reads the Company tables, which a database from agno 3.2 must migrate first.
+MIGRATION_REQUIRED_RESPONSE: Dict[Union[int, str], Dict[str, Any]] = {
+    500: {
+        "description": "Internal server error, or the database must be migrated first (migration_required_error)",
+        "content": {
+            "application/json": {
+                "example": {
+                    "detail": "Table agno_company_products was written by an older version of Agno and must be "
+                    "renamed to agno_company_goals. Apply the pending migrations.",
+                    "error_id": "migration_required_error",
+                    "error_type": "migration_required_error",
+                }
+            }
+        },
+        "model": InternalServerErrorResponse,
+    }
+}
 
-class ProductCreate(BaseModel):
+
+def refuse_product_id(request: Request) -> None:
+    """Refuse ``product_id``, the filter a client written for agno 3.2 sends.
+
+    It is not an alias of ``goal_id``. Ignored, it would answer with the records of every Goal.
+    """
+    if "product_id" in request.query_params:
+        raise HTTPException(status_code=422, detail="product_id is not a filter of this route. Use goal_id.")
+
+
+def _refuse_purpose(data: Any) -> Any:
+    """Refuse ``purpose``, the field a client written for agno 3.2 sends. Dropped, the objective would stay as it is."""
+    if isinstance(data, dict) and "purpose" in data:
+        raise ValueError("purpose is not a field of a Goal. Use objective.")
+    return data
+
+
+class GoalCreate(BaseModel):
     name: str = Field(..., min_length=1)
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod
@@ -20,10 +63,15 @@ class ProductCreate(BaseModel):
         return value
 
 
-class ProductUpdate(BaseModel):
+class GoalUpdate(BaseModel):
     name: Optional[str] = None
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_purpose(cls, data: Any) -> Any:
+        return _refuse_purpose(data)
 
     @field_validator("name")
     @classmethod
@@ -46,15 +94,15 @@ class ProjectCounts(BaseModel):
     tasks: TaskCounts = Field(default_factory=TaskCounts)
 
 
-class ProductCounts(ProjectCounts):
+class GoalCounts(ProjectCounts):
     projects: int = Field(0, description="Non-archived Projects in proposed or active status")
 
 
-class ProductResponse(BaseModel):
-    counts: ProductCounts = Field(default_factory=ProductCounts)
+class GoalResponse(BaseModel):
+    counts: GoalCounts = Field(default_factory=GoalCounts)
     id: str
     name: str
-    purpose: Optional[str] = None
+    objective: Optional[str] = None
     user_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
@@ -68,7 +116,8 @@ TaskStatus = Literal["backlog", "ready", "in_progress", "in_review", "done", "ca
 
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    # The Goal this Project serves. Without one the Project stands on its own.
+    goal_id: Optional[str] = Field(None, min_length=1)
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -97,7 +146,9 @@ class ProjectUpdate(BaseModel):
 
 class ProjectResponse(BaseModel):
     counts: ProjectCounts = Field(default_factory=ProjectCounts)
-    product_id: str = Field(..., min_length=1)
+    goal_id: Optional[str] = None
+    # True for the one Default Project: always active, and it refuses edits, transitions and archive.
+    is_default: bool = False
     name: str = Field(..., min_length=1)
     outcome: Optional[str] = None
     target_date: Optional[int] = None
@@ -136,11 +187,15 @@ class TaskCreate(BaseModel):
     executor_type: Optional[Literal["agent", "team", "workflow"]] = None
     executor_id: Optional[str] = Field(None, min_length=1)
     model_config = ConfigDict(extra="forbid")
-    product_id: str = Field(..., min_length=1)
+    # In a Project the Task takes the Project's Goal. In the Default Project it has this Goal or none.
+    goal_id: Optional[str] = Field(None, min_length=1)
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
-    project_id: str = Field(..., min_length=1)
+    # Without a Project the Task goes into the Default Project.
+    project_id: Optional[str] = Field(None, min_length=1)
     evidence: Optional[List[Dict[str, Any]]] = None
+    # What a run of the Task is given beside its brief. A reference that names nothing is refused.
+    context: Optional[List[ContextRef]] = Field(None, max_length=MAX_TASK_CONTEXT_ENTRIES)
     # In progress and later stages need a run, so they are reached through POST /company/tasks/{id}/runs.
     status: Literal["backlog", "ready", "cancelled"] = "backlog"
 
@@ -183,6 +238,8 @@ class TaskLastRun(BaseModel):
     session_id: Optional[str] = None
     error: Optional[str] = None
     attempt: Optional[int] = None
+    # What the attempt's input carried of the Task's context: each entry with the version sent.
+    context_sent: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskTransitionOption(BaseModel):
@@ -201,11 +258,19 @@ class TaskResponse(BaseModel):
 
         return public_task({"transitions": value})["transitions"]
 
-    product_id: str = Field(..., min_length=1)
+    @field_validator("context", mode="before")
+    @classmethod
+    def stored_context(cls, value):
+        # A Task nothing was attached to stores no list.
+        return value or []
+
+    goal_id: Optional[str] = None
     title: str = Field(..., min_length=1)
     brief: Optional[str] = None
     project_id: Optional[str] = None
     evidence: Optional[List[Dict[str, Any]]] = None
+    # Each entry: id, kind, ref, added_by and added_at.
+    context: List[Dict[str, Any]] = Field(default_factory=list)
     origin: Optional[str] = None
     routine_id: Optional[str] = None
     dedupe_key: Optional[str] = None

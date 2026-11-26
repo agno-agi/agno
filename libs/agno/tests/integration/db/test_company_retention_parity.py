@@ -20,6 +20,7 @@ from agno.db.postgres import AsyncPostgresDb, PostgresDb
 from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig
 from agno.registry import Registry
+from agno.registry._reserved import MINI_AGENT_ID
 from agno.run.authorization import authorization_scope
 
 
@@ -55,10 +56,10 @@ async def archive(request, tmp_path):
 @pytest.mark.parametrize("status", ["backlog", "ready", "in_progress", "in_review"])
 async def test_done_rejects_visible_open_tasks_only(archive, status):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     projects = []
     for name in ("Ship", "Launch"):
-        project = await call(manager, "create_project", product_id=product["id"], name=name)
+        project = await call(manager, "create_project", goal_id=goal["id"], name=name)
         await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
         for identifier, task_status in (("open-" + name, status), ("done-" + name, "done")):
             await call(
@@ -66,7 +67,7 @@ async def test_done_rejects_visible_open_tasks_only(archive, status):
                 "create_task",
                 dict(
                     id=identifier,
-                    product_id=product["id"],
+                    goal_id=goal["id"],
                     project_id=project["id"],
                     title="Unfinished work" if task_status == status else "Finished work",
                     status=task_status,
@@ -86,11 +87,11 @@ async def test_done_rejects_visible_open_tasks_only(archive, status):
     for target in (manager, db):
         with pytest.raises(ValueError, match="Unfinished work"):
             await call(target, "transition_project", project_id=project["id"], target="done", reason="Review")
-    assert (await call(manager, "refresh", product["id"]))["completion_proposals"] == []
+    assert (await call(manager, "refresh", goal["id"]))["completion_proposals"] == []
     # Archived Tasks are hidden from lists and counts, so they must not block completion either.
     for project in projects:
         await call(manager, "delete_task", "open-" + project["name"])
-    proposals = (await call(manager, "refresh", product["id"]))["completion_proposals"]
+    proposals = (await call(manager, "refresh", goal["id"]))["completion_proposals"]
     assert sorted(proposal["project_id"] for proposal in proposals) == sorted(p["id"] for p in projects)
     done = await call(manager, "transition_project", project_id=projects[0]["id"], target="done", reason="Reviewed")
     assert done["status"] == "done"
@@ -108,13 +109,13 @@ async def test_retention_ignores_archived_open_work(archive, monkeypatch):
     db, manager, call = archive
     now = int(time.time())
     old = now - 15 * 86400
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     project = await call(
         db,
         "create_project",
         dict(
             id="cancelled-project",
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="Cancelled",
             status="active",
             created_at=old,
@@ -127,7 +128,7 @@ async def test_retention_ignores_archived_open_work(archive, monkeypatch):
         "create_task",
         dict(
             id="backlog-child",
-            product_id=product["id"],
+            goal_id=goal["id"],
             project_id=project["id"],
             title="Never started",
             status="backlog",
@@ -140,9 +141,9 @@ async def test_retention_ignores_archived_open_work(archive, monkeypatch):
     await call(manager, "transition_project", project_id=project["id"], target="cancelled", reason="Stop project")
     monkeypatch.setattr(time, "time", lambda: now)
     # Visible Backlog work keeps a terminal Project out of retention.
-    assert (await call(manager, "refresh", product["id"]))["archived_projects"] == []
+    assert (await call(manager, "refresh", goal["id"]))["archived_projects"] == []
     await call(manager, "delete_task", "backlog-child")
-    assert (await call(manager, "refresh", product["id"]))["archived_projects"] == [project["id"]]
+    assert (await call(manager, "refresh", goal["id"]))["archived_projects"] == [project["id"]]
     assert (await call(manager, "get_project", project["id"], include_deleted=True))["deleted_at"] == now
     # The separately archived Task keeps its own provenance through the Project's restore.
     await call(manager, "restore_project", project["id"])
@@ -153,26 +154,26 @@ async def test_retention_ignores_archived_open_work(archive, monkeypatch):
 @pytest.mark.asyncio
 async def test_refresh_proposes_once_and_cannot_accept(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK", user_id="owner")
-    assert product["metadata"]["archive_window_days"] == 14
-    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    goal = await call(manager, "create", name="SDK", user_id="owner")
+    assert goal["metadata"]["archive_window_days"] == 14
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Ship")
     await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
-    task = await call(manager, "create_task", product_id=product["id"], title="Work", project_id=project["id"])
-    assert not (await call(manager, "refresh", product["id"], user_id="owner"))["completion_proposals"]
+    task = await call(manager, "create_task", goal_id=goal["id"], title="Work", project_id=project["id"])
+    assert not (await call(manager, "refresh", goal["id"], user_id="owner"))["completion_proposals"]
     await call(manager, "transition_task", task_id=task["id"], target="cancelled", reason="Superseded")
     with authorization_scope(lambda: _RoutineAuthorization(None, "refresh")):
-        first = await call(manager, "refresh", product["id"], user_id="owner")
+        first = await call(manager, "refresh", goal["id"], user_id="owner")
         with pytest.raises(PermissionError, match="human"):
             await call(manager, "transition_project", project_id=project["id"], target="done", reason="Self acceptance")
     proposal = first["completion_proposals"][0]
-    page = await call(manager, "read_wiki", product["id"], proposal["path"])
+    page = await call(manager, "read_wiki", goal["id"], proposal["path"])
     assert "Proposed transition: Done" in page.content
-    second = await call(manager, "refresh", product["id"], user_id="owner")
+    second = await call(manager, "refresh", goal["id"], user_id="owner")
     assert second == first
-    assert (await call(manager, "read_wiki", product["id"], proposal["path"])).metadata.version == page.metadata.version
+    assert (await call(manager, "read_wiki", goal["id"], proposal["path"])).metadata.version == page.metadata.version
     assert (await call(manager, "get_project", project["id"]))["status"] == "active"
-    reopened = await call(manager, "create_task", product_id=product["id"], title="More work", project_id=project["id"])
-    withdrawn = await call(manager, "refresh", product["id"])
+    reopened = await call(manager, "create_task", goal_id=goal["id"], title="More work", project_id=project["id"])
+    withdrawn = await call(manager, "refresh", goal["id"])
     assert not withdrawn["completion_proposals"] and proposal["path"] in withdrawn["deleted_pages"]
     await call(manager, "transition_task", task_id=reopened["id"], target="cancelled", reason="Superseded")
     assert (await call(manager, "transition_project", project_id=project["id"], target="done", reason="Human review"))[
@@ -186,14 +187,14 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
     db, manager, call = archive
     now = int(time.time())
     old = now - 15 * 86400
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     other = await call(manager, "create", name="Other")
     project = await call(
         db,
         "create_project",
         dict(
             id="finished",
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="Finished",
             status=project_status,
             created_at=old,
@@ -207,7 +208,7 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
             "create_task",
             dict(
                 id=str(i),
-                product_id=product["id"],
+                goal_id=goal["id"],
                 project_id=project["id"],
                 title="Old work",
                 status="done" if i % 2 else "cancelled",
@@ -217,8 +218,8 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
             ),
         )
     for identifier, status, updated, pid in [
-        ("open", "backlog", old, product["id"]),
-        ("recent", "done", now, product["id"]),
+        ("open", "backlog", old, goal["id"]),
+        ("recent", "done", now, goal["id"]),
         ("other", "done", old, other["id"]),
     ]:
         await call(
@@ -226,7 +227,7 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
             "create_task",
             dict(
                 id=identifier,
-                product_id=pid,
+                goal_id=pid,
                 title=identifier,
                 status=status,
                 created_at=old,
@@ -239,50 +240,51 @@ async def test_archive_window_paging_pages_context_and_restore(archive, monkeypa
         ("summary.md", "Old generated report\n<!-- Company summary snapshot: e30= -->"),
         ("notes.md", "Keep human notes"),
     ]:
-        await call(manager, "write_wiki", product_id=product["id"], path=path, content=content, expected_version=0)
-    brief = await call(manager, "read_wiki", product["id"], "brief.md")
-    status_page = await call(manager, "read_wiki", product["id"], "status.md")
+        await call(manager, "write_wiki", goal_id=goal["id"], path=path, content=content, expected_version=0)
+    brief = await call(manager, "read_wiki", goal["id"], "brief.md")
+    status_page = await call(manager, "read_wiki", goal["id"], "status.md")
     monkeypatch.setattr(time, "time", lambda: now)
-    result = await call(manager, "refresh", product["id"])
+    result = await call(manager, "refresh", goal["id"])
     assert len(result["archived_tasks"]) == 0 and result["archived_projects"] == [project["id"]]
     assert result["deleted_pages"] == ["summary.md"]
-    assert (await call(manager, "list_tasks", product_id=product["id"]))[1] == 2
-    assert (await call(manager, "list_projects", product_id=product["id"]))[1] == 0
+    assert (await call(manager, "list_tasks", goal_id=goal["id"]))[1] == 2
+    assert (await call(manager, "list_projects", goal_id=goal["id"]))[1] == 0
     assert await call(manager, "get_task", "0") is None
     assert (await call(manager, "get_task", "0", include_deleted=True))["deleted_at"] == now
     assert (await call(manager, "get_task", "other"))["deleted_at"] is None
-    counts = await call(manager, "attention", product["id"])
+    counts = await call(manager, "attention", goal["id"])
     assert counts == {"proposals": 1, "in_review": 0, "failed": 0}
     app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         assert (await client.post("/company/tasks/0/runs")).status_code == 404
     active = await call(manager, "get_task", "open")
-    context = json.loads(await _task_input(manager, active))
-    assert not any(page["path"] == "summary.md" for page in context["wiki"])
-    assert (await call(manager, "read_wiki", product["id"], "brief.md")).content == brief.content
-    assert (await call(manager, "read_wiki", product["id"], "status.md")).content == status_page.content
-    assert (await call(manager, "read_wiki", product["id"], "notes.md")).content == "Keep human notes"
+    # No executor's input carries a page that was not attached to its Task.
+    context = json.loads(await _task_input(manager, {**active, "executor_type": "agent", "executor_id": MINI_AGENT_ID}))
+    assert set(context) == {"brief", "evidence"}
+    assert (await call(manager, "read_wiki", goal["id"], "brief.md")).content == brief.content
+    assert (await call(manager, "read_wiki", goal["id"], "status.md")).content == status_page.content
+    assert (await call(manager, "read_wiki", goal["id"], "notes.md")).content == "Keep human notes"
     await call(manager, "restore_project", project["id"])
     assert (await call(manager, "list_tasks", project_id=project["id"], limit=200))[1] == 105
-    again = await call(manager, "refresh", product["id"])
+    again = await call(manager, "refresh", goal["id"])
     assert not again["archived_tasks"] and not again["archived_projects"]
     assert not await call(manager, "delete_task", "open", updated_before=now)
     assert not await call(manager, "delete_task", "recent", updated_before=now)
-    await call(manager, "update", product["id"], metadata={"archive_window_days": 30})
-    assert (await call(manager, "refresh", product["id"]))["archive_window_days"] == 30
+    await call(manager, "update", goal["id"], metadata={"archive_window_days": 30})
+    assert (await call(manager, "refresh", goal["id"]))["archive_window_days"] == 30
 
 
 @pytest.mark.asyncio
 async def test_retention_reuses_cascade_counts_and_exact_restore(archive):
     db, manager, call = archive
     now = int(time.time())
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     project = await call(
         db,
         "create_project",
         dict(
             id="old-project",
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="Finished",
             status="cancelled",
             created_at=now - 15 * 86400,
@@ -296,7 +298,7 @@ async def test_retention_reuses_cascade_counts_and_exact_restore(archive):
             "create_task",
             dict(
                 id=identifier,
-                product_id=product["id"],
+                goal_id=goal["id"],
                 project_id=project["id"],
                 title=identifier,
                 status="done",
@@ -306,12 +308,12 @@ async def test_retention_reuses_cascade_counts_and_exact_restore(archive):
             ),
         )
     await call(manager, "delete_task", "separate-child")
-    assert (await call(manager, "get", product["id"]))["counts"]["tasks"]["done"] == 1
-    result = await call(manager, "refresh", product["id"])
+    assert (await call(manager, "get", goal["id"]))["counts"]["tasks"]["done"] == 1
+    result = await call(manager, "refresh", goal["id"])
     assert result["archived_projects"] == [project["id"]]
     assert not result["archived_tasks"]  # The parent cascade owns this archive.
-    assert (await call(manager, "list_tasks", product_id=product["id"], include_deleted=True))[1] == 0
-    assert (await call(manager, "get", product["id"]))["counts"]["tasks"]["done"] == 0
+    assert (await call(manager, "list_tasks", goal_id=goal["id"], include_deleted=True))[1] == 0
+    assert (await call(manager, "get", goal["id"]))["counts"]["tasks"]["done"] == 0
     child = await call(manager, "get_task", "recent-child", include_deleted=True)
     assert child["transitions"][-1]["archived_by"] == {"type": "project", "id": project["id"]}
     await call(manager, "restore_project", project["id"])
@@ -324,13 +326,13 @@ async def test_retention_reuses_cascade_counts_and_exact_restore(archive):
 async def test_retention_keeps_active_work_refusal(archive, monkeypatch):
     db, manager, call = archive
     old = int(time.time()) - 15 * 86400
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     project = await call(
         db,
         "create_project",
         dict(
             id="cancelled-project",
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="Cancelled",
             status="active",
             created_at=old,
@@ -343,7 +345,7 @@ async def test_retention_keeps_active_work_refusal(archive, monkeypatch):
         "create_task",
         dict(
             id="active-child",
-            product_id=product["id"],
+            goal_id=goal["id"],
             project_id=project["id"],
             title="Still running",
             status="in_progress",
@@ -355,7 +357,7 @@ async def test_retention_keeps_active_work_refusal(archive, monkeypatch):
     await call(manager, "transition_project", project_id=project["id"], target="cancelled", reason="Stop project")
     monkeypatch.setattr(time, "time", lambda: old + 16 * 86400)
     with pytest.raises(ValueError) as refusal:
-        await call(manager, "refresh", product["id"])
+        await call(manager, "refresh", goal["id"])
     assert refusal.value.args[0]["tasks"] == [{"id": "active-child", "title": "Still running"}]
     assert await call(manager, "get_project", project["id"]) is not None
     assert await call(manager, "get_task", "active-child") is not None
@@ -364,12 +366,12 @@ async def test_retention_keeps_active_work_refusal(archive, monkeypatch):
 @pytest.mark.asyncio
 async def test_deduplicated_insert_keeps_parent_archive_guards(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Work")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Work")
     await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
     fields = dict(
         id="proposal",
-        product_id=product["id"],
+        goal_id=goal["id"],
         project_id=project["id"],
         title="Observed issue",
         status="backlog",
@@ -381,28 +383,26 @@ async def test_deduplicated_insert_keeps_parent_archive_guards(archive):
     with pytest.raises(ValueError, match="Project is missing or archived"):
         await call(db, "create_task", fields)
     await call(manager, "restore_project", project["id"])
-    await call(manager, "delete", product["id"])
-    with pytest.raises(ValueError, match="Product is missing or archived"):
+    await call(manager, "delete", goal["id"])
+    with pytest.raises(ValueError, match="Goal is missing or archived"):
         await call(db, "create_task", fields)
-    await call(manager, "restore", product["id"])
+    await call(manager, "restore", goal["id"])
     first = await call(db, "create_task", fields)
     repeated = await call(db, "create_task", {**fields, "id": "another-id"})
     assert repeated["id"] == first["id"]
-    assert (await call(manager, "get", product["id"]))["counts"]["tasks"]["backlog"] == 1
+    assert (await call(manager, "get", goal["id"]))["counts"]["tasks"]["backlog"] == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("domain", ["products", "projects", "tasks"])
+@pytest.mark.parametrize("domain", ["goals", "projects", "tasks"])
 async def test_activity_sorting_precedes_paging(archive, domain):
     db, manager, call = archive
-    parent = await call(manager, "create", name="Parent") if domain != "products" else None
+    parent = await call(manager, "create", name="Parent") if domain != "goals" else None
     singular = domain[:-1]
     for identifier, created, updated in [("a", 10, 80), ("b", 20, None), ("c", 30, 60)]:
         fields = dict(id=identifier, created_at=created, updated_at=updated)
         if parent:
-            fields.update(
-                product_id=parent["id"], status="active" if domain == "projects" else "backlog", transitions=[]
-            )
+            fields.update(goal_id=parent["id"], status="active" if domain == "projects" else "backlog", transitions=[])
         fields["title" if domain == "tasks" else "name"] = identifier
         await call(db, "create_" + singular, fields)
     app = AgentOS(db=db, company=CompanyConfig(), telemetry=False).get_app()
@@ -436,37 +436,37 @@ async def test_custom_archive_window_and_exact_boundary(archive, monkeypatch):
     db, manager, call = archive
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now)
-    product = await call(manager, "create", name="Long retention", metadata={"archive_window_days": 30})
+    goal = await call(manager, "create", name="Long retention", metadata={"archive_window_days": 30})
     for identifier, age in [("expired", 31), ("boundary", 30), ("within", 15)]:
         await call(
             db,
             "create_task",
             dict(
                 id=identifier,
-                product_id=product["id"],
+                goal_id=goal["id"],
                 title=identifier,
                 status="cancelled",
                 created_at=now - age * 86400,
                 transitions=[],
             ),
         )
-    result = await call(manager, "refresh", product["id"])
+    result = await call(manager, "refresh", goal["id"])
     assert result["archived_tasks"] == ["expired"]
-    assert (await call(manager, "list_tasks", product_id=product["id"]))[1] == 2
+    assert (await call(manager, "list_tasks", goal_id=goal["id"]))[1] == 2
 
 
 @pytest.mark.asyncio
 async def test_completion_proposal_does_not_reintroduce_archived_task_context(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Ship")
     await call(manager, "transition_project", project_id=project["id"], target="active", reason="Begin")
     await call(
         db,
         "create_task",
         dict(
             id="archived-task-private-detail",
-            product_id=product["id"],
+            goal_id=goal["id"],
             project_id=project["id"],
             title="Old Task detail",
             status="done",
@@ -474,19 +474,19 @@ async def test_completion_proposal_does_not_reintroduce_archived_task_context(ar
             transitions=[],
         ),
     )
-    current_project = await call(manager, "create_project", product_id=product["id"], name="Current work")
+    current_project = await call(manager, "create_project", goal_id=goal["id"], name="Current work")
     await call(manager, "transition_project", project_id=current_project["id"], target="active", reason="Begin")
     current = await call(
         manager,
         "create_task",
-        product_id=product["id"],
+        goal_id=goal["id"],
         title="Current independent work",
         project_id=current_project["id"],
     )
-    result = await call(manager, "refresh", product["id"])
+    result = await call(manager, "refresh", goal["id"])
     assert result["archived_tasks"] == ["archived-task-private-detail"]
     assert result["completion_proposals"][0]["project_id"] == project["id"]
-    context = await _task_input(manager, current)
+    context = await _task_input(manager, {**current, "executor_type": "agent", "executor_id": MINI_AGENT_ID})
     assert "archived-task-private-detail" not in context
     assert "Old Task detail" not in context
 
@@ -494,22 +494,20 @@ async def test_completion_proposal_does_not_reintroduce_archived_task_context(ar
 @pytest.mark.asyncio
 async def test_terminal_project_rejects_new_and_moved_open_work(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Ship")
     await call(manager, "transition_project", project_id=project["id"], target="active", reason="Start")
     await call(manager, "transition_project", project_id=project["id"], target="done", reason="Complete")
     with pytest.raises(ValueError, match="open work"):
-        await call(manager, "create_task", product_id=product["id"], title="Late proposal", project_id=project["id"])
-    open_project = await call(manager, "create_project", product_id=product["id"], name="Next release")
+        await call(manager, "create_task", goal_id=goal["id"], title="Late proposal", project_id=project["id"])
+    open_project = await call(manager, "create_project", goal_id=goal["id"], name="Next release")
     await call(manager, "transition_project", project_id=open_project["id"], target="active", reason="Begin")
-    task = await call(
-        manager, "create_task", product_id=product["id"], title="Next release", project_id=open_project["id"]
-    )
+    task = await call(manager, "create_task", goal_id=goal["id"], title="Next release", project_id=open_project["id"])
     with pytest.raises(ValueError, match="open work"):
         await call(manager, "update_task", task["id"], project_id=project["id"])
     assert (await call(manager, "get_task", task["id"]))["project_id"] == open_project["id"]
     cancelled = await call(
-        manager, "create_task", product_id=product["id"], project_id=project["id"], title="Closed", status="cancelled"
+        manager, "create_task", goal_id=goal["id"], project_id=project["id"], title="Closed", status="cancelled"
     )
     assert cancelled["status"] == "cancelled"
 
@@ -520,14 +518,14 @@ async def test_refresh_never_deletes_a_replaced_page(archive, monkeypatch, stale
     from agno.fs import FileSystem
 
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
+    goal = await call(manager, "create", name="SDK")
     path = "project-completion/old.md" if stale_proposal else "summary.md"
     content = (
         "<!-- Company completion proposal -->\nOld" if stale_proposal else "<!-- Company summary snapshot: e30= -->"
     )
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now - 15 * 86400)
-    await call(manager, "write_wiki", product_id=product["id"], path=path, content=content, expected_version=0)
+    await call(manager, "write_wiki", goal_id=goal["id"], path=path, content=content, expected_version=0)
     monkeypatch.setattr(time, "time", lambda: now)
     original = FileSystem.adelete
 
@@ -537,33 +535,31 @@ async def test_refresh_never_deletes_a_replaced_page(archive, monkeypatch, stale
         return await original(self, candidate, **kwargs)
 
     monkeypatch.setattr(FileSystem, "adelete", replaced)
-    result = await call(manager, "refresh", product["id"])
+    result = await call(manager, "refresh", goal["id"])
     assert path not in result["deleted_pages"]
-    assert (await call(manager, "read_wiki", product["id"], path)).content == "Fresh human replacement"
+    assert (await call(manager, "read_wiki", goal["id"], path)).content == "Fresh human replacement"
 
 
 @pytest.mark.asyncio
 async def test_routine_mutations_are_bound_and_project_proposals_reuse(archive, tmp_path):
     db, manager, call = archive
-    product = await call(manager, "create", name="Own")
+    goal = await call(manager, "create", name="Own")
     other = await call(manager, "create", name="Other")
-    source = await call(
-        manager, "create_source", product_id=other["id"], type="website", reference="https://example.com"
-    )
-    authority = _RoutineAuthorization(None, "routine", product_id=product["id"])
+    source = await call(manager, "create_source", goal_id=other["id"], type="website", reference="https://example.com")
+    authority = _RoutineAuthorization(None, "routine", goal_id=goal["id"])
     with authorization_scope(lambda: authority):
         for method, kwargs in [
-            ("create_project", {"product_id": other["id"], "name": "Intrusion"}),
-            ("refresh", {"product_id": other["id"]}),
+            ("create_project", {"goal_id": other["id"], "name": "Intrusion"}),
+            ("refresh", {"goal_id": other["id"]}),
             (
                 "write_wiki",
-                {"product_id": other["id"], "path": "status.md", "content": "Intrusion", "expected_version": 0},
+                {"goal_id": other["id"], "path": "status.md", "content": "Intrusion", "expected_version": 0},
             ),
             ("read_source", {"source_id": source["id"], "run_id": "scan"}),
             (
                 "add_source",
                 {
-                    "product_id": other["id"],
+                    "goal_id": other["id"],
                     "type": "website",
                     "reference": "https://example.org",
                     "executor_id": "finder",
@@ -572,32 +568,32 @@ async def test_routine_mutations_are_bound_and_project_proposals_reuse(archive, 
                 },
             ),
         ]:
-            with pytest.raises(PermissionError, match="configured Product"):
+            with pytest.raises(PermissionError, match="configured Goal"):
                 await call(manager, method, **kwargs)
         proposals = await asyncio.gather(
-            *[call(manager, "create_project", product_id=product["id"], name="One proposal") for _ in range(3)]
+            *[call(manager, "create_project", goal_id=goal["id"], name="One proposal") for _ in range(3)]
         )
         assert len({row["id"] for row in proposals}) == 1
     await call(manager, "update_project", proposals[0]["id"], outcome="Human edit")
     await call(manager, "delete_project", proposals[0]["id"])
     with authorization_scope(lambda: authority):
-        repeated = await call(manager, "create_project", product_id=product["id"], name="One proposal")
+        repeated = await call(manager, "create_project", goal_id=goal["id"], name="One proposal")
     assert repeated["deleted_at"] is not None and repeated["outcome"] == "Human edit"
 
 
 @pytest.mark.asyncio
 async def test_sources_hide_archived_parent_and_routine_links_preserve_metadata(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK", metadata={"archive_window_days": 30, "custom": "kept"})
-    await call(manager, "create_source", product_id=product["id"], type="website", reference="https://example.com")
-    await asyncio.gather(*[call(db, "add_product_routine", product["id"], str(i)) for i in range(4)])
-    linked = await call(manager, "get", product["id"])
+    goal = await call(manager, "create", name="SDK", metadata={"archive_window_days": 30, "custom": "kept"})
+    await call(manager, "create_source", goal_id=goal["id"], type="website", reference="https://example.com")
+    await asyncio.gather(*[call(db, "add_goal_routine", goal["id"], str(i)) for i in range(4)])
+    linked = await call(manager, "get", goal["id"])
     assert set(linked["metadata"]["routine_ids"]) == {"0", "1", "2", "3"}
     assert linked["metadata"]["custom"] == "kept" and linked["metadata"]["archive_window_days"] == 30
-    await call(manager, "delete", product["id"])
-    assert (await call(manager, "list_sources", product_id=product["id"]))[1] == 0
-    await call(manager, "restore", product["id"])
-    assert (await call(manager, "list_sources", product_id=product["id"]))[1] == 1
+    await call(manager, "delete", goal["id"])
+    assert (await call(manager, "list_sources", goal_id=goal["id"]))[1] == 0
+    await call(manager, "restore", goal["id"])
+    assert (await call(manager, "list_sources", goal_id=goal["id"]))[1] == 1
 
 
 @pytest.mark.asyncio
@@ -605,29 +601,29 @@ async def test_routine_link_repairs_sql_null_metadata(archive):
     from sqlalchemy import null
 
     db, manager, call = archive
-    product = await call(manager, "create", name="Legacy")
-    table = await call(db, "_get_table", table_type="products")
-    statement = table.update().where(table.c.id == product["id"]).values(metadata=null())
+    goal = await call(manager, "create", name="Legacy")
+    table = await call(db, "_get_table", table_type="goals")
+    statement = table.update().where(table.c.id == goal["id"]).values(metadata=null())
     if isinstance(db, AsyncBaseDb):
         async with db.db_engine.begin() as connection:
             await connection.execute(statement)
     else:
         with db.db_engine.begin() as connection:
             connection.execute(statement)
-    linked = await call(db, "add_product_routine", product["id"], "routine")
+    linked = await call(db, "add_goal_routine", goal["id"], "routine")
     assert linked["metadata"] == {"archive_window_days": 14, "routine_ids": ["routine"]}
 
 
 @pytest.mark.asyncio
 async def test_completed_project_preserves_intake_dedupe(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Ship")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Ship")
     await call(manager, "transition_project", project_id=project["id"], target="active", reason="Start")
     fields = dict(
         id="proposal",
         title="Issue",
-        product_id=product["id"],
+        goal_id=goal["id"],
         project_id=project["id"],
         dedupe_key="issue",
         status="backlog",
@@ -649,12 +645,12 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
     db, manager, call = archive
     writer = Agent(id="writer")
     manager.registry = Registry(agents=[writer])
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Release")
-    body = dict(product_id=product["id"], project_id=project["id"], title="Ship", status=status)
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Release")
+    body = dict(goal_id=goal["id"], project_id=project["id"], title="Ship", status=status)
     if status == "ready":
         body.update(executor_type="agent", executor_id="writer")
-    before_product = await call(db, "get_product", product["id"])
+    before_goal = await call(db, "get_goal", goal["id"])
     before_project = await call(db, "get_project", project["id"])
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now + 100)
@@ -683,7 +679,7 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
                 ):
                     await create_task()
             assert await call(db, "get_tasks", include_deleted=True) == ([], 0)
-            assert await call(db, "get_product", product["id"]) == before_product
+            assert await call(db, "get_goal", goal["id"]) == before_goal
             assert await call(db, "get_project", project["id"]) == before_project
 
         await call(manager, "transition_project", project_id=project["id"], target="active", reason="Approved")
@@ -702,9 +698,9 @@ async def test_project_approval_required_for_new_tasks(archive, monkeypatch, ent
 @pytest.mark.parametrize("entry_point", ["storage", "manager", "http"])
 async def test_proposed_project_accepts_backlog_tasks(archive, entry_point):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Release")
-    fields = dict(product_id=product["id"], project_id=project["id"], title="Draft plan", status="backlog")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Release")
+    fields = dict(goal_id=goal["id"], project_id=project["id"], title="Draft plan", status="backlog")
     if entry_point == "storage":
         created = await call(db, "create_task", dict(fields, id="draft", created_at=int(time.time()), transitions=[]))
     elif entry_point == "manager":
@@ -723,11 +719,11 @@ async def test_proposed_project_accepts_backlog_tasks(archive, entry_point):
 @pytest.mark.asyncio
 async def test_proposed_project_dedupes_and_preserves_parent_guards(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    project = await call(manager, "create_project", product_id=product["id"], name="Release")
+    goal = await call(manager, "create", name="SDK")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Release")
     fields = dict(
         id="proposal",
-        product_id=product["id"],
+        goal_id=goal["id"],
         project_id=project["id"],
         title="Issue",
         dedupe_key="issue",
@@ -746,19 +742,19 @@ async def test_proposed_project_dedupes_and_preserves_parent_guards(archive):
     with pytest.raises(ValueError, match="Project is missing or archived"):
         await call(db, "create_task", fields)
     await call(manager, "restore_project", project["id"])
-    await call(manager, "delete", product["id"])
-    with pytest.raises(ValueError, match="Product is missing or archived"):
+    await call(manager, "delete", goal["id"])
+    with pytest.raises(ValueError, match="Goal is missing or archived"):
         await call(db, "create_task", fields)
 
 
 @pytest.mark.asyncio
 async def test_proposed_project_refuses_task_acceptance_before_write(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    approved = await call(manager, "create_project", product_id=product["id"], name="Approved")
+    goal = await call(manager, "create", name="SDK")
+    approved = await call(manager, "create_project", goal_id=goal["id"], name="Approved")
     await call(manager, "transition_project", project_id=approved["id"], target="active", reason="Approved")
-    task = await call(manager, "create_task", product_id=product["id"], project_id=approved["id"], title="Draft")
-    project = await call(manager, "create_project", product_id=product["id"], name="Release")
+    task = await call(manager, "create_task", goal_id=goal["id"], project_id=approved["id"], title="Draft")
+    project = await call(manager, "create_project", goal_id=goal["id"], name="Release")
     await call(manager, "update_task", task["id"], project_id=project["id"])
     before = await call(db, "get_task", task["id"])
     with pytest.raises(ValueError, match="Project approval is required"):
@@ -774,11 +770,11 @@ async def test_proposed_project_refuses_task_acceptance_before_write(archive):
 @pytest.mark.asyncio
 async def test_project_approval_does_not_block_existing_task_moves(archive):
     db, manager, call = archive
-    product = await call(manager, "create", name="SDK")
-    approved = await call(manager, "create_project", product_id=product["id"], name="Approved")
+    goal = await call(manager, "create", name="SDK")
+    approved = await call(manager, "create_project", goal_id=goal["id"], name="Approved")
     await call(manager, "transition_project", project_id=approved["id"], target="active", reason="Approved")
-    task = await call(manager, "create_task", product_id=product["id"], project_id=approved["id"], title="Issue")
-    proposed = await call(manager, "create_project", product_id=product["id"], name="Proposed")
+    task = await call(manager, "create_task", goal_id=goal["id"], project_id=approved["id"], title="Issue")
+    proposed = await call(manager, "create_project", goal_id=goal["id"], name="Proposed")
     for _ in range(2):
         moved = await call(manager, "update_task", task["id"], project_id=proposed["id"])
         assert moved["project_id"] == proposed["id"] and moved["status"] == "backlog"

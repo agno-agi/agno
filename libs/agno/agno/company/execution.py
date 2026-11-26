@@ -126,6 +126,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
             **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
+            **({"context_sent": payload["company_context_sent"]} if payload.get("company_context_sent") else {}),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -438,6 +439,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
             **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
+            **({"company_context_sent": submission["context_sent"]} if submission.get("context_sent") else {}),
         },
     }
     try:
@@ -501,7 +503,7 @@ async def _check_task(worker: Any, job: Dict[str, Any]) -> None:
         acceptances = [entry for entry in task["transitions"] if entry.get("target") == "ready"]
         # A person read the brief of a Task they accepted. Nobody read one a policy accepted.
         authority.run_components = [] if acceptances and acceptances[-1].get("auto_accept") else None
-        authority.product_id = task["product_id"]
+        authority.goal_id = task["goal_id"]
     if authority is not None:
         try:
             await authority.arequire(
@@ -631,12 +633,17 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
 
 
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
-    from agno.company.files import _always_loaded
+    from agno.company.context import _task_context
 
-    # Company-wide read visibility. No Source credentials, Product metadata, other Tasks or
-    # caller-supplied runtime state are forwarded. Every other file is read on request.
-    pages = await _always_loaded(manager, task["product_id"])
-    payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
+    # Every executor starts with the brief and the evidence. No wiki page, Goal page, Source credential or
+    # other Task reaches it unless whoever coordinates the Task attached it to the Task's context.
+    payload: Dict[str, Any] = {"brief": task.get("brief")}
+    if task.get("goal_id") is not None and await _call(manager, "get", task["goal_id"]) is None:
+        raise LookupError("Goal not found")
+    context = await _task_context(manager, task)
+    if context is not None:
+        payload["context"] = context
+    payload["evidence"] = task.get("evidence") or []
     feedback = _review_feedback(task)
     if feedback:
         payload["review_feedback"] = feedback
@@ -754,8 +761,8 @@ class _ExecutorAuthorization(RunAuthorization):
     run_components bounds what the run tools may run in that Task: None leaves it to the saved permissions
     of the person who accepted and the starter's permissions, and a list admits only the (type, id) pairs in it.
     acceptance preserves the accepting person's component-run permissions through delegation and resume.
-    product_id is the Product of that Task. The queue sets it, and Product-scoped writes and Source reads
-    refuse another Product.
+    goal_id is the Goal of that Task. The queue sets it, and Goal-scoped writes and Source reads
+    refuse another Goal.
     """
 
     def __init__(self, original: Optional[RunAuthorization], task_id: Optional[str] = None):
@@ -768,7 +775,7 @@ class _ExecutorAuthorization(RunAuthorization):
         self.acceptance: Optional[RunAuthorization] = (
             original.acceptance if isinstance(original, _ExecutorAuthorization) else None
         )
-        self.product_id: Optional[str] = original.product_id if isinstance(original, _ExecutorAuthorization) else None
+        self.goal_id: Optional[str] = original.goal_id if isinstance(original, _ExecutorAuthorization) else None
         super().__init__(
             original.provider if original else _default_authorization_provider(),
             original.context if original else AuthorizationContext(),
@@ -797,7 +804,7 @@ class _ExecutorAuthorization(RunAuthorization):
             **super().snapshot(),
             "company_executor": True,
             "company_task_id": self.task_id,
-            "company_product_id": self.product_id,
+            "company_goal_id": self.goal_id,
         }
         if self.acceptance is not None:
             snapshot["company_acceptance"] = self.acceptance.snapshot()

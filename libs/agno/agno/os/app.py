@@ -22,7 +22,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import database_error_message
-from agno.exceptions import AgnoError, SessionBusyError
+from agno.exceptions import AgnoError, MigrationRequiredError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -109,6 +109,7 @@ if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider
 
     from agno.company.config import CompanyConfig
+    from agno.fs import FileSystem
     from agno.os.authz.audit import AuditSink
     from agno.os.authz.authorization import Authorization
     from agno.os.authz.provider import AuthorizationProvider
@@ -434,6 +435,7 @@ class AgentOS:
         public: Optional[Any] = None,
         manager: Optional[Union[bool, "OSManager"]] = None,
         company: Optional["CompanyConfig"] = None,
+        filesystem: Optional[Union["FileSystem", List["FileSystem"]]] = None,
     ):
         """Initialize AgentOS.
 
@@ -453,7 +455,7 @@ class AgentOS:
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             manager: Adds an OS Manager team to the OS.
-            company: Enable Company Products, inheriting db unless a Company database is provided.
+            company: Enable Company Goals, inheriting db unless a Company database is provided.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
@@ -526,9 +528,22 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
+            filesystem: A FileSystem, or a list of them, to include in the OS. Each one is listed in
+                /config and browsable through the /filesystem routes whether or not an agent holds
+                it. An agent gets file tools on one only by holding it.
         """
-        if not agents and not workflows and not teams and not knowledge and not db and company is None:
-            raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
+        if (
+            not agents
+            and not workflows
+            and not teams
+            and not knowledge
+            and not filesystem
+            and not db
+            and company is None
+        ):
+            raise ValueError(
+                "Either agents, teams, workflows, knowledge bases, a filesystem or a database must be provided."
+            )
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
@@ -537,6 +552,7 @@ class AgentOS:
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
+        self.filesystems: List["FileSystem"] = self._normalize_filesystems(filesystem)
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
         self._app_set = False
@@ -563,23 +579,37 @@ class AgentOS:
         self.db = db
         if (
             company is not None
-            and company.products
+            and company.goals
             and self.config is not None
             and self.config.company is not None
-            and self.config.company.products
+            and self.config.company.goals
         ):
-            raise ValueError("Declare Company Products in code or config.yaml, not both")
-        if self.config is not None and self.config.company is not None and (company is None or not company.products):
+            raise ValueError("Declare Company Goals in code or config.yaml, not both")
+        if self.config is not None and self.config.company is not None and (company is None or not company.goals):
             from agno.company.config import CompanyConfig
 
             if company is None:
-                company = CompanyConfig(products=self.config.company.products)
+                company = CompanyConfig(goals=self.config.company.goals)
             else:
                 from dataclasses import replace
 
-                company = replace(company, products=self.config.company.products)
+                company = replace(company, goals=self.config.company.goals)
         self.company = company
         self._company_db = (company.db if company.db is not None else db) if company is not None else None
+        # Whether Company still has to start, because a database was not migrated yet.
+        self._company_start_pending = False
+        if company is not None and self._company_db is not None:
+            from agno.company.filesystem import (
+                reserve_company_namespace,
+                set_company_filesystem_bytes,
+                set_company_notes_source,
+            )
+
+            reserve_company_namespace(self._company_db)
+            set_company_filesystem_bytes(self._company_db, company.max_filesystem_bytes)
+            if db is not None and db is not self._company_db:
+                # Before 3.3.0 notes were in the AgentOS database: notes/ is refused while any is still there.
+                set_company_notes_source(self._company_db, db)
         self.checkpoint = checkpoint
 
         self.telemetry = telemetry
@@ -762,7 +792,9 @@ class AgentOS:
                 company_model = manager.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._mini_agent = _build_mini_agent(self, company_model)
+            # Mini Agent runs under Super Agent's tool call limit: OSManager(tool_call_limit=...), or its default.
+            limits = manager if isinstance(manager, OSManager) else OSManager()
+            self._mini_agent = _build_mini_agent(self, company_model, tool_call_limit=limits.tool_call_limit)
             if self._mini_agent is None:
                 self._mini_agent_unavailable_reason = (
                     "Mini Agent unavailable: configure CompanyConfig(model=...), OSManager(model=...) "
@@ -1056,15 +1088,15 @@ class AgentOS:
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.files import get_company_files_router
+            from agno.os.routers.company.goals import get_goals_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
-            from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             updated_routers.append(get_company_details_router(self))
-            updated_routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            updated_routers.append(get_goals_router(db=self._company_db, settings=self.settings))
             updated_routers.append(get_heartbeat_router(self))
             updated_routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             updated_routers.append(
@@ -1415,6 +1447,59 @@ class AgentOS:
         if self.queue is not None and self.queue.durable:
             _harness.check_queue_checkpoints(agent)
 
+    @staticmethod
+    def _normalize_filesystems(filesystem: Any) -> List["FileSystem"]:
+        """The filesystems declared on the OS, as a list."""
+        if filesystem is None:
+            return []
+        from agno.fs import FileSystem
+
+        stores = list(filesystem) if isinstance(filesystem, (list, tuple)) else [filesystem]
+        for store in stores:
+            if not isinstance(store, FileSystem):
+                raise TypeError("AgentOS filesystem must be a FileSystem or a list of FileSystem instances")
+        return stores
+
+    def _user_isolation_enabled(self) -> bool:
+        """The top-level flag, or the legacy AuthorizationConfig(user_isolation=True) on an authorized OS."""
+        return bool(
+            self.user_isolation
+            or (
+                self.authorization
+                and self.authorization_config is not None
+                and self.authorization_config.user_isolation
+            )
+        )
+
+    def _company_filesystem(self) -> Optional["FileSystem"]:
+        """The Company filesystem, when Company is on and its database can hold files."""
+        if self._company_db is None:
+            return None
+        from agno.company.filesystem import company_filesystem
+
+        try:
+            return company_filesystem(self._company_db)
+        except NotImplementedError:
+            return None
+
+    def _served_filesystems(self) -> List["FileSystem"]:
+        """The declared filesystems as this AgentOS serves them.
+
+        One that left ``user_scoped`` unset takes the ``user_isolation`` setting of this AgentOS.
+        The value is set on a copy, so the declared FileSystem is not changed and one declared on
+        two AgentOS instances follows each. One that set ``user_scoped``, True or False, keeps it.
+        """
+        from copy import copy
+
+        user_isolation = self._user_isolation_enabled()
+        served: List["FileSystem"] = []
+        for filesystem in self.filesystems:
+            if filesystem.user_scoped is None:
+                filesystem = copy(filesystem)
+                filesystem.user_scoped = user_isolation
+            served.append(filesystem)
+        return served
+
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
         # Inject db into external framework agents (not covered by self._agents)
@@ -1433,16 +1518,8 @@ class AgentOS:
 
         from agno.agent import _init as agent_init
 
-        # Same rule the auth middleware applies: the top-level flag, or the legacy
-        # AuthorizationConfig(user_isolation=True) on an authorized OS.
-        user_isolation = bool(
-            self.user_isolation
-            or (
-                self.authorization
-                and self.authorization_config is not None
-                and self.authorization_config.user_isolation
-            )
-        )
+        # Same rule the auth middleware applies.
+        user_isolation = self._user_isolation_enabled()
         for agent in agents_to_initialize:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -2166,15 +2243,15 @@ class AgentOS:
         if self.company is not None:
             from agno.os.routers.company.details import get_company_details_router
             from agno.os.routers.company.files import get_company_files_router
+            from agno.os.routers.company.goals import get_goals_router
             from agno.os.routers.company.heartbeat import get_heartbeat_router
             from agno.os.routers.company.playbook import get_playbook_router
-            from agno.os.routers.company.products import get_products_router
             from agno.os.routers.company.projects import get_projects_router
             from agno.os.routers.company.runs import get_company_runs_router
             from agno.os.routers.company.tasks import get_tasks_router
 
             routers.append(get_company_details_router(self))
-            routers.append(get_products_router(db=self._company_db, settings=self.settings))
+            routers.append(get_goals_router(db=self._company_db, settings=self.settings))
             routers.append(get_heartbeat_router(self))
             routers.append(get_projects_router(db=self._company_db, settings=self.settings))
             routers.append(get_tasks_router(db=self._company_db, settings=self.settings, registry=self.registry))
@@ -2264,6 +2341,13 @@ class AgentOS:
                     status_code=exc.status_code,
                     content=_error_body(str(exc.detail), exc),
                 )
+
+            @fastapi_app.exception_handler(MigrationRequiredError)
+            async def migration_required_handler(_: Request, exc: MigrationRequiredError) -> JSONResponse:
+                # The message names the table and the two ways to migrate it. It is written for the
+                # caller and holds no connection detail, so it is the response.
+                log_error(f"Migration required: {exc}")
+                return JSONResponse(status_code=exc.status_code, content=_error_body(str(exc), exc))
 
             @fastapi_app.exception_handler(HTTPStatusError)
             async def http_status_error_handler(_: Request, exc: HTTPStatusError) -> JSONResponse:
@@ -3036,6 +3120,49 @@ class AgentOS:
         if self.auto_provision_dbs:
             self._pending_async_db_init = True
 
+    async def _move_company_notes(self) -> None:
+        """Move notes from the AgentOS database into a Company database that is kept apart from it.
+
+        Before 3.3.0 notes were stored in the AgentOS database. A migrate endpoint runs this after both
+        databases are migrated, and never the start of AgentOS. Until the notes are moved, notes/ is
+        refused at first use with the call that moves them.
+        """
+        if self._company_db is None or self.db is None or self._company_db is self.db:
+            return
+        from agno.company.filesystem import arequire_company_notes_moved
+        from agno.db.migrations.versions.v3_3_0 import amove_company_notes
+
+        try:
+            moved = await amove_company_notes(self.db, self._company_db)
+            # A use of notes/ before the move recorded that they wait.
+            await arequire_company_notes_moved(self._company_db)
+        except Exception as exc:
+            log_error(
+                f"Notes were not moved from the AgentOS database to the Company database: {exc} "
+                "notes/ is refused until they are. Move them with `move_company_notes(agent_os_db, company_db)` "
+                "(import it from `agno.db.migrations.versions.v3_3_0`; use `await amove_company_notes(...)` when "
+                "either database is asynchronous)."
+            )
+            return
+        if moved:
+            log_info(f"Moved {moved} notes from the AgentOS database to the Company database")
+
+    async def _finish_company_migration(self) -> None:
+        """Move the notes after a migrate endpoint ran, once neither of Company's databases waits for it."""
+        if self._company_db is None or self.db is None or self._company_db is self.db:
+            return
+        from agno.db.migrations.manager import MigrationManager
+
+        try:
+            for db in (self.db, self._company_db):
+                manager = MigrationManager(db)  # type: ignore[arg-type]
+                if await manager._company_rename_pending() or await manager._company_files_pending():
+                    return
+        except Exception as exc:
+            log_error(f"Notes were not moved after the migration: {type(exc).__name__}: {exc}")
+            return
+        await self._move_company_notes()
+
     def _initialize_sync_databases(self) -> None:
         """Initialize sync databases."""
         from itertools import chain
@@ -3289,7 +3416,7 @@ class AgentOS:
             DatabaseConfig(
                 db_id=db.id,
                 domain_config=configured.domain_config if configured else CompanyDomainConfig(display_name=db.id),
-                tables=[db.products_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name],
+                tables=[db.goals_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name],
             )
         ]
         return company_config
@@ -3319,27 +3446,59 @@ class AgentOS:
     def _get_filesystem_config(
         self, user_id: Optional[str] = None, agents: Optional[List[Any]] = None
     ) -> "FileSystemConfig":
-        from agno.os.routers.filesystem.utils import _filesystem_backend_key
+        from agno.fs import InvalidPathError
+        from agno.fs._reserved import is_reserved
+        from agno.os.routers.filesystem.utils import _filesystem_key, _listed_filesystem_ids
         from agno.os.schema import FileSystemAgent, FileSystemConfig, FileSystemNamespace, _extract_filesystem
 
         namespaces: Dict[tuple, FileSystemNamespace] = {}
-        # ``agents`` is the caller's roster when /config filters by access; the
-        # filesystem section must not describe agents the caller cannot see.
-        for entry in (self.agents if agents is None else agents) or []:
-            if not isinstance(entry, Agent) or not entry.id:
+
+        def describe(filesystem: Any, agent: Optional[Agent] = None, company: bool = False) -> FileSystemNamespace:
+            """The entry of one store: every filesystem on one backend and namespace joins it."""
+            summary = _extract_filesystem(filesystem, agent, user_id=user_id)
+            key = _filesystem_key(filesystem, summary.namespace)
+            namespace_config = namespaces.get(key)
+            if namespace_config is None:
+                namespace_config = namespaces[key] = FileSystemNamespace(
+                    **summary.model_dump(), id=summary.namespace, declared=agent is None and not company, agents=[]
+                )
+            namespace_config.company = namespace_config.company or company
+            namespace_config.declared = namespace_config.declared or (agent is None and not company)
+            return namespace_config
+
+        # The Company filesystem is listed when Company is on. It needs no agent, and it is first
+        # so a declaration of the same store does not describe it.
+        company_store = self._company_filesystem()
+        if company_store is not None:
+            describe(company_store, company=True)
+
+        # Declared filesystems stand without an agent too; an agent
+        # holding the same store is linked to the same entry below.
+        for filesystem in self._served_filesystems():
+            if any(name != "user_id" for name in filesystem._placeholders):
+                # Only an agent holding the store fills {agent_id} or {team_id}.
+                continue
+            try:
+                describe(filesystem)
+            except InvalidPathError:
+                # The caller's identity cannot be part of a namespace: the store is not theirs to browse.
                 continue
 
+        # ``agents`` is the caller's roster when /config filters by access; the
+        # filesystem section must not describe agents the caller cannot see.
+        roster = [
+            entry
+            for entry in (self.agents if agents is None else agents) or []
+            if isinstance(entry, Agent) and entry.id
+        ]
+        # The first agent by id describes a store that several agents hold, as on the /filesystem routes.
+        for entry in sorted(roster, key=lambda agent: str(agent.id)):
             for filesystem, read_only in entry.filesystems:
-                summary = _extract_filesystem(filesystem, entry, user_id=user_id)
-                key = (
-                    _filesystem_backend_key(filesystem),
-                    summary.namespace,
-                    summary.max_file_bytes,
-                    summary.max_namespace_bytes,
-                )
-                namespace_config = namespaces.get(key)
-                if namespace_config is None:
-                    namespace_config = namespaces[key] = FileSystemNamespace(**summary.model_dump(), agents=[])
+                view = filesystem.resolve(user_id=user_id, agent_id=entry.id)
+                if not filesystem.user_scoped and is_reserved(view.backend, view.namespace):
+                    # The agent is refused this namespace, so it holds nothing there.
+                    continue
+                namespace_config = describe(filesystem, entry)
                 linked_agent = next((agent for agent in namespace_config.agents if agent.id == entry.id), None)
                 if linked_agent is None:
                     namespace_config.agents.append(
@@ -3349,7 +3508,10 @@ class AgentOS:
                     # A writable attachment takes precedence over a read-only one on the same store.
                     linked_agent.access = "full"
 
-        for namespace_config in namespaces.values():
+        # The /filesystem routes take their ids from the same function.
+        ids = _listed_filesystem_ids(self, user_id, roster)
+        for key, namespace_config in namespaces.items():
+            namespace_config.id = ids[key]
             namespace_config.agents.sort(key=lambda agent: agent.id)
 
         return FileSystemConfig(
@@ -3359,6 +3521,7 @@ class AgentOS:
                     namespace_config.backend_type,
                     namespace_config.db_id or "",
                     namespace_config.namespace,
+                    namespace_config.id,
                     [agent.id for agent in namespace_config.agents],
                 ),
             )

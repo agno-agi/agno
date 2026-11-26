@@ -85,6 +85,12 @@ COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 DISPATCH_CHAIN_METADATA_KEY = "agno_dispatch_chain"
 DISPATCH_DEPTH_METADATA_KEY = "agno_dispatch_depth"
 
+# Marks a run the scheduler fired when the schedule has no saved authority to carry that fact, as
+# in a deployment without authorization. Tools that act only for a person present read it. It is
+# not among the reserved keys below: the run routes strip those from inbound metadata, and this
+# one arrives inbound from the scheduler. A caller who sets it only gets the same refusals.
+SCHEDULED_RUN_METADATA_KEY = "agno_scheduled"
+
 # Every run-metadata key the runtime owns. Component metadata is merged OVER
 # call-site metadata, so a stored config carrying one of these would overwrite
 # the value the runtime just wrote: a forged version stamp would continue a

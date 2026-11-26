@@ -247,12 +247,12 @@ def _raise_if_source_tool_names_taken(tools: Sequence[Any]) -> None:
 
 
 def _holds_files(db: Any) -> bool:
-    """Whether the database can hold a FileSystem namespace: SQLite and PostgreSQL can."""
-    from agno.fs import FileSystem
+    """Whether the database can hold the Company file system: SQLite and PostgreSQL can."""
+    from agno.company.filesystem import company_filesystem
 
     try:
-        FileSystem(db, namespace="company/notes", user_scoped=False)
-    except (TypeError, ValueError):
+        company_filesystem(db)
+    except NotImplementedError:
         return False
     return True
 
@@ -399,7 +399,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         from agno.tools.company import CompanyTools
 
         tools.append(
-            # The file tree tools below read and write the wiki and every Product's pages.
+            # The file tree tools below read and write the wiki and every Goal's pages.
             CompanyTools(
                 company_db,
                 summary_tools=False,
@@ -411,8 +411,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         )
         tools.append(CompanyTaskTools(agent_os))
         instructions.append(COMPANY_INSTRUCTIONS)
-    # notes/ lives in the OS database with Super Agent's conversations, with or without Company.
-    notes_db = db if _holds_files(db) else None
+    # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
+    notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
         from agno.os.manager.company_tasks import _user_isolation
         from agno.tools.company_files import CompanyFileTools

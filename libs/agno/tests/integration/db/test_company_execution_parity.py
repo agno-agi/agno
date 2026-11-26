@@ -99,17 +99,15 @@ async def system(request, tmp_path):
 
 
 async def accepted(client, kind="agent", id="writer"):
-    product = (
-        await client.post("/company/products", json={"name": "SDK", "metadata": {"secret": "never-forward"}})
-    ).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    goal = (await client.post("/company/goals", json={"name": "SDK", "metadata": {"secret": "never-forward"}})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
         await client.post(
             "/company/tasks",
             json={
-                "product_id": product["id"],
+                "goal_id": goal["id"],
                 "project_id": project["id"],
                 "title": "Draft",
                 "brief": "Write a draft",
@@ -235,12 +233,12 @@ async def test_direct_start_accepts_a_backlog_task(system):
 @pytest.mark.asyncio
 async def test_direct_start_waits_for_project_approval(system):
     client, _, worker, _, _ = system
-    product = (await client.post("/company/products", json={"name": "SDK"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    goal = (await client.post("/company/goals", json={"name": "SDK"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     task = (
         await client.post(
             "/company/tasks",
-            json={"product_id": product["id"], "project_id": project["id"], "title": "Draft"},
+            json={"goal_id": goal["id"], "project_id": project["id"], "title": "Draft"},
         )
     ).json()
     path = f"/company/tasks/{task['id']}"
@@ -358,9 +356,10 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
     run_id = starts[0].json()["run_id"]
     job = await worker.store.get_job(run_id)
     payload = json.loads(job["payload"]["input"])
-    assert set(payload) == {"brief", "wiki", "evidence", "execution_context"}
+    # No executor receives a wiki page or a Goal page that was not attached to the Task.
+    assert set(payload) == {"brief", "evidence", "execution_context"}
     assert payload["execution_context"]["stage"] == "accepted_task_execution"
-    assert len(payload["wiki"]) == 4 and payload["evidence"][0]["hash"] == "abc"
+    assert payload["evidence"][0]["hash"] == "abc"
     assert "never-forward" not in job["payload"]["input"]
     assert job["idempotency_key"] == f"company:{value['id']}:1" and job["max_attempts"] == 2
     assert (await execute(worker))["status"] == "completed"
@@ -371,7 +370,7 @@ async def test_execution_duplicate_context_history_and_attention(system, kind, i
     assert duplicate.status_code == 409, duplicate.text
     history = (await client.get(path + "/runs", params={"limit": 1, "page": 1})).json()
     assert history["meta"]["total_count"] == 1
-    assert (await client.get("/company/attention", params={"product_id": value["product_id"]})).json() == {
+    assert (await client.get("/company/attention", params={"goal_id": value["goal_id"]})).json() == {
         "proposals": 0,
         "in_review": 1,
         "failed": 0,
@@ -788,16 +787,12 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     client, db, worker, os, components = system
     path = tmp_path / "release.md"
     path.write_text("A released capability")
-    product = (await client.post("/company/products", json={"name": "Docs"})).json()
-    project = (
-        await client.post("/company/projects", json={"product_id": product["id"], "name": "Documentation"})
-    ).json()
+    goal = (await client.post("/company/goals", json={"name": "Docs"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Documentation"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     source = (
-        await client.post(
-            "/company/sources", json={"product_id": product["id"], "type": "markdown", "reference": str(path)}
-        )
+        await client.post("/company/sources", json={"goal_id": goal["id"], "type": "markdown", "reference": str(path)})
     ).json()
 
     if failure == "missing":
@@ -814,14 +809,14 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     elif failure == "website":
         await _call(db, "update_source", source["id"], type="website", reference="https://docs.example.test")
         monkeypatch.setattr("agno.knowledge.reader.website_reader.WebsiteReader.read", lambda *args, **kwargs: [])
-    tool_name = "read_product_source" if failure in {"markdown", "website"} else "intake_product_source"
+    tool_name = "read_goal_source" if failure in {"markdown", "website"} else "intake_goal_source"
     arguments = {"source_id": source["id"]}
     if failure == "plain_proposal":
         tool_name = "propose_company_task"
-        arguments = {"product_id": product["id"], "project_id": project["id"], "title": "Undeduplicated proposal"}
-    if tool_name == "read_product_source":
+        arguments = {"goal_id": goal["id"], "project_id": project["id"], "title": "Undeduplicated proposal"}
+    if tool_name == "read_goal_source":
         arguments["path"] = "https://docs.example.test" if failure == "website" else path.name
-    if tool_name == "intake_product_source":
+    if tool_name == "intake_goal_source":
         arguments.update(
             project_id=project["id"],
             title="Document release",
@@ -839,7 +834,7 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
 
     class IntakeModel(OfflineModel):
         def invoke(self, messages, *args, **kwargs):
-            assert any(product["id"] in str(message.content) for message in messages if message.role == "user")
+            assert any(goal["id"] in str(message.content) for message in messages if message.role == "user")
             if not any(message.role == "tool" for message in messages):
                 return ModelResponse(
                     role="assistant",
@@ -867,7 +862,7 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     response = await client.post(
         "/company/routines",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "name": "intake",
             "template": "intake",
             "executor_type": "agent",
@@ -899,15 +894,15 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     if failure:
         assert first["status"] == "failed", first
         assert tool_name in first["error"]
-        assert (await _call(db, "get_tasks", product_id=product["id"]))[1] == 0
+        assert (await _call(db, "get_tasks", goal_id=goal["id"]))[1] == 0
         history = (await client.get("/company/routines/" + routine["id"] + "/runs")).json()
         assert history["data"][0]["status"] == "failed"
-        assert (await client.get("/company/attention", params={"product_id": product["id"]})).json()["failed"] == 1
+        assert (await client.get("/company/attention", params={"goal_id": goal["id"]})).json()["failed"] == 1
         run = await components["writer"].aget_run_output(first["run_id"], first["session_id"])
         assert run.status == RunStatus.error
         return
     assert first["status"] == "success", first
-    rows, total = await _call(db, "get_tasks", product_id=product["id"])
+    rows, total = await _call(db, "get_tasks", goal_id=goal["id"])
     assert total == 1, first
     assert rows[0]["routine_id"] == routine["id"]
     task_response = (await client.get("/company/tasks/" + rows[0]["id"])).json()
@@ -918,7 +913,7 @@ async def test_routine_intake_through_scheduler_and_durable_queue(system, tmp_pa
     assert rows[0]["status"] == "backlog"
     second = await executor.execute(schedule, db, release_schedule=False)
     assert second["status"] == "success", second
-    assert (await _call(db, "get_tasks", product_id=product["id"]))[1] == 1
+    assert (await _call(db, "get_tasks", goal_id=goal["id"]))[1] == 1
     history = (await client.get("/company/routines/" + routine["id"] + "/runs")).json()
     assert history["meta"]["total_count"] == 2
     assert all(run["status"] == "success" for run in history["data"])
@@ -1021,8 +1016,8 @@ async def test_attention_clears_acted_on_failures_and_preserves_results(system, 
             db, "complete_task_run", task["id"], reserved["job_id"], {"status": result_status, "content": "Failure"}
         )
     path = f"/company/tasks/{value['id']}"
-    product_filter = {"product_id": value["product_id"]}
-    assert (await client.get("/company/attention", params=product_filter)).json()["failed"] == 1
+    goal_filter = {"goal_id": value["goal_id"]}
+    assert (await client.get("/company/attention", params=goal_filter)).json()["failed"] == 1
     assert (await client.get("/company/attention")).json()["failed"] == 2
     steps = ["backlog", "ready"] if target == "ready" else ["in_review", "done"] if target == "done" else [target]
     for step in steps:
@@ -1031,7 +1026,7 @@ async def test_attention_clears_acted_on_failures_and_preserves_results(system, 
             body.update(executor_type="agent", executor_id="writer")
         response = await client.post(path + "/transitions", json=body)
         assert response.status_code == 200, response.text
-        attention = (await client.get("/company/attention", params=product_filter)).json()
+        attention = (await client.get("/company/attention", params=goal_filter)).json()
         assert attention == {"proposals": int(step == "backlog"), "in_review": int(step == "in_review"), "failed": 0}
     assert (await client.get(path)).json()["result"] == {"status": result_status, "content": "Failure"}
     assert (await client.get("/company/attention")).json()["failed"] == 1
@@ -1269,7 +1264,7 @@ async def test_cancelled_task_is_visible_and_can_start_another_attempt(system, k
     assert saved["status"] == "in_progress"
     assert saved["result"]["status"] == "CANCELLED" and saved["result"]["run_id"] == run_id
     assert saved["result"]["content"]
-    assert (await client.get("/company/attention", params={"product_id": value["product_id"]})).json()["failed"] == 1
+    assert (await client.get("/company/attention", params={"goal_id": value["goal_id"]})).json()["failed"] == 1
     assert (await client.get("/company/tasks", params={"failed": True})).json()["meta"]["total_count"] == 1
     assert (await client.get("/company/tasks", params={"failed": False})).json()["meta"]["total_count"] == 0
     assert (await client.get(path + "/runs")).json()["data"][0]["status"] == "CANCELLED"
@@ -1584,19 +1579,19 @@ async def routine_proposal(
     from agno.run.authorization import authorization_scope
 
     client, db, worker, os, _ = system
-    product = (await client.post("/company/products", json={"name": "Docs"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Docs"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     if approve_project:
         assert (
             await client.post(
                 f"/company/projects/{project['id']}/transitions", json={"target": "active", "reason": "Start"}
             )
         ).status_code == 200
-    source_path = tmp_path / (product["id"] + ".md")
+    source_path = tmp_path / (goal["id"] + ".md")
     source_path.write_text("# Release\nVerified Source material.\n")
     source = (
         await client.post(
-            "/company/sources", json={"product_id": product["id"], "type": "markdown", "reference": str(source_path)}
+            "/company/sources", json={"goal_id": goal["id"], "type": "markdown", "reference": str(source_path)}
         )
     ).json()
     if policy is None:
@@ -1604,14 +1599,14 @@ async def routine_proposal(
             "executor_type": "agent",
             "executor_id": "writer",
             "source_ids": [source["id"]],
-            "work_scope": {"product_ids": [product["id"]], "project_ids": [project["id"]]},
+            "work_scope": {"goal_ids": [goal["id"]], "project_ids": [project["id"]]},
             "required_checks": required_checks or ["project_active", "has_source_evidence", "executor_registered"],
             "limits": {"max_acceptances": 1, "expires_at": int(time.time()) + 3600},
         }
     response = await client.post(
         "/company/routines",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "name": template or "custom",
             "template": template,
             **({"instructions": "Inspect work and propose follow-up."} if template is None else {}),
@@ -1820,12 +1815,12 @@ async def test_routine_can_still_propose_projects(system):
     from agno.run.authorization import authorization_scope
 
     client, db, worker, os, _ = system
-    product = (await client.post("/company/products", json={"name": "Routine projects"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Routine projects"})).json()
     manager = AsyncCompanyManager(db, os.registry) if isinstance(db, AsyncBaseDb) else CompanyManager(db, os.registry)
     with authorization_scope(lambda: _RoutineAuthorization(None, "routine")):
-        project = await _manager_call(manager, "create_project", product_id=product["id"], name="Proposed release")
+        project = await _manager_call(manager, "create_project", goal_id=goal["id"], name="Proposed release")
     assert project["status"] == "proposed"
-    assert (await _manager_call(manager, "get_project", project["id"]))["product_id"] == product["id"]
+    assert (await _manager_call(manager, "get_project", project["id"]))["goal_id"] == goal["id"]
 
 
 @pytest.mark.asyncio
@@ -1905,15 +1900,15 @@ async def test_authenticated_intake_without_executor_is_picked_up_once(system, t
         def invoke(self, messages, *args, **kwargs):
             observations = [message for message in messages if message.role == "tool"]
             if not observations:
-                name = "read_product_source"
+                name = "read_goal_source"
                 arguments = {"source_id": selected["source_id"]}
             elif len(observations) == 1:
                 index = json.loads(observations[0].content)
-                name = "read_product_source"
+                name = "read_goal_source"
                 arguments = {"source_id": selected["source_id"], "path": index["data"][0]["path"]}
             elif len(observations) == 2:
                 evidence = [json.loads(observations[1].content)]
-                name = "intake_product_source"
+                name = "intake_goal_source"
                 arguments = {
                     "source_id": selected["source_id"],
                     "title": "Document API",
@@ -1954,7 +1949,7 @@ async def test_authenticated_intake_without_executor_is_picked_up_once(system, t
     secret = "authenticated-intake-secret-at-least-32-bytes"
     scopes = [
         f"{resource}:{action}"
-        for resource in ("products", "projects", "tasks", "sources", "routines", "schedules", "wiki")
+        for resource in ("goals", "projects", "tasks", "sources", "routines", "schedules", "wiki")
         for action in ("read", "write")
     ] + ["agents:reader:run", "agents:writer:run", "agents:read"]
     token = jwt.encode(
@@ -1980,21 +1975,21 @@ async def test_authenticated_intake_without_executor_is_picked_up_once(system, t
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test", headers={"Authorization": "Bearer " + token}
     ) as client:
-        product = (await client.post("/company/products", json={"name": "API"})).json()
+        goal = (await client.post("/company/goals", json={"name": "API"})).json()
         selected["project_id"] = (
-            await client.post("/company/projects", json={"product_id": product["id"], "name": "Guide"})
+            await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Guide"})
         ).json()["id"]
         approval = {"target": "active", "reason": "Approved"}
         await client.post(f"/company/projects/{selected['project_id']}/transitions", json=approval)
         selected["source_id"] = (
             await client.post(
-                "/company/sources", json={"product_id": product["id"], "type": "markdown", "reference": str(path)}
+                "/company/sources", json={"goal_id": goal["id"], "type": "markdown", "reference": str(path)}
             )
         ).json()["id"]
         response = await client.post(
             "/company/routines",
             json={
-                "product_id": product["id"],
+                "goal_id": goal["id"],
                 "name": "intake",
                 "template": "intake",
                 "executor_type": "agent",
@@ -2022,7 +2017,7 @@ async def test_authenticated_intake_without_executor_is_picked_up_once(system, t
         intake._get_client = AsyncMock(return_value=SimpleClient(request_and_work))
         result = await intake.execute(await _call(db, "get_schedule", routine["id"]), db, release_schedule=False)
         assert result["status"] == "success", result
-        rows, count = await _call(db, "get_tasks", product_id=product["id"])
+        rows, count = await _call(db, "get_tasks", goal_id=goal["id"])
         assert count == 1, result
         proposal = rows[0]
         assert proposal["status"] == "backlog" and proposal["executor_id"] is None
@@ -2253,7 +2248,7 @@ async def test_refresh_completion_requires_permission_and_never_completes_on_arc
     executor, schedule = await automation(system)
     # Terminal work alone is not a completion proposal.
     assert await executor._tick() == []
-    refreshed = await _manager_call(manager, "refresh", task["product_id"])
+    refreshed = await _manager_call(manager, "refresh", task["goal_id"])
     assert refreshed["completion_proposals"][0]["project_id"] == task["project_id"]
     outcomes = await executor._tick()
     assert outcomes == []
@@ -2274,7 +2269,7 @@ async def test_refresh_completion_requires_permission_and_never_completes_on_arc
         "create_task",
         dict(
             id="old-terminal",
-            product_id=task["product_id"],
+            goal_id=task["goal_id"],
             title="Old",
             status="done",
             created_at=old,
@@ -2282,12 +2277,12 @@ async def test_refresh_completion_requires_permission_and_never_completes_on_arc
             transitions=[],
         ),
     )
-    independent = await _manager_call(manager, "create_project", product_id=task["product_id"], name="Human review")
+    independent = await _manager_call(manager, "create_project", goal_id=task["goal_id"], name="Human review")
     await _manager_call(manager, "transition_project", project_id=independent["id"], target="active", reason="Go")
     backlog = await _manager_call(
-        manager, "create_task", product_id=task["product_id"], title="Needs human review", project_id=independent["id"]
+        manager, "create_task", goal_id=task["goal_id"], title="Needs human review", project_id=independent["id"]
     )
-    refreshed = await _manager_call(manager, "refresh", task["product_id"])
+    refreshed = await _manager_call(manager, "refresh", task["goal_id"])
     assert "old-terminal" in refreshed["archived_tasks"]
     assert (await _manager_call(manager, "get_task", backlog["id"]))["status"] == "backlog"
     assert (await _manager_call(manager, "get_project", task["project_id"]))["status"] == "active"
@@ -2314,14 +2309,14 @@ async def test_project_completion_and_task_acceptance_share_atomic_budget(system
     await _manager_call(manager, "transition_task", task_id=task["id"], target="cancelled", reason="Finished")
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy.update(complete_projects=True, required_checks=["has_source_evidence", "executor_registered"])
-    independent = await _manager_call(manager, "create_project", product_id=task["product_id"], name="Independent work")
+    independent = await _manager_call(manager, "create_project", goal_id=task["goal_id"], name="Independent work")
     await _manager_call(manager, "transition_project", project_id=independent["id"], target="active", reason="Go")
     policy["work_scope"]["project_ids"].append(independent["id"])
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
     other = await intake_proposal(
         manager, "Independent task", task["evidence"], project_id=independent["id"], routine_id=routine["id"]
     )
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, _ = await automation(system)
     project = await _manager_call(manager, "get_project", task["project_id"])
     proposal = await executor._completion_candidate(manager, project, routine["id"])
@@ -2372,7 +2367,7 @@ async def test_project_completion_enforces_live_policy_and_terminal_tasks(system
                     "create_task",
                     dict(
                         id="new-open",
-                        product_id=task["product_id"],
+                        goal_id=task["goal_id"],
                         project_id=task["project_id"],
                         title="New work",
                         status="backlog",
@@ -2386,7 +2381,7 @@ async def test_project_completion_enforces_live_policy_and_terminal_tasks(system
         os.company.acceptance_checks["completion_check"] = check
         policy["required_checks"].append("completion_check")
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, _ = await automation(system)
     project = await _manager_call(manager, "get_project", task["project_id"])
     proposal = await executor._completion_candidate(manager, project, routine["id"])
@@ -2402,7 +2397,7 @@ async def test_project_completion_enforces_live_policy_and_terminal_tasks(system
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("binding", ["product_id", "template"])
+@pytest.mark.parametrize("binding", ["goal_id", "template"])
 async def test_completion_rechecks_routine_binding(system, tmp_path, binding):
     from agno.company.execution import _call
     from agno.company.routines import _manager_call, _policy_fingerprint
@@ -2410,13 +2405,13 @@ async def test_completion_rechecks_routine_binding(system, tmp_path, binding):
     client, db, worker, os, _ = system
     task, routine, manager = await routine_proposal(system, tmp_path, template="refresh")
     await _manager_call(manager, "transition_task", task_id=task["id"], target="cancelled", reason="Finished")
-    other = (await client.post("/company/products", json={"name": "Other"})).json()
+    other = (await client.post("/company/goals", json={"name": "Other"})).json()
 
     async def change_binding():
         current = await _call(db, "get_schedule", routine["id"])
         before = _policy_fingerprint(current)
         payload = current["payload"]
-        payload["metadata"][binding] = other["id"] if binding == "product_id" else "intake"
+        payload["metadata"][binding] = other["id"] if binding == "goal_id" else "intake"
         response = await client.patch("/schedules/" + routine["id"], json={"payload": payload})
         assert response.status_code == 409, response.text
         # Public mutation is blocked; model a concurrent application-level edit
@@ -2432,7 +2427,7 @@ async def test_completion_rechecks_routine_binding(system, tmp_path, binding):
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy.update(complete_projects=True, required_checks=["executor_registered", "binding_check"])
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, _ = await automation(system)
     project = await _manager_call(manager, "get_project", task["project_id"])
     proposal = await executor._completion_candidate(manager, project, routine["id"])
@@ -2501,15 +2496,13 @@ async def test_all_task_and_project_writes_stamp_updated_at(system, monkeypatch)
     from agno.company.execution import _call
 
     client, db, worker, os, _ = system
-    product = (await client.post("/company/products", json={"name": "Timestamps"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Project"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Timestamps"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Project"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
-        await client.post(
-            "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "Task"}
-        )
+        await client.post("/company/tasks", json={"goal_id": goal["id"], "project_id": project["id"], "title": "Task"})
     ).json()
     now = int(time.time())
     monkeypatch.setattr(time, "time", lambda: now)
@@ -2536,7 +2529,7 @@ async def test_all_task_and_project_writes_stamp_updated_at(system, monkeypatch)
     await write("transition_task", task["id"], "done", "Review accepted")
     await write("transition_project", project["id"], "done", "All work finished")
     # Direct and cascading archives/restores must stamp every affected child.
-    for kind, record in (("task", task), ("project", project), ("product", product)):
+    for kind, record in (("task", task), ("project", project), ("goal", goal)):
         children = [("task", task)] if kind == "task" else [("task", task), ("project", project)]
         for method, archived in (("delete_", True), ("restore_", False)):
             now += 1
@@ -2555,13 +2548,13 @@ async def test_transition_updated_at_compare_and_set(system, monkeypatch, kind, 
     from agno.company.execution import _call
 
     client, db, worker, os, _ = system
-    product = (await client.post("/company/products", json={"name": "CAS"})).json()
+    goal = (await client.post("/company/goals", json={"name": "CAS"})).json()
     record = await _call(
         db,
         "create_" + kind,
         dict(
             id=str(uuid4()),
-            product_id=product["id"],
+            goal_id=goal["id"],
             **(
                 {"title": "Task", "status": "backlog", "routine_id": "routine"}
                 if kind == "task"
@@ -2578,7 +2571,7 @@ async def test_transition_updated_at_compare_and_set(system, monkeypatch, kind, 
             "create_task",
             dict(
                 id=str(uuid4()),
-                product_id=product["id"],
+                goal_id=goal["id"],
                 project_id=record["id"],
                 title="Finished",
                 status="done",
@@ -2620,14 +2613,12 @@ async def test_same_second_timestamp_keeps_status_guard(system, monkeypatch, aut
     from agno.company.execution import _call
 
     client, db, worker, os, _ = system
-    product = (await client.post("/company/products", json={"name": "Epoch seconds"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Release"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Epoch seconds"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Release"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     task = (
-        await client.post(
-            "/company/tasks", json={"product_id": product["id"], "project_id": project["id"], "title": "First"}
-        )
+        await client.post("/company/tasks", json={"goal_id": goal["id"], "project_id": project["id"], "title": "First"})
     ).json()
     monkeypatch.setattr(time, "time", lambda: 100)
     observed = await _call(db, "update_task", task["id"], title="Observed")
@@ -2651,12 +2642,12 @@ async def test_a_receipt_with_no_lifetime_limit_reads_no_acceptance_history(syst
     from agno.company.execution import _call
 
     client, db, _, _, _ = system
-    product = (await client.post("/company/products", json={"name": "No lifetime limit"})).json()
-    proposed = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Proposed"})).json()
+    goal = (await client.post("/company/goals", json={"name": "No lifetime limit"})).json()
+    proposed = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Proposed"})).json()
     tasks = [
         (
             await client.post(
-                "/company/tasks", json={"product_id": product["id"], "project_id": proposed["id"], "title": title}
+                "/company/tasks", json={"goal_id": goal["id"], "project_id": proposed["id"], "title": title}
             )
         ).json()
         for title in ("First", "Second")
@@ -2711,15 +2702,15 @@ async def test_automatic_task_timestamp_refuses_later_edit(system, monkeypatch, 
     from agno.company.execution import _call
 
     client, db, _, _, _ = system
-    product = (await client.post("/company/products", json={"name": "Scope guard"})).json()
-    project = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Other"})).json()
-    initial = (await client.post("/company/projects", json={"product_id": product["id"], "name": "Initial"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Scope guard"})).json()
+    project = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Other"})).json()
+    initial = (await client.post("/company/projects", json={"goal_id": goal["id"], "name": "Initial"})).json()
     approval = {"target": "active", "reason": "Approved"}
     await client.post(f"/company/projects/{project['id']}/transitions", json=approval)
     await client.post(f"/company/projects/{initial['id']}/transitions", json=approval)
     task = (
         await client.post(
-            "/company/tasks", json={"product_id": product["id"], "project_id": initial["id"], "title": "Original"}
+            "/company/tasks", json={"goal_id": goal["id"], "project_id": initial["id"], "title": "Original"}
         )
     ).json()
     monkeypatch.setattr(time, "time", lambda: 100)
@@ -2785,11 +2776,11 @@ async def test_template_free_routine_quiet_run_and_edited_executor(system):
 
     components["writer"].model = CapturingModel()
     components["editors"].model = CapturingModel()
-    product = (await client.post("/company/products", json={"name": "Quiet discovery"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Quiet discovery"})).json()
     created = await client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="quiet",
             instructions="First custom instructions",
             executor_type="agent",
@@ -2819,8 +2810,8 @@ async def test_template_free_routine_quiet_run_and_edited_executor(system):
     second = await executor.execute(await _call(db, "get_schedule", routine["id"]), db, release_schedule=False)
     assert second["status"] == "success", second
     assert any("Second custom instructions" in str(value) for value in observed)
-    assert (await _call(db, "get_tasks", product_id=product["id"]))[1] == 0
-    assert (await _call(db, "get_sources", product_id=product["id"]))[1] == 0
+    assert (await _call(db, "get_tasks", goal_id=goal["id"]))[1] == 0
+    assert (await _call(db, "get_sources", goal_id=goal["id"]))[1] == 0
     history = (await client.get("/company/routines/" + routine["id"] + "/runs")).json()
     assert len(history["data"]) == 2 and all(row["status"] == "success" for row in history["data"])
 
@@ -2838,19 +2829,19 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
         "agno.knowledge.reader.website_reader.WebsiteReader.read",
         lambda *args, **kwargs: [Document(content="The released API needs a migration guide.")],
     )
-    product = (await client.post("/company/products", json={"name": "Search discovery"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Search discovery"})).json()
 
     class SearchModel(OfflineModel):
         def invoke(self, messages, *args, **kwargs):
             results = [json.loads(message.content) for message in messages if message.role == "tool"]
             if not results:
-                name, arguments = "add_product_source", dict(product_id=product["id"], reference=url)
+                name, arguments = "add_goal_source", dict(goal_id=goal["id"], reference=url)
             elif len(results) == 1:
-                name, arguments = "read_product_source", dict(source_id=results[0]["id"], path=url)
+                name, arguments = "read_goal_source", dict(source_id=results[0]["id"], path=url)
             elif len(results) == 2:
-                name, arguments = "list_company_projects", dict(product_id=product["id"])
+                name, arguments = "list_company_projects", dict(goal_id=goal["id"])
             elif len(results) == 3 and not results[2]["data"]:
-                name, arguments = "propose_company_project", dict(product_id=product["id"], name="Migration guide")
+                name, arguments = "propose_company_project", dict(goal_id=goal["id"], name="Migration guide")
             elif len(results) == 3 or (len(results) == 4 and not results[2]["data"]):
                 project = results[2]["data"][0] if results[2]["data"] else results[3]
                 if project["status"] == "proposed":
@@ -2860,7 +2851,7 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
                 observed = results[1]
                 assert "migration guide" in observed["content"]
                 name, arguments = (
-                    "intake_product_source",
+                    "intake_goal_source",
                     dict(
                         source_id=results[0]["id"],
                         project_id=project["id"],
@@ -2887,7 +2878,7 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
     created = await client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="search",
             instructions="Discover useful pages, save website Sources, and propose evidence-backed work.",
             executor_type=executor_type,
@@ -2904,10 +2895,10 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
         result = await executor.execute(await _call(db, "get_schedule", routine["id"]), db, release_schedule=False)
         assert result["status"] == "success", result
         runs.append(result["run_id"])
-        tasks, count = await _call(db, "get_tasks", product_id=product["id"])
+        tasks, count = await _call(db, "get_tasks", goal_id=goal["id"])
         if index == 0:
             assert count == 0
-            projects, project_count = await _call(db, "get_projects", product_id=product["id"])
+            projects, project_count = await _call(db, "get_projects", goal_id=goal["id"])
             assert project_count == 1 and projects[0]["status"] == "proposed"
             approved = await client.post(
                 "/company/projects/" + projects[0]["id"] + "/transitions",
@@ -2918,18 +2909,18 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
             assert count == 1
             task_ids.append(tasks[0]["id"])
     assert task_ids[0] == task_ids[1]
-    sources, count = await _call(db, "get_sources", product_id=product["id"])
+    sources, count = await _call(db, "get_sources", goal_id=goal["id"])
     assert count == 1
     assert sources[0]["config"]["metadata"] == {executor_type + "_id": executor_id, "run_id": runs[0]}
-    tasks, count = await _call(db, "get_tasks", product_id=product["id"])
+    tasks, count = await _call(db, "get_tasks", goal_id=goal["id"])
     assert count == 1 and tasks[0]["status"] == "backlog"
     assert tasks[0]["evidence"][0]["run_id"] == runs[1]
     assert tasks[0]["evidence"][0]["link"] == url and tasks[0]["evidence"][0]["content_hash"]
     assert tasks[0]["routine_id"] == routine["id"]
-    projects, project_count = await _call(db, "get_projects", product_id=product["id"])
+    projects, project_count = await _call(db, "get_projects", goal_id=goal["id"])
     assert project_count == 1 and tasks[0]["project_id"] == projects[0]["id"]
     assert projects[0]["status"] == "active"
-    listed = (await client.get("/company/sources", params={"product_id": product["id"]})).json()["data"]
+    listed = (await client.get("/company/sources", params={"goal_id": goal["id"]})).json()["data"]
     assert listed[0]["config"]["metadata"][executor_type + "_id"] == executor_id
     # Discovered websites use the same bounded acceptance checks as human-added Sources.
     policy = dict(
@@ -2944,7 +2935,7 @@ async def test_search_routine_adds_website_and_deduplicates_three_runs(system, m
     automatic, _ = await automation(system)
     assert (await automatic._accept(tasks[0]))["status"] == "ready"
     assert (await client.delete("/company/sources/" + sources[0]["id"])).status_code == 204
-    assert (await client.get("/company/sources", params={"product_id": product["id"]})).json()["data"] == []
+    assert (await client.get("/company/sources", params={"goal_id": goal["id"]})).json()["data"] == []
 
 
 @pytest.mark.asyncio
@@ -2959,7 +2950,7 @@ async def test_template_free_policy_never_completes_projects(system, tmp_path):
     policy = routine["payload"]["metadata"]["auto_accept"]
     policy["complete_projects"] = True
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, _ = await automation(system)
     project = await _manager_call(manager, "get_project", task["project_id"])
     proposal = await executor._completion_candidate(manager, project, routine["id"])
@@ -3007,9 +2998,7 @@ async def test_later_scope_move_cannot_accept_or_queue(system, tmp_path, monkeyp
 
     client, db, worker, os, _ = system
     task, routine, _ = await routine_proposal(system, tmp_path)
-    outside = (
-        await client.post("/company/projects", json={"product_id": task["product_id"], "name": "Outside"})
-    ).json()
+    outside = (await client.post("/company/projects", json={"goal_id": task["goal_id"], "name": "Outside"})).json()
     approved = await client.post(
         f"/company/projects/{outside['id']}/transitions", json={"target": "active", "reason": "Approved"}
     )
@@ -3056,7 +3045,7 @@ async def test_completion_uses_project_timestamp_and_terminal_task_gate(system, 
                 "create_task",
                 dict(
                     id=str(uuid4()),
-                    product_id=task["product_id"],
+                    goal_id=task["goal_id"],
                     project_id=task["project_id"],
                     title="New child",
                     status="cancelled" if change == "add_terminal" else "backlog",
@@ -3078,7 +3067,7 @@ async def test_completion_uses_project_timestamp_and_terminal_task_gate(system, 
     policy.update(complete_projects=True)
     policy["required_checks"].append("change_facts")
     assert (await client.patch("/company/routines/" + routine["id"], json={"auto_accept": policy})).status_code == 200
-    await _manager_call(manager, "refresh", task["product_id"])
+    await _manager_call(manager, "refresh", task["goal_id"])
     executor, _ = await automation(system)
     project = await _manager_call(manager, "get_project", task["project_id"])
     proposal = await executor._completion_candidate(manager, project, routine["id"])
@@ -3210,11 +3199,11 @@ async def test_cheap_check_failure_skips_source_io(system, tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_expired_authorization_refused_at_write(system):
     client, db, _, _, _ = system
-    product = (await client.post("/company/products", json={"name": "Expiry"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Expiry"})).json()
     response = await client.post(
         "/company/routines",
         json=dict(
-            product_id=product["id"],
+            goal_id=goal["id"],
             name="Expired",
             instructions="Check",
             executor_type="agent",
@@ -3440,7 +3429,7 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
     secret = "wiki-acceptance-tests-secret-at-least-32-bytes"
     scopes = [
         f"{resource}:{action}"
-        for resource in ("products", "tasks", "routines", "schedules")
+        for resource in ("goals", "tasks", "routines", "schedules")
         for action in ("read", "write")
     ] + ["agents:writer:run", "wiki:read"]
     managed = phase in {"write_managed", "before_checks", "during_checks"}
@@ -3488,9 +3477,9 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test", headers=headers(phase != "write_token")
         ) as client:
-            product_response = await client.post("/company/products", json={"name": "Wiki-gated work"})
-            assert product_response.status_code == 201, product_response.text
-            product = product_response.json()
+            goal_response = await client.post("/company/goals", json={"name": "Wiki-gated work"})
+            assert goal_response.status_code == 201, goal_response.text
+            goal = goal_response.json()
             policy = dict(
                 executor_type="agent",
                 executor_id="writer",
@@ -3498,7 +3487,7 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
                 limits={"max_acceptances": 1, "expires_at": int(time.time()) + 3600},
             )
             body = dict(
-                product_id=product["id"],
+                goal_id=goal["id"],
                 name="intake",
                 template="intake",
                 executor_type="agent",
@@ -3509,7 +3498,7 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
             if phase.startswith("write_"):
                 refused = await client.post("/company/routines", json=body)
                 assert refused.status_code == 403 and "wiki" in refused.text, refused.text
-                assert await _call(db, "get_schedule_by_name", product["id"] + ".intake", user_id="alice") is None
+                assert await _call(db, "get_schedule_by_name", goal["id"] + ".intake", user_id="alice") is None
                 created = await client.post("/company/routines", json={**body, "auto_accept": False})
                 assert created.status_code == 201, created.text
                 routine = created.json()
@@ -3529,12 +3518,12 @@ async def test_automatic_acceptance_requires_wiki_read(system, tmp_path, isolati
             manager = (
                 AsyncCompanyManager(db, os.registry) if isinstance(db, AsyncBaseDb) else CompanyManager(db, os.registry)
             )
-            project = await _manager_call(manager, "create_project", product_id=product["id"], name="Routine work")
+            project = await _manager_call(manager, "create_project", goal_id=goal["id"], name="Routine work")
             await _manager_call(manager, "transition_project", project_id=project["id"], target="active", reason="Go")
             task = await _manager_call(
                 manager,
                 "create_task",
-                product_id=product["id"],
+                goal_id=goal["id"],
                 title="Routine proposal",
                 project_id=project["id"],
                 user_id="alice",
@@ -3680,7 +3669,7 @@ async def test_company_config_database_and_disabled_section(system):
 
     client, db, _, os, _ = system
     section = (await client.get("/config")).json()["company"]
-    tables = [db.products_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name]
+    tables = [db.goals_table_name, db.projects_table_name, db.tasks_table_name, db.sources_table_name]
     assert section["dbs"] == [{"db_id": db.id, "domain_config": {"display_name": db.id}, "tables": tables}]
     os.config = AgentOSConfig(
         company=CompanySectionConfig(
@@ -3731,7 +3720,7 @@ async def test_company_config_uses_explicit_company_database_only(system):
         section = (await client.get("/config")).json()["company"]
     assert [entry["db_id"] for entry in section["dbs"]] == [db.id]
     assert section["dbs"][0]["tables"] == [
-        db.products_table_name,
+        db.goals_table_name,
         db.projects_table_name,
         db.tasks_table_name,
         db.sources_table_name,
@@ -3778,11 +3767,11 @@ async def test_routine_endpoint_edit_rejects_nonrun_target(system):
     from agno.company.execution import _call
 
     client, db, _, _, _ = system
-    product = (await client.post("/company/products", json={"name": "Routine targets"})).json()
+    goal = (await client.post("/company/goals", json={"name": "Routine targets"})).json()
     response = await client.post(
         "/company/routines",
         json={
-            "product_id": product["id"],
+            "goal_id": goal["id"],
             "name": "Routine",
             "instructions": "Review work",
             "executor_type": "agent",

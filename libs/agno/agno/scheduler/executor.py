@@ -11,6 +11,7 @@ from urllib.parse import quote
 from agno.db.schemas.scheduler import (
     RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
+    SCHEDULED_RUN_METADATA_KEY,
     SCHEDULE_OWNER_HEADER,
     Schedule,
     match_run_endpoint,
@@ -397,7 +398,7 @@ class ScheduleExecutor:
             )
             snapshot["company_routine_unscoped"] = unscoped
             snapshot["company_routine_id"] = schedule.id
-            snapshot["company_product_id"] = (payload.get("metadata") or {}).get("product_id")
+            snapshot["company_goal_id"] = (payload.get("metadata") or {}).get("goal_id")
             snapshot["company_routine"] = True
             has_authority = True
         elif snapshot is not None:
@@ -460,6 +461,14 @@ class ScheduleExecutor:
             }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
+            if snapshot is None:
+                # With a saved authority the run carries "scheduled" on it. With none, or with one
+                # saved empty where authorization is off, the run's metadata is the only place left
+                # to say that nobody is present. Written after the payload's own metadata, so a
+                # schedule cannot leave it out.
+                kept = sanitized_payload.get("metadata")
+                marked = {**(kept if isinstance(kept, dict) else {}), SCHEDULED_RUN_METADATA_KEY: True}
+                form_payload["metadata"] = _to_form_value(marked)
 
             # The owner wins over the user-controlled payload: a crafted schedule must not run as another user
             form_payload.pop("user_id", None)

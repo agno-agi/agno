@@ -133,7 +133,10 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     """Qualify each store's tools without mutating the supplied toolkit.
 
     Position distinguishes duplicate namespace labels. Truncation keeps built-in
-    tool names within model providers' 64-character limit.
+    tool names within model providers' 64-character limit. A store's description
+    follows its namespace on every tool, so the model can pick a store from the
+    tool list alone. The description is shown as written: the tool names in it
+    are not qualified.
     """
     import re
     from copy import copy
@@ -152,6 +155,11 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     def qualify(text: str) -> str:
         return pattern.sub(lambda match: names[match.group(0)], text)
 
+    header = f"Filesystem namespace: {namespace!r}."
+    described = toolkit.description_line
+    if described:
+        header = f"{header} {described}"
+
     def rename_functions(functions: Dict[str, Function]) -> Dict[str, Function]:
         result: Dict[str, Function] = {}
         for name, function in functions.items():
@@ -160,7 +168,7 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
             description = function.description or (
                 get_entrypoint_docstring(function.entrypoint) if function.entrypoint else ""
             )
-            renamed_function.description = f"Filesystem namespace: {namespace!r}.\n{qualify(description)}"
+            renamed_function.description = f"{header}\n{qualify(description)}"
             renamed_function.source_toolkit = renamed
             result[renamed_function.name] = renamed_function
         return result
@@ -168,7 +176,13 @@ def _namespace_filesystem_toolkit(toolkit: FileSystemTools, index: int) -> FileS
     renamed.functions = rename_functions(toolkit.functions)
     renamed.async_functions = rename_functions(toolkit.async_functions)
     if toolkit.instructions:
-        renamed.instructions = f"Filesystem namespace: {namespace!r}.\n{qualify(toolkit.instructions)}"
+        guidance = toolkit.instructions
+        lead = ""
+        if described and guidance.startswith(f"{described}\n"):
+            # The description leads the toolkit's instructions and is not qualified.
+            lead = f"{described}\n"
+            guidance = guidance[len(lead) :]
+        renamed.instructions = f"Filesystem namespace: {namespace!r}.\n{lead}{qualify(guidance)}"
     return renamed
 
 

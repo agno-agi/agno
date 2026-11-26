@@ -11,10 +11,14 @@ For several stores, tools are qualified by list position and namespace, such as
 can read its own drafts as well as the handbook without tool-name collisions.
 A single store (including a one-item list) keeps the original tool names.
 
+``description`` says what each store is for. The agent reads it on every tool of
+that store and at the top of the store's instructions, so the choice between the
+stores does not rest on their namespaces alone.
+
 AgentOS discovers both stores; browser routes select them by ``namespace``.
 
 Prerequisites: OPENAI_API_KEY is needed only for agent runs
-Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_per_agent.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/27_filesystem/multiple_stores_agent.py
 Try: curl "http://localhost:7777/filesystem/entries?namespace=analyst/drafts"
      curl "http://localhost:7777/filesystem/entries?namespace=team/handbook"
 """
@@ -33,9 +37,18 @@ db = SqliteDb(
     db_file="tmp/filesystem_multiple_stores_agent.db",
 )
 
-drafts = FileSystem(db, namespace="analyst/drafts")
+drafts = FileSystem(
+    db,
+    namespace="analyst/drafts",
+    description="Your working drafts. Write and revise analysis here.",
+)
 # The analyst reads the handbook but never changes it.
-handbook = FileSystem(db, namespace="team/handbook", read_only=True)
+handbook = FileSystem(
+    db,
+    namespace="team/handbook",
+    read_only=True,
+    description="The team handbook. Read the style guide here before writing.",
+)
 
 # ---------------------------------------------------------------------------
 # Create Agent
