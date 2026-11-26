@@ -723,18 +723,18 @@ def test_a_start_for_another_executor_sends_no_page_when_mini_agent_was_suggeste
     assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
 
 
-def test_a_named_executors_task_input_needs_no_file_store(system):
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_named_executors_task_input_needs_no_file_store(system, use_async, monkeypatch):
     """Building the input for another executor reads and writes no page, and still refuses a missing Goal."""
     ids = records(system)
     task = {**system.db.get_task(ids["stray"]), "executor_type": "agent", "executor_id": "writer"}
     store = company_filesystem(system.db)
     before = sorted(meta.path for meta in store.list())
     assert not any(path.startswith(f"goals/{ids['other']}/") for path in before)
-    manager = CompanyManager(system.db, system.os.registry)
-    manager.get_wiki = None  # type: ignore[method-assign]
-    assert "wiki" not in json.loads(asyncio.run(_task_input(manager, task)))
+    monkeypatch.setattr(AsyncCompanyManager if use_async else CompanyManager, "get_wiki", None)
+    assert "wiki" not in json.loads(task_input(system, task, use_async))
     with pytest.raises(LookupError, match="Goal not found"):
-        asyncio.run(_task_input(manager, {**task, "goal_id": "missing"}))
+        task_input(system, {**task, "goal_id": "missing"}, use_async)
     assert sorted(meta.path for meta in store.list()) == before
 
 

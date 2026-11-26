@@ -59,6 +59,8 @@ Proposing work:
 Task briefs:
 - Write for the executor who will do the work: the desired outcome, the deliverable, how it will be
   checked, and any restrictions in the Routine's instructions.
+- An executor other than Mini Agent receives only the brief and the evidence, so the brief must carry
+  what it needs.
 - A Routine only proposes. Leave that limit out of the brief; it does not apply to the executor.
 
 Sources and status:
