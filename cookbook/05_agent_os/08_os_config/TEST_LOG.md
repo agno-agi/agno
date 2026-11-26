@@ -56,9 +56,10 @@ admin `alice` and as the member `bob`, and `GET /authz/audit` as `alice`.
 `roles_from_token` false, `token_scopes_trusted` false, `audience_verified` true). `bob` received only
 `enabled`, `mode` and `user_isolation`. `alice` received the full `features`
 block: user directory on with `auto_provision` and `fail_closed` true, audit on
-with both trails readable, tracing, scheduler, MCP and the public surface off. `bob` received only
-tracing, scheduler and MCP. `GET /authz/audit` returned 200, matching
-`changes_readable`.
+with both trails readable, tracing, scheduler, MCP, the public surface, the OS
+Manager and media storage off, and telemetry on (the AgentOS default). `bob`
+received only tracing, scheduler, MCP, manager, media storage and telemetry.
+`GET /authz/audit` returned 200, matching `changes_readable`.
 
 ---
 

@@ -589,6 +589,12 @@ class AuditStatus(FeatureStatus):
     )
 
 
+class MediaStorageStatus(FeatureStatus):
+    """Where the media routes read stored media from."""
+
+    backend: Optional[str] = Field(None, description="Storage backend: s3, gcs or local")
+
+
 class PublicStatus(FeatureStatus):
     """The public surface: components served to outside callers under public input and rate limits."""
 
@@ -606,11 +612,12 @@ class PublicStatus(FeatureStatus):
 
 class FeaturesReport(BaseModel):
     """Which optional features run on this AgentOS, so a client can show or hide their
-    pages without probing each route. Reported as EFFECTIVE behavior: a feature that was
-    requested but could not start is reported off. `tracing`, `scheduler` and `mcp` go to
-    every caller that can read /config; `user_directory`, `audit` and `public` go to
-    administrators only. Every field is optional so a client parses responses from
-    servers that omit it."""
+    pages without probing each route. Holds the opt-ins without a block of their own: a
+    feature with its own top-level block (company, filesystem, knowledge, interfaces,
+    queue) is reported there. Reported as EFFECTIVE behavior: a feature that was
+    requested but could not start is reported off. `user_directory`, `audit` and `public`
+    go to administrators only, the rest to every caller that can read /config. Every
+    field is optional so a client parses responses from servers that omit it."""
 
     user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
     audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
@@ -621,6 +628,17 @@ class FeaturesReport(BaseModel):
     )
     public: Optional[PublicStatus] = Field(
         None, description="Components served under public limits. Administrators only"
+    )
+    manager: Optional[FeatureStatus] = Field(
+        None, description="The OS Manager team is served; teams[] carries it as an internal team"
+    )
+    media_storage: Optional[MediaStorageStatus] = Field(
+        None, description="Stored media is served from a storage backend instead of only the database"
+    )
+    telemetry: Optional[FeatureStatus] = Field(
+        None,
+        description="Usage telemetry is sent to Agno: the AgentOS launch ping, or run telemetry "
+        "from a local agent, team or workflow",
     )
 
 

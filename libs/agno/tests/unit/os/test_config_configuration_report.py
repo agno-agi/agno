@@ -18,10 +18,13 @@ from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.job_queue.config import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
+from agno.media.storage.local import LocalMediaStorage
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, Authorization
 from agno.os.authz import UserDirectory
 from agno.os.authz.audit import LoggingAuditSink
 from agno.os.config import AuthorizationConfig
+from agno.os.manager import OSManager
 from agno.os.public import PublicSurface
 from agno.os.schema import ConfigResponse
 from agno.os.settings import AgnoAPISettings
@@ -39,6 +42,9 @@ FEATURES_OFF = {
     "scheduler": {"enabled": False},
     "mcp": {"enabled": False},
     "public": {"enabled": False, "agents": [], "teams": [], "workflows": [], "mcp": False},
+    "manager": {"enabled": False},
+    "media_storage": {"enabled": False},
+    "telemetry": {"enabled": False},
 }
 ADMIN_ONLY_FEATURES = {"user_directory", "audit", "public"}
 PUBLIC_FEATURES_OFF = {k: v for k, v in FEATURES_OFF.items() if k not in ADMIN_ONLY_FEATURES}
@@ -46,7 +52,7 @@ PUBLIC_FEATURES_OFF = {k: v for k, v in FEATURES_OFF.items() if k not in ADMIN_O
 
 @pytest.fixture(autouse=True)
 def _no_ambient_auth(monkeypatch):
-    for name in ("JWT_VERIFICATION_KEY", "JWT_JWKS_FILE", "OS_SECURITY_KEY"):
+    for name in ("JWT_VERIFICATION_KEY", "JWT_JWKS_FILE", "OS_SECURITY_KEY", "AGNO_TELEMETRY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -56,7 +62,7 @@ def db(tmp_path):
 
 
 def _os(db, **kwargs):
-    agent = Agent(id="cfg-agent", name="Cfg Agent", db=db)
+    agent = Agent(id="cfg-agent", name="Cfg Agent", db=db, telemetry=False)
     kwargs.setdefault("db", db)
     return AgentOS(id=OS_ID, agents=[agent], telemetry=False, **kwargs)
 
@@ -313,7 +319,7 @@ class TestFeatures:
         assert _config(_os(db, scheduler=True)).json()["features"]["scheduler"] == {"enabled": True}
 
     def test_scheduler_without_a_database_does_not_run(self):
-        agent_os = AgentOS(id=OS_ID, agents=[Agent(id="cfg-agent")], scheduler=True, telemetry=False)
+        agent_os = AgentOS(id=OS_ID, agents=[Agent(id="cfg-agent", telemetry=False)], scheduler=True, telemetry=False)
         assert _config(agent_os).json()["features"]["scheduler"] == {"enabled": False}
 
     def test_mcp_matches_info(self, db):
@@ -325,7 +331,7 @@ class TestFeatures:
     def _public_os(self, **kwargs):
         # A public surface needs a PostgreSQL db; no connection is made for these requests.
         pg = PostgresDb(db_engine=create_engine("postgresql+psycopg://unused:unused@127.0.0.1:1/unused"))
-        agent = Agent(id="cfg-agent", name="Cfg Agent")
+        agent = Agent(id="cfg-agent", name="Cfg Agent", telemetry=False)
         public = PublicSurface(agents=[agent])
         return AgentOS(
             id=OS_ID, agents=[agent], db=pg, public=public, auto_provision_dbs=False, telemetry=False, **kwargs
@@ -337,6 +343,50 @@ class TestFeatures:
         assert "public" not in _config(agent_os, _bearer("bob", MEMBER_SCOPES)).json()["features"]
         public = _config(agent_os, _bearer("alice", ["agent_os:admin"])).json()["features"]["public"]
         assert public == {"enabled": True, "agents": ["cfg-agent"], "teams": [], "workflows": [], "mcp": False}
+
+    def test_manager(self, db):
+        body = _config(_os(db, manager=OSManager(model=OpenAIResponses(id="offline", api_key="test")))).json()
+        assert body["features"]["manager"] == {"enabled": True}
+        assert any(team.get("metadata", {}).get("_agno", {}).get("internal") for team in body["teams"])
+
+    def test_media_storage_set_on_the_os(self, db, tmp_path):
+        agent_os = _os(db, media_storage=LocalMediaStorage(base_path=str(tmp_path / "media")))
+        assert _config(agent_os).json()["features"]["media_storage"] == {"enabled": True, "backend": "local"}
+
+    def test_media_storage_found_on_an_agent(self, db, tmp_path):
+        storage = LocalMediaStorage(base_path=str(tmp_path / "media"))
+        agent = Agent(id="media-agent", db=db, media_storage=storage, telemetry=False)
+        agent_os = AgentOS(id=OS_ID, agents=[agent], db=db, telemetry=False)
+        assert _config(agent_os).json()["features"]["media_storage"] == {"enabled": True, "backend": "local"}
+
+    def test_telemetry_from_the_os_launch_ping(self, db):
+        agent_os = AgentOS(id=OS_ID, agents=[Agent(id="cfg-agent", db=db, telemetry=False)], db=db)
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_telemetry_from_an_agent_when_the_os_ping_is_off(self, db):
+        agent_os = AgentOS(id=OS_ID, agents=[Agent(id="cfg-agent", db=db)], db=db, telemetry=False)
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_telemetry_env_overrides_each_component(self, db, monkeypatch):
+        agent_os = AgentOS(id=OS_ID, agents=[Agent(id="cfg-agent", db=db)], db=db, telemetry=False)
+        monkeypatch.setenv("AGNO_TELEMETRY", "false")
+        assert _config(agent_os).json()["features"]["telemetry"] == {"enabled": False}
+        monkeypatch.setenv("AGNO_TELEMETRY", "true")
+        assert _config(_os(db)).json()["features"]["telemetry"] == {"enabled": True}
+
+    def test_member_sees_manager_media_storage_and_telemetry(self, db, tmp_path):
+        storage = LocalMediaStorage(base_path=str(tmp_path / "media"))
+        agent_os = _os(
+            db,
+            authorization=_roles(),
+            manager=OSManager(model=OpenAIResponses(id="offline", api_key="test")),
+            media_storage=storage,
+        )
+        features = _config(agent_os, _bearer("bob")).json()["features"]
+        assert features["manager"] == {"enabled": True}
+        assert features["media_storage"] == {"enabled": True, "backend": "local"}
+        # The manager team keeps its own default run telemetry.
+        assert features["telemetry"] == {"enabled": True}
 
     def test_queue_stays_in_its_own_block(self, db):
         body = _config(_os(db, queue=QueueConfig(durable=True, db=InMemoryQueueStore()))).json()

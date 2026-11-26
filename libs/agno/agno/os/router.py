@@ -1,5 +1,6 @@
 import asyncio
 import json
+from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import (
@@ -46,6 +47,7 @@ from agno.os.schema import (
     InterfaceResponse,
     InternalServerErrorResponse,
     McpInfo,
+    MediaStorageStatus,
     Model,
     NotFoundResponse,
     PublicStatus,
@@ -313,6 +315,22 @@ def _agno_tracing_is_active() -> bool:
     return is_agno_tracing_active()
 
 
+def _telemetry_is_on(os: "AgentOS") -> bool:
+    """AgentOS(telemetry=...) covers only the launch ping; each component sends its own run telemetry."""
+    if os.telemetry:
+        return True
+    flags = [
+        *(agent.telemetry for agent in os._agents),
+        *(team.telemetry for team in os._teams),
+        *(workflow.telemetry for workflow in os._workflows),
+    ]
+    # Components apply AGNO_TELEMETRY over their own flag each time they send.
+    env = getenv("AGNO_TELEMETRY")
+    if env is not None:
+        return bool(flags) and env.lower() == "true"
+    return any(flags)
+
+
 def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> FeaturesReport:
     """The /config features block: what runs on this AgentOS. Directory and audit status are admin-only."""
     report = FeaturesReport(
@@ -322,6 +340,12 @@ def _features_report(os: "AgentOS", request: Request, is_admin: bool) -> Feature
         # The poller starts only with a database to read schedules from.
         scheduler=FeatureStatus(enabled=bool(os._scheduler_enabled and os.db is not None)),
         mcp=FeatureStatus(enabled=bool(os.mcp)),
+        manager=FeatureStatus(enabled=os._manager is not None),
+        media_storage=MediaStorageStatus(
+            enabled=os.media_storage is not None,
+            backend=getattr(os.media_storage, "backend_name", None),
+        ),
+        telemetry=FeatureStatus(enabled=_telemetry_is_on(os)),
     )
     if not is_admin:
         return report
