@@ -32,7 +32,9 @@ def test_mini_agent_assembly_and_model_precedence(tmp_path, manager):
         telemetry=False,
     )
     pm = os._mini_agent
-    assert pm.id == MINI_AGENT_ID and pm.model is override
+    # With Super Agent on, Mini Agent runs on Super Agent's model, here the registry's first. Without it,
+    # CompanyConfig names the model.
+    assert pm.id == MINI_AGENT_ID and pm.model is (first if manager else override)
     # Mini Agent keeps no decision log: it neither writes Company decisions nor recalls them.
     assert pm.learning is None
     assert pm not in registry.agents and not registry.tools

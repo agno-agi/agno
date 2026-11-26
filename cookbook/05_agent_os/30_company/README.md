@@ -116,6 +116,10 @@ on 3.2.0 keeps the input it was queued with, and an agent or team with
 `add_history_to_context=True` reads its own earlier attempts of the same Task,
 so an attempt that ran on 3.2.0 can bring its pages back.
 
+Mini Agent's model follows Super Agent. With `manager=OSManager(...)` set, Mini Agent runs on Super
+Agent's model, also when `CompanyConfig(model=...)` names another one. In 3.2.0 `CompanyConfig(model=...)`
+came first. It still sets Mini Agent's model when Super Agent is off.
+
 ## Weekly Mini Agent review
 
 `10_weekly_goal_review.py` declares a Company Routine with no executor, so
@@ -125,9 +129,9 @@ Backlog Tasks, and updates status without accepting work. Mini Agent is a
 restricted agent for unattended work. In a Routine run it holds Company tools
 and the Routine skills only, no Platform Builder, no run or platform tools, and
 proposal-only authority. In a Task run it does the accepted work; see
-"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`. Its
-model is `CompanyConfig(model=...)`, else Super Agent's model when `manager=OSManager(model=...)` is set,
-else the first registry model. The stored schedule, the
+"Decisions from chat and Mini Agent Tasks" below. It works with or without `manager=OSManager(...)`. With
+Super Agent on, its model is Super Agent's: `OSManager(model=...)`, else the first registry model. With Super
+Agent off it is `CompanyConfig(model=...)`, else the first registry model. The stored schedule, the
 Routine API and the run and session records all name it: endpoint
 `/agents/miniagent/runs`, `target_type` `agent`, `target_id` `miniagent`.
 Mini Agent is hidden from `GET /agents`, `GET /config`, MCP and A2A, and a
@@ -547,8 +551,8 @@ Sources with permission and Goal ownership. When the person asks, it approves
 a Project, accepts a Task and reviews a finished one; see "Decisions from chat
 and Mini Agent Tasks". Ownership changes, local Source additions, Goal
 maintenance and outbound summaries are
-not among its Company tools. Routines use the model from `CompanyConfig(model=...)`,
-otherwise Super Agent's model, otherwise the first registry model. If none exists,
+not among its Company tools. Routines use Super Agent's model when Super Agent is on,
+otherwise `CompanyConfig(model=...)`, otherwise the first registry model. If none exists,
 diagnostics warns, a Routine on Mini Agent fails with that reason, and manual APIs
 still work.
 

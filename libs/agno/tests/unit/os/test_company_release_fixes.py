@@ -1296,13 +1296,40 @@ def test_mini_agent_uses_super_agents_model_when_company_config_names_none(tmp_p
         db.close()
 
 
-def test_company_config_still_names_mini_agents_model_and_the_registry_still_serves_without_super_agent(tmp_path):
+def test_super_agents_model_is_mini_agents_model_even_when_company_config_names_one(tmp_path):
     from agno.os import CompanyConfig, OSManager
     from agno.registry import Registry
 
     super_model, company_model, registry_model = ScriptedModel(), ScriptedModel(), ScriptedModel()
     agent_os, db = deployment(
         tmp_path, manager=OSManager(model=super_model), company=CompanyConfig(model=company_model)
+    )
+    try:
+        assert agent_os._mini_agent.model is super_model
+    finally:
+        db.close()
+    # Super Agent with no model of its own runs on the registry's first model, and so does Mini Agent.
+    for index, manager in enumerate((OSManager(), True)):
+        agent_os, db = deployment(
+            tmp_path / f"registry-{index}",
+            manager=manager,
+            company=CompanyConfig(model=company_model),
+            registry=Registry(models=[registry_model]),
+        )
+        try:
+            assert agent_os.manager.model is registry_model
+            assert agent_os._mini_agent.model is registry_model
+        finally:
+            db.close()
+
+
+def test_without_super_agent_company_config_names_mini_agents_model_then_the_registry(tmp_path):
+    from agno.os import CompanyConfig
+    from agno.registry import Registry
+
+    company_model, registry_model = ScriptedModel(), ScriptedModel()
+    agent_os, db = deployment(
+        tmp_path, company=CompanyConfig(model=company_model), registry=Registry(models=[registry_model])
     )
     try:
         assert agent_os._mini_agent.model is company_model

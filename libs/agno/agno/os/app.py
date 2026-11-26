@@ -786,12 +786,20 @@ class AgentOS:
 
             _mount_executors(self)
 
-            # CompanyConfig's model, else Super Agent's when it is on, else the registry's first model.
-            company_model = self.company.model
-            if company_model is None and isinstance(manager, OSManager):
-                company_model = manager.model
-            if company_model is None and self.registry is not None and self.registry.models:
-                company_model = self.registry.models[0]
+            # Mini Agent runs on Super Agent's model when Super Agent is on: OSManager(model=...), else the
+            # registry's first model. With Super Agent off it uses CompanyConfig's model, else the registry's first.
+            first_registry_model = (
+                self.registry.models[0] if self.registry is not None and self.registry.models else None
+            )
+            company_model = None
+            if manager:
+                company_model = manager.model if isinstance(manager, OSManager) else None
+                if company_model is None:
+                    company_model = first_registry_model
+            if company_model is None:
+                company_model = self.company.model
+            if company_model is None:
+                company_model = first_registry_model
             # Mini Agent runs under Super Agent's tool call limit: OSManager(tool_call_limit=...), or its default.
             limits = manager if isinstance(manager, OSManager) else OSManager()
             self._mini_agent = _build_mini_agent(self, company_model, tool_call_limit=limits.tool_call_limit)
