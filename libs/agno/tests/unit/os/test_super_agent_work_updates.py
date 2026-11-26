@@ -452,16 +452,43 @@ def test_a_request_cannot_name_a_conversation_or_mark_itself(plain):
 
 def test_a_conversation_that_does_not_list_the_work_is_not_told(plain):
     async def steps():
-        await plain.say("Hello")
+        run_id = await plain.start()
+        notify = run_background.notify_requester
+        run_background.notify_requester = lambda *a, **k: None
+        try:
+            await plain.finish()
+        finally:
+            run_background.notify_requester = notify
         asked = {"session_id": CHAT, "run_id": "r", "team_id": "superagent", "user_id": "alice"}
+        ended = {"kind": "run", "id": run_id, "status": "COMPLETED"}
         # A run that names the conversation, which the conversation never started.
-        await plain.updates(asked, {"kind": "run", "id": "not-listed", "status": "COMPLETED"}, None)
-        # A conversation that does not exist, and one of another team.
-        await plain.updates({**asked, "session_id": "nowhere"}, {"kind": "run", "id": "x", "status": "COMPLETED"}, None)
-        await plain.updates({**asked, "team_id": "crew"}, {"kind": "run", "id": "x", "status": "COMPLETED"}, None)
-        return plain.updates_stored()
+        await plain.updates(asked, {**ended, "id": "not-listed"}, None)
+        # A Task under the id of a run the conversation did start.
+        await plain.updates(asked, {**ended, "kind": "task"}, None)
+        # A conversation that does not exist, and work that says another team asked for it.
+        await plain.updates({**asked, "session_id": "nowhere"}, ended, None)
+        await plain.updates({**asked, "team_id": "crew"}, ended, None)
+        await plain.settle()
+        none = len(plain.updates_stored())
+        # A conversation of the same id that is not Super Agent's.
+        session = plain.db.get_session(CHAT, deserialize=False)
+        read = WorkUpdates._read
 
-    assert scenario(steps) == []
+        async def another_teams(db, session_id):
+            _, rows = await read(db, session_id)
+            return {**session, "team_id": "crew"}, rows
+
+        plain.updates._read = another_teams
+        await plain.updates(asked, ended, None)
+        await plain.settle()
+        other = len(plain.updates_stored())
+        del plain.updates._read
+        # The run the conversation started, told as it is.
+        await plain.updates(asked, ended, None)
+        await plain.settle()
+        return none, other, len(plain.updates_stored())
+
+    assert scenario(steps) == (0, 0, 1)
 
 
 def test_the_switch_off_starts_no_work_update(tmp_path):
