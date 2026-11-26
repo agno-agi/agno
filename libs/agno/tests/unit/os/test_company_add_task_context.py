@@ -193,3 +193,23 @@ def test_the_tool_and_the_prompt_say_one_thing_about_what_a_run_is_given():
     assert "pauses for the person's confirmation." in lines[index - 1]
     assert "adding or proposing a Task" in lines[index + 1]
     assert "other than Mini Agent" not in COMPANY_INSTRUCTIONS
+
+
+def test_moving_a_task_keeps_its_context_and_its_next_run_is_given_it(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    project, earlier, attached = earlier_work(client, db)
+    # Added to be started later, in the Default Project, then moved into the Project it serves.
+    assert add(agent_os, context(), executor_type="agent", executor_id="writer", context=attached).startswith("Added")
+    task = titled(db, "Write the breaking-changes section")
+    (acceptance,) = task["transitions"]
+    assert acceptance["start_on_request"] is True and len(task["context"]) == 2
+
+    reply = call(agent_os, "move_company_task", context(), task_id=task["id"], project_id=project["id"])
+
+    moved = db.get_task(task["id"])
+    assert moved["project_id"] == project["id"], reply
+    assert moved["context"] == task["context"]
+    started = call(agent_os, "start_company_task", context(), task_id=task["id"])
+    assert "Queued" in started, started
+    job = asyncio.run(queue.store.get_job(db.get_task(task["id"])["job_id"]))
+    assert NOTES in job["payload"]["input"]

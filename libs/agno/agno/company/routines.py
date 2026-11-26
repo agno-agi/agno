@@ -546,9 +546,9 @@ def _auto_accept_note(policy: Any, reason: Optional[str], turn_off: str, turn_on
             else f"at most {policy.limits.max_acceptances} in all"
         )
         return (
-            f"Auto-accept is on: this Routine's proposals are accepted and run on {policy.default_executor} "
-            f"with no person, {bound}, and finished work waits In review. Proposals with no Project wait "
-            f"for a person. {turn_off}"
+            f"Auto-accept is on: this Routine's proposals are accepted and run with no person, on "
+            f"{policy.default_executor} unless a proposal names another executor, {bound}, and finished "
+            f"work waits In review. Proposals with no Project wait for a person. {turn_off}"
         )
     why = f": {reason.rstrip('.')}" if reason else ""
     return f"Auto-accept is off{why}. This Routine's proposals wait for a person. {turn_on}"
@@ -941,6 +941,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     task = await self._accept(task)
                     outcomes.append({"task_id": task["id"], "status": "accepted"})
                 if task["status"] != "ready":
+                    continue
+                # A Task a person added to be started later is held until someone starts it.
+                acceptances = [
+                    entry
+                    for entry in task.get("transitions") or []
+                    if entry.get("target") == "ready" and not entry.get("action")
+                ]
+                if acceptances and acceptances[-1].get("start_on_request"):
                     continue
                 result = await self._dispatch(task)
                 outcomes.append({"task_id": task["id"], **result})

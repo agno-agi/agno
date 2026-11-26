@@ -166,7 +166,7 @@ Mini Agent ran the Release Writer.
 
 **Status:** PASS, with one wording change made after the first runs
 
-**Description:** Eight requests in a harness that confirms every pause and records
+**Description:** Nine requests in a harness that confirms every pause and records
 it, on a Goal with a website Source and one active Project. The harness is kept
 outside the repository.
 
@@ -240,6 +240,26 @@ agent's stored input is 715 characters with the keys `brief`, `evidence` and
 `execution_context`, and neither marker. Mini Agent's stored input is 1,396
 characters, lists five pages and holds both markers. The same script on `main`
 gives the plain agent the 1,396-character input with both markers.
+
+---
+
+### Move a Task from chat, and a schedule aimed at Super Agent
+
+**Status:** PASS
+
+**Description:** One run on a new PostgreSQL database with `gpt-5.6-luna`,
+authorization off, AgentOS served over HTTP with the scheduler on. First: "Add a
+task: fix the typo on the pricing page", then "Move that task into the 3.3
+migration guide project". Second: a schedule on `/teams/superagent/runs` whose
+message says to add a Task and start it now, triggered once.
+
+**Result:** The added Task was Ready in the Default Project. The second message
+called `move_company_task` once, with no confirmation. The Task was then in the
+named Project, still Ready, with the same brief, executor and accepter, and its
+history ended with a `move` entry naming the person. The scheduled run carried
+`agno_scheduled` in its metadata; `add_company_task` answered that a scheduled
+run has no person present, the reply said nothing was created, and no Task was
+created.
 
 ---
 

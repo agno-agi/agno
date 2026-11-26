@@ -232,7 +232,7 @@ def test_the_manager_takes_a_project_and_a_task_with_no_goal(system):
     assert manager.get(goal["id"])["counts"]["tasks"]["backlog"] == 2
 
 
-def test_a_task_moves_to_the_default_project_and_keeps_its_goal(system):
+def test_a_task_keeps_its_goal_when_it_moves_and_takes_one_when_it_has_none(system):
     manager = system.manager
     goal = manager.create(name="Developer docs")
     under_goal = manager.create_project(goal_id=goal["id"], name="3.3 migration guide")
@@ -244,9 +244,20 @@ def test_a_task_moves_to_the_default_project_and_keeps_its_goal(system):
     assert (moved["project_id"], moved["goal_id"]) == (DEFAULT_PROJECT_ID, goal["id"])
     assert manager.update_task(task["id"], project_id=under_goal["id"])["project_id"] == under_goal["id"]
     assert manager.update_task(loose["id"], project_id=other["id"])["project_id"] == other["id"]
-    for task_id, project_id in ((task["id"], other["id"]), (loose["id"], under_goal["id"])):
+    # A Task that has a Goal keeps it: a Project with no Goal, or with another, refuses it.
+    elsewhere = manager.create_project(goal_id=manager.create(name="Customer support")["id"], name="Faster replies")
+    for project_id in (other["id"], elsewhere["id"]):
         with pytest.raises(ValueError, match="Task and Project must belong to the same Goal"):
-            manager.update_task(task_id, project_id=project_id)
+            manager.update_task(task["id"], project_id=project_id)
+    # A Task with no Goal takes the Goal of the Project it moves into, from a Project or from Default.
+    adopted = manager.update_task(loose["id"], project_id=under_goal["id"])
+    assert (adopted["project_id"], adopted["goal_id"]) == (under_goal["id"], goal["id"])
+    filed = manager.create_task(title="Fix the typo on the pricing page")
+    adopted = manager.update_task(filed["id"], project_id=under_goal["id"])
+    assert (adopted["project_id"], adopted["goal_id"]) == (under_goal["id"], goal["id"])
+    assert manager.get(goal["id"])["counts"]["tasks"]["backlog"] == 3
+    # Back in the Default Project it keeps the Goal it took.
+    assert manager.update_task(filed["id"], project_id=None)["goal_id"] == goal["id"]
 
 
 def test_work_with_no_goal_runs_the_whole_lifecycle(system):
@@ -526,6 +537,42 @@ def test_a_move_with_no_goal_locks_the_project_it_moves_into(system):
     manager.transition_project(project_id=target["id"], target="active", reason="Approved")
     with pytest.raises(ValueError, match="Project has open Tasks"):
         manager.transition_project(project_id=target["id"], target="done", reason="Finished")
+
+
+def test_a_write_that_waited_behind_a_goal_taking_move_follows_the_task_to_its_goal(system, monkeypatch):
+    import agno.db.sql.company as company
+
+    manager = system.manager
+    goal = manager.create(name="Developer docs")
+    under_goal = manager.create_project(goal_id=goal["id"], name="3.3 migration guide")
+    task = manager.create_task(title="Fix the typo on the pricing page")
+    tasks = system.db._get_table(table_type="tasks")
+    original_parent, original_goal = company.lock_parent, company.lock_goal
+    locked = []
+
+    def move_wins_first(sess, goals, projects, goal_id, project_id=None):
+        # The move into the Goal's Project finishes while this write waits for its lock.
+        original_parent(sess, goals, projects, goal_id, project_id)
+        if goal_id is None and project_id == DEFAULT_PROJECT_ID and not locked:
+            moved = tasks.update().where(tasks.c.id == task["id"])
+            sess.execute(moved.values(goal_id=goal["id"], project_id=under_goal["id"]))
+
+    def record(sess, goals, goal_id):
+        locked.append(goal_id)
+        return original_goal(sess, goals, goal_id)
+
+    monkeypatch.setattr(company, "lock_parent", move_wins_first)
+    monkeypatch.setattr(company, "lock_goal", record)
+
+    # The edit is not refused as a Goal mismatch, and it takes the lock of the Goal the Task now has.
+    edited = system.db.update_task(task["id"], title="Fix the pricing page typo")
+
+    assert locked == [goal["id"]]
+    assert (edited["title"], edited["goal_id"], edited["project_id"]) == (
+        "Fix the pricing page typo",
+        goal["id"],
+        under_goal["id"],
+    )
 
 
 # ------------------------------------------------------------- the Default Project never completes

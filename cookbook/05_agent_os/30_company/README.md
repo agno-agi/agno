@@ -207,9 +207,10 @@ need one.
 - A Task and a Project that a Routine proposes carry the Routine's Goal, also
   when the Task names no Project and lands in the Default Project. A Routine is
   refused another Goal.
-- A Backlog Task can move between Projects of its Goal. `project_id: null` moves
-  it to the Default Project. A Task keeps its Goal when it moves, so a Task with
-  no Goal cannot move into a Project that has one.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
 - `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
   list the records with no Goal; `has_goal=true` lists the others.
 
@@ -673,8 +674,9 @@ When a person asks Super Agent for work, the ask is the acceptance. `add_company
 creates the Task Ready, with that person as `accepted_by` and on its acceptance
 transition, and the run does not pause. With `start` true, "do X", it also queues the
 run through the same path as `start_company_task`. With `start` false, "add a task to
-do X", the Task stays Ready, and Super Agent offers once to start it; on a yes it
-starts it with `start_company_task`. With no executor named it runs on agent
+do X", the Task stays Ready and is held: its acceptance records `start_on_request`,
+and the automation tick, which starts other Ready Tasks, leaves it alone. Super Agent
+offers once to start it; on a yes it starts it with `start_company_task`. With no executor named it runs on agent
 `miniagent`. With no Project named it goes in the Default Project.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
@@ -684,11 +686,13 @@ in Backlog by `propose_company_task` and accepted by a person or a policy.
 The tool keeps the checks of a confirmed acceptance. Only a person in chat may call it:
 Routine runs, Task runs, the automation tick, service accounts, the scheduler identity
 and scheduled runs are refused, and so is a run with no permissions where
-authorization is on. The person needs `tasks:write` and run permission on the
+authorization is on. A schedule with no saved authority, as where authorization is off,
+has its run marked `agno_scheduled` in the run metadata by the scheduler, and the same
+refusal applies: Super Agent's person-only tools act for nobody on a scheduled run. The person needs `tasks:write` and run permission on the
 executor. A Task aimed at a proposed Project is refused: approve the Project, or leave
 the Project out.
 
-Accept is the rule, and three cases still wait for the person:
+Accept is the rule, and four cases still wait for the person:
 
 | Case | What happens |
 | --- | --- |
@@ -701,6 +705,29 @@ The count of five is per Super Agent run and held in the serving process. A paus
 run that continues keeps its count. A new message is a new run.
 
 `19_ask_and_start_in_one_message.py` shows both asks with a live model.
+
+### Moving a Task to another Project
+
+A Task changes Project through `PATCH /company/tasks/{id}` with `project_id`, or in
+chat through Super Agent's `move_company_task`, which does not pause. Every other field
+of an accepted Task stays frozen, as before.
+
+| Stage | Moves? | Why |
+| --- | --- | --- |
+| Backlog | Yes, as before | A draft. It may also sit in a proposed Project. |
+| Ready | Yes | Nothing is running. A Task a policy accepted is the exception: the policy accepted it for its Project, so return it to Backlog or accept it yourself first. |
+| In progress | No, 409 | A queued or running attempt is checked against the Task's history, and its input was built from the Project it started in. Move it once it is In review. |
+| In review | Yes | The run has ended. A review confirmation requested before the move is refused, because the Task changed. |
+| Done | Yes | The record moves to the Project it belongs with. |
+| Cancelled | No, 409 | Closed work. |
+
+An accepted Task moves only into an active Project; the Default Project always is. The
+Goal rule is the same as for a Backlog move: a Task with a Goal moves only to a Project
+of that Goal or the Default Project, and a Task with no Goal takes the Goal of the
+Project it moves into. Only a person moves an accepted Task: a Routine or Task run is
+refused. The move is added to the Task's `transitions` as
+`{"action": "move", "project": {"from": ..., "to": ...}, "user_id": ..., "created_at": ...}`.
+It has no `from` or `target` stage, because the stage does not change.
 
 ### Decisions from chat and Mini Agent Tasks
 
@@ -1300,7 +1327,8 @@ person creates it and says nothing of `auto_accept`: through `POST /company/rout
 `POST /company/setup`, or Super Agent's `create_goal_routine` and `create_company_goal`.
 The policy is authorized as that person and stored with their grant, exactly as when
 they turn it on afterwards, so the Routine's accepted work runs under their permissions
-and only they or an admin can trigger it manually. Send `"auto_accept": false`, or ask
+and only they or an admin can trigger it manually. Where the deployment has neither
+authorization nor user isolation, requests carry no identity and anyone may trigger it. Send `"auto_accept": false`, or ask
 Super Agent to create it with auto-accept off (`leave_auto_accept_off`), to leave it
 off. The create response carries `auto_accept_note`, and the chat tools' results carry
 `auto_accept` (`routines_auto_accept` for a Goal's Routines), saying whether it is on,

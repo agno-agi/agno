@@ -9919,18 +9919,26 @@ class SqliteDb(BaseDb):
             return [dict(row._mapping) for row in rows], total
 
     def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        from agno.db.schemas.tasks import validate_task_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
+        from agno.db.sql.company import lock_child, require_move
 
         validate_task_fields(fields)
         table = self._get_table(table_type="tasks")
         if table is None:
             return None
         stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
-        if set(fields) - {"title", "brief"}:
+        # A change of Project is allowed in more stages than the rest of a Task's scope.
+        if set(fields) - {"title", "brief", "project_id"}:
             stmt = stmt.where(table.c.status == "backlog")
+        elif "project_id" in fields:
+            stmt = stmt.where(table.c.status.in_(MOVABLE_TASK_STATUSES))
         if expected_status is not None:
             stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
@@ -9939,9 +9947,17 @@ class SqliteDb(BaseDb):
         projects = self._get_table(table_type="projects", create_table_if_not_found=True)
         with self.Session() as sess, sess.begin():
             lock_child(sess, goals, projects, table, task_id)
-            current = sess.execute(select(table.c.goal_id).where(table.c.id == task_id)).first()
+            current = (
+                sess.execute(
+                    select(table.c.goal_id, table.c.status, table.c.project_id, table.c.transitions).where(
+                        table.c.id == task_id
+                    )
+                )
+                .mappings()
+                .first()
+            )
             if current is not None and fields.get("project_id") is not None:
-                require_project(sess, projects, fields["project_id"], current[0], "backlog")
+                fields.update(require_move(sess, goals, projects, current, fields["project_id"], moved_by))
             result = sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table)).fetchone()
             return dict(result._mapping) if result else None
 
