@@ -418,6 +418,9 @@ def convert_schema(
         any_of = filtered_any_of  # type: ignore
         if len(any_of) == 1 and any_of[0] is not None:
             any_of[0].nullable = is_nullable
+            # A parameter's description sits beside its anyOf, not inside the branch.
+            if description and not any_of[0].description:
+                any_of[0].description = description
             return any_of[0]
         else:
             return Schema(
