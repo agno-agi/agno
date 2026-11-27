@@ -665,6 +665,7 @@ class QueueWorker:
         self._company_db: Any = None
         self._company_schedule_db: Any = None
         self._sandbox_agents: List[Any] = []
+        self._resolve_eval_suite_handles: Optional[Callable[[], Tuple[Any, Any, Any, Any]]] = None
         self.store = store
         self.resolve_component = resolve_component
         self.config = config
@@ -1274,6 +1275,9 @@ class QueueWorker:
             # Lost to a live heartbeat or another sweeper - and the run
             # row was never touched, which is the point of acquiring first
             return
+        if job.get("job_type") == "eval_suite":
+            await self._sweep_eval_suite_job(job)
+            return
         # RECONCILE before defacing: a stale lease only proves heartbeats
         # stopped, not that the leg failed. It may have COMPLETED (crash
         # in the window between the row commit and the ticket settle),
@@ -1411,6 +1415,114 @@ class QueueWorker:
             task.add_done_callback(_requester_notices.discard)
         except Exception as exc:
             log_error(f"Job queue: could not tell a conversation that job {job.get('id')} ended: {exc}")
+
+    async def _sweep_eval_suite_job(self, job: Dict[str, Any]) -> None:
+        """Reconcile or fail one swept eval suite ticket, as _sweep_job does a run
+        ticket. It has no run row: its eval run row is read and written
+        instead."""
+        from agno.os.routers.evals.utils import (
+            afail_queued_eval_suite,
+            afail_queued_eval_suite_outcome,
+            ais_deleted_queued_eval_suite,
+        )
+        from agno.run.cancel import ais_cancelled
+        from agno.run.status_persist import RunPersistOutcome
+
+        dbs, _, _, _ = self._eval_suite_handles()
+        if await self._areconcile_swept_eval_suite_job(job):
+            return
+        if job.get("attempt", 1) > 1:
+            # Attempt 1 ensured the row, so a row missing on a later attempt
+            # was deleted: it settles cancelled, never recreated as ERROR
+            deleted = await ais_deleted_queued_eval_suite(dbs, job)
+            if deleted is None:
+                log_error(
+                    f"Job queue: swept job {job['id']} could not read its eval run row; "
+                    "it will be re-swept when the sweep lock goes stale"
+                )
+                return
+            if deleted:
+                await self.store.settle_swept_job(job["id"], self.worker_id, "cancelled")
+                log_warning(
+                    f"Job queue: swept job {job['id']} to cancelled; its lease held by {job.get('locked_by')} was "
+                    f"last renewed at {_epoch_text(job.get('locked_at'))} by the store clock (deleted)"
+                )
+                return
+        if await ais_cancelled(job["id"]):
+            # Cancelled while its worker was lost: a row that still exists is
+            # marked first, so no cancelled ticket sits over a RUNNING row; a
+            # deleted run is not recreated as ERROR
+            if not await afail_queued_eval_suite(dbs, job, "cancelled", missing_ok=True, status="CANCELLED"):
+                log_error(
+                    f"Job queue: could not persist run-row error for swept job {job['id']}; "
+                    "it will be re-swept when the sweep lock goes stale"
+                )
+                return
+            await self.store.settle_swept_job(job["id"], self.worker_id, "cancelled")
+            log_warning(
+                f"Job queue: swept job {job['id']} to cancelled; its lease held by {job.get('locked_by')} was last "
+                f"renewed at {_epoch_text(job.get('locked_at'))} by the store clock (cancelled)"
+            )
+            return
+        error = (
+            "Worker lost and attempt budget exhausted; run was not re-executed. "
+            "Crashed runs fail visibly instead of silently re-executing (at-most-once, "
+            "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
+            "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+        )
+        outcome = await afail_queued_eval_suite_outcome(dbs, job, error, create_missing=True)
+        if outcome is None:
+            log_error(
+                f"Job queue: could not persist run-row error for swept job {job['id']}; "
+                "it will be re-swept when the sweep lock goes stale"
+            )
+            return
+        if outcome is RunPersistOutcome.TERMINAL_REFUSED:
+            # The suite finished in the gap between the pre-read and our
+            # write: re-read and reconcile instead of failing over a
+            # finished row
+            if await self._areconcile_swept_eval_suite_job(job):
+                return
+            log_error(
+                f"Job queue: swept job {job['id']} refused the error write as terminal but "
+                "could not be reconciled; it will be re-swept when the sweep lock goes stale"
+            )
+            return
+        if outcome is RunPersistOutcome.STALE_ATTEMPT:
+            # Anomalous: the row carries a NEWER attempt stamp than the
+            # ticket we swept. The row belongs to that newer writer - leave
+            # it - but the ticket bookkeeping still settles
+            await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+            log_warning(
+                f"Job queue: swept job {job['id']} is owned by a newer attempt on the eval run row; "
+                "ticket failed without touching the row"
+            )
+            return
+        await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+        log_warning(
+            f"Job queue: swept job {job['id']} to failed; its lease held by {job.get('locked_by')} was last "
+            f"renewed at {_epoch_text(job.get('locked_at'))} by the store clock ({error})"
+        )
+
+    async def _areconcile_swept_eval_suite_job(self, job: Dict[str, Any]) -> bool:
+        """Settle a swept eval suite ticket to MATCH an already-finished eval run
+        row, as _areconcile_swept_job settles a run ticket. Returns False when
+        the row is RUNNING, ERROR, missing or unreadable: the caller runs the
+        honest failure path."""
+        from agno.os.routers.evals.utils import aread_queued_eval_suite_status
+
+        dbs, _, _, _ = self._eval_suite_handles()
+        row_status = await aread_queued_eval_suite_status(dbs, job)
+        if row_status not in ("PASS", "FAIL", "CANCELLED"):
+            return False
+        ticket_status = "cancelled" if row_status == "CANCELLED" else "completed"
+        settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
+        if settled:
+            log_warning(
+                f"Job queue: reconciled swept job {job['id']} to completed - the leg had "
+                "settled before the sweep (only the ticket write was lost)"
+            )
+        return settled
 
     async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
         """The component for run-row reads and writes: an unbuildable factory
@@ -1617,6 +1729,28 @@ class QueueWorker:
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
         self._notify_requester(prior, "cancelled")
         return True
+
+    async def acancel_queued_eval_suite(self, run_id: str) -> bool:
+        """Cancel a still-waiting eval suite ticket (QUEUED) whose eval run
+        was cancelled or deleted, as acancel_queued cancels a run's: row first
+        (CANCELLED, or already gone after a delete), ticket tombstone second.
+        Claimed/running tickets are not touched here: the cancellation intent
+        the cancel and delete routes register reaches the executing attempt."""
+        from agno.os.routers.evals.utils import afail_queued_eval_suite
+
+        prior = None
+        with contextlib.suppress(Exception):
+            prior = await self.store.get_job(run_id)
+        if prior is None or prior.get("job_type") != "eval_suite" or prior.get("status") != "queued":
+            return False
+        dbs, _, _, _ = self._eval_suite_handles()
+        if not await afail_queued_eval_suite(dbs, prior, "cancelled", missing_ok=True, status="CANCELLED"):
+            log_error(
+                f"Job queue: could not persist the cancelled run row for waiting job {run_id}; "
+                "ticket left as-is (the caller's cancellation intent covers any later execution)"
+            )
+            return False
+        return bool(await self.store.cancel_job(run_id))
 
     async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
         """Execute a queued STREAMING run: iterate the component's stream and
@@ -2052,9 +2186,19 @@ class QueueWorker:
         workflow's not-paused ValueError) is equally incurable.
         ``continuation_component`` is the component_type when the job is a
         continuation leg, else None."""
-        from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+        from agno.exceptions import (
+            EvalError,
+            InputCheckError,
+            OutputCheckError,
+            RunNotContinuableError,
+            RunNotFoundError,
+        )
 
-        if isinstance(exc, (InputCheckError, OutputCheckError, TypeError, RunNotContinuableError, RunNotFoundError)):
+        # EvalError: an eval suite the ticket cannot rebuild (no case
+        # matches, an invalid judge model, a remote target)
+        if isinstance(
+            exc, (InputCheckError, OutputCheckError, TypeError, RunNotContinuableError, RunNotFoundError, EvalError)
+        ):
             return True
         # ONLY workflows signal "cannot continue" with a bare ValueError
         # (agents/teams raise the typed RunNotContinuableError above). For
@@ -2446,6 +2590,174 @@ class QueueWorker:
             raise asyncio.TimeoutError()
         return exec_task.result()
 
+    def _eval_suite_handles(self) -> Tuple[Any, Any, Any, Any]:
+        """Resolve the dbs, agents, teams and eval suites an eval suite ticket
+        runs against."""
+        if self._resolve_eval_suite_handles is None:
+            return {}, None, None, None
+        return self._resolve_eval_suite_handles()
+
+    async def _aholds_lease(self, job_id: str, attempt: int) -> bool:
+        """Whether this worker still holds a ticket's lease, read back as
+        _check_leases does. A ticket that cannot be read counts as lost: the
+        write is skipped and the claim left for the sweep."""
+        if _lease_lost(job_id):
+            return False
+        try:
+            ticket = await self.store.get_job(job_id)
+        except Exception as e:
+            log_warning(f"Job queue: could not read ticket {job_id} to confirm its lease: {e}")
+            return False
+        if ticket is None:
+            return False
+        return (
+            ticket.get("status") == "running"
+            and ticket.get("locked_by") == self.worker_id
+            and ticket.get("attempt") == attempt
+        )
+
+    async def _ahonor_finished_eval_suite_row(self, job: Dict[str, Any]) -> bool:
+        """Settle an eval suite ticket completed when its row already holds a
+        finished result, as _ahonor_terminal_row honors a terminal run row.
+        Returns False when the row is not finished."""
+        from agno.os.routers.evals.utils import aread_queued_eval_suite_status
+
+        dbs, _, _, _ = self._eval_suite_handles()
+        row_status = await aread_queued_eval_suite_status(dbs, job)
+        if row_status not in ("PASS", "FAIL", "CANCELLED"):
+            return False
+        await self._asettle_ticket(
+            job["id"], job["attempt"], "cancelled" if row_status == "CANCELLED" else "completed", shielded=True
+        )
+        log_warning(
+            f"Job queue: claimed job {job['id']} has a terminal run row ({row_status}); "
+            "kept the finished result and settled the ticket completed"
+        )
+        return True
+
+    async def _execute_eval_suite(self, job: Dict[str, Any], ownership: Any = None) -> None:
+        """Execute an eval suite ticket. It has no run row: the evals router
+        rebuilds the suite and writes its eval run row, and the ticket settles,
+        retries, times out and drains as a run ticket does."""
+        from agno.exceptions import RunCancelledException
+        from agno.os.routers.evals.utils import afail_queued_eval_suite, arun_queued_eval_suite
+
+        job_id, attempt = job["id"], job["attempt"]
+        dbs, agents, teams, eval_suites = self._eval_suite_handles()
+        slot_acquired = False
+        try:
+            from agno.run.concurrency import background_run_slot
+
+            slot_cm = background_run_slot(run_id=job_id)
+            await slot_cm.__aenter__()
+            slot_acquired = True
+            execution = arun_queued_eval_suite(
+                dbs, agents, teams, eval_suites, job, lambda: self._aholds_lease(job_id, attempt)
+            )
+            if self.config.timeout_seconds:
+                finished = await self._await_with_timeout(execution, ownership)
+            else:
+                finished = await execution
+            if finished is None:
+                # The row could not be ensured (logged by the runner) or the
+                # lease was lost
+                return
+            if not finished:
+                log_error(
+                    f"Job queue: component not found for job {job_id} "
+                    f"({job['component_type']}/{job['component_id']}); leaving the claim to go stale "
+                    "so a redeployed replica or the sweep can finish it"
+                )
+                return
+            await self._asettle_ticket(job_id, attempt, "completed")
+        except asyncio.CancelledError:
+            if ownership is not None and ownership.cancellation_cause == "lease_lost":
+                # Another worker owns the ticket now: anything written
+                # here would contradict its record
+                raise
+            # A drain landing after the result write keeps the result, as
+            # a terminal run row is honored
+            honored = False
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                honored = await asyncio.shield(self._ahonor_finished_eval_suite_row(job))
+            if honored:
+                raise
+            # Shutdown drain: requeue if budget remains, else the row error
+            # is persisted FIRST and gates the terminal ticket write, as for
+            # a run
+            will_fail = attempt >= job.get("max_attempts", 1)
+            if will_fail:
+                holds_lease = False
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    holds_lease = await asyncio.shield(self._aholds_lease(job_id, attempt))
+                if not holds_lease:
+                    raise
+                persisted = False
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    persisted = await asyncio.shield(
+                        afail_queued_eval_suite(dbs, job, "interrupted by worker shutdown")
+                    )
+                if not persisted:
+                    log_error(
+                        f"Job queue: could not persist run-row error for drained job {job_id}; "
+                        "leaving it stale for the post-restart sweep"
+                    )
+                    raise
+            await self._aretry_or_fail_ticket(
+                job_id,
+                attempt,
+                "interrupted by worker shutdown",
+                self.config.retry_delay_seconds,
+                shielded=True,
+            )
+            raise
+        except RunCancelledException:
+            # Cancelled while waiting for a slot or while its cases ran
+            # (the run was deleted): honour it - the ticket tombstones as
+            # cancelled
+            if ownership is not None:
+                ownership.cancellation_cause = "user_cancel"
+            # A row that still exists (the delete failed, or another cancel) is
+            # marked first, so no cancelled ticket sits over a RUNNING row; a
+            # deleted run is not recreated
+            if not await afail_queued_eval_suite(dbs, job, "cancelled", missing_ok=True, status="CANCELLED"):
+                log_error(f"Job queue: cancelled job {job_id} but its run row could not be terminalized")
+                return
+            await self._asettle_ticket(job_id, attempt, "cancelled")
+        except asyncio.TimeoutError:
+            if await self._ahonor_finished_eval_suite_row(job):
+                return
+            error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
+            if attempt >= job.get("max_attempts", 1):
+                if not await self._aholds_lease(job_id, attempt):
+                    return
+                if not await afail_queued_eval_suite(dbs, job, error):
+                    log_error(
+                        f"Job queue: could not persist run-row error for timed-out job {job_id}; "
+                        "leaving it stale for the sweep"
+                    )
+                    return
+            await self._aretry_or_fail_ticket(job_id, attempt, error, self._retry_delay(attempt))
+        except Exception as e:
+            permanent = self._is_permanent_failure(e)
+            if permanent or attempt >= job.get("max_attempts", 1):
+                if not await self._aholds_lease(job_id, attempt):
+                    return
+                if not await afail_queued_eval_suite(dbs, job, str(e)):
+                    log_error(
+                        f"Job queue: could not persist run-row error for failed job {job_id}; "
+                        "leaving it stale instead of terminalizing the ticket"
+                    )
+                    return
+            if permanent:
+                await self._asettle_ticket(job_id, attempt, "failed", f"permanent: {str(e)}")
+            else:
+                await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
+        finally:
+            if slot_acquired:
+                with contextlib.suppress(Exception):
+                    await slot_cm.__aexit__(None, None, None)
+
     async def _execute_claimed_inner(self, job: Dict[str, Any], ownership: Any = None) -> None:
         from agno.exceptions import RunCancelledException
         from agno.run.base import RunStatus
@@ -2522,6 +2834,9 @@ class QueueWorker:
                     f"Job queue: attempt stamp failed for job {job_id} (worker={self.worker_id}, "
                     f"attempt={attempt}): {e}"
                 )
+        if job_type == "eval_suite":
+            await self._execute_eval_suite(job, ownership)
+            return
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
@@ -2809,10 +3124,11 @@ def wake_queue_worker(queue_worker: Any) -> None:
     Duck-typed and tolerant on purpose: a wake is a latency optimization and
     must never be able to fail the request that triggered it - a worker
     double without wake(), or no worker at all, is simply a no-op. The
-    sibling set that calls this: the seven router enqueue seams (agents x2,
-    teams x2, workflows x3), acontinue_via_queue, and the requeue endpoint.
-    The router seams call it only after aprepare_accepted_or_abort: a worker
-    woken earlier can claim the ticket before the run row exists, so a failed
+    sibling set that calls this: the eight router enqueue seams (agents x2,
+    teams x2, workflows x3, eval suites), acontinue_via_queue, and the requeue endpoint.
+    The router seams call it only after aprepare_accepted_or_abort (the eval
+    suite seam: aprepare_eval_suite_accepted_or_abort): a worker woken
+    earlier can claim the ticket before the run row exists, so a failed
     prepare could no longer cancel it."""
     if queue_worker is None:
         return
@@ -3494,6 +3810,29 @@ def warn_unfenced_session_stores(agent_os: Any) -> None:
         )
 
 
+def warn_unfenced_eval_stores(agent_os: Any) -> None:
+    """Loud-degrade for durable queues over eval stores without the atomic
+    eval-row primitive, as warn_unfenced_session_stores does for runs: only
+    the Postgres adapters implement ``update_eval_run_data_in_attempt``."""
+    from agno.remote.base import RemoteDb
+
+    unfenced = set()
+    for dbs in (getattr(agent_os, "dbs", None) or {}).values():
+        for eval_db in dbs:
+            # A RemoteDb writes its eval runs on the remote AgentOS, never here
+            if isinstance(eval_db, RemoteDb):
+                continue
+            if not callable(getattr(eval_db, "update_eval_run_data_in_attempt", None)):
+                unfenced.add(type(eval_db).__name__)
+    if unfenced:
+        log_warning(
+            f"Durable queue over eval store(s) without atomic eval run persistence: {', '.join(sorted(unfenced))}. "
+            "On these stores, queued eval suite result writes are UNFENCED (no attempt fencing - a swept "
+            "worker's late writes can collide with a retry's); the worker's lease check still runs before each "
+            "write. Use a Postgres eval store for production deployments of the durable queue."
+        )
+
+
 @contextlib.asynccontextmanager
 async def queue_lifespan(app: Any, agent_os: Any):
     """Start and stop the durable job queue worker (one per replica)."""
@@ -3502,6 +3841,7 @@ async def queue_lifespan(app: Any, agent_os: Any):
     config: QueueConfig = agent_os.queue
     store = resolve_queue_store(config, agent_os.db)
     warn_unfenced_session_stores(agent_os)
+    warn_unfenced_eval_stores(agent_os)
 
     if isinstance(get_event_stream(), InMemoryEventStream):
         log_info("Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.")
@@ -3640,6 +3980,18 @@ async def queue_lifespan(app: Any, agent_os: Any):
     worker._company_schedule_db = agent_os.db
     if callable(getattr(agent_os, "_sandboxed_agents", None)):
         worker._sandbox_agents = agent_os._sandboxed_agents()
+
+    def resolve_eval_suite_handles() -> Tuple[Any, Any, Any, Any]:
+        # Read at each claim, as resolve_component reads the registry, so
+        # a resync is seen
+        return (
+            getattr(agent_os, "dbs", {}),
+            getattr(agent_os, "_agents", None) or None,
+            getattr(agent_os, "_teams", None) or None,
+            getattr(agent_os, "_eval_suites", None),
+        )
+
+    worker._resolve_eval_suite_handles = resolve_eval_suite_handles
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:

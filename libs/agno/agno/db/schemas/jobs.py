@@ -49,12 +49,12 @@ class QueuedJob:
     """One accepted background run awaiting or undergoing execution."""
 
     id: str  # == run_id, so poll/resume endpoints key identically
-    component_type: str  # "agent" | "team" | "workflow"
+    component_type: str  # "agent" | "team" | "workflow" | "eval_suite"
     component_id: str
     session_id: str
-    # What kind of work this ticket carries. Runs are the only type today; the
-    # column exists so other AgentOS job types (e.g. knowledge ingestion) can
-    # ride the same queue without a schema migration.
+    # What kind of work this ticket carries: a run, or a background eval suite
+    # run ("eval_suite", id == its eval run id). The column lets other AgentOS
+    # job types ride the same queue without a schema migration.
     job_type: str = "run"
     # Claim affinity: workers claim only jobs whose deployment_id is None or
     # equals their QueueConfig.deployment_id. Stamped at enqueue; a

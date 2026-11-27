@@ -4893,6 +4893,44 @@ class PostgresDb(BaseDb):
             log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data_in_attempt(
+        self, eval_run_id: str, eval_data: Dict[str, Any], expected_attempt: int
+    ) -> "RunPersistOutcome":
+        """Sync twin of AsyncPostgresDb.update_eval_run_data_in_attempt; see that docstring."""
+        from agno.run.status_persist import RunPersistOutcome
+
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return RunPersistOutcome.MISSING
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(table.c.eval_data).where(table.c.run_id == eval_run_id).with_for_update()
+                ).fetchone()
+                if row is None:
+                    return RunPersistOutcome.MISSING
+                stored_attempt = (row[0] or {}).get("queue_attempt")
+                if stored_attempt is not None and stored_attempt > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                stored_status = ((row[0] or {}).get("summary") or {}).get("status")
+                incoming_status = (eval_data.get("summary") or {}).get("status")
+                if (
+                    stored_status in ("PASS", "FAIL", "CANCELLED")
+                    and incoming_status
+                    and incoming_status != stored_status
+                ):
+                    return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                sanitized_eval_data = sanitize_postgres_strings({**eval_data, "queue_attempt": expected_attempt})
+                sess.execute(
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(eval_data=sanitized_eval_data, updated_at=int(time.time()))
+                )
+                return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # -- Migrations --
 
     def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):

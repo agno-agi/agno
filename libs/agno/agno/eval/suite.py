@@ -201,8 +201,11 @@ class CaseResult:
     # kw_only, so positional construction depends on field order.
     score: Optional[Score] = None
     # A copy of the run's metrics with the judge's added, so a run held by a cached
-    # session is never changed. Appended last for the same field-order reason.
+    # session is never changed. Appended after score for the same field-order reason.
     metrics: Optional[RunMetrics] = None
+    # The run id of the case's agent or team run, so the case links to its run and trace.
+    # Appended last for the same field-order reason.
+    run_id: Optional[str] = None
 
     @property
     def passed(self) -> bool:
@@ -233,6 +236,20 @@ class SuiteResult:
         return self.total - self.passed
 
     @property
+    def metrics(self) -> Optional[RunMetrics]:
+        """The cases' metrics summed, as a parallel step sums its steps'; None when no case has any."""
+        case_metrics = [result.metrics for result in self.results if result.metrics is not None]
+        if not case_metrics:
+            return None
+        total = RunMetrics()
+        for metrics in case_metrics:
+            total = total + metrics
+        # The sum keeps the fastest case's time to first token, which says nothing for cases run one after
+        # another, so it is dropped, as a workflow run's session metrics drop it.
+        total.time_to_first_token = None
+        return total
+
+    @property
     def status(self) -> str:
         # An empty suite fails: CI gates compare == "PASS", and a typo'd tag must
         # not green-light a release having run nothing.
@@ -242,12 +259,16 @@ class SuiteResult:
 
     def to_dict(self) -> Dict[str, Any]:
         """Machine-readable payload. This shape is a contract parsed by CI consumers."""
+        metrics = self.metrics
         return {
             "summary": {
                 "total": self.total,
                 "passed": self.passed,
                 "failed": self.failed,
                 "status": self.status,
+                # Appended at the end of the summary: purely additive for CI consumers.
+                "duration_seconds": round(sum((result.duration_seconds for result in self.results), 0.0), 3),
+                "metrics": metrics.to_dict() if metrics is not None else None,
             },
             "cases": [
                 {
@@ -274,6 +295,8 @@ class SuiteResult:
                     "score_reason": result.score.reason if result.score is not None else None,
                     # The run's metrics with the judge's folded in; null when the run produced no output.
                     "metrics": result.metrics.to_dict() if result.metrics is not None else None,
+                    # Appended at the end of the case payload: purely additive for CI consumers.
+                    "run_id": result.run_id,
                 }
                 for result in self.results
             ],
@@ -432,9 +455,14 @@ async def _run_case_body(
                 # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
+                result.run_id = event.run_id
                 result.metrics = RunMetrics.from_dict(event.metrics.to_dict()) if event.metrics is not None else None
                 _extract_evidence(result, event)
                 continue
+            if result.run_id is None and not isinstance(event, _RUN_ERROR_EVENTS):
+                # Taken from the run's first event, so a case that errors or times out before its final
+                # output still links to its run; a team's member error events carry the member's run id.
+                result.run_id = getattr(event, "run_id", None)
             if isinstance(event, _RUN_ERROR_EVENTS):
                 # The streaming path does not raise on in-run model/API failures: it
                 # yields an error event and ends without the final RunOutput. Recorded

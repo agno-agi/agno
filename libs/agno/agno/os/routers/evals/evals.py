@@ -6,16 +6,27 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
+from httpx import HTTPStatusError
 from starlette._utils import get_route_path
 
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
-from agno.eval.suite import Case, EvalSuite, arun_cases
+from agno.db.schemas.jobs import QueuedJob
+from agno.eval.suite import Case, CaseResult, EvalSuite, arun_cases
 from agno.eval.utils import async_log_eval
 from agno.exceptions import AgnoError, RunCancelledException
 from agno.models.utils import get_model
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, get_auth_token_from_request, get_authentication_dependency
+from agno.os.job_queue import (
+    aenqueue_ticket,
+    ensure_duplicate_matches_component,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    ticket_status_to_api,
+    wake_queue_worker,
+)
 from agno.os.middleware.user_scope import (
     _schedule_owner_from_header,
     apply_scope_to_kwargs,
@@ -33,14 +44,17 @@ from agno.os.routers.evals.schemas import (
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import (
+    aborted_eval_suite_data,
     adelete_eval_suite_run,
     apply_case_overrides,
+    aprepare_eval_suite_accepted_or_abort,
     aprepare_eval_suite_run,
     aread_eval_suite_run,
     arun_eval_suite_cases,
     astore_eval_suite_run_data,
     build_posted_suite,
     build_registered_suite,
+    eval_suite_result_data,
     run_accuracy_eval,
     run_agent_as_judge_eval,
     run_performance_eval,
@@ -57,9 +71,15 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_eval_suite_by_id, get_team_by_id
+from agno.os.utils import (
+    AgnoHTTPException,
+    get_agent_by_id,
+    get_db,
+    get_eval_suite_by_id,
+    get_team_by_id,
+)
 from agno.remote.base import RemoteDb
-from agno.run.cancel import acancel_run, acleanup_run, araise_if_cancelled, aregister_run
+from agno.run.cancel import acancel_run, acleanup_run, ais_cancelled, araise_if_cancelled, aregister_run
 from agno.run.concurrency import background_run_slot
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_error, log_warning
@@ -355,13 +375,21 @@ def attach_routes(
             # A deleted background suite run is cancelled, so its cases stop making model calls: each id is read
             # with the caller's scope, and a RUNNING suite run gets its cancellation registered before the rows
             # are deleted. The cancellation is withdrawn when the delete fails or keeps the row; a run that
-            # saw it before then has already stopped.
+            # saw it before then has already stopped. With a durable queue, the run's ticket is tombstoned
+            # only once its row is confirmed gone. A claim landing between the delete and the withdraw can still
+            # see the cancellation: cross-store atomicity between the job store and the cancellation manager
+            # does not exist (same constraint as the requeue route).
+            queue_worker = getattr(http_request.app.state, "queue_worker", None)
             cancelled_run_ids: List[str] = []
             for eval_run_id in request.eval_run_ids:
                 eval_run = await aread_eval_suite_run(db, eval_run_id, **scope)  # type: ignore
                 if eval_run is None or eval_run.get("eval_type") != EvalType.SUITE.value:
                     continue
-                if ((eval_run.get("eval_data") or {}).get("summary") or {}).get("status") == "RUNNING":
+                if ((eval_run.get("eval_data") or {}).get("summary") or {}).get("status") != "RUNNING":
+                    continue
+                # A run already cancelled through /cancel keeps its cancellation: only this delete's own are
+                # withdrawn when the delete fails.
+                if not await ais_cancelled(eval_run_id):
                     cancelled_run_ids.append(eval_run_id)
             try:
                 for eval_run_id in cancelled_run_ids:
@@ -376,11 +404,20 @@ def attach_routes(
                     with suppress(Exception):
                         await acleanup_run(eval_run_id)
                 raise
+            # Every id is handled before a failure is raised, so no deleted run is left with a queued ticket.
+            failure: Optional[Exception] = None
             for eval_run_id in cancelled_run_ids:
-                # Some databases log and swallow a failed delete: a row that is still there keeps its run.
-                with suppress(Exception):
+                try:
+                    # Some databases log and swallow a failed delete: a row that is still there keeps its run.
                     if await aread_eval_suite_run(db, eval_run_id, **scope) is not None:  # type: ignore
                         await acleanup_run(eval_run_id)
+                        continue
+                    if queue_worker is not None:
+                        await queue_worker.acancel_queued_eval_suite(eval_run_id)
+                except Exception as e:
+                    failure = failure or e
+            if failure is not None:
+                raise failure
         except HTTPException:
             raise
         except AgnoError as e:
@@ -461,6 +498,69 @@ def attach_routes(
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
         return EvalSchema.from_dict(eval_run)  # type: ignore
+
+    @router.post(
+        "/eval-runs/{eval_run_id}/cancel",
+        operation_id="cancel_eval_run",
+        response_model_exclude_none=True,
+        summary="Cancel Evaluation Run",
+        description=(
+            "Cancel a currently executing eval suite run. This will attempt to stop its cases gracefully; the run "
+            "is kept with status CANCELLED and the cases that finished.\n\n"
+            "**Note:** Cancellation may not be immediate for all operations."
+        ),
+        responses={
+            200: {},
+            404: {"description": "Evaluation run not found", "model": NotFoundResponse},
+            500: {"description": "Failed to cancel evaluation run", "model": InternalServerErrorResponse},
+        },
+    )
+    async def cancel_eval_run(
+        request: Request,
+        eval_run_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        table: Optional[str] = Query(default=None, description="Table to query eval run from"),
+    ):
+        try:
+            db = await get_db(dbs, db_id, table)
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                await db.cancel_eval_run(eval_run_id, db_id=db_id, table=table, headers=headers)
+                return JSONResponse(content={}, status_code=200)
+            # Read with the caller's scope, as GET /eval-runs/{eval_run_id}: a caller cannot cancel a run they
+            # cannot read.
+            eval_run = await aread_eval_suite_run(db, eval_run_id, **apply_scope_to_kwargs(request))  # type: ignore
+            if not eval_run:
+                raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
+            # Stopping a run is gated like starting it, as the cancel routes require "run" on their agent or team.
+            if eval_run.get("agent_id") or eval_run.get("team_id"):
+                await _require_eval_target_run_access(
+                    request,
+                    resource_type="agents" if eval_run.get("agent_id") else "teams",
+                    resource_id=eval_run.get("agent_id") or eval_run["team_id"],
+                )
+            # Only a RUNNING suite run has cases to stop. As on the run routes, the cancellation is stored even
+            # before the run starts, and a finished run is answered with success.
+            if (
+                eval_run.get("eval_type") == EvalType.SUITE.value
+                and ((eval_run.get("eval_data") or {}).get("summary") or {}).get("status") == "RUNNING"
+            ):
+                # Tombstone a still-queued durable ticket first: intent alone does not stop a job no task is
+                # executing yet
+                queue_worker = getattr(request.app.state, "queue_worker", None)
+                if queue_worker is not None:
+                    await queue_worker.acancel_queued_eval_suite(eval_run_id)
+                await acancel_run(eval_run_id)
+        except HTTPException:
+            raise
+        except HTTPStatusError:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to cancel eval run: {e}")
+        return JSONResponse(content={}, status_code=200)
 
     @router.post(
         "/eval-runs",
@@ -751,12 +851,14 @@ def attach_routes(
         timeout: int,
         eval_input: Dict[str, Any],
         background: bool = False,
+        queue_payload: Optional[Dict[str, Any]] = None,
     ) -> EvalSchema:
         """Run the selected cases of a suite and store the result as one eval run of type suite.
 
         Shared by the registered-suite and the body-defined routes, so both gate, run and persist
         the same way; eval_input is the request a client reruns: the posted body, or the suite_id with
-        the body posted to its run route.
+        the body posted to its run route. queue_payload is what a durable queue worker rebuilds the
+        suite from: its db and the suite_id, or the posted body.
         """
         # Resolved before the run: get_scoped_user_id raises 403 and the suite below makes real model calls.
         # The scheduler sentinel identifies the caller, not the owner: a scheduled run takes the forwarded
@@ -827,8 +929,95 @@ def attach_routes(
                 team_id=team_id,
                 name=eval_run.name,
             )
+            # With a durable queue the run rides it, as a background agent run does, so a server killed
+            # mid-run leaves a ticket a restarted or peer worker finishes instead of a row RUNNING forever.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            queued_payload = {
+                **(queue_payload or {}),
+                "tag": tag,
+                "case_name": name,
+                "default_timeout": timeout,
+                "overrides": overrides,
+                "record": running_record.model_dump(mode="json"),
+            }
+            if queue_worker is not None and payload_is_queueable(queued_payload):
+                job = QueuedJob(
+                    id=eval_run.id,
+                    component_type="eval_suite",
+                    # The registered suite by id; a posted suite, whose id is per request, by its agent or team.
+                    component_id=cast(str, (queue_payload or {}).get("suite_id") or agent_id or team_id),
+                    session_id=eval_run.id,
+                    job_type="eval_suite",
+                    user_id=creator_user_id,
+                    payload=queued_payload,
+                    max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                ).to_dict()
+
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # RUNNING eval run behind.
+                enqueue_result = await aenqueue_ticket(queue_worker, job)
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Job queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "eval_suite", job["component_id"])
+                    # Answered from the ticket, as a duplicate agent run is: its row is read through the
+                    # ticket's own database, and before the original prepare lands the ticket's record stands in.
+                    existing_payload = existing.get("payload") or {}
+                    existing_run = None
+                    with suppress(Exception):
+                        existing_db = await get_db(dbs, existing_payload.get("db_id"), existing_payload.get("table"))
+                        existing_run = await aread_eval_suite_run(existing_db, existing["id"])  # type: ignore
+                    existing_eval_run = EvalSchema.from_dict(existing_run or existing_payload["record"])
+                    existing_eval_run.user_id = existing.get("user_id")
+                    if existing_run is None and existing["status"] not in ("queued", "running"):
+                        # A duplicate of a run that ended with no row (aborted or deleted) is never RUNNING: its
+                        # result is gone, so it reads as CANCELLED for a cancelled ticket, or as a suite ERROR
+                        # carrying the ticket's error or status, as a duplicate agent run says it.
+                        existing_eval_data = existing_eval_run.eval_data
+                        ticket_status = ticket_status_to_api(existing["status"]) or existing["status"].upper()
+                        failure = (
+                            {}
+                            if ticket_status == "CANCELLED"
+                            else {"error": existing.get("error") or ticket_status.lower()}
+                        )
+                        existing_eval_run.eval_data = {
+                            **existing_eval_data,
+                            "summary": {
+                                **existing_eval_data["summary"],
+                                "status": "CANCELLED" if ticket_status == "CANCELLED" else "ERROR",
+                            },
+                            **failure,
+                        }
+                    return existing_eval_run
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
+                # Accepted: persist the RUNNING eval run so pollers find it.
+                await aprepare_eval_suite_accepted_or_abort(
+                    queue_worker, db, running_record, creator_user_id, job["component_id"]
+                )
+                eval_run.user_id = creator_user_id
+                wake_queue_worker(queue_worker)
+                return eval_run
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                log_warning(
+                    "Background run bypasses the durable queue: the submission carries values plain "
+                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                    "accepting replica instead - bounded and observable, but NOT durable."
+                )
             # Register the run for cancellation tracking before its row is stored and its task spawned, as a
-            # background agent run is, so a delete that lands before the task starts is kept.
+            # background agent run is, so a cancel that lands before the task starts is kept.
             await aregister_run(eval_run.id)
             try:
                 await aprepare_eval_suite_run(db, running_record, creator_user_id)
@@ -860,6 +1049,7 @@ def attach_routes(
             agent_id=agent_id,
             team_id=team_id,
         )
+        eval_run.eval_data = eval_suite_result_data(suite_result)
         # Persisted like a single eval run: a failed write is logged and the report is still returned,
         # so the model calls behind it are not lost.
         await async_log_eval(
@@ -894,28 +1084,33 @@ def attach_routes(
         db: Union[BaseDb, AsyncBaseDb], selected: Tuple[Case, ...], timeout: int, eval_run: EvalSchema
     ) -> None:
         """Run the cases of a background suite run and replace its running row with the result."""
-        error_data = {**eval_run.eval_data, "summary": {**eval_run.eval_data["summary"], "status": "ERROR"}}
+        finished: List[CaseResult] = []
         try:
-            # A delete stored before the task started stops it here, as _execute_background checks it.
+            # A cancel stored before the task started stops it here, as _execute_background checks it.
             await araise_if_cancelled(eval_run.id)
             # Held like a background agent run's slot, so the background concurrency cap bounds suite runs too.
             async with background_run_slot(run_id=eval_run.id):
-                suite_result = await arun_eval_suite_cases(selected, timeout, eval_run.id)
-            eval_data = suite_result.to_dict()
+                suite_result = await arun_eval_suite_cases(selected, timeout, eval_run.id, finished)
+            eval_data = eval_suite_result_data(suite_result)
         except RunCancelledException:
-            # Deleted while waiting for a slot or while its cases ran: the cases stop, and the write below finds
-            # no row, so a deleted run stays deleted.
-            eval_data = {**error_data, "error": "cancelled"}
+            # Cancelled or deleted, while waiting for a slot or while its cases ran: the row is marked
+            # CANCELLED with the cases that finished, as a cancelled background agent run keeps its output,
+            # and a deleted run stays deleted.
+            eval_data = aborted_eval_suite_data(selected, finished, "CANCELLED")
         except asyncio.CancelledError:
-            # A shutdown cancels the run: the row is marked ERROR, best-effort, and the cancellation goes on,
-            # as a cancelled background agent run is marked cancelled. Shielded, so a second cancellation does
-            # not lose the write.
+            # A shutdown cancels the run: the row is marked CANCELLED, best-effort, and the cancellation goes on,
+            # as a background agent run cancelled by a shutdown is marked cancelled. Shielded, as
+            # _BackgroundStream.complete shields its write: a second cancellation must not lose it.
             with suppress(Exception, asyncio.CancelledError):
-                await asyncio.shield(astore_eval_suite_run_data(db, eval_run.id, {**error_data, "error": "cancelled"}))
+                await asyncio.shield(
+                    astore_eval_suite_run_data(
+                        db, eval_run.id, aborted_eval_suite_data(selected, finished, "CANCELLED")
+                    )
+                )
             raise
         except Exception as e:
             log_error(f"Eval suite run {eval_run.id} failed: {e}", exc_info=True)
-            eval_data = {**error_data, "error": str(e)}
+            eval_data = aborted_eval_suite_data(selected, finished, "ERROR", error=str(e))
         finally:
             with suppress(Exception, asyncio.CancelledError):
                 await asyncio.shield(acleanup_run(eval_run.id))
@@ -963,8 +1158,8 @@ def attach_routes(
                 },
             },
             202: {
-                "description": "Background run started; poll GET /eval-runs/{eval_run_id} until it is not RUNNING. A server killed "
-                "before it finishes leaves it RUNNING"
+                "description": "Background run started; poll GET /eval-runs/{eval_run_id} until it is not RUNNING. Without a "
+                "durable queue, a server killed before it finishes leaves it RUNNING"
             },
             400: {"description": "No case matched the selection", "model": BadRequestResponse},
             404: {"description": "Evaluation suite not found", "model": NotFoundResponse},
@@ -982,13 +1177,27 @@ def attach_routes(
         ),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
+        suite_run_input = suite_run_input or EvalSuiteRunInput()
         if isinstance(db, RemoteDb):
-            raise HTTPException(status_code=501, detail="Eval suites are not supported for remote databases")
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            remote_eval_run = await db.run_eval_suite(
+                suite_id,
+                tag=suite_run_input.tag,
+                case_name=suite_run_input.case_name,
+                default_timeout=suite_run_input.default_timeout,
+                db_id=db_id,
+                table=table,
+                background=background,
+                headers=headers,
+            )
+            if background:
+                response.status_code = 202
+            return remote_eval_run
         eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
         if eval_suite is None:
             raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
         eval_suite = build_registered_suite(eval_suite, agents, teams)
-        suite_run_input = suite_run_input or EvalSuiteRunInput()
         eval_run = await _run_eval_suite(
             request,
             db,
@@ -998,6 +1207,7 @@ def attach_routes(
             timeout=suite_run_input.default_timeout,
             eval_input={"suite_id": suite_id, **suite_run_input.model_dump()},
             background=background,
+            queue_payload={"db_id": db_id, "table": table, "suite_id": suite_id},
         )
         if background:
             response.status_code = 202
@@ -1050,8 +1260,8 @@ def attach_routes(
                 },
             },
             202: {
-                "description": "Background run started; poll GET /eval-runs/{eval_run_id} until it is not RUNNING. A server killed "
-                "before it finishes leaves it RUNNING"
+                "description": "Background run started; poll GET /eval-runs/{eval_run_id} until it is not RUNNING. Without a "
+                "durable queue, a server killed before it finishes leaves it RUNNING"
             },
             400: {
                 "description": "Cases target more than one agent or team, or none matched",
@@ -1072,7 +1282,22 @@ def attach_routes(
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
         if isinstance(db, RemoteDb):
-            raise HTTPException(status_code=501, detail="Eval suites are not supported for remote databases")
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            remote_eval_run = await db.run_eval_suite_from_body(
+                name=eval_suite_input.name,
+                cases=eval_suite_input.cases,
+                tag=eval_suite_input.tag,
+                case_name=eval_suite_input.case_name,
+                default_timeout=eval_suite_input.default_timeout,
+                db_id=db_id,
+                table=table,
+                background=background,
+                headers=headers,
+            )
+            if background:
+                response.status_code = 202
+            return remote_eval_run
         # One target per suite, as every eval stamps exactly one agent or team.
         targets = {(case.agent_id or None, case.team_id or None) for case in eval_suite_input.cases}
         if len(targets) > 1:
@@ -1097,6 +1322,9 @@ def attach_routes(
             # eval_input that GET /eval-runs returns to every evals:read caller.
             eval_input=eval_suite_input.model_dump(exclude={"cases": {"__all__": {"dependencies"}}}),
             background=background,
+            # The queue worker reruns the posted cases, so its ticket keeps their dependencies, as a queued
+            # agent run's ticket keeps the run's.
+            queue_payload={"db_id": db_id, "table": table, "suite": eval_suite_input.model_dump()},
         )
         if background:
             response.status_code = 202

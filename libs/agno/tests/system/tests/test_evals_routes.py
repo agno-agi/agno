@@ -4,6 +4,7 @@ System Tests for AgentOS Evals Routes.
 Run with: pytest test_evals_routes.py -v --tb=short
 """
 
+import time
 import uuid
 
 import httpx
@@ -275,3 +276,74 @@ class TestRemoteEvalRoutes:
         # Verify it's gone
         verify_response = client.get(f"/eval-runs/{eval_id}?db_id={self.DB_ID}")
         assert verify_response.status_code == 404
+
+
+class TestLocalEvalSuiteRoutes:
+    """Test eval suite routes with local agent (gateway-agent)."""
+
+    AGENT_ID = "gateway-agent"
+    DB_ID = "gateway-db"
+
+    def _posted_suite(self) -> dict:
+        return {
+            "name": "Gateway smoke",
+            "cases": [
+                {
+                    "name": "capital",
+                    "agent_id": self.AGENT_ID,
+                    "input": "What is the capital of France?",
+                    "criteria": "Says that the capital of France is Paris",
+                }
+            ],
+        }
+
+    def _wait_until_finished(self, client: httpx.Client, eval_id: str) -> dict:
+        deadline = time.monotonic() + REQUEST_TIMEOUT
+        while time.monotonic() < deadline:
+            response = client.get(f"/eval-runs/{eval_id}?db_id={self.DB_ID}")
+            assert response.status_code == 200
+            if response.json()["eval_data"]["summary"]["status"] != "RUNNING":
+                return response.json()
+            time.sleep(1)
+        raise TimeoutError(f"Eval suite run {eval_id} did not finish")
+
+    def test_run_eval_suite_from_body(self, client: httpx.Client):
+        """Test POST /eval-suites runs the posted cases and stores one suite eval run."""
+        response = client.post(f"/eval-suites?db_id={self.DB_ID}", json=self._posted_suite())
+        assert response.status_code == 200
+        data = response.json()
+        assert data["eval_type"] == "suite"
+        assert data["agent_id"] == self.AGENT_ID
+        assert data["eval_data"]["summary"]["total"] == 1
+        assert data["eval_data"]["summary"]["status"] in ("PASS", "FAIL")
+        assert data["eval_data"]["summary"]["metrics"]["total_tokens"] > 0
+        assert data["eval_data"]["cases"][0]["run_id"]
+
+        verify_response = client.get(f"/eval-runs/{data['id']}?db_id={self.DB_ID}")
+        assert verify_response.status_code == 200
+        assert verify_response.json()["eval_data"] == data["eval_data"]
+
+    def test_run_eval_suite_from_body_in_background(self, client: httpx.Client):
+        """Test a background suite run is answered 202 as RUNNING and finishes on its own."""
+        response = client.post(f"/eval-suites?db_id={self.DB_ID}&background=true", json=self._posted_suite())
+        assert response.status_code == 202
+        assert response.json()["eval_data"]["summary"]["status"] == "RUNNING"
+
+        finished = self._wait_until_finished(client, response.json()["id"])
+        assert finished["eval_data"]["summary"]["status"] in ("PASS", "FAIL")
+
+    def test_cancel_eval_run(self, client: httpx.Client):
+        """Test POST /eval-runs/{id}/cancel stops a background suite run and keeps it as CANCELLED."""
+        suite = self._posted_suite()
+        suite["cases"][0]["input"] = (
+            "Tell me a very long story about artificial intelligence. Make it detailed and comprehensive."
+        )
+        response = client.post(f"/eval-suites?db_id={self.DB_ID}&background=true", json=suite)
+        assert response.status_code == 202
+        eval_id = response.json()["id"]
+
+        cancel_response = client.post(f"/eval-runs/{eval_id}/cancel?db_id={self.DB_ID}")
+        assert cancel_response.status_code == 200
+
+        finished = self._wait_until_finished(client, eval_id)
+        assert finished["eval_data"]["summary"]["status"] == "CANCELLED"

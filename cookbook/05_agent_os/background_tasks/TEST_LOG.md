@@ -112,3 +112,13 @@ scenario, or live streaming exercise was performed in this smoke check.
 **Result:** PASS. One run per session in acceptance order (the second answer named the city the first run chose), concurrency across sessions, waiting_on on the poll, paused-head hold with continue and cancel, and /config discovery behave as the docstring describes on both stores.
 
 ---
+
+### durable_queue_eval_suite.py
+
+**Status:** PASS (2026-11-27, cookbook run as written with gpt-5.5 against a private Postgres database)
+
+**Description:** Started the cookbook app and followed its "Try it" steps 1 to 6: started `math-quality` with ?background=true, polled GET /eval-runs/{id}, read the ticket on GET /queue/jobs/{id} and /queue/stats, resubmitted twice with one Idempotency-Key, deleted a background run with DELETE /eval-runs, and killed the server with kill -9 mid-run (max_attempts=1 as written), then restarted it.
+
+**Result:** PASS. The POST answered 202 with the run RUNNING; the poll ended PASS; the ticket was job_type eval_suite, completed at attempt 1; the two Idempotency-Key submissions returned the same eval run; the deleted run's ticket was cancelled and its GET answered 404; the killed run was not run again, and after the restart the sweeper marked it ERROR "Worker lost and attempt budget exhausted" with a failed ticket.
+
+---

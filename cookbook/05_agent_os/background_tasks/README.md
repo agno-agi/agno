@@ -2,6 +2,7 @@
 
 - `durable_queue.py`: submit, poll, stream and recover durable background runs.
 - `durable_continue.py`: resume a paused run through its durable queue ticket.
+- `durable_queue_eval_suite.py`: run an eval suite in the background through the durable queue.
 - `redis_event_stream.py`: share queued-run events across replicas.
 
 Run `durable_queue.py` with PostgreSQL available and `OPENAI_API_KEY` set. Set

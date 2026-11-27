@@ -14,6 +14,11 @@ from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, Too
 from agno.run.base import RunStatus
 
 
+def _counts(summary: dict) -> dict:
+    """The summary's counts and status, without its duration and metrics."""
+    return {key: summary[key] for key in ("total", "passed", "failed", "status")}
+
+
 def _output(**kwargs):
     """RunOutput factory defaulting to status=completed, like real finished runs."""
     kwargs.setdefault("status", RunStatus.completed)
@@ -206,6 +211,28 @@ def test_judge_metrics_are_added_to_the_case_run_metrics(monkeypatch):
     assert run_metrics.total_tokens == 15
 
 
+def test_suite_summary_sums_the_case_metrics_and_each_case_links_its_run(monkeypatch):
+    # The summary carries the suite's totals, as a workflow run sums its steps', and each case its run id.
+    from agno.metrics import RunMetrics
+
+    _install_fake_evals(monkeypatch)
+    cases = [
+        _make_case(
+            name=name,
+            agent=StubAgent(
+                output=_output(content="ok", run_id=f"run-{name}", metrics=RunMetrics(total_tokens=tokens))
+            ),
+        )
+        for name, tokens in (("a", 10), ("b", 5))
+    ]
+
+    payload = run_cases(cases).to_dict()
+
+    assert payload["summary"]["metrics"]["total_tokens"] == 15
+    assert payload["summary"]["duration_seconds"] == round(sum(c["duration_seconds"] for c in payload["cases"]), 3)
+    assert [c["run_id"] for c in payload["cases"]] == ["run-a", "run-b"]
+
+
 def test_empty_expected_tool_calls_with_criteria_skips_reliability(monkeypatch):
     # An empty tuple alongside a real criteria constructs, but must not run a
     # vacuous reliability check.
@@ -332,7 +359,14 @@ def test_unknown_tag_returns_empty_suite(monkeypatch):
     assert agent.run_count == 0
     # An empty selection must not green-light a CI gate comparing == "PASS"
     assert result.status == "FAIL"
-    assert result.to_dict()["summary"] == {"total": 0, "passed": 0, "failed": 0, "status": "FAIL"}
+    assert result.to_dict()["summary"] == {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "status": "FAIL",
+        "duration_seconds": 0.0,
+        "metrics": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -489,7 +523,7 @@ def test_cancelled_run_aborts_the_suite_and_records_skipped_cases(monkeypatch):
     # disagree with to_dict() about how many cases the suite accounted for.
     assert ended == [("interrupted", False), ("never_run", True)]
     payload = result.to_dict()
-    assert payload["summary"] == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
+    assert _counts(payload["summary"]) == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
     assert [case["skipped"] for case in payload["cases"]] == [False, True]
 
 
@@ -932,7 +966,9 @@ def test_to_dict_matches_contract(monkeypatch):
 
     payload = run_cases([case]).to_dict()
 
-    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0, "status": "PASS"}
+    assert _counts(payload["summary"]) == {"total": 1, "passed": 1, "failed": 0, "status": "PASS"}
+    assert list(payload["summary"]) == ["total", "passed", "failed", "status", "duration_seconds", "metrics"]
+    assert payload["summary"]["duration_seconds"] == payload["cases"][0]["duration_seconds"]
     case_payload = payload["cases"][0]
     assert list(case_payload.keys()) == [
         "name",
@@ -955,6 +991,7 @@ def test_to_dict_matches_contract(monkeypatch):
         "score_passed",
         "score_reason",
         "metrics",
+        "run_id",
     ]
     assert case_payload["name"] == "capital_of_france"
     assert case_payload["agent_id"] == "geo-agent"
@@ -982,7 +1019,7 @@ def test_failed_suite_summary(monkeypatch):
     _install_fake_evals(monkeypatch, judge_passed=False)
     payload = run_cases([_make_case(name="a"), _make_case(name="b")]).to_dict()
 
-    assert payload["summary"] == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
+    assert _counts(payload["summary"]) == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
 
 
 # ---------------------------------------------------------------------------
@@ -1248,7 +1285,7 @@ def test_cli_json_output_writes_payload(monkeypatch, tmp_path):
 
     assert exit_code == 0
     payload = json.loads(json_path.read_text(encoding="utf-8"))
-    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0, "status": "PASS"}
+    assert _counts(payload["summary"]) == {"total": 1, "passed": 1, "failed": 0, "status": "PASS"}
     assert payload["cases"][0]["name"] == "json_case"
 
 
@@ -1735,8 +1772,8 @@ def test_suite_to_dict_is_additive(monkeypatch):
 
     case_payload = payload["cases"][0]
     keys = list(case_payload.keys())
-    assert keys[-4:] == ["score_value", "score_passed", "score_reason", "metrics"]
-    assert keys[:-4] == [
+    assert keys[-5:] == ["score_value", "score_passed", "score_reason", "metrics", "run_id"]
+    assert keys[:-5] == [
         "name",
         "agent_id",
         "team_id",

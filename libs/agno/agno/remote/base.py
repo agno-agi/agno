@@ -301,6 +301,15 @@ class RemoteDb:
     async def create_eval_run(self, **kwargs: Any) -> Optional["EvalSchema"]:
         return await self.client.run_eval(**kwargs)
 
+    async def run_eval_suite(self, suite_id: str, **kwargs: Any) -> "EvalSchema":
+        return await self.client.run_eval_suite(suite_id, **kwargs)
+
+    async def run_eval_suite_from_body(self, **kwargs: Any) -> "EvalSchema":
+        return await self.client.run_eval_suite_from_body(**kwargs)
+
+    async def cancel_eval_run(self, eval_run_id: str, **kwargs: Any) -> None:
+        return await self.client.cancel_eval_run(eval_run_id, **kwargs)
+
     # METRICS
     async def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None, **kwargs: Any

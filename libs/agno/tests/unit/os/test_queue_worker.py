@@ -12,6 +12,7 @@ from agno.job_queue.config import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
 from agno.os.job_queue import QueueWorker
 from agno.run.base import RunStatus
+from agno.run.status_persist import RunPersistOutcome
 
 
 class FakeAgent:
@@ -78,6 +79,18 @@ def make_job(job_id: str = "r1", max_attempts: int = 1) -> dict:
     ).to_dict()
 
 
+def make_eval_suite_job(job_id: str = "e1", max_attempts: int = 1) -> dict:
+    return QueuedJob(
+        id=job_id,
+        component_type="eval_suite",
+        component_id="suite-1",
+        session_id=job_id,
+        job_type="eval_suite",
+        payload={"suite_id": "suite-1", "default_timeout": 120},
+        max_attempts=max_attempts,
+    ).to_dict()
+
+
 def make_worker(store: InMemoryQueueStore, agent: Optional[FakeAgent], config: QueueConfig) -> QueueWorker:
     return QueueWorker(
         store=store,
@@ -96,6 +109,58 @@ async def wait_for_status(store: InMemoryQueueStore, job_id: str, status: str, t
             await asyncio.sleep(0.01)
 
     return await asyncio.wait_for(poll(), timeout=timeout)
+
+
+def stub_eval_suite(
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: list,
+    row_status: Optional[str] = "RUNNING",
+    persisted: bool = True,
+    persist_outcome: RunPersistOutcome = RunPersistOutcome.UPDATED,
+) -> list:
+    """Stub the evals router's queued-suite runner, row reader and row-error writer; returns the rows marked ERROR."""
+    marked: list = []
+
+    async def runner(
+        dbs: Any,
+        agents: Any,
+        teams: Any,
+        eval_suites: Any,
+        job: dict,
+        holds_lease: Any,
+        cancellation_poll_interval: float = 0.5,
+    ) -> Optional[bool]:
+        outcome = outcomes.pop(0) if outcomes else True
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome == "slow":
+            await asyncio.sleep(30)
+        return None if outcome is None else bool(outcome)
+
+    async def row_reader(dbs: Any, job: dict) -> Optional[str]:
+        return row_status
+
+    async def error_writer(
+        dbs: Any, job: dict, error: str, create_missing: bool = False, missing_ok: bool = False, status: str = "ERROR"
+    ) -> bool:
+        marked.append((job["id"], error))
+        return persisted
+
+    async def error_outcome_writer(
+        dbs: Any, job: dict, error: str, create_missing: bool = False, missing_ok: bool = False, status: str = "ERROR"
+    ) -> Optional[RunPersistOutcome]:
+        marked.append((job["id"], error))
+        return persist_outcome if persisted else None
+
+    async def deleted_reader(dbs: Any, job: dict) -> Optional[bool]:
+        return row_status is None
+
+    monkeypatch.setattr("agno.os.routers.evals.utils.arun_queued_eval_suite", runner)
+    monkeypatch.setattr("agno.os.routers.evals.utils.aread_queued_eval_suite_status", row_reader)
+    monkeypatch.setattr("agno.os.routers.evals.utils.afail_queued_eval_suite", error_writer)
+    monkeypatch.setattr("agno.os.routers.evals.utils.afail_queued_eval_suite_outcome", error_outcome_writer)
+    monkeypatch.setattr("agno.os.routers.evals.utils.ais_deleted_queued_eval_suite", deleted_reader)
+    return marked
 
 
 class TestExecution:
@@ -2723,3 +2788,271 @@ async def test_component_cleanup_gates_cancelled_ticket(cleanup_fails):
     await worker._execute_claimed(claimed)
     assert calls == ["running"]
     assert (await store.get_job("cleanup"))["status"] == ("running" if cleanup_fails else "cancelled")
+
+
+class TestEvalSuiteJobs:
+    @pytest.mark.asyncio
+    async def test_claims_and_completes_eval_suite_job(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [True])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", "completed")
+            assert marked == []
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_failing_eval_suite_is_retried_when_budget_remains(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [RuntimeError("boom"), True])
+        worker = make_worker(store, None, make_config(retry_delay_seconds=0))
+        await store.enqueue_job(make_eval_suite_job(max_attempts=2))
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "e1", "completed")
+            assert job["attempt"] == 2
+            assert marked == []
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_failing_eval_suite_marks_its_row_when_budget_is_spent(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [RuntimeError("boom")])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "e1", "failed")
+            assert job["error"] == "boom"
+            assert marked == [("e1", "boom")]
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_unwritten_row_error_leaves_the_ticket_for_the_sweep(self, monkeypatch):
+        store = InMemoryQueueStore()
+        stub_eval_suite(monkeypatch, [RuntimeError("boom")], persisted=False)
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "running", "claim left to go stale"
+
+    @pytest.mark.asyncio
+    async def test_unensured_eval_suite_row_leaves_the_claim(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [None])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "running", "claim left to go stale"
+        assert marked == []
+
+    @pytest.mark.asyncio
+    async def test_unresolved_eval_suite_leaves_the_claim(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [False])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "running", "claim left to go stale"
+        assert marked == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("max_attempts, status", [(1, "failed"), (2, "queued")])
+    async def test_stop_drains_eval_suite_job(self, monkeypatch, max_attempts, status):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, ["slow"])
+        worker = make_worker(store, None, make_config())
+        worker.stop_timeout = 0  # cancel stragglers immediately
+        await store.enqueue_job(make_eval_suite_job(max_attempts=max_attempts))
+        await worker.start()
+        await wait_for_status(store, "e1", "running")
+        await asyncio.sleep(0.05)  # let the execution enter its sleep
+
+        await worker.stop()
+
+        job = await store.get_job("e1")
+        assert job["status"] == status
+        assert "shutdown" in job["error"].lower()
+        assert marked == ([("e1", "interrupted by worker shutdown")] if max_attempts == 1 else [])
+
+    @pytest.mark.asyncio
+    async def test_lost_lease_writes_nothing(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, ["slow"])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", "running")
+            await asyncio.sleep(0.05)
+            store._jobs["e1"]["locked_by"] = "other-worker"
+            await worker._check_leases(["e1"])
+            await asyncio.sleep(0.05)
+            job = await store.get_job("e1")
+            assert job["status"] == "running" and job["locked_by"] == "other-worker"
+            assert marked == []
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_eval_suite_settles_cancelled(self, monkeypatch):
+        from agno.exceptions import RunCancelledException
+
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [RunCancelledException("e1")])
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "cancelled"
+        assert marked == [("e1", "cancelled")], "a row that still exists is marked before the ticket settles"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_eval_suite_with_an_unwritten_row_leaves_the_ticket(self, monkeypatch):
+        from agno.exceptions import RunCancelledException
+
+        store = InMemoryQueueStore()
+        stub_eval_suite(monkeypatch, [RunCancelledException("e1")], persisted=False)
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "running", "an unwritten row leaves the ticket for the sweep"
+
+    @pytest.mark.asyncio
+    async def test_unbuildable_eval_suite_fails_without_a_retry(self, monkeypatch):
+        from agno.exceptions import EvalError
+
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [EvalError("No cases match the given tag or name")])
+        worker = make_worker(store, None, make_config(retry_delay_seconds=0))
+        await store.enqueue_job(make_eval_suite_job(max_attempts=3))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        job = await store.get_job("e1")
+        assert job["status"] == "failed" and job["attempt"] == 1
+        assert marked == [("e1", "No cases match the given tag or name")]
+
+    @pytest.mark.asyncio
+    async def test_timed_out_eval_suite_keeps_a_stored_result(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, ["slow"], row_status="PASS")
+        worker = make_worker(store, None, make_config(timeout_seconds=1))
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert (await store.get_job("e1"))["status"] == "completed"
+        assert marked == []
+
+    @pytest.mark.asyncio
+    async def test_deleted_eval_suite_run_tombstones_its_waiting_ticket(self, monkeypatch):
+        stub_eval_suite(monkeypatch, [], row_status=None)
+        store = InMemoryQueueStore()
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job("e1"))
+        await store.enqueue_job(make_eval_suite_job("e2"))
+        await store.claim_job(worker.worker_id)
+
+        assert await worker.acancel_queued_eval_suite("e2") is True
+        assert await worker.acancel_queued_eval_suite("e1") is False, "a claimed ticket is reached by intent"
+
+        assert (await store.get_job("e2"))["status"] == "cancelled"
+        assert (await store.get_job("e1"))["status"] == "running"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_ticket_counts_as_a_lost_lease(self, monkeypatch):
+        store = InMemoryQueueStore()
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_eval_suite_job())
+        claimed = await store.claim_job(worker.worker_id)
+        assert await worker._aholds_lease("e1", claimed["attempt"]) is True
+
+        async def unreadable(job_id: str, strict: bool = False) -> None:
+            raise RuntimeError("store down")
+
+        monkeypatch.setattr(store, "get_job", unreadable)
+        assert await worker._aholds_lease("e1", claimed["attempt"]) is False
+
+    @pytest.mark.asyncio
+    async def test_sweep_cancels_an_eval_suite_run_deleted_after_its_first_attempt(self, monkeypatch):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [], row_status=None)
+        await store.enqueue_job(make_eval_suite_job(max_attempts=2))
+        await store.claim_job("dead-worker")
+        await store.retry_or_fail_job("e1", "dead-worker", 1, "Worker lost", 0)
+        await store.claim_job("dead-worker")
+        store._jobs["e1"]["locked_at"] -= 1000
+
+        worker = make_worker(store, None, make_config())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", "cancelled")
+            assert marked == [], "a row missing after attempt 1 was deleted: it is not recreated as ERROR"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_sweep_cancels_a_deleted_eval_suite_run(self, monkeypatch):
+        from agno.run.cancel import acancel_run, acleanup_run
+
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [], row_status=None)
+        await store.enqueue_job(make_eval_suite_job(max_attempts=1))
+        await store.claim_job("dead-worker")
+        store._jobs["e1"]["locked_at"] -= 1000
+        await acancel_run("e1")
+
+        worker = make_worker(store, None, make_config())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", "cancelled")
+            assert marked == [("e1", "cancelled")], "a deleted run is not recreated as ERROR"
+        finally:
+            await worker.stop()
+            await acleanup_run("e1")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("row_status, status", [("RUNNING", "failed"), ("PASS", "completed")])
+    async def test_sweep_settles_eval_suite_job_from_its_row(self, monkeypatch, row_status, status):
+        store = InMemoryQueueStore()
+        marked = stub_eval_suite(monkeypatch, [], row_status=row_status)
+        await store.enqueue_job(make_eval_suite_job(max_attempts=1))
+        await store.claim_job("dead-worker")
+        store._jobs["e1"]["locked_at"] -= 1000
+
+        worker = make_worker(store, None, make_config())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", status)
+            assert bool(marked) is (row_status == "RUNNING"), "a finished row is reconciled, not marked ERROR"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_sweep_reconciles_eval_suite_job_whose_error_write_was_refused_as_terminal(self, monkeypatch):
+        store = InMemoryQueueStore()
+        row_statuses = iter(["RUNNING", "PASS"])
+
+        async def row_reader(dbs: Any, job: dict) -> Optional[str]:
+            return next(row_statuses, "PASS")
+
+        stub_eval_suite(monkeypatch, [], persist_outcome=RunPersistOutcome.TERMINAL_REFUSED)
+        monkeypatch.setattr("agno.os.routers.evals.utils.aread_queued_eval_suite_status", row_reader)
+        await store.enqueue_job(make_eval_suite_job(max_attempts=1))
+        await store.claim_job("dead-worker")
+        store._jobs["e1"]["locked_at"] -= 1000
+
+        worker = make_worker(store, None, make_config())
+        await worker.start()
+        try:
+            await wait_for_status(store, "e1", "completed")
+        finally:
+            await worker.stop()
