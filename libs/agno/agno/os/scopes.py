@@ -664,6 +664,9 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
                 # Their rows come before tasks/*, which also matches them and asks for less.
                 "GET /company/tasks/*/files": ["tasks:read", "wiki:read"],
                 "GET /company/tasks/*/files/*": ["tasks:read", "wiki:read"],
+                # A Task's context. The route also asks for the permission that reads what is attached.
+                "POST /company/tasks/*/context": ["tasks:write"],
+                "DELETE /company/tasks/*/context/*": ["tasks:write"],
                 "GET /company/tasks": ["tasks:read"],
                 "GET /company/tasks/*": ["tasks:read"],
                 "POST /company/tasks": ["tasks:write"],

@@ -1,7 +1,7 @@
 """Validation and explicit lifecycle rules for Company tasks."""
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class CancelledProjectError(ValueError):
@@ -69,6 +69,38 @@ def validate_task_fields(fields: Dict[str, Any]) -> None:
         raise ValueError("project_id must be a non-empty string or None")
 
 
+# What a Task's context list may reference: a wiki page, a page of a Goal, another Task, a file a Task wrote.
+TASK_CONTEXT_KINDS = ("wiki", "goal", "task", "file")
+MAX_TASK_CONTEXT_ENTRIES = 50
+
+
+def task_context_after(
+    existing: Dict[str, Any], add: Optional[List[Dict[str, Any]]] = None, remove: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """A Task's context list after entries are removed by id and others added. Callers persist atomically.
+
+    The list changes at any status before Done or Cancelled. A reference the list already holds is not
+    added twice. An id the list does not hold is an error, so a caller never believes it removed something.
+    """
+    if existing["status"] in {"done", "cancelled"}:
+        raise ValueError(f"The context of a {existing['status']} Task cannot change")
+    context = list(existing.get("context") or [])
+    for entry_id in remove or []:
+        kept = [entry for entry in context if entry.get("id") != entry_id]
+        if len(kept) == len(context):
+            raise LookupError(f"Context entry {entry_id} not found on this Task")
+        context = kept
+    held = {(entry.get("kind"), entry.get("ref")) for entry in context}
+    for entry in add or []:
+        if (entry["kind"], entry["ref"]) not in held:
+            held.add((entry["kind"], entry["ref"]))
+            context.append(entry)
+    # Only an addition is refused for the size, so a list can always be made shorter.
+    if add and len(context) > MAX_TASK_CONTEXT_ENTRIES:
+        raise ValueError(f"A Task's context holds at most {MAX_TASK_CONTEXT_ENTRIES} entries")
+    return context
+
+
 def task_transition_blocker(task: Dict[str, Any], target: str, run_holding: bool = False) -> Optional[str]:
     """Name the error a move to target raises, or None when the Task allows it."""
     attempted = any("attempt" in entry for entry in task.get("transitions") or [])
@@ -127,6 +159,11 @@ def task_transition_fields(
         *(existing.get("transitions") or []),
         {"from": existing["status"], "target": target, "reason": reason, "user_id": accepted_by, "created_at": now},
     ]
+    ended = (existing.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+    if target == "ready" and existing["status"] == "in_progress" and ended:
+        # The return answers a run that failed or was cancelled, so its reason is a reply to that run.
+        # The same move on a queued attempt withdraws it, and the reason of that is a note.
+        fields["transitions"][-1]["ended_run"] = existing.get("job_id")
     if target == "ready":
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
@@ -180,10 +217,12 @@ def task_run_fields(
     run_db_id: Optional[str] = None,
     session_user_id: Optional[str] = None,
     requested_from: Optional[Dict[str, Any]] = None,
+    context_sent: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Reserve execution in the Task lifecycle, retaining the session across attempts.
 
     requested_from names the conversation that asked for this attempt (session, run and team ids).
+    context_sent lists the context entries the attempt's input carried, each with the version sent.
     """
     from uuid import NAMESPACE_URL, uuid5
 
@@ -215,6 +254,7 @@ def task_run_fields(
                 "attempt": attempt,
                 "run_db_id": run_db_id,
                 **({"requested_from": _requested_from(requested_from)} if requested_from else {}),
+                **({"context_sent": context_sent} if context_sent else {}),
             },
         ],
     }

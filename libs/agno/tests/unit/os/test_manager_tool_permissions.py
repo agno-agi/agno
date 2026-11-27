@@ -53,6 +53,8 @@ MOVED_TOOLS = {
     "list_company_tasks": ({}, "tasks:read"),
     "propose_company_task": ({"goal_id": "{goal}", "title": "Second", "project_id": "{project}"}, "tasks:write"),
     "edit_company_task": ({"task_id": "{task}", "title": "Renamed", "brief": "New brief"}, "tasks:write"),
+    # Removing asks for tasks:write alone; attaching also asks for the permission that reads the reference.
+    "update_company_task_context": ({"task_id": "{task}", "remove": []}, "tasks:write"),
     "list_goal_sources": ({"goal_id": "{goal}"}, "sources:read"),
     "add_goal_source": ({"goal_id": "{goal}", "reference": "https://example.com/docs"}, "sources:write"),
     "read_goal_source": ({"source_id": "{source}"}, "sources:read"),
@@ -87,6 +89,7 @@ TASK_RUN_TOOLS = {
     "add_company_task",
     "move_company_task",
     "start_company_task",
+    "message_company_task",
     "get_company_task_status",
     "approve_company_project",
     "accept_company_task",

@@ -53,6 +53,9 @@ class OSManager:
             invocation. Defaults to 96; None disables the limit. Each delegation has
             its own budget, not a shared run-wide budget. Offloaded-result read-back
             tools retain their existing exemption from both limits.
+        report_finished_work: Tell a conversation when a Task or background run it started has
+            finished, without waiting for the person's next message. Each report is a
+            model run. Enabled by default; pass False to disable.
     """
 
     name: str = MANAGER_TEAM_NAME
@@ -68,6 +71,7 @@ class OSManager:
     num_history_runs: int = 5
     tool_call_limit: Optional[int] = 96
     member_tool_call_limit: Optional[int] = 96
+    report_finished_work: bool = True
 
     def __post_init__(self) -> None:
         if not self.name or not self.name.strip():

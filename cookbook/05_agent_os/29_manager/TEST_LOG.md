@@ -1,5 +1,38 @@
 # Test log
 
+## Finished-work reports, 2026-11-26
+
+### manager_finished_work.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_finished_work.py` with `.venv/bin/python`,
+`gpt-5.6-luna`, a new SQLite database, no Company and no durable queue. Super Agent is asked to run
+a 20-second workflow in the background, and then nothing is sent.
+
+**Result:** The first reply came with a receipt. After the workflow ended the conversation held a
+second run, started by AgentOS, whose reply said the Investigator finished and that the export job
+uses the old IAM role. Its input starts with "Finished work report from AgentOS" and its metadata holds
+`agno_finished_work_report` with the run's id and status.
+
+---
+## Background runs from chat, 2026-11-26
+
+### manager_background_runs.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_background_runs.py` with
+`.venv/bin/python`, `gpt-5.6-luna`, a new SQLite database, no Company and no durable queue. Super
+Agent is asked to run a 20-second workflow in the background, then an unrelated question, then
+"Thanks. Anything else?" after the workflow has finished.
+
+**Result:** The first turn took 4.1 seconds and called `start_background_run`; the reply said the
+run was pending. "What is 17 times 23?" was answered in 1.9 seconds with no tool call. The third
+turn called `check_background_run` once and said the Investigator finished, with its finding.
+
+---
+
 ## PR #11394 review, 2026-10-30
 
 ### manager_discovery.py

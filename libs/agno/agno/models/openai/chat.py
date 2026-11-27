@@ -333,20 +333,24 @@ class OpenAIChat(Model):
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
-        # Ignore non-string message content
-        # because we assume that the images/audio are already added to the message
         if (message.images is not None and len(message.images) > 0) or (
             message.audio is not None and len(message.audio) > 0
         ):
-            # Ignore non-string message content
-            # because we assume that the images/audio are already added to the message
-            if isinstance(message.content, str):
-                message_dict["content"] = [{"type": "text", "text": message.content}]
+            # A non-empty content list is sent as written: its parts are taken to hold the media already.
+            # Content that is a string, None or an empty list gets the media attached here.
+            if isinstance(message.content, str) or not message.content:
+                parts: List[Dict[str, Any]] = []
+                # A message with no text gets no text part
+                if isinstance(message.content, str):
+                    parts.append({"type": "text", "text": message.content})
                 if message.images is not None:
-                    message_dict["content"].extend(images_to_message(images=message.images))
+                    parts.extend(images_to_message(images=message.images))
 
                 if message.audio is not None:
-                    message_dict["content"].extend(audio_to_message(audio=message.audio))
+                    parts.extend(audio_to_message(audio=message.audio))
+                # Media that could not be read leaves no parts, and an empty content list is not sent
+                if parts:
+                    message_dict["content"] = parts
 
         if message.audio_output is not None:
             message_dict["content"] = ""
@@ -373,8 +377,11 @@ class OpenAIChat(Model):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Manually add the content field even if it is None.
+        # Media and file parts attached above to a message with no text are kept.
+        if message.content is None and not (
+            isinstance(message_dict.get("content"), list) and len(message_dict["content"]) > 0
+        ):
             message_dict["content"] = ""
         return message_dict
 
