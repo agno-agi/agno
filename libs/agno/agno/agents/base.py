@@ -331,6 +331,9 @@ class BaseExternalAgent:
         """
         return None
 
+    async def _aresolve_subscription(self) -> None:
+        """Read, at the start of a run, anything stored that decides whether this agent is on a subscription."""
+
     def _check_subscription(self) -> None:
         """Raise when this agent is set to run on a subscription and its subscription credential cannot be used."""
 
@@ -2240,6 +2243,7 @@ class BaseExternalAgent:
             raise RuntimeError("Paused native run produced no result")
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
+        await self._aresolve_subscription()
         if self.sandbox is not None:
             run_id = kwargs.get("run_id") or str(uuid4())
             session_id = kwargs.get("session_id") or str(uuid4())
@@ -2399,6 +2403,7 @@ class BaseExternalAgent:
         native_non_stream = kwargs.pop("_native_non_stream", False)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
+        await self._aresolve_subscription()
         if self.sandbox is not None:
             run_id = kwargs.get("run_id") or str(uuid4())
             session_id = kwargs.get("session_id") or str(uuid4())

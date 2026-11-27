@@ -470,6 +470,10 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         # Config endpoints (legacy scope: system:read)
         "GET /config": ["config:read"],
         "GET /models": ["config:read"],
+        # Signing a Codex agent in to a ChatGPT subscription; listed before the broader agent patterns.
+        "POST /agents/*/sign-in": ["agent_os:admin"],
+        "GET /agents/*/sign-in": ["agent_os:admin"],
+        "DELETE /agents/*/sign-in": ["agent_os:admin"],
         # Agent endpoints
         "GET /agents": ["agents:read"],
         "GET /agents/*": ["agents:read"],
