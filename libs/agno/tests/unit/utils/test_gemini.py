@@ -166,6 +166,18 @@ def test_convert_schema_anyof_with_null():
     assert result.nullable is True
 
 
+def test_convert_schema_anyof_with_null_keeps_the_outer_description():
+    """A parameter's description sits beside its anyOf; folding the anyOf must not drop it."""
+    schema_dict = {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Stored version."}
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "INTEGER"
+    assert result.nullable is True
+    assert result.description == "Stored version."
+
+
 def test_convert_schema_null_type():
     """Test converting a schema with null type"""
     schema_dict = {"type": "null"}

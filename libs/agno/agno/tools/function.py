@@ -18,17 +18,20 @@ from typing import (
     Type,
     TypeVar,
     get_args,
+    get_origin,
     get_type_hints,
 )
 
 from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, field_validator, validate_call
+from pydantic.fields import FieldInfo
 
 from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.tools.annotations import validate_tool_annotations
+from agno.utils.json_schema import is_origin_union_type
 from agno.utils.log import log_debug, log_exception, log_warning
 from agno.utils.schema import (
     AGNO_INJECTED_PARAMS,
@@ -1108,6 +1111,55 @@ class UserFeedbackQuestion:
         )
 
 
+def _add_null_branches(parameters: Dict[str, Any], entrypoint: Optional[Callable]) -> None:
+    """Give a null branch to each property that strict mode made required but the callable can leave as None.
+
+    Only a parameter whose type admits None and whose default is None (or that has no default) qualifies:
+    leaving out `max_results: Optional[int] = 5` means 5, so a null there would change the call.
+    """
+    from inspect import signature
+
+    properties = parameters.get("properties")
+    if entrypoint is None or not isinstance(properties, dict):
+        return
+    try:
+        hints = get_type_hints(entrypoint)
+        params = signature(entrypoint).parameters
+    except Exception:
+        return
+    for name, schema in list(properties.items()):
+        param = params.get(name)
+        if param is None or not isinstance(schema, dict) or not _admits_none(hints.get(name)):
+            continue
+        default = param.default.default if isinstance(param.default, FieldInfo) else param.default
+        # Identity checks: a default whose __eq__ misbehaves (a numpy array) must not raise here.
+        if default is not param.empty and default is not None:
+            continue
+        if _schema_accepts_null(schema):
+            continue
+        nullable: Dict[str, Any] = {
+            "anyOf": [{k: v for k, v in schema.items() if k != "description"}, {"type": "null"}]
+        }
+        if "description" in schema:
+            nullable["description"] = schema["description"]
+        properties[name] = nullable
+
+
+def _admits_none(hint: Any) -> bool:
+    return hint is type(None) or (is_origin_union_type(get_origin(hint)) and type(None) in get_args(hint))
+
+
+def _schema_accepts_null(schema: Dict[str, Any]) -> bool:
+    schema_type = schema.get("type")
+    if schema_type == "null" or (isinstance(schema_type, list) and "null" in schema_type):
+        return True
+    return any(
+        isinstance(branch, dict) and _schema_accepts_null(branch)
+        for key in ("anyOf", "oneOf")
+        for branch in schema.get(key) or []
+    )
+
+
 # What Function.to_dict() writes and from_dict() reads back: the choices that
 # belong to the saved component, so a later registry edit must not rewrite them.
 SERIALIZED_FIELDS = (
@@ -1586,6 +1638,8 @@ class Function(BaseModel):
             # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
             # get_json_schema, so requiring it would describe a property that does not exist.
             parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
+            if strict:
+                _add_null_branches(parameters, c)
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
@@ -1885,6 +1939,8 @@ class Function(BaseModel):
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS
         ]
+
+        _add_null_branches(self.parameters, self.entrypoint)
 
     @staticmethod
     def _get_run_context_identity(entrypoint_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:

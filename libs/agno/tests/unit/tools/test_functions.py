@@ -3,7 +3,7 @@ from inspect import isasyncgen, isawaitable
 from typing import Annotated, Any, Callable, Dict, List, Optional, Union
 
 import pytest
-from pydantic import BaseModel, BeforeValidator, ValidationError
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 
 import agno.tools.function as function_module
 from agno.models.message import Message
@@ -347,6 +347,186 @@ def test_function_process_schema_for_strict():
     func.process_schema_for_strict()
     assert "param1" in func.parameters["required"]
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
+
+
+@pytest.mark.parametrize("from_callable", [False, True])
+def test_strict_optional_parameter_is_required_but_nullable(from_callable):
+    """Strict mode requires every parameter, so an Optional one must accept null to be left out."""
+
+    def get_component(component_id: str, version: Optional[int] = None) -> str:
+        """Read one component.
+
+        Args:
+            component_id: The component id.
+            version: Stored version. Leave out for the latest.
+        """
+        return component_id
+
+    if from_callable:
+        function = Function.from_callable(get_component, strict=True)
+    else:
+        function = Function(name="get_component", entrypoint=get_component)
+        function.process_entrypoint(strict=True)
+
+    assert function.parameters["required"] == ["component_id", "version"]
+    assert function.parameters["properties"]["version"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+
+
+class _VersionedKit(Toolkit):
+    def __init__(self):
+        super().__init__(name="versioned_kit", tools=[self.read])
+
+    @tool
+    def read(self, item_id: str, version: Optional[int] = None) -> str:
+        """Read one item.
+
+        Args:
+            item_id: The item id.
+            version: Stored version. Leave out for the latest.
+        """
+        return item_id
+
+
+@tool
+def _decorated_read(item_id: str, version: Optional[int] = None) -> str:
+    """Read one item.
+
+    Args:
+        item_id: The item id.
+        version: Stored version. Leave out for the latest.
+    """
+    return item_id
+
+
+@pytest.mark.parametrize("source", ["decorated", "toolkit"])
+def test_strict_keeps_a_decorated_optional_parameter_nullable(source):
+    """@tool builds its schema before strict mode is known; strict processing must add the null branch."""
+    if source == "decorated":
+        function = _decorated_read._per_run_copy()
+    else:
+        function = _VersionedKit().get_functions()["read"]._per_run_copy()
+
+    function.process_entrypoint(strict=True)
+
+    assert function.parameters["required"] == ["item_id", "version"]
+    assert function.parameters["properties"]["version"] == {
+        "anyOf": [{"type": "integer"}, {"type": "null"}],
+        "description": "Stored version. Leave out for the latest.",
+    }
+    assert function.parameters["properties"]["item_id"] == {"type": "string", "description": "The item id."}
+
+
+def _search_with_defaults(query: str, limit: int = 10, max_results: Optional[int] = 5) -> str:
+    """Search.
+
+    Args:
+        query: Text.
+        limit: Row limit.
+        max_results: Result count.
+    """
+    return query
+
+
+@pytest.mark.parametrize("source", ["process_entrypoint", "from_callable", "decorated"])
+def test_strict_does_not_make_a_parameter_with_a_non_none_default_nullable(source):
+    """Leaving out `max_results: Optional[int] = 5` means 5; a null would reach the function as None instead."""
+    if source == "process_entrypoint":
+        function = Function(name="search", entrypoint=_search_with_defaults)
+        function.process_entrypoint(strict=True)
+    elif source == "from_callable":
+        function = Function.from_callable(_search_with_defaults, strict=True)
+    else:
+        function = tool(_search_with_defaults)._per_run_copy()
+        function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    assert function.parameters["required"] == ["query", "limit", "max_results"]
+    assert properties["limit"] == {"type": "integer", "description": "Row limit."}
+    assert properties["max_results"] == {"type": "integer", "description": "Result count."}
+
+
+def _read_with_unset_versions(
+    item_id: str,
+    required_version: Optional[int],
+    field_version: Optional[int] = Field(default=None),
+) -> str:
+    """Read one item.
+
+    Args:
+        item_id: The item id.
+        required_version: Version, no default.
+        field_version: Version, defaulted through Field.
+    """
+    return item_id
+
+
+@pytest.mark.parametrize("from_callable", [False, True])
+def test_strict_makes_an_optional_without_a_default_or_with_a_field_none_default_nullable(from_callable):
+    """No default, or Field(default=None), still means None is what the call gets without a value."""
+    if from_callable:
+        function = Function.from_callable(_read_with_unset_versions, strict=True)
+    else:
+        function = Function(name="read", entrypoint=_read_with_unset_versions)
+        function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    for name in ("required_version", "field_version"):
+        assert properties[name]["anyOf"] == [{"type": "integer"}, {"type": "null"}], name
+
+
+def test_strict_leaves_a_dict_inside_a_union_open():
+    """A dict schema's additionalProperties is its value type; closing it would only accept {}."""
+
+    class Query(BaseModel):
+        text: str
+        weights: Optional[Dict[str, float]] = None
+
+    def search(q: Query, tags: Union[Dict[str, int], str] = "x") -> str:
+        return "ok"
+
+    function = Function(name="search", entrypoint=search)
+    function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    weights_dict = properties["q"]["properties"]["weights"]["anyOf"][0]
+    tags_dict = properties["tags"]["anyOf"][0]
+    assert weights_dict["additionalProperties"] == {"type": "number"}
+    assert tags_dict["additionalProperties"] == {"type": "integer"}
+
+
+def test_strict_leaves_a_schema_without_python_types_unchanged():
+    """An MCP tool's entrypoint takes **kwargs, so there is no annotation to say a parameter admits None."""
+
+    def call_tool(**kwargs: Any) -> str:
+        return ""
+
+    function = Function(
+        name="remote",
+        entrypoint=call_tool,
+        skip_entrypoint_processing=True,
+        parameters={"type": "object", "properties": {"version": {"type": "integer"}}, "required": []},
+    )
+    function.process_entrypoint(strict=True)
+
+    assert function.parameters["properties"]["version"] == {"type": "integer"}
+    assert function.parameters["required"] == ["version"]
+
+
+def test_strict_closes_an_optional_object_parameter():
+    """An Optional object parameter is an anyOf; strict mode must still close the object inside it."""
+
+    class Filter(BaseModel):
+        field: str
+
+    def search(query: str, filter: Optional[Filter] = None) -> str:
+        return query
+
+    function = Function(name="search", entrypoint=search)
+    function.process_entrypoint(strict=True)
+
+    object_schema, null_schema = function.parameters["properties"]["filter"]["anyOf"]
+    assert object_schema["additionalProperties"] is False
+    assert null_schema == {"type": "null"}
 
 
 def test_process_schema_for_strict_tolerates_a_schema_without_properties():

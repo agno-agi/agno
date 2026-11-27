@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
+from agno.utils.models.ollama import format_tools_for_ollama
 from agno.utils.reasoning import extract_thinking_content
 
 try:
@@ -118,7 +119,7 @@ class Ollama(Model):
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
         if tools is not None and len(tools) > 0:
-            request_params["tools"] = tools
+            request_params["tools"] = format_tools_for_ollama(tools)
 
         # Add additional request params if provided
         if self.request_params:
