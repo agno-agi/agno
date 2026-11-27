@@ -13,6 +13,7 @@ from agno.agent import Agent
 from agno.agents.claude import ClaudeAgent
 from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
+from agno.offload.store import DEFAULT_THRESHOLD_CHARS
 from agno.os import AgentOS, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
@@ -260,6 +261,8 @@ def test_a_cut_diff_says_how_much_is_missing(reader, saved, mode):
     marker = f"\n[The diff is cut here: {missing} more characters are not shown.]"
     assert result["diff"].endswith(marker) and len(result["diff"]) == DIFF_LENGTH + len(marker)
     assert result["diff"].startswith("diff --git a/README.md b/README.md")
+    # A cut result is still short enough to be shown to Super Agent whole, not as a preview.
+    assert len(json.dumps(result)) < DEFAULT_THRESHOLD_CHARS
     # The note comes before the diff, and the list of files is whole whatever was cut.
     assert list(result).index("note") < list(result).index("diff")
     assert {entry["path"] for entry in result["changed_files"]} == {
