@@ -307,6 +307,32 @@ class TestMetadataMerge:
         assert opts.metadata["team_only"] == "t"
         assert opts.metadata["run_only"] == "r"
 
+    def test_a_checkout_selector_of_a_later_layer_replaces_an_earlier_one_whole(self):
+        # metadata.repository names one thing for a sandboxed member to check out: a commit or a branch.
+        # Merged key by key, a team default of a branch and a run that names a commit became both,
+        # which the sandbox refuses.
+        commit = "a" * 40
+        team = _make_team(metadata={"repository": {"branch": "release"}, "labels": {"team": 1}})
+
+        run = resolve_run_options(team, metadata={"repository": {"commit": commit}, "labels": {"run": 2}})
+        assert run.metadata["repository"] == {"commit": commit}
+        # Any other nested value is still merged key by key.
+        assert run.metadata["labels"] == {"team": 1, "run": 2}
+
+        session = resolve_run_options(team, session_metadata={"repository": {"commit": commit}})
+        assert session.metadata["repository"] == {"commit": commit}
+        both = resolve_run_options(
+            team, session_metadata={"repository": {"commit": commit}}, metadata={"repository": {"branch": "hotfix"}}
+        )
+        assert both.metadata["repository"] == {"branch": "hotfix"}
+
+        # A run that names nothing keeps the team's, and the team's own value is never changed.
+        assert resolve_run_options(team, metadata={"labels": {"run": 2}}).metadata["repository"] == {
+            "branch": "release"
+        }
+        run.metadata["repository"]["commit"] = "changed"
+        assert team.metadata == {"repository": {"branch": "release"}, "labels": {"team": 1}}
+
     def test_only_session(self):
         team = _make_team()
         opts = resolve_run_options(team, session_metadata={"session": "value"})

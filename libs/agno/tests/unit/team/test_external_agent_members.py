@@ -620,3 +620,69 @@ def test_a_team_that_stores_member_responses_runs_with_a_harness_member(db, sdk)
     stored = db.get_session(session_id="s1", session_type=SessionType.TEAM).runs
     team_run = next(run for run in stored if run.run_id == output.run_id)
     assert [run.agent_id for run in team_run.member_responses] == ["claude-coder"]
+
+
+@pytest.fixture
+def sandboxed(db, monkeypatch):
+    """A sandboxed member whose sandbox turns are recorded and never started."""
+    from agno.db.postgres import PostgresDb
+    from agno.run.agent import RunOutput
+    from agno.sandbox import Repository, _harness
+    from agno.sandbox.docker import DockerSandbox
+
+    member = ClaudeAgent(
+        id="claude-coder",
+        # A sandboxed agent requires PostgreSQL. Nothing connects: its sandbox turns are stood in for below.
+        db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai"),
+        sandbox=DockerSandbox(image="fixture"),
+        repository=Repository(url="https://github.com/acme/app", branch="main"),
+    )
+    turns: List[Dict[str, Any]] = []
+
+    async def arun(agent, input, **kwargs):
+        turns.append({"input": input, **kwargs})
+        return RunOutput(run_id=kwargs["run_id"], agent_id=agent.id, content="done", status=RunStatus.completed)
+
+    async def astream(agent, input, **kwargs):
+        yield await arun(agent, input, **kwargs)
+
+    monkeypatch.setattr(_harness, "arun", arun)
+    monkeypatch.setattr(_harness, "astream", astream)
+    return member, turns
+
+
+def test_a_runs_checkout_replaces_the_teams_default_for_a_sandboxed_member(db, sandboxed):
+    """A team that names a default branch in its metadata, run for one commit: the member is sent the commit alone.
+
+    The sandbox takes exactly one of commit or branch, and refuses a run that names both."""
+    from agno.sandbox.repository import validate_repository_override
+
+    member, turns = sandboxed
+    commit = "a" * 40
+    team = _team(db, [member], [_delegate("claude-coder", "Review it", "c1"), ("content", "done")])
+    team.metadata = {"repository": {"branch": "release"}}
+
+    team.run("Review the commit", session_id="t1", metadata={"repository": {"commit": commit}})
+
+    [turn] = turns
+    assert turn["metadata"] == {"repository": {"commit": commit}}
+    assert validate_repository_override(turn["metadata"], {"url": member.repository.url, "branch": "main"}) == {
+        "commit": commit
+    }
+
+
+def test_a_workflow_runs_checkout_replaces_the_workflows_default_for_a_sandboxed_member(db, sandboxed):
+    """The same through a workflow: its run's metadata reaches a team step's members."""
+    from agno.workflow import Step, Workflow
+
+    member, turns = sandboxed
+    commit = "a" * 40
+    team = _team(db, [member], [_delegate("claude-coder", "Review it", "c1"), ("content", "done")])
+    workflow = Workflow(
+        id="wf", db=db, metadata={"repository": {"branch": "release"}}, steps=[Step(name="review", team=team)]
+    )
+
+    workflow.run(input="Review the commit", session_id="w1", metadata={"repository": {"commit": commit}})
+
+    [turn] = turns
+    assert turn["metadata"] == {"repository": {"commit": commit}}

@@ -142,6 +142,18 @@ class TestResolveRunParamsMetadata:
         assert resolved["metadata"]["version"] == "1.0"  # class-level preserved
         assert resolved["metadata"]["campaign"] == "launch"  # call-site added
 
+    def test_a_checkout_selector_of_the_run_replaces_the_workflows_whole(self):
+        """metadata.repository names one thing to check out; a run's replaces the workflow's instead of joining it."""
+        commit = "a" * 40
+        wf = Workflow(id="wf", metadata={"repository": {"branch": "release"}, "labels": {"workflow": 1}})
+
+        resolved = wf._resolve_run_params(metadata={"repository": {"commit": commit}, "labels": {"run": 2}})
+
+        assert resolved["metadata"]["repository"] == {"commit": commit}
+        assert resolved["metadata"]["labels"] == {"workflow": 1, "run": 2}  # other nested values still merge
+        assert wf._resolve_run_params()["metadata"]["repository"] == {"branch": "release"}
+        assert wf.metadata == {"repository": {"branch": "release"}, "labels": {"workflow": 1}}
+
     def test_class_metadata_not_mutated(self, workflow_with_metadata):
         """Resolving metadata does not mutate self.metadata."""
         original = workflow_with_metadata.metadata.copy()
