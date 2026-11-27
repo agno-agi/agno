@@ -1366,7 +1366,7 @@ def test_an_image_turn_is_sent_as_it_is_without_the_block_with_the_block_before_
         first, second = dump(format_all([block_message, person]))
         assert first == {"role": "user", "content": block_message.content}
         assert second == alone
-        # OpenAI is sent the photo whether or not the message has text, with or without the block.
+        # The photo reaches OpenAI even when the message has no text content.
         assert encoded in json.dumps(alone)
 
     # Claude joins the two user messages: the block's text first, then what it sends with no block.
