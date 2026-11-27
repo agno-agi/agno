@@ -179,6 +179,9 @@ def _task_state(value: Dict[str, Any], ticket: Optional[Dict[str, Any]] = None) 
         state["result"] = {"content": content[:1500] if isinstance(content, str) else content}
         if result.get("invoked"):
             state["invoked"] = result["invoked"]
+        if value["status"] == "in_review" and result.get("status") in ("ERROR", "CANCELLED"):
+            # The run did not finish the work. The Task waits for a person to retry it or close it.
+            state["meaning"] = "its run failed or was cancelled, waiting for a person"
     return state
 
 
@@ -332,7 +335,16 @@ class _TaskStarter:
             attempt = _pending_task_attempt(value) or task_next_attempt(value)
         # Review requests start the next attempt; an old attempt is not a revision.
         # Validate before looking up tickets so retained runs cannot bypass this gate.
-        if value["status"] in {"ready", "in_review"} or (value["status"] == "backlog" and attempt > 1):
+        # Naming the attempt whose run failed or was cancelled joins that run, as it did while it ran.
+        ended = task_run_id(task_id, attempt) == value.get("job_id") and (value.get("result") or {}).get("status") in {
+            "ERROR",
+            "CANCELLED",
+        }
+        if (
+            value["status"] == "ready"
+            or (value["status"] == "in_review" and not ended)
+            or (value["status"] == "backlog" and attempt > 1)
+        ):
             try:
                 task_run_fields(value, attempt, started_by)
             except ValueError as exc:

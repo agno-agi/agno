@@ -329,7 +329,7 @@ async def test_recovery_projects_and_verifies_checkout(sandbox_system, monkeypat
     saved = await _call(db, "get_task", task["id"])
     assert saved["metadata"]["checkout"] == checkout
     assert saved["result"]["status"] == ("COMPLETED" if second_pin == "same" else "ERROR")
-    assert saved["status"] == ("in_review" if second_pin == "same" else "in_progress")
+    assert saved["status"] == "in_review"
     if second_pin != "same":
         assert "repository pin" in saved["result"]["content"]
     # A stale recovery observation cannot replace a settled result or its pin.

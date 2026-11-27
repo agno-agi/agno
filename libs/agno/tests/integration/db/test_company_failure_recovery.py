@@ -169,7 +169,8 @@ async def test_lost_ticket_after_real_enqueue_is_cancelled_and_retryable(system,
     saved = await _call(db, "get_task", task["id"])
     assert saved["result"]["status"] == "CANCELLED", saved
     assert "Queue ticket lost" in saved["result"]["content"]
-    assert saved["transitions"] == original["transitions"]
+    # The reservation is kept, followed by the step into review that the cancelled attempt's end added.
+    assert saved["transitions"][:-1] == original["transitions"] and saved["status"] == "in_review"
     assert (await _call(db, "get_run", run_id, deserialize=False))["status"] == "CANCELLED"
     assert await worker.store.get_job(run_id) is None
     # Reconciliation is idempotent and the automation does not replay the run.

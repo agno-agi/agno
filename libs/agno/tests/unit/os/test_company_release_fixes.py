@@ -1489,7 +1489,7 @@ def test_a_person_retries_a_task_whose_last_attempt_failed_from_chat(system):
     task = system.proposal()
     system.accept(task["id"])
     failed = system.execute(task["id"], model=FailingModel())
-    assert failed["status"] == "in_progress" and failed["result"]["status"] == "ERROR", failed["result"]
+    assert failed["status"] == "in_review" and failed["result"]["status"] == "ERROR", failed["result"]
 
     reply = start_from_chat(system, task["id"])
     assert reply.startswith("Queued 'Notes'") and task_run_id(task["id"], 2) in reply, reply
