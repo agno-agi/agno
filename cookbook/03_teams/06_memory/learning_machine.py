@@ -5,11 +5,32 @@ Learning Machine
 Demonstrates team learning with LearningMachine and user profile extraction.
 """
 
+from dataclasses import dataclass, field
+from typing import Optional
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
+from agno.learn.schemas import UserProfile
 from agno.models.openai import OpenAIResponses
 from agno.team import Team
+
+# ---------------------------------------------------------------------------
+# Custom Profile Schema
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TeamUserProfile(UserProfile):
+    """Profile schema that captures the user's response style preferences."""
+
+    response_preferences: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": "The user's preferences for response style, tone, formatting, and verbosity"
+        },
+    )
+
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -40,7 +61,10 @@ learning_team = Team(
     members=[researcher, writer],
     db=team_db,
     learning=LearningMachine(
-        user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
+        user_profile=UserProfileConfig(
+            mode=LearningMode.AGENTIC,
+            schema=TeamUserProfile,
+        ),
     ),
     markdown=True,
 )
