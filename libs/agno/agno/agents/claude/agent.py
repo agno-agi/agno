@@ -349,18 +349,22 @@ class ClaudeAgent(BaseExternalAgent):
 
         Claude Code reports the limit with a rate limit event whose ``status`` is "rejected" and
         that names the limit and when it resets. A temporary 429, which a retry can pass, carries
-        the same ``error == "rate_limit"`` on its assistant message and a rejected event too, but
-        its event names no limit; it is left as it is. So is an agent on an API key: its rate
-        limits are the API's.
+        the same ``error == "rate_limit"`` on its assistant message and a rejected event too. Its
+        event names no limit, or names the one Claude Code worked out from the usage so far, with
+        the share of it used; it is left as it is. So is an agent on an API key: its rate limits
+        are the API's.
         """
         from agno.agents._limits import limit_message, note_possible_limit
 
         if not self._signed_in_with_oauth_token():
             return error
+        used = getattr(limit_reached, "utilization", None)
         reached = (
             limit_reached is not None
             # Only a subscription limit is named. Claude Code says of the unnamed one: "not your usage limit".
             and getattr(limit_reached, "rate_limit_type", None) is not None
+            # A limit named with part of it still unused is a warning about usage, not the limit reached.
+            and not (isinstance(used, (int, float)) and used < 1)
             # With extra usage allowed the run carried on, so a later failure is about something else.
             and getattr(limit_reached, "overage_status", None) not in ("allowed", "allowed_warning")
             and error.subtype not in _LIMIT_SUBTYPES

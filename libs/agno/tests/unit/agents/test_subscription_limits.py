@@ -118,12 +118,19 @@ def unnamed_429() -> RateLimitEvent:
     return rate_limit(kind=None, resets_at=None)
 
 
-async def test_a_temporary_429_on_a_claude_subscription_is_retried(scripted):  # noqa: F811
+def warned_429() -> RateLimitEvent:
+    """A temporary 429 whose response also carried the usage so far: Claude Code names the limit that usage
+    is a warning for, with the share of it used, and marks it rejected like any 429."""
+    return rate_limit(kind="seven_day", utilization=0.85)
+
+
+@pytest.mark.parametrize("event", [unnamed_429, warned_429], ids=["no limit named", "a limit named from usage"])
+async def test_a_temporary_429_on_a_claude_subscription_is_retried(scripted, event):  # noqa: F811
     turns, calls, _ = scripted
     turns.append(
         [
             SystemMessage("init", {"session_id": "sdk-1"}),
-            unnamed_429(),
+            event(),
             AssistantMessage(content=[], error="rate_limit"),
             ResultMessage("sdk-1", BUSY, is_error=True),
         ]
@@ -149,6 +156,9 @@ def test_claude_names_each_limit_the_rejected_event_names(notes):
     assert str(said).startswith(
         "claude-1 has reached its Claude subscription limit; it resets at 2026-11-28 14:00 UTC."
     )
+    # A named limit with all of it used is reached.
+    said = agent._subscription_limit(stopped, rate_limit(kind="seven_day", utilization=1.0).rate_limit_info)
+    assert said.subscription_limit and "(the weekly limit)" in str(said)
     assert notes == []
 
 
@@ -164,12 +174,12 @@ def test_a_claude_failure_that_is_not_the_limit_is_left_as_it_is(notes):
     assert agent._subscription_limit(turns, rate_limit().rate_limit_info) is turns
     assert notes == []
     # A temporary 429 says "rate_limit" and "rejected" as the subscription's limit does. It stays retryable,
-    # with or without its event, and its text is logged in case it was a limit after all.
-    for event in (unnamed_429().rate_limit_info, None):
+    # whatever its event names, and its text is logged in case it was a limit after all.
+    for event in (unnamed_429().rate_limit_info, warned_429().rate_limit_info, None):
         busy = ClaudeResultError(f"Claude SDK error: {BUSY}", subtype="success", assistant_error="rate_limit")
         assert agent._subscription_limit(busy, event) is busy
         assert agent._is_retryable_error(busy)
-    assert len(notes) == 2 and "claude-1" in notes[0] and "not your usage limit" in notes[0]
+    assert len(notes) == 3 and "claude-1" in notes[0] and "not your usage limit" in notes[0]
 
 
 def test_claude_on_an_api_key_is_untouched(notes):
