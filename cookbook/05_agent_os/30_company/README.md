@@ -622,8 +622,8 @@ Task starts only when the request names `executor_type` and `executor_id`: the r
 accepts it with the same checks as moving it to Ready, then starts the run. If
 the run does not start, the Task returns to Backlog with the refusal as the
 transition reason. Repeating the start joins its run while the Task is Ready or
-its run is unfinished; after the run ends, the repeat returns 409. Failed or
-cancelled runs can still be retried while the Task remains In progress. No
+its run is unfinished; after the run ends, the repeat returns 409. A failed or
+cancelled run moves the Task to In review, where starting it again runs its next attempt. No
 revision feedback field is accepted by this request. Each Task retains one session. GET on the same route returns ordinary session runs
 with `limit` and `page`. GET `/company/runs/{id}` reads an individual run and
 POST `/company/runs/{id}/cancel` uses the executor's existing cancellation route.
@@ -656,18 +656,23 @@ Task executors.
 Executor input contains only the Task brief and its evidence, and on a retry
 after a send-back the reviewer's reason and the earlier result. When something was
 attached to the Task it also holds that, under `context`; see "What a Task run is
-given". No executor receives a wiki page or a Goal page that was not attached. Queue retries and restart recovery use the
-existing queue policy. Results are saved on the Task; success moves it to
+given". No executor receives a wiki page or a Goal page that was not attached. Queue retries use the
+existing queue policy. A Task run whose worker was lost, by a crash or a shutdown, is executed once
+more from the Task's input, so a tool call the lost execution made is made again; a run lost a second
+time is failed. With `QueueConfig(max_attempts=...)` of 2 or more, that setting governs instead.
+Results are saved on the Task, and every ended run moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
-In progress with a visible `ERROR` or `CANCELLED` result. It can start another numbered attempt or return to
+In review with a visible `ERROR` or `CANCELLED` result. It can start another numbered attempt or return to
 Backlog for replanning. Executors cannot acquire scheduler mutation authority.
 
 GET `/company/attention?goal_id=...` returns `proposals`, `in_review` and
 `failed` counts using the Task list filters. Omitting Goal counts all work.
 Attention and run reads are company-wide with `tasks:read`; Task lists also
-accept `failed=true`. Failed work means an In progress Task whose latest result
-is `ERROR` or `CANCELLED`. Moving the Task to Cancelled, Backlog, Ready, In review or Done
+accept `failed=true`. Failed work means a Task In review whose latest result
+is `ERROR` or `CANCELLED`, so it is counted under both `in_review` and `failed`. A Task whose run
+failed before a release moved failed Tasks to review is still In progress, and counts as failed too.
+Moving the Task to Cancelled, Backlog, Ready or Done
 clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
@@ -1426,7 +1431,7 @@ Every field has a default:
 
 - **The bound.** The review queue is the brake. When five of the Routine's Tasks
   are open, the next proposal waits in Backlog until a person completes or
-  cancels one. A Task whose run failed stays In progress, so it still counts
+  cancels one. A Task whose run failed waits In review, so it still counts
   until a person retries it, returns it to Backlog or cancels it.
   `get_company_goal` and a Backlog or unfiltered listing from `list_company_tasks` return
   `auto_accept_at_limit` for a Routine that is waiting this way.
@@ -1621,7 +1626,7 @@ custom Company toolkits. Non-admin scoped tokens missing a subject are rejected
 under isolation on Company reads as well as writes; the existing administrator
 exemption is unchanged.
 
-Summary's unresolved failures match attention: only Tasks still `in_progress`
+Summary's unresolved failures match attention: only Tasks `in_review`, or still `in_progress`,
 with an ERROR or CANCELLED execution result appear under Failed Tasks. Moving
 work on or archiving it removes that unresolved failure without deleting its
 execution history.

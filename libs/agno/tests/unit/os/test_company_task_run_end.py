@@ -194,6 +194,22 @@ def test_a_task_run_lost_twice_is_failed_and_the_task_waits_in_review(system):
     saved = system.task(task["id"])
     assert saved["status"] == "in_review" and saved["result"]["status"] == "ERROR"
     assert "Worker lost" in saved["result"]["content"] and system.model.calls == 0
+    # The result tells a person what retries a Task. A requeue of this ticket would not run it again.
+    assert "Start the Task's next attempt" in saved["result"]["content"]
+    assert "requeue" not in saved["result"]["content"] and "QueueConfig" not in saved["result"]["content"]
+
+
+def test_a_lost_run_that_is_not_a_task_still_names_the_queue_setting_and_the_requeue(system):
+    plain = system.client.post(
+        "/agents/writer/runs", data={"message": "Hello", "background": "true", "stream": "false"}
+    )
+    assert plain.status_code == 202, plain.text
+    run_id = plain.json()["run_id"]
+    assert system.claim()["attempt"] == 1
+    system.lose_worker(run_id)
+    ticket = system.ticket(run_id)
+    assert ticket["status"] == "failed"
+    assert "QueueConfig.max_attempts" in ticket["error"] and "/requeue" in ticket["error"]
 
 
 def test_a_run_that_completed_before_its_ticket_was_settled_is_not_run_again(system, monkeypatch):

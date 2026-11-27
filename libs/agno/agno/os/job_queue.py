@@ -1290,10 +1290,18 @@ class QueueWorker:
         allowed = job.get("max_attempts", 1)
         error = (
             "Worker lost and attempt budget exhausted; run was not re-executed. "
-            f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent "
-            "(QueueConfig.max_attempts, 1 by default): raise it to allow more automatic "
-            "re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent"
         )
+        if (job.get("payload") or {}).get("company_task_id"):
+            # This is also the Task's result. A Task is retried by starting its next attempt: a requeue
+            # of this ticket is failed again from its stored run, and the queue's setting does not
+            # raise the executions a lost Task run gets.
+            error += ". Start the Task's next attempt to retry."
+        else:
+            error += (
+                " (QueueConfig.max_attempts, 1 by default): raise it to allow more automatic "
+                "re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            )
         # A run that failed on its own keeps its error on the Task result. Read before the
         # write below, which turns an unsettled row ERROR and keeps any partial draft in it.
         task_error = error
