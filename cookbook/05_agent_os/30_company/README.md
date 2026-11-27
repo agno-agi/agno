@@ -728,7 +728,10 @@ the second message. The list of Tasks is still kept in the chat's session state.
 match is on the model's own class, so an adapter that subclasses an OpenAI class for
 another endpoint (vLLM, LM Studio, llama.cpp, DeepSeek, Perplexity and the like) is not
 sent the block; neither are AWS Bedrock's Converse API, Mistral or Gemini's
-Interactions API.
+Interactions API. The OpenAI, Azure OpenAI and xAI classes send the two messages as
+they are, so one of those classes given another `base_url` (or, for OpenAI, run with
+`OPENAI_BASE_URL` set) is not sent the block either. The Claude and Gemini classes
+merge the two messages before sending and are sent the block on any endpoint.
 
 When the conversation starts or otherwise acts on a Task it already lists, that Task
 moves to the newest place, so it is among the 20 that are read.
@@ -822,6 +825,13 @@ a new run and leaves the paused one as it is.
 A Task sent back keeps its executor. The person's reason is saved on the
 transition and given to the executor's next attempt as `review_feedback` in its
 input. Starting stays a separate step, with `start_company_task`.
+
+To reply to a Task that has run, a person says so in chat and Super Agent calls
+`message_company_task`: it returns the Task to Ready with the person's words as
+the reason and starts the next attempt, in the Task's own session, in one call
+with no confirmation. It takes a Task in review and a Task whose last run failed
+or was cancelled, and it refuses a Task that is still running. Completing a Task
+stays with `review_company_task` and its confirmation.
 
 Review confirmations include `reviewed_run_id` from `get_company_task_status`.
 If another attempt runs while a confirmation is pending, that confirmation is

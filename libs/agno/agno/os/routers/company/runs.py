@@ -121,39 +121,22 @@ async def _run_route(
     checkout: Optional[Dict[str, Any]] = None,
 ) -> Response:
     """Enter the executor route with authorized actor grants and a separate session owner."""
-    import json
-
-    import httpx
-
-    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
-    from agno.run.authorization import AUTHORIZATION_HEADER
+    from agno.os.utils import enter_run_route
 
     caller = source if isinstance(source, _StartCaller) else _StartCaller.from_request(source)
-    authority = caller.authorization()
-    headers = {"Authorization": "Bearer " + caller.app.state.internal_service_token}
-    if authority is not None:
-        headers[AUTHORIZATION_HEADER] = json.dumps(authority.snapshot())
-    if owner is not None:
-        headers[SCHEDULE_OWNER_HEADER] = quote(owner, safe="")
-    if key:
-        headers["Idempotency-Key"] = key
-
-    async def executor_app(scope, receive, send):
-        if checkout is not None:
-            scope = {
-                **scope,
-                "state": {**scope.get("state", {}), "metadata": {"repository": {"commit": checkout["commit"]}}},
-            }
-        await caller.app(scope, receive, send)
-
     token = _task_transport.set((method, unquote(path), owner))
     try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=executor_app), base_url="http://company"
-        ) as client:
-            response = await client.request(
-                method, path, data=form, headers=headers, params={"session_id": session_id} if session_id else None
-            )
+        response = await enter_run_route(
+            caller.app,
+            caller.authorization(),
+            method,
+            path,
+            owner=owner,
+            form=form,
+            key=key,
+            session_id=session_id,
+            state={"metadata": {"repository": {"commit": checkout["commit"]}}} if checkout is not None else None,
+        )
         return Response(response.content, status_code=response.status_code, media_type="application/json")
     finally:
         _task_transport.reset(token)

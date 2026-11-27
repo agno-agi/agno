@@ -1495,6 +1495,58 @@ def test_a_subclass_of_a_listed_provider_is_not_listed():
     assert real_delivers(Scripted()) is False and real_delivers(None) is False
 
 
+SENT_AS_TWO = [
+    ("agno.models.openai.chat", "OpenAIChat"),
+    ("agno.models.openai.responses", "OpenAIResponses"),
+    ("agno.models.azure.openai_chat", "AzureOpenAI"),
+    ("agno.models.azure.openai_responses", "AzureOpenAIResponses"),
+    ("agno.models.xai.xai", "xAI"),
+    ("agno.models.xai.responses", "xAIResponses"),
+]
+MERGED_BY_FORMATTER = [
+    ("agno.models.anthropic.claude", "Claude"),
+    ("agno.models.aws.claude", "Claude"),
+    ("agno.models.azure.claude", "Claude"),
+    ("agno.models.vertexai.claude", "Claude"),
+    ("agno.models.google.gemini", "Gemini"),
+]
+
+
+@pytest.mark.parametrize("module, name", SENT_AS_TWO, ids=[f"{m.split('.')[2]}.{n}" for m, n in SENT_AS_TWO])
+def test_a_listed_class_pointed_at_another_endpoint_is_not_sent_the_block(module, name, monkeypatch):
+    from agno.os.manager.linked_work import _SENT_AS_TWO_MESSAGES
+
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    model = provider(module, name)
+    assert (module, name) in _SENT_AS_TWO_MESSAGES and len(_SENT_AS_TWO_MESSAGES) == len(SENT_AS_TWO)
+    # On the class's own endpoint the block is sent.
+    assert real_delivers(model) is True
+    # The class formats two user messages as two, so a server behind another URL may refuse the second.
+    model.base_url = "http://localhost:8000/v1"
+    assert real_delivers(model) is False
+    model.base_url = type(model).base_url
+    assert real_delivers(model) is True
+
+
+@pytest.mark.parametrize("module, name", SENT_AS_TWO[:2], ids=["chat", "responses"])
+def test_the_openai_base_url_variable_counts_as_another_endpoint(module, name, monkeypatch):
+    model = provider(module, name)
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
+    assert real_delivers(model) is False
+    monkeypatch.delenv("OPENAI_BASE_URL")
+    assert real_delivers(model) is True
+
+
+@pytest.mark.parametrize(
+    "module, name", MERGED_BY_FORMATTER, ids=[f"{m.split('.')[2]}.{n}" for m, n in MERGED_BY_FORMATTER]
+)
+def test_a_class_whose_formatter_merges_is_sent_the_block_on_any_endpoint(module, name, monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
+    model = provider(module, name)
+    model.base_url = "http://localhost:8000"
+    assert real_delivers(model) is True
+
+
 class Strict(Scripted):
     """A provider that is not listed and refuses two user messages in a row."""
 
@@ -1619,7 +1671,7 @@ def test_the_oldest_of_twenty_one_tasks_is_shown_after_the_chat_starts_it(mode):
     assert lines[-1] == "1 more exist: call list_company_tasks." and len(lines) == 21
 
 
-def test_an_os_without_company_is_unchanged(tmp_path):
+def test_an_os_without_company_reads_no_tasks(tmp_path):
     from agno.db.sqlite import SqliteDb
     from agno.os import AgentOS, OSManager
 
@@ -1627,12 +1679,13 @@ def test_an_os_without_company_is_unchanged(tmp_path):
     model = Scripted()
     agent_os = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     manager = agent_os.manager
-    assert manager._message_context is None
+    # The block is there for the runs a conversation starts in the background. It has no Tasks to read.
+    assert manager._message_context.db is None
     assert not manager.add_dependencies_to_context
     assert not any(isinstance(tool, CompanyTaskTools) for tool in manager.tools)
     # A list in the session state of such an OS is never read, and nothing is sent with the message.
     state = {LINKED_WORK_KEY: [{"kind": "task", "id": "task-1", "added_at": 1, "shown": "ready::"}]}
     run = asyncio.run(manager.arun("Hello", user_id="alice", session_id="chat", session_state=state))
     assert run.content and [entry[:2] for entry in model.requests[0] if entry[0] == "user"] == [("user", "Hello")]
-    assert LINKED_WORK_INSTRUCTIONS not in model.system and _HEADER not in model.system
+    assert LINKED_WORK_INSTRUCTIONS not in model.system
     db.close()
