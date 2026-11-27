@@ -12,7 +12,7 @@ from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.db.schemas.tasks import task_run_id
 from agno.os.manager import company_tasks
 from agno.os.manager.company_tasks import CompanyTaskTools
-from agno.os.manager.linked_work import _task_phase
+from agno.os.manager.linked_work import _LISTED, LINKED_WORK_KEY, _task_phase
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.os.routers.company.runs import _TaskStarter
 from agno.registry._reserved import MINI_AGENT_ID
@@ -36,7 +36,17 @@ from tests.unit.os.test_company_decision_tools import (
     system,  # noqa: F401
     without_executor,
 )
-from tests.unit.os.test_super_agent_linked_work import ADD, CHANGED, linked, only_task, say, work
+from tests.unit.os.test_super_agent_linked_work import (
+    ADD,
+    CHANGED,
+    blocks,
+    linked,
+    only_task,
+    say,
+    scripted_models_are_sent_the_block,  # noqa: F401
+    strict_turn,
+    work,
+)
 
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
@@ -776,6 +786,39 @@ def test_a_message_to_a_task_from_elsewhere_adds_it_to_the_conversation(chat):  
     assert [(item["id"], item["shown"]) for item in linked(chat)] == [(task["id"], _task_phase(saved))]
     _, sent = say(chat)
     assert CHANGED not in task_line(sent, task["id"])
+
+
+def test_a_messaged_task_moves_to_the_newest_place_of_a_long_list(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    # The Task is the oldest of more entries than one run reads.
+    older = {"kind": "task", "id": task["id"], "added_at": 1, "shown": "in_review::", "changed_in": None}
+    others = [
+        {"kind": "task", "id": f"other-{number}", "added_at": 100 + number, "shown": "ready::", "changed_in": None}
+        for number in range(_LISTED + 5)
+    ]
+    run_context = context()
+    run_context.session_state = {LINKED_WORK_KEY: [older, *others]}
+    assert message(agent_os, run_context, task["id"]).startswith("Sent the message")
+    entries = run_context.session_state[LINKED_WORK_KEY]
+    assert len(entries) == _LISTED + 6 and entries[-1]["id"] == task["id"]
+    assert entries[-1]["shown"] == _task_phase(db.get_task(task["id"])) and entries[-1]["changed_in"] is None
+    # A refused message moves nothing.
+    order = [entry["id"] for entry in entries]
+    assert message(agent_os, run_context, task["id"]).startswith("Not sent")
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == order
+
+
+def test_a_conversation_that_is_sent_no_block_messages_a_task_the_same_way(chat):  # noqa: F811
+    task = chat.proposal()
+    chat.accept(task["id"])
+    chat.execute(task["id"])
+    run, model = strict_turn(chat, [("message_company_task", {"task_id": task["id"], "message": MESSAGE})])
+    tool = next(item for item in run.tools if item.tool_name == "message_company_task")
+    assert tool.result.startswith("Sent the message"), tool.result
+    assert all(blocks(request) == [] for request in model.requests)
+    assert chat.db.get_task(task["id"])["transitions"][-1]["attempt"] == 2
 
 
 def test_a_refused_message_in_chat_changes_nothing_and_lists_nothing(chat):  # noqa: F811
