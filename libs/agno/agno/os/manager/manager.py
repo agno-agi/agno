@@ -83,6 +83,14 @@ class _ManagerInstructions:
         self.base = base
         self.runner = runner
         self.company: Any = _company_instructions(company_db, base) if company_db is not None else None
+        # Set when Company is on: whether this model is sent the linked-work block. When it is not,
+        # the sentences that describe the block are left out too.
+        self.linked_work: Any = None
+
+    def _said(self, parts: List[str]) -> List[str]:
+        if self.linked_work is None or self.linked_work():
+            return parts
+        return [part for part in parts if part is not LINKED_WORK_INSTRUCTIONS]
 
     def __copy__(self) -> "_ManagerInstructions":
         # Holds no run state. A run copy of the team keeps this object, so the copy is
@@ -143,8 +151,8 @@ class _ManagerInstructions:
             from agno.utils.log import log_warning
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
-            return base
-        return [*base, *self._catalog(rows, more)]
+            return self._said(base)
+        return self._said([*base, *self._catalog(rows, more)])
 
     async def __acall__(self, run_context: Any = None) -> List[str]:
         base = await self.company.__acall__(run_context) if self.company is not None else list(self.base)
@@ -166,8 +174,8 @@ class _ManagerInstructions:
             from agno.utils.log import log_warning
 
             log_warning(f"Component catalog unavailable for this run: {exc}")
-            return base
-        return [*base, *self._catalog(rows, more)]
+            return self._said(base)
+        return self._said([*base, *self._catalog(rows, more)])
 
 
 def _resolve_model(agent_os: "AgentOS", config: OSManager) -> Any:
@@ -395,11 +403,10 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
     company_db = agent_os._company_db
-    # Super Agent can edit the platform, so a Company Routine never runs on it.
-    pre_hooks: List[Any] = [_RoutineBoundary(routine=False)]
+    company_queue: Any = None
     if company_db is not None:
         from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
-        from agno.os.manager.linked_work import LinkedWork, alink_proposal, link_proposal
+        from agno.os.manager.linked_work import alink_proposal, link_proposal
         from agno.tools.company import CompanyTools
 
         # The file tree tools below read and write the wiki and every Goal's pages.
@@ -418,7 +425,12 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools.append(company_tools)
         tools.append(CompanyTaskTools(agent_os))
         instructions.extend([COMPANY_INSTRUCTIONS, LINKED_WORK_INSTRUCTIONS])
-        pre_hooks.append(LinkedWork(company_db, _user_isolation(agent_os)))
+
+        # The queue worker is installed when the Company app starts.
+        def company_queue():
+            app = getattr(agent_os, "_company_app", None)
+            return getattr(app.state, "queue_worker", None) if app is not None else None
+
     # notes/ is a folder of the Company file system. Without Company, the same store in the OS database holds it.
     notes_db = company_db if company_db is not None else (db if _holds_files(db) else None)
     if company_db is not None or notes_db is not None:
@@ -446,7 +458,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tools=tools,
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
-        pre_hooks=pre_hooks,
+        # Super Agent can edit the platform, so a Company Routine never runs on it.
+        pre_hooks=[_RoutineBoundary(routine=False)],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
@@ -454,6 +467,17 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
+    if company_db is not None:
+        from agno.os.manager import linked_work
+
+        # Decided from the model Super Agent holds when a run is built, so it follows a changed model.
+        def block_is_sent() -> bool:
+            return linked_work._delivers(team.model)
+
+        team._message_context = linked_work.LinkedWork(
+            company_db, _user_isolation(agent_os), company_queue, block_is_sent
+        )
+        team.instructions.linked_work = block_is_sent  # type: ignore[union-attr]
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})
     registry.exclude_components([team, builder])
     return _Manager(config=config, team=team, builder=builder)

@@ -1,29 +1,26 @@
 """The work a Super Agent conversation started, and the block that shows it to Super Agent.
 
-The list is kept in the conversation's own session state. Super Agent's tools add to it as they act,
-and a pre-hook reads it at the start of every run, so only a run of the conversation writes it. Each
-entry keeps the state last shown to the model: a different live state is marked as changed, in one run.
+Super Agent's tools add Tasks to the conversation's session state. When the Team builds a fresh
+run's messages, it reads the listed Tasks and marks changes since the last state shown to the model.
 
-The block is sent as a message of its own right before the person's message, and is not stored with
-the run. Instructions would not carry it: a model that continues from its previous response is sent
-the instructions of a conversation's first run only, and what follows the last reply is what every
-request carries.
+The Team sends the block as a user message of its own right before the person's input, and does
+not store it: the stored run holds the person's message as they sent it. It sits after the last
+assistant message, so a provider that continues from its previous response is still sent it. The
+model's provider has to accept two user messages in a row, or merge them in its own formatter.
 """
 
 import asyncio
 import json
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
-from agno.guardrails.base import BaseGuardrail
-from agno.models.message import Message
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
-# The session state key. Each entry is {"kind", "id", "added_at", "shown", "changed_in"}.
+# Each entry records the phase shown and which run received its change notice or tool receipt.
 LINKED_WORK_KEY = "linked_work"
 
 # Entries read and listed in one run, newest first.
@@ -32,17 +29,51 @@ _LISTED = 20
 _KEPT = 100
 _TITLE_LENGTH = 80
 
-# The name the block's message is attached to the run under.
-LINKED_WORK_MESSAGE = "linked_work"
-
 _HEADER = "Work started from this conversation"
 
+# The block is a second user message right before the person's. It is sent only to a model whose
+# provider is known to take two user messages in a row; for every other model nothing is sent, so
+# the request is what it would be without linked work. Matched by the model's own class, never a
+# base class: many adapters for other endpoints subclass the OpenAI classes, and some of those
+# endpoints refuse the second message.
+_DELIVERED_TO = frozenset(
+    {
+        # OpenAI accepts consecutive user messages.
+        ("agno.models.openai.chat", "OpenAIChat"),
+        ("agno.models.openai.responses", "OpenAIResponses"),
+        # Azure OpenAI serves the same API and models. Expected to behave the same; not run live.
+        ("agno.models.azure.openai_chat", "AzureOpenAI"),
+        ("agno.models.azure.openai_responses", "AzureOpenAIResponses"),
+        # The Claude formatter, shared by these four, merges consecutive user messages.
+        ("agno.models.anthropic.claude", "Claude"),
+        ("agno.models.aws.claude", "Claude"),
+        ("agno.models.azure.claude", "Claude"),
+        ("agno.models.vertexai.claude", "Claude"),
+        # Gemini's generateContent formatter merges them. The Interactions API class is not listed.
+        ("agno.models.google.gemini", "Gemini"),
+        # xAI documents that messages may come in any role order.
+        ("agno.models.xai.xai", "xAI"),
+        ("agno.models.xai.responses", "xAIResponses"),
+        # AwsBedrock (the Converse API) refuses two user messages in a row and its formatter does not
+        # merge them, so it is not listed.
+    }
+)
 
-def _task_phase(value: Dict[str, Any]) -> str:
-    """A Task's state as one comparable value: its stage, its latest run, and how that run ended."""
+
+def _delivers(model: Any) -> bool:
+    """Whether the block is sent to this model: its exact class is one of the listed providers."""
+    kind = type(model)
+    return (kind.__module__, kind.__qualname__) in _DELIVERED_TO
+
+
+def _result_status(value: Dict[str, Any]) -> Optional[str]:
     result = value.get("result") or {}
-    ended = result.get("status") if result.get("run_id") == value.get("job_id") else None
-    return f"{value.get('status')}:{value.get('job_id') or ''}:{ended or ''}"
+    return result.get("status") if result.get("run_id") == value.get("job_id") else None
+
+
+def _task_phase(value: Dict[str, Any], paused: bool = False) -> str:
+    run_status = "PAUSED" if paused else _result_status(value)
+    return f"{value.get('status')}:{value.get('job_id') or ''}:{run_status or ''}"
 
 
 def _task_words(value: Dict[str, Any]) -> str:
@@ -50,8 +81,7 @@ def _task_words(value: Dict[str, Any]) -> str:
     status = value.get("status")
     words = TASK_STATUS_MEANING.get(str(status), str(status))
     if status == "in_progress":
-        result = value.get("result") or {}
-        ended = result.get("status") if result.get("run_id") == value.get("job_id") else None
+        ended = _result_status(value)
         if ended == "ERROR":
             return "started, its run ended in error"
         if ended == "CANCELLED":
@@ -67,29 +97,30 @@ def _entries(run_context: Any) -> List[Dict[str, Any]]:
     return [entry for entry in listed if isinstance(entry, dict) and isinstance(entry.get("id"), str)]
 
 
-def link_task(run_context: Any, value: Any, add: bool = True) -> None:
+def link_task(run_context: Any, value: Any, add: bool = True, *, paused: bool = False) -> None:
     """Record a Task this conversation created or acted on, in the state its tool result reports.
 
-    A Task already listed keeps its place and takes the new state as shown, so what this conversation
-    did itself is not reported back to it as a change. With add false, a Task not listed stays out.
+    A Task already listed takes the new state as shown, so what this conversation did itself is not
+    reported back to it as a change, and moves to the newest place: only the newest entries are read,
+    and the Task just acted on must be among them. With add false, the call refreshes a listed Task
+    where it is and leaves an unlisted one out.
     """
     state = getattr(run_context, "session_state", None)
     if not isinstance(state, dict) or not isinstance(value, dict) or not isinstance(value.get("id"), str):
         return
     entries = _entries(run_context)
     entry = next((item for item in entries if item.get("kind") == "task" and item["id"] == value["id"]), None)
-    if entry is not None:
-        entry["shown"] = _task_phase(value)
+    if entry is None:
+        if not add:
+            return
+        entry = {"kind": "task", "id": value["id"], "added_at": int(time.time())}
+        entries.append(entry)
     elif add:
-        entries.append(
-            {
-                "kind": "task",
-                "id": value["id"],
-                "added_at": int(time.time()),
-                "shown": _task_phase(value),
-                "changed_in": None,
-            }
-        )
+        entries.remove(entry)
+        entries.append(entry)
+    entry["shown"] = _task_phase(value, paused)
+    entry["changed_in"] = None
+    entry["receipt_in"] = getattr(run_context, "run_id", None)
     state[LINKED_WORK_KEY] = entries[-_KEPT:]
 
 
@@ -115,7 +146,20 @@ async def alink_proposal(run_context: Any = None, fc: Any = None) -> None:
 
 
 def _since(value: Dict[str, Any]) -> str:
-    at = value.get("updated_at") or value.get("created_at")
+    """When the Task entered the state its line describes, or '' when no record says.
+
+    The time of the step into its stage: an edit, a move to another Project and an archive are not
+    steps. A proposal is dated by its creation. A run's failure or cancellation is not dated.
+    """
+    status = value.get("status")
+    if status == "in_progress" and _result_status(value) in ("ERROR", "CANCELLED"):
+        return ""
+    steps = [
+        step.get("created_at")
+        for step in value.get("transitions") or []
+        if isinstance(step, dict) and not step.get("action") and step.get("target") == status
+    ]
+    at = steps[-1] if steps else (value.get("created_at") if status == "backlog" else None)
     if not isinstance(at, (int, float)) or isinstance(at, bool):
         return ""
     moment = datetime.fromtimestamp(at, timezone.utc)
@@ -123,47 +167,150 @@ def _since(value: Dict[str, Any]) -> str:
     return " since " + moment.strftime("%H:%M UTC" if today else "%Y-%m-%d %H:%M UTC")
 
 
-def _line(value: Dict[str, Any], changed: bool) -> str:
-    # A title is text written by people and agents: one line, cut, and never able to close the quotes.
-    title = " ".join(str(value.get("title") or "").split()).replace('"', "'")
-    if len(title) > _TITLE_LENGTH:
-        title = title[: _TITLE_LENGTH - 3] + "..."
-    executor = f", {value['executor_id']}" if value.get("executor_id") else ""
-    line = f'- Task "{title}" (id {value["id"]}{executor}): {_task_words(value)}{_since(value)}.'
+def _one_line(text: Any) -> str:
+    """Text written by people and agents, made safe for a line of the block: one line, cut, and never
+    able to close the quotes around it."""
+    cleaned = " ".join(str(text or "").split()).replace('"', "'")
+    return cleaned if len(cleaned) <= _TITLE_LENGTH else cleaned[: _TITLE_LENGTH - 3] + "..."
+
+
+def _line(value: Dict[str, Any], changed: bool, paused: bool) -> str:
+    title = _one_line(value.get("title"))
+    # A proposal can name any text as its executor.
+    executor = f", {_one_line(value['executor_id'])}" if value.get("executor_id") else ""
+    # The Task's start transition predates its pause.
+    state = "waiting for a person to approve or answer" if paused else _task_words(value) + _since(value)
+    line = f'- Task "{title}" (id {value["id"]}{executor}): {state}.'
     return line + (" Changed since your last turn." if changed else "")
 
 
-class LinkedWork(BaseGuardrail):
-    """Before each run, read the listed work as the caller and attach the block to the run.
+def _active_jobs(values: List[Any]) -> List[str]:
+    return [
+        task["job_id"]
+        for task in values
+        if task and task.get("status") == "in_progress" and task.get("job_id") and not _result_status(task)
+    ]
 
-    A pre-hook of Super Agent. It refuses nothing: with no list, no permission or a failed read, the
-    run goes on without the block.
-    """
 
-    def __init__(self, db: Any, user_isolation: bool = False):
+def _ticket_paused(ticket: Optional[Dict[str, Any]]) -> Optional[bool]:
+    return None if ticket is None else ticket["status"] == "paused"
+
+
+async def _get_ticket_pauses(store: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    async def paused(job_id: str) -> Optional[bool]:
+        try:
+            return _ticket_paused(await store.get_job(job_id, strict=True))
+        except Exception as exc:
+            log_warning(f"Linked work could not read ticket {job_id}: {exc}")
+            return None
+
+    return dict(zip(job_ids, await asyncio.gather(*(paused(job_id) for job_id in job_ids))))
+
+
+async def _aread_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    if not job_ids:
+        return {}
+    from agno.os.job_queue import _SyncStoreAdapter
+
+    worker_loop = getattr(queue, "_loop", None)
+    if (
+        worker_loop is not None
+        and worker_loop is not asyncio.get_running_loop()
+        and worker_loop.is_running()
+        and not isinstance(queue.store, _SyncStoreAdapter)
+    ):
+        # Async stores can have locks or connections bound to the worker's loop.
+        future = asyncio.run_coroutine_threadsafe(_get_ticket_pauses(queue.store, job_ids), worker_loop)
+        return await asyncio.wrap_future(future)
+    return await _get_ticket_pauses(queue.store, job_ids)
+
+
+def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
+    if not job_ids:
+        return {}
+    from agno.os.job_queue import _SyncStoreAdapter
+
+    if isinstance(queue.store, _SyncStoreAdapter):
+        pauses: Dict[str, Optional[bool]] = {}
+        for job_id in job_ids:
+            try:
+                pauses[job_id] = _ticket_paused(queue.store._store.get_job(job_id, strict=True))
+            except Exception as exc:
+                log_warning(f"Linked work could not read ticket {job_id}: {exc}")
+                pauses[job_id] = None
+        return pauses
+    try:
+        caller_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        caller_loop = None
+    worker_loop = queue._loop
+    if worker_loop is not None and worker_loop.is_running() and worker_loop is not caller_loop:
+        return asyncio.run_coroutine_threadsafe(_get_ticket_pauses(queue.store, job_ids), worker_loop).result()
+    if caller_loop is None:
+        return asyncio.run(_get_ticket_pauses(queue.store, job_ids))
+    # A synchronous call on the async store's own event loop cannot wait for that store.
+    return dict.fromkeys(job_ids)
+
+
+class LinkedWork:
+    """Supply the current state of the conversation's Tasks under the caller's read permissions."""
+
+    def __init__(
+        self,
+        db: Any,
+        user_isolation: bool = False,
+        queue_worker: Optional[Callable[[], Any]] = None,
+        delivers: Optional[Callable[[], bool]] = None,
+    ):
         self.db = db
         self.user_isolation = user_isolation
+        self.queue_worker = queue_worker
+        # Whether Super Agent's model is sent the block. When it is not, nothing is read, shown or
+        # marked: the list is only kept by the tools, ready for a model that is sent it.
+        self.delivers = delivers
 
     def _head(self, run_context: Any) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
         """The newest entries to read, the owner the reads are limited to, and whether to read at all."""
-        from agno.tools.company import _scoped_user
-
         entries = _entries(run_context)
         if not entries:
             return [], None, False
+        from agno.tools.company import _scoped_user
+
         try:
             owner = _scoped_user(run_context, self.user_isolation)
         except PermissionError:
             return [], None, False
-        newest = sorted(entries, key=lambda entry: entry.get("added_at") or 0, reverse=True)
-        return [entry for entry in newest if entry.get("kind") == "task"][:_LISTED], owner, True
+        # Entries are kept in the order they were added, so the newest are the last.
+        newest = [entry for entry in reversed(entries) if entry.get("kind") == "task"]
+        return newest[:_LISTED], owner, True
 
-    def _block(self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]]) -> Optional[str]:
+    @staticmethod
+    def _replied(session: Any, run_id: Any, *, tool_receipt: bool = False) -> bool:
+        """Whether the run a change was shown in gave the person a reply written with the change in view.
+
+        A run that failed or was cancelled gave none. A run that paused for a confirmation is
+        continued from its stored messages, which hold no block, so its reply may not have it either:
+        the change is shown again. With no session to look in, the run is taken to have replied.
+        """
+        if session is None:
+            return True
+        for run in getattr(session, "runs", None) or []:
+            if getattr(run, "run_id", None) == run_id:
+                status = getattr(run, "status", None)
+                completed = str(getattr(status, "value", status)).upper() == "COMPLETED"
+                # The continuation includes its confirmed tool result in the messages used to reply.
+                return completed and (tool_receipt or not getattr(run, "requirements", None))
+        return False
+
+    def _block(
+        self, run_context: Any, read: List[Tuple[Dict[str, Any], Any]], session: Any, pauses: Dict[str, Optional[bool]]
+    ) -> Optional[str]:
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
 
         A change is marked with the run it was first shown in. A retry builds the block again under
-        the same run id and gets the same mark. A continued run keeps its run id and runs no pre-hook,
-        so the mark is given in one run however often that run pauses or retries.
+        the same run id and gets the same mark. A continued run uses the stored messages.
+        If a run failed, was cancelled or paused for a confirmation, the person may still need to
+        hear the change, so its marks pass to the next run.
         """
         run_id = getattr(run_context, "run_id", None)
         entries = _entries(run_context)
@@ -173,16 +320,38 @@ class LinkedWork(BaseGuardrail):
                 # Deleted, or not readable by this caller.
                 entries.remove(entry)
                 continue
-            phase = _task_phase(value)
-            if entry.get("shown") != phase:
+            paused = pauses.get(value.get("job_id"), False)
+            if (
+                value.get("job_id") not in pauses
+                and not _result_status(value)
+                and entry.get("shown") == _task_phase(value, paused=True)
+            ):
+                # The worker is unavailable. Only an observed ticket or a new Task phase can end its pause.
+                continue
+            if paused is None:
+                # An unavailable ticket cannot establish a change. Keep the entry for the next turn.
+                continue
+            phase = _task_phase(value, paused)
+            receipt_in = entry.get("receipt_in")
+            shown_in = receipt_in or entry.get("changed_in")
+            unheard = (
+                shown_in is not None
+                and shown_in != run_id
+                and not self._replied(session, shown_in, tool_receipt=receipt_in is not None)
+            )
+            if entry.get("shown") != phase or unheard:
                 entry["shown"] = phase
                 entry["changed_in"] = run_id
+                entry.pop("receipt_in", None)
+            elif receipt_in is not None and receipt_in != run_id:
+                entry.pop("receipt_in")
             changed = run_id is not None and entry.get("changed_in") == run_id
             if value.get("status") in ("done", "cancelled") and not changed:
-                # Its end was shown in an earlier run, or by the tool that ended it here.
-                entries.remove(entry)
+                # A receipt in this same run may still be followed by a failed reply.
+                if receipt_in is None or receipt_in != run_id:
+                    entries.remove(entry)
                 continue
-            lines.append(_line(value, changed))
+            lines.append(_line(value, changed, paused))
         run_context.session_state[LINKED_WORK_KEY] = entries
         if not lines:
             return None
@@ -196,56 +365,46 @@ class LinkedWork(BaseGuardrail):
             f"Read at {read_at}: newer than anything said earlier.\n" + "\n".join(lines)
         )
 
-    @staticmethod
-    def _attach(run_context: Any, block: Optional[str]) -> None:
-        """Attach the block as this run's message, or take away the one an earlier attempt attached."""
-        attached = dict(getattr(run_context, "_hook_messages", None) or {})
-        attached.pop(LINKED_WORK_MESSAGE, None)
-        if block is not None:
-            # Sent to the model and not stored: the person's own message stays as they wrote it, and
-            # no earlier block is replayed with the history.
-            attached[LINKED_WORK_MESSAGE] = Message(role="user", content=block, add_to_agent_memory=False)
-        run_context._hook_messages = attached or None
-
-    def check(self, run_input: Any = None, run_context: Any = None) -> None:
-        self._attach(run_context, self.read(run_context))
-
-    async def async_check(self, run_input: Any = None, run_context: Any = None) -> None:
-        self._attach(run_context, await self.aread(run_context))
-
-    def read(self, run_context: Any) -> Optional[str]:
-        authority = _caller_authorization(run_context)
+    def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         # A synchronous run cannot read an asynchronous database, and the block is optional.
-        if isinstance(self.db, AsyncBaseDb):
+        if isinstance(self.db, AsyncBaseDb) or (self.delivers is not None and not self.delivers()):
             return None
         try:
-            if authority is not None:
-                authority.require("tasks", "read")
             head, owner, found = self._head(run_context)
             if not found:
                 return None
-            return self._block(run_context, [(entry, self.db.get_task(entry["id"], user_id=owner)) for entry in head])
+            authority = _caller_authorization(run_context)
+            if authority is not None:
+                authority.require("tasks", "read")
+            values = [self.db.get_task(entry["id"], user_id=owner) for entry in head]
+            queue = self.queue_worker() if self.queue_worker else None
+            pauses = _read_pauses(queue, _active_jobs(values)) if queue is not None else {}
+            return self._block(run_context, list(zip(head, values)), session, pauses)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:
             log_warning(f"Linked work unavailable for this run: {exc}")
             return None
 
-    async def aread(self, run_context: Any) -> Optional[str]:
-        authority = _caller_authorization(run_context)
+    async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
+        if self.delivers is not None and not self.delivers():
+            return None
         try:
-            if authority is not None:
-                await authority.arequire("tasks", "read")
             head, owner, found = self._head(run_context)
             if not found:
                 return None
+            authority = _caller_authorization(run_context)
+            if authority is not None:
+                await authority.arequire("tasks", "read")
             if isinstance(self.db, AsyncBaseDb):
                 values = list(await asyncio.gather(*(self.db.get_task(entry["id"], user_id=owner) for entry in head)))
             else:
                 values = await asyncio.to_thread(
                     lambda: [self.db.get_task(entry["id"], user_id=owner) for entry in head]
                 )
-            return self._block(run_context, list(zip(head, values)))
+            queue = self.queue_worker() if self.queue_worker else None
+            pauses = await _aread_pauses(queue, _active_jobs(values)) if queue is not None else {}
+            return self._block(run_context, list(zip(head, values)), session, pauses)
         except (PermissionError, NotImplementedError):
             return None
         except Exception as exc:

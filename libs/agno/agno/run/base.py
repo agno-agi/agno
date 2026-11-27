@@ -43,10 +43,6 @@ class RunContext:
     knowledge: Optional[Any] = None
     members: Optional[List[Any]] = None
 
-    # Internal: messages the framework's own pre-hooks attach to this run, by the name of what attached
-    # them. A Team sends them right before the run's input. Agents and workflows do not read this.
-    _hook_messages: Optional[Dict[str, Message]] = field(default=None, repr=False, compare=False)
-
     # Per-run additive tools from the client (e.g., AG-UI frontend tools)
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
