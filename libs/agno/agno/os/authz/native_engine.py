@@ -224,6 +224,8 @@ class NativePolicyEngine(PolicyEngine):
                 principals.add(role)
                 stack.extend(self._db.get_authz_direct_roles(role))
             if not principals:
+                from agno.os.middleware.jwt import is_reserved_principal
+
                 # No role of its own: a subject with no assigned role is treated as holding the
                 # default (``is_default``) role -- BUT only when it is a known directory user. The
                 # default is a floor for people the operator ONBOARDED, never for an arbitrary
@@ -234,7 +236,8 @@ class NativePolicyEngine(PolicyEngine):
                 # time only: nothing is written, so ``roles_of`` stays truthful. The directory must
                 # share the role store's db for this check to see it; on a split db it fails closed.
                 default = self._default_role()
-                if default is not None and self._subject_in_directory(subject):
+                # A reserved server principal (sa:, __oauth__:, the scheduler) cannot hold a role, the default included
+                if default is not None and not is_reserved_principal(subject) and self._subject_in_directory(subject):
                     principals.add(default)
             return principals
 
@@ -596,8 +599,15 @@ class NativePolicyEngine(PolicyEngine):
                 principals.add(role)
                 stack.extend(await self._acall("get_authz_direct_roles", role))
             if not principals:
+                from agno.os.middleware.jwt import is_reserved_principal
+
                 default = await self._adefault_role()
-                if default is not None and await self._asubject_in_directory(subject):
+                # A reserved server principal (sa:, __oauth__:, the scheduler) cannot hold a role, the default included
+                if (
+                    default is not None
+                    and not is_reserved_principal(subject)
+                    and await self._asubject_in_directory(subject)
+                ):
                     principals.add(default)
             return principals
 
