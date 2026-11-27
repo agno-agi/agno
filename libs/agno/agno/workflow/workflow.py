@@ -6673,6 +6673,12 @@ class Workflow:
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
 
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
+
         # Update step requirements if provided
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
@@ -8718,6 +8724,12 @@ class Workflow:
         # Validate the run is paused
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
+
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
 
         # Update step requirements if provided
         if step_requirements is not None:

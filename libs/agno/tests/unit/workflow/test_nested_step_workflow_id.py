@@ -22,6 +22,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.team import Team
 from agno.team.mode import TeamMode
+from agno.tools import tool
 from agno.workflow import Condition, Loop, Parallel, Router, Step, Steps, Workflow
 from agno.workflow import step as step_module
 from agno.workflow.step import running_as_workflow_step
@@ -313,12 +314,13 @@ def _stored(db: InMemoryDb, session_id: str) -> Tuple[Optional[str], List[Option
 
 
 def _step_executor(kind: str, db: InMemoryDb, **kwargs) -> Dict[str, Any]:
+    kwargs.setdefault("model", _Model())
     if kind == "agent":
-        return {"agent": Agent(id="agent", name="agent", db=db, model=_Model(), **kwargs)}
+        return {"agent": Agent(id="agent", name="agent", db=db, **kwargs)}
     member = Agent(id="member", name="member", db=db, model=_Model())
     # A team in tasks mode streams through a second generator, which ends after the step does.
     mode = TeamMode.tasks if kind == "tasks team" else TeamMode.coordinate
-    return {"team": Team(id="team", name="team", db=db, model=_Model(), members=[member], mode=mode, **kwargs)}
+    return {"team": Team(id="team", name="team", db=db, members=[member], mode=mode, **kwargs)}
 
 
 def _one_step_workflow(kind: str, db: InMemoryDb) -> Workflow:
@@ -434,3 +436,52 @@ def test_a_step_stopped_after_a_pause_on_a_new_workflow_saves_no_run_of_its_own(
     asyncio.run(pause_continue_and_stop())
 
     assert _stored(db, "workflow-session") == ("workflow", ["workflow"])
+
+
+@tool(requires_confirmation=True)
+def send_report(title: str) -> str:
+    """Send the report."""
+    return f"sent {title}"
+
+
+class _AsksForApproval(_Model):
+    """Calls the tool that needs an approval, then answers once the tool has run."""
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        messages = kwargs.get("messages") or (args[0] if args else [])
+        if any(message.role == "tool" for message in messages):
+            return self._response
+        call = {"id": "call_1", "type": "function", "function": {"name": "send_report", "arguments": '{"title": "q3"}'}}
+        return ModelResponse(role="assistant", response_usage=MessageMetrics(), tool_calls=[call])
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self.invoke(*args, **kwargs)
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("mode", ["run", "arun"])
+def test_a_workflow_with_only_a_name_continued_on_a_new_instance_keeps_its_id(kind, mode):
+    """The id comes from the name on the first run. A new instance has none until it continues the run."""
+    db = InMemoryDb()
+
+    def build() -> Workflow:
+        executor = _step_executor(kind, db, model=_AsksForApproval(), tools=[send_report])
+        return Workflow(name="Approval workflow", db=db, steps=[Step(name="step", **executor)])
+
+    paused = _run(build(), mode, input="hello", session_id="workflow-session")
+    assert paused.is_paused
+    for step_requirement in paused.active_step_requirements:
+        for requirement in step_requirement.executor_requirements or []:
+            requirement["confirmation"] = True
+            requirement["tool_execution"]["confirmed"] = True
+
+    new_instance = build()
+    if mode == "run":
+        continued = new_instance.continue_run(paused)
+    else:
+        continued = asyncio.run(new_instance.acontinue_run(paused))
+
+    assert continued.status == RunStatus.completed
+    assert new_instance.id == paused.workflow_id == "approval-workflow"
+    # The agent's or team's run is stored with the workflow's run, not a second time on its own.
+    assert _stored(db, "workflow-session") == ("workflow", ["approval-workflow"])
