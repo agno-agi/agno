@@ -18,10 +18,9 @@ from agno.agents.claude import agent as claude_module
 from agno.agents.claude.agent import ClaudeResultError
 from agno.agents.codex import CodexAgent, _plan
 from agno.agents.codex import agent as codex_module
-from agno.exceptions import EngineerBusyError
+from agno.exceptions import AgentBusyError
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
 from agno.sandbox import Sandbox, _harness
 from agno.sandbox.base import ExecResult, SandboxHandle
 
@@ -130,7 +129,6 @@ def api_keys_on_the_host(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "gateway-token")
     monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.setattr(_plan, "_WAIT_SECONDS", 0.01)
     _plan._busy.clear()
 
 
@@ -150,7 +148,7 @@ async def test_claude_oauth_token_is_the_only_credential_in_the_sandbox(coordina
     assert "oauth-token-1" not in repr(agent)
 
 
-async def test_each_claude_engineer_holds_its_own_plan(coordinator):
+async def test_each_claude_agent_holds_its_own_plan(coordinator):
     sandbox = FakeSandbox()
     for name, token in (("claude-1", "token-one"), ("claude-2", "token-two")):
         await ClaudeAgent(id=name, oauth_token=token, sandbox=sandbox).arun("hello", session_id=name)
@@ -373,7 +371,7 @@ async def test_codex_on_the_host_signs_in_with_the_plan_login_and_never_the_api_
     db = FakeDb()
     agent = CodexAgent(id="codex-1", plan_login=login(), db=db, env={"CODEX_HOME": str(tmp_path), "KEEP": "1"})
     auth_json = tmp_path / "auth.json"
-    async with agent._new_client("r1"):
+    async with agent._new_client():
         assert json.loads(auth_json.read_text()) == login()
         assert auth_json.stat().st_mode & 0o777 == 0o600
         auth_json.write_text(json.dumps(login("refresh-rotated", datetime(2026, 11, 9, tzinfo=timezone.utc))))
@@ -397,12 +395,12 @@ async def test_codex_on_the_host_gets_a_home_of_its_own_by_default(codex_sdk, tm
 # ---------------------------------------------------------------------------
 
 
-async def test_a_second_request_to_a_codex_engineer_on_a_plan_is_told_it_is_busy(coordinator):
+async def test_a_second_request_to_a_codex_agent_on_a_plan_is_told_it_is_busy(coordinator):
     coordinator.hold = 0.05
     agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
     first = asyncio.create_task(agent.arun("one", session_id="s1", run_id="r1"))
     await asyncio.sleep(0.01)
-    with pytest.raises(EngineerBusyError, match="^codex-1 is busy") as error:
+    with pytest.raises(AgentBusyError, match="^codex-1 is busy") as error:
         await agent.arun("two", session_id="s2", run_id="r2")
     assert error.value.status_code == 409
     await first
@@ -411,46 +409,82 @@ async def test_a_second_request_to_a_codex_engineer_on_a_plan_is_told_it_is_busy
     await agent.arun("three", session_id="s3", run_id="r3")
 
 
-async def test_a_queued_request_to_a_codex_engineer_on_a_plan_waits_its_turn(coordinator):
+async def test_a_busy_codex_agent_refuses_a_queued_run_too_so_the_queue_keeps_it(coordinator):
+    from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
+
     coordinator.hold = 0.05
     agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
-    # A second instance of the same engineer, as a stored or rebuilt agent would be.
+    # A second instance of the same agent, as a stored or rebuilt agent would be.
     twin = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
-    for run_id in ("r1", "r2"):
-        mark_worker_managed(run_id, "worker", 1)
-    try:
-        await asyncio.gather(
-            agent.arun("one", session_id="s1", run_id="r1"), twin.arun("two", session_id="s2", run_id="r2")
-        )
-    finally:
-        for run_id in ("r1", "r2"):
-            unmark_worker_managed(run_id)
-    assert coordinator.most_at_once == 1
-    assert len(coordinator.calls) == 2
-    assert coordinator.order[1].startswith("end ") and coordinator.order[2].startswith("start ")
-
-
-async def test_a_waiting_request_stops_waiting_when_it_is_cancelled(coordinator, monkeypatch):
-    from agno.exceptions import RunCancelledException
-    from agno.run import cancel
-
-    coordinator.hold = 0.05
-    agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
     mark_worker_managed("r2", "worker", 1)
-
-    async def cancelled(run_id):
-        return run_id == "r2"
-
-    monkeypatch.setattr(cancel, "ais_cancelled", cancelled)
     try:
         first = asyncio.create_task(agent.arun("one", session_id="s1", run_id="r1"))
         await asyncio.sleep(0.01)
-        with pytest.raises(RunCancelledException):
-            await agent.arun("two", session_id="s2", run_id="r2")
+        # The worker hands the ticket back on this error; nothing waits inside the claimed run.
+        with pytest.raises(AgentBusyError):
+            await twin.arun("two", session_id="s2", run_id="r2")
         await first
     finally:
         unmark_worker_managed("r2")
     assert [execution["run_id"] for _, execution in coordinator.calls] == ["r1"]
+
+
+async def test_queued_runs_for_one_codex_agent_on_a_plan_run_one_after_another(coordinator, monkeypatch):
+    from agno.db.schemas.jobs import QueuedJob
+    from agno.job_queue.config import QueueConfig
+    from agno.job_queue.store import InMemoryQueueStore
+    from agno.os.job_queue import QueueWorker
+
+    monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 0)
+    coordinator.hold = 0.05
+    agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
+    store = InMemoryQueueStore()
+    worker = QueueWorker(
+        store=store,
+        resolve_component=lambda kind, component_id: agent,
+        config=QueueConfig(durable=True, poll_interval=0.02, timeout_seconds=None),
+        worker_id="worker",
+    )
+    for run_id in ("r1", "r2", "r3"):
+        job = QueuedJob(
+            id=run_id,
+            component_type="agent",
+            component_id="codex-1",
+            session_id="s-" + run_id,
+            payload={"input": "work", "kwargs": {}},
+        )
+        await store.enqueue_job(job.to_dict())
+
+    async def all_completed() -> None:
+        while {(await store.get_job(run_id))["status"] for run_id in ("r1", "r2", "r3")} != {"completed"}:
+            await asyncio.sleep(0.01)
+
+    await worker.start()
+    try:
+        await asyncio.wait_for(all_completed(), timeout=5)
+    finally:
+        await worker.stop()
+    assert coordinator.most_at_once == 1 and len(coordinator.calls) == 3
+    # Waiting for the agent spent none of the one execution each ticket allows.
+    assert [(await store.get_job(run_id))["attempt"] for run_id in ("r1", "r2", "r3")] == [1, 1, 1]
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["arun", "stream"])
+async def test_a_second_request_to_a_codex_agent_on_the_host_is_told_it_is_busy(codex_sdk, tmp_path, stream):
+    from agno.db.in_memory import InMemoryDb
+
+    agent = CodexAgent(id="codex-1", plan_login=login(), db=InMemoryDb(), env={"CODEX_HOME": str(tmp_path)}, retries=2)
+    async with agent._aplan_slot():
+        with pytest.raises(AgentBusyError, match="^codex-1 is busy") as error:
+            if stream:
+                [event async for event in agent.arun("two", session_id="s2", run_id="r2", stream=True)]
+            else:
+                await agent.arun("two", session_id="s2", run_id="r2")
+    assert error.value.status_code == 409
+    # Refused before it started: no Codex process, and no failed run left in the session.
+    assert codex_sdk == []
+    session = await agent.aget_session("s2")
+    assert session is None or not session.runs
 
 
 @pytest.mark.parametrize(
@@ -462,7 +496,7 @@ async def test_a_waiting_request_stops_waiting_when_it_is_cancelled(coordinator,
     ],
     ids=["claude on a plan", "claude on an API key", "codex on an API key"],
 )
-async def test_other_engineers_are_not_limited_to_one_at_a_time(coordinator, build):
+async def test_other_agents_are_not_limited_to_one_at_a_time(coordinator, build):
     coordinator.hold = 0.03
     agent = build(FakeSandbox())
     await asyncio.gather(*(agent.arun("work", session_id=f"s{n}", run_id=f"r{n}") for n in range(3)))
@@ -474,7 +508,7 @@ async def test_other_engineers_are_not_limited_to_one_at_a_time(coordinator, bui
 # ---------------------------------------------------------------------------
 
 
-async def test_engineers_with_only_api_keys_are_given_them_as_before(coordinator, monkeypatch, codex_sdk):
+async def test_agents_with_only_api_keys_are_given_them_as_before(coordinator, monkeypatch, codex_sdk):
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "host-token")
     await ClaudeAgent(id="claude-key", sandbox=FakeSandbox()).arun("hello", session_id="s1")
     await CodexAgent(id="codex-key", sandbox=FakeSandbox()).arun("hello", session_id="s2")

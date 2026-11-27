@@ -26,12 +26,11 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional, Set
 
 from agno.db.base import AsyncBaseDb
-from agno.exceptions import EngineerBusyError, RunCancelledException
+from agno.exceptions import AgentBusyError
 from agno.utils.log import log_error, log_warning
 
 # provider column of the auth tokens table; the service column is the agent id.
 _PROVIDER = "codex"
-_WAIT_SECONDS = 2.0
 _EXEC_SECONDS = 30.0
 _MAX_LOGIN_BYTES = 256 * 1024
 
@@ -363,29 +362,19 @@ async def _finish(task: "asyncio.Future[Any]") -> Any:
 
 
 @asynccontextmanager
-async def one_at_a_time(agent: Any, run_id: Optional[str] = None) -> AsyncIterator[None]:
-    """Hold the agent's one slot for a run.
+async def one_at_a_time(agent: Any) -> AsyncIterator[None]:
+    """Hold the agent's one slot for a run, or raise AgentBusyError when another run has it.
 
-    A run the durable queue owns waits for the slot, because the queue is where work waits.
-    Any other caller is told the agent is busy.
+    Nothing waits here. A run the durable queue owns goes back to the queue on that error, because
+    the queue is where work waits, and is started again when the agent is free.
     """
-    from agno.run.cancel import ais_cancelled
-    from agno.run.concurrency import get_worker_ownership
-
-    waits = run_id is not None and get_worker_ownership(run_id) is not None
-    while True:
-        release = await _finish(asyncio.ensure_future(_take(agent)))
-        if release is not None:
-            break
-        if not waits:
-            raise EngineerBusyError(
-                f"{agent.get_id()} is busy. It runs on a ChatGPT plan, one piece of work at a time. "
-                "Try again when its current run finishes.",
-                agent_id=agent.get_id(),
-            )
-        if run_id is not None and await ais_cancelled(run_id):
-            raise RunCancelledException(run_id)
-        await asyncio.sleep(_WAIT_SECONDS)
+    release = await _finish(asyncio.ensure_future(_take(agent)))
+    if release is None:
+        raise AgentBusyError(
+            f"{agent.get_id()} is busy. It runs on a ChatGPT plan, one piece of work at a time. "
+            "Try again when its current run finishes.",
+            agent_id=agent.get_id(),
+        )
     try:
         yield
     finally:

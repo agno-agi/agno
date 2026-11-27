@@ -141,6 +141,59 @@ class TestExecution:
             await worker.stop()
 
     @pytest.mark.asyncio
+    async def test_a_run_whose_agent_is_busy_goes_back_to_the_queue_and_runs_later(self, monkeypatch):
+        from agno.exceptions import AgentBusyError
+
+        monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 0)
+        store = InMemoryQueueStore()
+
+        class BusyTwice(FakeAgent):
+            async def arun(self, **kwargs: Any) -> SimpleNamespace:
+                if len(self.calls) < 2:
+                    self.calls.append(kwargs)
+                    raise AgentBusyError("agent-1 is busy", agent_id="agent-1")
+                return await super().arun(**kwargs)
+
+        agent = BusyTwice()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job())  # max_attempts=1
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "completed")
+            # Waiting for the agent spent none of the one execution the ticket allows.
+            assert job["attempt"] == 1 and job["max_attempts"] == 1
+            assert len(agent.calls) == 3
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_a_run_waiting_for_a_busy_agent_survives_a_worker_stop(self, monkeypatch):
+        from agno.exceptions import AgentBusyError
+
+        monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 0)
+        store = InMemoryQueueStore()
+        agent = FakeAgent(raises=AgentBusyError("agent-1 is busy", agent_id="agent-1"))
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job())  # max_attempts=1
+        await worker.start()
+        try:
+            while len(agent.calls) < 2:
+                await asyncio.sleep(0.01)
+        finally:
+            await worker.stop()
+        # Still waiting in the queue, not failed as a run the stop interrupted.
+        job = await store.get_job("r1")
+        assert (job["status"], job["attempt"], job["error"]) == ("queued", 0, None)
+        # The agent is free when a worker starts again, and the run gets its one execution.
+        agent.raises = None
+        again = make_worker(store, agent, make_config())
+        await again.start()
+        try:
+            assert (await wait_for_status(store, "r1", "completed"))["attempt"] == 1
+        finally:
+            await again.stop()
+
+    @pytest.mark.asyncio
     async def test_cancelled_result_marks_cancelled(self):
         store = InMemoryQueueStore()
         agent = FakeAgent(status=RunStatus.cancelled)

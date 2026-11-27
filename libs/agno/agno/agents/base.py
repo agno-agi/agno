@@ -1,6 +1,6 @@
 import asyncio
 import json
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
@@ -339,8 +339,11 @@ class BaseExternalAgent:
         return None
 
     @asynccontextmanager
-    async def _aplan_slot(self, run_id: Optional[str] = None) -> AsyncIterator[None]:
-        """Held for the length of one run by an agent that runs one piece of work at a time."""
+    async def _aplan_slot(self) -> AsyncIterator[None]:
+        """Held for the length of one run by an agent that runs one piece of work at a time.
+
+        Raises AgentBusyError when another run holds it.
+        """
         yield
 
     @property
@@ -2267,8 +2270,12 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
+        slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:
+            if parent_id is None:
+                # Before anything starts: the caller of a busy agent is refused, and no run is stored.
+                await slot.enter_async_context(self._aplan_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2279,6 +2286,9 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
+                    if parent_id is not None:
+                        # A team or workflow reads a busy member's refusal as that member's failed run.
+                        await slot.enter_async_context(self._aplan_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2356,6 +2366,7 @@ class BaseExternalAgent:
             return run_output
         finally:
             self._release_session(state_session_id, run_id)
+            await slot.aclose()
 
     async def _native_non_stream_events(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         """Keep the adapter's nonstreaming result contract while multiplexing permission events."""
@@ -2436,8 +2447,12 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
+        slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:
+            if parent_id is None:
+                # Before the first event, as in the non-streaming path.
+                await slot.enter_async_context(self._aplan_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2474,6 +2489,8 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
+                    if parent_id is not None:
+                        await slot.enter_async_context(self._aplan_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2641,6 +2658,7 @@ class BaseExternalAgent:
                 yield run
         finally:
             self._release_session(state_session_id, run_id)
+            await slot.aclose()
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""

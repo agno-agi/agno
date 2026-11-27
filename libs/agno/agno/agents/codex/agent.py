@@ -206,7 +206,7 @@ class CodexAgent(BaseExternalAgent):
             that `codex login` writes, as text or a mapping. Give each agent a login of its own and
             use that login nowhere else, because Codex replaces its tokens as it works. The agent
             then never uses OPENAI_API_KEY and runs one piece of work at a time: a run the durable
-            queue owns waits its turn, any other is refused with EngineerBusyError. The refreshed
+            queue owns waits its turn, any other is refused with AgentBusyError. The refreshed
             login is saved, encrypted, in the agent's database after every run.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
@@ -392,14 +392,13 @@ class CodexAgent(BaseExternalAgent):
         return SandboxLogin(self)
 
     @asynccontextmanager
-    async def _aplan_slot(self, run_id: Optional[str] = None) -> AsyncIterator[None]:
+    async def _aplan_slot(self) -> AsyncIterator[None]:
         if self.plan_login is None:
             yield
             return
         from agno.agents.codex._plan import one_at_a_time
 
-        self._check_plan()
-        async with one_at_a_time(self, run_id):
+        async with one_at_a_time(self):
             yield
 
     def _refuse_host_operation(self, operation: str) -> None:
@@ -457,7 +456,7 @@ class CodexAgent(BaseExternalAgent):
         if not thread_id:
             return False
         self._check_no_run_in_flight(session, session_id)
-        async with self._new_client() as codex:
+        async with self._aplan_slot(), self._new_client() as codex:
             # Resume through the high-level client: it translates the adapter's options
             # (sandbox names, approval mode, instructions) into the wire parameters that the
             # low-level thread_resume would otherwise send verbatim.
@@ -547,15 +546,19 @@ class CodexAgent(BaseExternalAgent):
         return config
 
     @asynccontextmanager
-    async def _new_client(self, run_id: Optional[str] = None) -> AsyncIterator[Any]:
+    async def _new_client(self) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
-        client bound to the current event loop."""
+        client bound to the current event loop.
+
+        An agent on a ChatGPT plan must hold its slot (_aplan_slot) around this: a run takes it
+        before it starts, so only one client uses the login at a time."""
         if self.plan_login is None:
             async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
                 yield codex
             return
         from agno.agents.codex._plan import home, host_login
 
+        self._check_plan()
         sdk = _sdk()
         config = self._codex_config(sdk)
         codex_home = home(self, config.env)
@@ -567,10 +570,9 @@ class CodexAgent(BaseExternalAgent):
             "CODEX_HOME": str(codex_home),
         }
         config.config_overrides = (*config.config_overrides, 'cli_auth_credentials_store="file"')
-        async with self._aplan_slot(run_id):
-            async with host_login(self, codex_home):
-                async with self._open_client(sdk, config, api_key=None) as codex:
-                    yield codex
+        async with host_login(self, codex_home):
+            async with self._open_client(sdk, config, api_key=None) as codex:
+                yield codex
 
     @asynccontextmanager
     async def _open_client(self, sdk: Any, config: Any, api_key: Any = _FROM_ENV) -> AsyncIterator[Any]:
@@ -888,7 +890,7 @@ class CodexAgent(BaseExternalAgent):
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
 
-        async with self._new_client(kwargs.get("run_id")) as codex:
+        async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
@@ -1018,7 +1020,7 @@ class CodexAgent(BaseExternalAgent):
         session_id = kwargs.get("session_id")
         state = _StreamState()
 
-        async with self._new_client(run_id) as codex:
+        async with self._new_client() as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             handle = await thread.turn(

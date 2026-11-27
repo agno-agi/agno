@@ -419,7 +419,7 @@ async def arun(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> RunOutp
     execution = _execution(agent, input, kwargs)
     await aregister_run(execution["run_id"])
     try:
-        async with agent._aplan_slot(execution["run_id"]):
+        async with agent._aplan_slot():
             run = await coordinator(agent).arun(kwargs.get("session_id") or str(uuid4()), **execution)
     finally:
         await acleanup_run(execution["run_id"])
@@ -438,7 +438,7 @@ async def astream(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> Asyn
     events: List[Dict[str, Any]] = []
     skipped = {event.value for event in agent.events_to_skip or []}
     try:
-        async with agent._aplan_slot(execution["run_id"]):
+        async with agent._aplan_slot():
             async for value in iterator:
                 if isinstance(value, RunOutput):
                     if agent.store_events:

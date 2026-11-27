@@ -156,6 +156,8 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 _DEFAULT_STOP_TIMEOUT = 30
 # How often the worker retires sandbox computers kept warm past their window.
 _WARM_SWEEP_SECONDS = 180.0
+# How long a ticket handed back because its agent was busy waits before it is claimed again.
+_BUSY_RETRY_SECONDS = 5
 
 
 def resolve_stop_timeout(config: QueueConfig) -> int:
@@ -1636,7 +1638,7 @@ class QueueWorker:
         cleaned up first - a re-execution is a fresh stream, never an append
         onto a contradicted history.
         """
-        from agno.exceptions import RunCancelledException
+        from agno.exceptions import AgentBusyError, RunCancelledException
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
@@ -1770,6 +1772,9 @@ class QueueWorker:
                 # must say CANCELLED, not a coerced ERROR
                 raw_status = RunStatus.cancelled
             status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
+            # The agent was busy, so the run did not start and its ticket goes back to the
+            # queue: the stream stays open for the events of the claim that does run it.
+            handed_back = isinstance(sys.exc_info()[1], AgentBusyError) and hasattr(self.store, "release_job")
             # A retryable failure must NOT publish the terminal sentinel: tails
             # would close cleanly and the client would never see the retry's
             # output. Leave the stream open; the retry attempt continues it
@@ -1779,7 +1784,7 @@ class QueueWorker:
                 and job.get("attempt", 1) < self._failure_attempts(job)
                 and not self._run_is_not_retryable(final_output)
             )
-            if not will_retry:
+            if not will_retry and not handed_back:
                 with contextlib.suppress(Exception):
                     await asyncio.shield(event_stream.complete_run(job_id, status, generation=stream_generation))
         return final_output
@@ -2389,6 +2394,47 @@ class QueueWorker:
             )
         return outcome
 
+    async def _arelease_ticket(self, component: Any, job: Dict[str, Any]) -> bool:
+        """Hand back a ticket whose agent was busy with another run, to be claimed again shortly.
+
+        The run did not start, so this claim does not count against the ticket's attempts and
+        the run row reads PENDING again. Work for a busy agent therefore waits in the queue,
+        where a restart of this worker leaves it, and not inside a claimed job, where a
+        restart would fail it. False when the ticket could not be handed back; the caller
+        then treats the refusal as a failed attempt.
+        """
+        release = getattr(self.store, "release_job", None)
+        if release is None or not self._begin_ticket_write(job["id"]):
+            return False
+        job_id, attempt = job["id"], job["attempt"]
+        if not (job.get("payload") or {}).get("continue"):
+            from agno.run.base import RunStatus
+            from agno.run.status_persist import apersist_run_status
+
+            try:
+                await apersist_run_status(
+                    component,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"status": RunStatus.pending.value},
+                    user_id=job.get("user_id"),
+                    expected_attempt=attempt,
+                )
+            except Exception as e:
+                log_warning(f"Job queue: PENDING stamp failed for handed-back job {job_id}: {e}")
+        try:
+            released = bool(await release(job_id, self.worker_id, attempt, _BUSY_RETRY_SECONDS))
+        except Exception as e:
+            log_error(f"Job queue: handing back ticket {job_id} raised ({e})")
+            return False
+        if not released:
+            log_error(
+                f"Job queue: could not hand back ticket {job_id} - another worker swept or reclaimed it, "
+                "or the store could not commit the write"
+            )
+        return released
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.concurrency import worker_managed_execution
 
@@ -2483,7 +2529,7 @@ class QueueWorker:
         return exec_task.result()
 
     async def _execute_claimed_inner(self, job: Dict[str, Any], ownership: Any = None) -> None:
-        from agno.exceptions import RunCancelledException
+        from agno.exceptions import AgentBusyError, RunCancelledException
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
@@ -2808,6 +2854,9 @@ class QueueWorker:
                 await self._terminate_stream_view(job)
             await self._aretry_or_fail_ticket(job_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
+            busy = isinstance(e, AgentBusyError)
+            if busy and await self._arelease_ticket(component, job):
+                return
             permanent = self._is_permanent_failure(e, job.get("component_type") if payload.get("continue") else None)
             if permanent or attempt >= self._failure_attempts(job):
                 # Terminal outcome either way: the run-row persist gates the
@@ -2830,7 +2879,11 @@ class QueueWorker:
                 with contextlib.suppress(Exception):
                     await self._terminate_stream_view(job)
             else:
-                await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
+                outcome = await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
+                if busy and outcome != "queued":
+                    # The stream was left open for a hand-back that did not happen.
+                    with contextlib.suppress(Exception):
+                        await self._terminate_stream_view(job)
         finally:
             # Ownership deregistration lives in _execute_claimed's context
             # manager, not here: this finally is unreachable from the pre-try
