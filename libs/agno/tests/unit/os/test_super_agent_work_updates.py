@@ -1247,6 +1247,8 @@ def test_the_state_a_work_update_saves_is_the_stored_one_with_its_own_marks():
         }
 
     session = Session()
+    # The work update has replied.
+    session.get_run = lambda run_id: type("Run", (), {"status": "COMPLETED"})()
     loaded = session.session_data["session_state"]
     work_update._keep_stored_state(session, stored, "update")
     # The same dictionary, which the run also holds, now has the stored state with this run's marks.
@@ -1685,3 +1687,106 @@ def test_a_confirmation_the_person_talked_past_does_not_silence_the_conversation
     system.close()
     assert (paused, first) == ("PAUSED", ["PAUSED"])
     assert updates == 1
+
+
+# ----------------------------------------------------------------- the last review
+
+
+def test_a_conversation_deleted_while_a_work_update_runs_stays_deleted(held):
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        await held.finish("writer")
+        going = [row["status"] for row in held.updates_stored()]
+        # The person deletes the conversation while the work update is going.
+        assert held.db.delete_session(CHAT) is True
+        gone = held.db.get_session(CHAT, deserialize=False)
+        GATES["update"].set()
+        await held.settle()
+        return going, gone, held.db.get_session(CHAT, deserialize=False)
+
+    going, gone, after = scenario(steps)
+    assert going[0] in ("PENDING", "RUNNING") and gone is None
+    assert after is None
+
+
+def test_a_conversation_renamed_while_a_work_update_runs_keeps_its_name(held):
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        await held.start()
+        await held.finish("writer")
+        await held.os.manager.aset_session_name(session_id=CHAT, session_name="Export failure")
+        GATES["update"].set()
+        await held.settle()
+        stored = held.db.get_session(CHAT, deserialize=False)
+        return stored["session_data"].get("session_name"), len(held.updates_stored()), listed(held)
+
+    name, updates, entries = scenario(steps)
+    assert name == "Export failure"
+    assert updates == 1 and entries == {"writer": "COMPLETED"}
+
+
+@pytest.mark.parametrize("ending", ["fails", "is cancelled"])
+def test_a_work_update_that_does_not_reply_leaves_the_finish_unreported(held, ending):
+    held.chat = FailingUpdates()
+    held.os.manager.model = held.chat
+
+    async def steps():
+        GATES["update"] = asyncio.Event()
+        SEEN["update_fails"] = ending == "fails"
+        await held.start()
+        await held.finish("writer")
+        if ending == "is cancelled":
+            await held.os.manager.acancel_run(held.updates_stored()[0]["run_id"])
+        GATES["update"].set()
+        await held.settle()
+        SEEN["update_fails"] = False
+        ended = [row["status"] for row in held.updates_stored()]
+        after = listed(held)
+        # Nobody was told, so the person's next message still shows the finish as new.
+        await held.say("What changed?")
+        return ended, after, held.chat.runs[-1]["sent"][0]
+
+    ended, after, block = scenario(steps)
+    assert ended[0] in ("ERROR", "CANCELLED")
+    assert after == {"writer": "LIVE"}
+    assert 'agent "Writer"' in block and "Changed since your last turn." in block
+
+
+def test_the_merge_carries_marks_only_once_the_work_update_has_replied():
+    def stored():
+        entry = {"kind": "run", "id": "a", "shown": "LIVE", "changed_in": None}
+        return {"session_data": {"session_name": "New name", "session_state": {LINKED_WORK_KEY: [entry]}}}
+
+    class Session:
+        def __init__(self, status):
+            self.status = status
+            entry = {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update"}
+            self.session_data = {
+                "session_name": "Old name",
+                "session_metrics": {"total_tokens": 7},
+                "session_state": {LINKED_WORK_KEY: [entry]},
+            }
+
+        def get_run(self, run_id):
+            return type("Run", (), {"status": self.status})() if run_id == "update" else None
+
+    for status, shown in (("COMPLETED", "COMPLETED"), ("ERROR", "LIVE"), ("CANCELLED", "LIVE"), ("RUNNING", "LIVE")):
+        session = Session(status)
+        work_update._keep_stored_state(session, stored(), "update")
+        assert session.session_data["session_state"][LINKED_WORK_KEY][0]["shown"] == shown, status
+        # The name the conversation stored meanwhile is kept, and the totals stay this run's own.
+        assert session.session_data["session_name"] == "New name"
+        assert session.session_data["session_metrics"] == {"total_tokens": 7}
+
+
+@pytest.mark.parametrize("async_mode", [True, False], ids=["async", "sync"])
+def test_a_read_that_asks_for_a_confirmation_is_not_offered_in_a_work_update(tmp_path, async_mode):
+    from agno.tools.workspace import Workspace
+
+    asks = Workspace(root=str(tmp_path), allowed=["list"], confirm=["read", "search"])
+    plain_reads = Workspace(root=str(tmp_path))
+    offered = work_update.WorkUpdateBoundary._reads(type("Team", (), {"tools": [asks]})(), async_mode)
+    assert [function.name for function in offered] == ["list_files"]
+    offered = work_update.WorkUpdateBoundary._reads(type("Team", (), {"tools": [plain_reads]})(), async_mode)
+    assert {function.name for function in offered} == {"read_file", "list_files", "search_content"}
