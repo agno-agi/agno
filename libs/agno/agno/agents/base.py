@@ -321,6 +321,28 @@ class BaseExternalAgent:
         """Whether native policy can ask for permission and a database can hold the paused run."""
         return False
 
+    # Variables that would make the harness bill something other than the plan; see _plan_env.
+    _plan_blocked_env: ClassVar[Tuple[str, ...]] = ()
+
+    def _plan_env(self) -> Optional[Dict[str, str]]:
+        """The variables that sign this agent's harness in with a vendor plan; None on API keys.
+
+        When this is not None the harness is never given the variables in _plan_blocked_env.
+        """
+        return None
+
+    def _check_plan(self) -> None:
+        """Raise when this agent is set to run on a plan and its plan credential cannot be used."""
+
+    def _sandbox_login(self) -> Any:
+        """What writes this agent's login into a sandbox before a turn and saves it after; None for none."""
+        return None
+
+    @asynccontextmanager
+    async def _aplan_slot(self, run_id: Optional[str] = None) -> AsyncIterator[None]:
+        """Held for the length of one run by an agent that runs one piece of work at a time."""
+        yield
+
     @property
     def sdk(self) -> str:
         """Integration identifier selected by the adapter, not a constructor option."""

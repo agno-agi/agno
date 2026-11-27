@@ -1,4 +1,5 @@
 import copy
+import os
 import warnings
 from dataclasses import field, fields
 from pathlib import Path
@@ -94,6 +95,9 @@ def _sdk() -> Any:
 
 # Result subtypes for limits the user configured; a retry would grant a fresh allowance.
 _LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"}
+_PLAN_TOKEN_REFUSED = (
+    "The Claude plan token was refused or has expired; make a new one with `claude setup-token`. No API key was used."
+)
 # AssistantMessage.error values that fail the same way on every attempt.
 _PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
 
@@ -182,6 +186,10 @@ class ClaudeAgent(BaseExternalAgent):
         strict_mcp_config: Use only explicitly configured MCP servers when True.
         skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
         plugins: Native SDK plugin configurations.
+        plan_token: Run on a Claude plan instead of an API key: a token from `claude setup-token`.
+            Claude Code is then never given ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or a cloud
+            provider switch, on this host or in a sandbox, so a missing, expired or refused token
+            fails the run instead of billing an API key.
         options: Native ClaudeAgentOptions for advanced configuration. Non-None constructor
             fields override these options, including empty collections and False. Agno owns
             native session selection and token streaming; configure them through run/arun.
@@ -239,6 +247,8 @@ class ClaudeAgent(BaseExternalAgent):
     # Execution limits
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
+    # A Claude plan token; never shown, stored as a component config or sent to a sandbox as configuration.
+    plan_token: Optional[str] = field(default=None, repr=False)
     # Advanced native configuration
     options: Optional["ClaudeAgentOptions"] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -249,7 +259,15 @@ class ClaudeAgent(BaseExternalAgent):
     _unstorable_fields: ClassVar[Dict[str, str]] = {
         "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
         "options_kwargs": "deprecated; use the named parameters instead",
+        "plan_token": "a credential; set it on the agent in the serving AgentOS's code",
     }
+    _plan_blocked_env: ClassVar[Tuple[str, ...]] = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+    )
     # Key under which the SDK session id is stored in the Agno session.
     _SESSION_KEY = "claude_sdk_session_id"
     _store_warning_logged: bool = field(default=False, init=False, repr=False)
@@ -297,6 +315,22 @@ class ClaudeAgent(BaseExternalAgent):
         super().__post_init__()
         if self.project_key is None:
             self.project_key = self.get_id()
+
+    def _plan_env(self) -> Optional[Dict[str, str]]:
+        return {"CLAUDE_CODE_OAUTH_TOKEN": self.plan_token.strip()} if self.plan_token is not None else None
+
+    def _check_plan(self) -> None:
+        if self.plan_token is not None and not self.plan_token.strip():
+            raise ValueError(
+                f"{self.get_id()} is set to run on a Claude plan, but its plan token is empty. Make one with "
+                "`claude setup-token`. ANTHROPIC_API_KEY was not used."
+            )
+
+    def _signed_in_with_plan_token(self) -> bool:
+        """Whether Claude Code has only a plan token to sign in with, here or inside a sandbox."""
+        if self.plan_token is not None:
+            return True
+        return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) and not os.environ.get("ANTHROPIC_API_KEY")
 
     def _run_model(self) -> Tuple[Optional[str], Optional[str]]:
         return self._effective_model(), "Anthropic"
@@ -413,6 +447,12 @@ class ClaudeAgent(BaseExternalAgent):
         # Keep the old dictionary's precedence during migration, without allowing it to
         # override the native session selected by Agno or disable requested streaming.
         opts.update(self.options_kwargs)
+        plan = self._plan_env()
+        if plan is not None:
+            self._check_plan()
+            # Claude Code inherits this process's environment, where a variable cannot be removed:
+            # an empty value is one it does not use.
+            opts["env"] = {**(opts.get("env") or {}), **{name: "" for name in self._plan_blocked_env}, **plan}
         partial = opts.get("include_partial_messages", False)
         if (partial and not streaming) or ("include_partial_messages" in self.options_kwargs and partial != streaming):
             raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")
@@ -568,7 +608,9 @@ class ClaudeAgent(BaseExternalAgent):
                     if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
                         assistant_error = message.error
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(sdk, message, assistant_error)
+                        self._check_result_message(
+                            sdk, message, assistant_error, plan_token=self._signed_in_with_plan_token()
+                        )
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -1187,7 +1229,9 @@ class ClaudeAgent(BaseExternalAgent):
         return self._build_metrics(totals, details, additional)
 
     @staticmethod
-    def _check_result_message(sdk: Any, message: Any, assistant_error: Optional[str] = None) -> None:
+    def _check_result_message(
+        sdk: Any, message: Any, assistant_error: Optional[str] = None, plan_token: bool = False
+    ) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
             return
@@ -1201,8 +1245,11 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "result", None)
                 or getattr(message, "stop_reason", None)
             )
+            status = getattr(message, "api_error_status", None)
+            refused = plan_token and (assistant_error == "authentication_failed" or status == 401)
+            text = f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}"
             raise ClaudeResultError(
-                f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}",
+                f"{text.rstrip('. ')}. {_PLAN_TOKEN_REFUSED}" if refused else text,
                 subtype=subtype,
                 errors=getattr(message, "errors", None),
                 api_error_status=getattr(message, "api_error_status", None),

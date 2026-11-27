@@ -7,7 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from agno.agents._config import agent_dataclass
@@ -55,6 +55,9 @@ def _sdk() -> Any:
 
 
 # Accept the CLI spellings as well as the SDK enum names for the sandbox setting.
+# Stands for "read OPENAI_API_KEY from the environment" where None means "use no API key".
+_FROM_ENV: Any = object()
+
 _SANDBOX_ALIASES: Dict[str, str] = {
     "read_only": "read-only",
     "readonly": "read-only",
@@ -199,6 +202,12 @@ class CodexAgent(BaseExternalAgent):
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
         env: Environment variables for the Codex process. OPENAI_API_KEY automatically
             authenticates API-key sessions; existing non-API-key logins are preserved.
+        plan_login: Run on a ChatGPT plan instead of an API key: the contents of the auth.json
+            that `codex login` writes, as text or a mapping. Give each agent a login of its own and
+            use that login nowhere else, because Codex replaces its tokens as it works. The agent
+            then never uses OPENAI_API_KEY and runs one piece of work at a time: a run the durable
+            queue owns waits its turn, any other is refused with EngineerBusyError. The refreshed
+            login is saved, encrypted, in the agent's database after every run.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -255,6 +264,8 @@ class CodexAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
+    # A ChatGPT plan login; never shown, stored as a component config or sent to a sandbox as configuration.
+    plan_login: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -266,7 +277,9 @@ class CodexAgent(BaseExternalAgent):
         "client_options": "native CodexConfig describes the host process; configure it on the serving AgentOS",
         "codex_bin": "a host path; configure it on the serving AgentOS",
         "env": "process credentials; set them in the serving environment",
+        "plan_login": "a credential; set it on the agent in the serving AgentOS's code",
     }
+    _plan_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
     _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
     # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
@@ -361,6 +374,33 @@ class CodexAgent(BaseExternalAgent):
 
         continuation = self.acontinue_run(run_response, **kwargs)
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
+
+    def _plan_env(self) -> Optional[Dict[str, str]]:
+        return {} if self.plan_login is not None else None
+
+    def _check_plan(self) -> None:
+        if self.plan_login is not None:
+            from agno.agents.codex._plan import check
+
+            check(self)
+
+    def _sandbox_login(self) -> Any:
+        if self.plan_login is None:
+            return None
+        from agno.agents.codex._plan import SandboxLogin
+
+        return SandboxLogin(self)
+
+    @asynccontextmanager
+    async def _aplan_slot(self, run_id: Optional[str] = None) -> AsyncIterator[None]:
+        if self.plan_login is None:
+            yield
+            return
+        from agno.agents.codex._plan import one_at_a_time
+
+        self._check_plan()
+        async with one_at_a_time(self, run_id):
+            yield
 
     def _refuse_host_operation(self, operation: str) -> None:
         if self.sandbox is not None:
@@ -507,12 +547,35 @@ class CodexAgent(BaseExternalAgent):
         return config
 
     @asynccontextmanager
-    async def _new_client(self) -> AsyncIterator[Any]:
+    async def _new_client(self, run_id: Optional[str] = None) -> AsyncIterator[Any]:
         """Create an AsyncCodex client. One app-server process per run keeps the
         client bound to the current event loop."""
+        if self.plan_login is None:
+            async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
+                yield codex
+            return
+        from agno.agents.codex._plan import home, host_login
+
         sdk = _sdk()
         config = self._codex_config(sdk)
-        api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+        codex_home = home(self, config.env)
+        # The app-server inherits this process's environment: blank the API keys, and keep the
+        # login in a file in the agent's own CODEX_HOME, never in the operating system's keyring.
+        config.env = {
+            **(config.env or {}),
+            **{name: "" for name in self._plan_blocked_env},
+            "CODEX_HOME": str(codex_home),
+        }
+        config.config_overrides = (*config.config_overrides, 'cli_auth_credentials_store="file"')
+        async with self._aplan_slot(run_id):
+            async with host_login(self, codex_home):
+                async with self._open_client(sdk, config, api_key=None) as codex:
+                    yield codex
+
+    @asynccontextmanager
+    async def _open_client(self, sdk: Any, config: Any, api_key: Any = _FROM_ENV) -> AsyncIterator[Any]:
+        if api_key is _FROM_ENV:
+            api_key = (config.env or {}).get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
         thread = self.thread_options if self.thread_options is not None else self.thread_kwargs
         native_config = self.config if self.config is not None else thread.get("config") or {}
         policy = self.approval_policy or native_config.get("approval_policy")
@@ -825,7 +888,7 @@ class CodexAgent(BaseExternalAgent):
         session = kwargs.get("session")
         session_id = kwargs.get("session_id")
 
-        async with self._new_client() as codex:
+        async with self._new_client(kwargs.get("run_id")) as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             run_id = kwargs.get("run_id") or str(uuid4())
@@ -955,7 +1018,7 @@ class CodexAgent(BaseExternalAgent):
         session_id = kwargs.get("session_id")
         state = _StreamState()
 
-        async with self._new_client() as codex:
+        async with self._new_client(run_id) as codex:
             thread, resumed = await self._open_thread(codex, sdk, session, session_id)
             prompt = self._build_prompt(input, history, resumed)
             handle = await thread.turn(
