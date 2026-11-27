@@ -2439,6 +2439,9 @@ def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_appr
     rule = " ".join(next(part for part in COMPANY_INSTRUCTIONS.split("\n- ") if "company's rules" in part).split())
     # Read once, before work is recorded or changed and before a "may I" is answered.
     assert "Once in a conversation, before you first record or change work" in rule
+    # The rules are read before a build too: Platform Builder cannot read the wiki, so a rule about
+    # what may be built holds only when Super Agent read it before handing the build over.
+    assert "hand Platform Builder an agent, team, workflow or schedule to create or change, start a run" in rule
     assert "or answer whether something may be done, is ready or is allowed, read them" in rule
     # The usual page is named, and a company that keeps its rules elsewhere is still read.
     assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
@@ -2457,6 +2460,23 @@ def test_super_agent_asks_before_work_that_pushes_whatever_starts_it():
     assert "That holds for a run and a background run as for a Task." in said
     # The wiki exists only with Company, so the rules are not mentioned without it.
     assert "wiki" not in MANAGER_INSTRUCTIONS
+
+
+def test_super_agent_builds_a_named_component_without_asking_again():
+    from agno.os.manager.prompts import MANAGER_INSTRUCTIONS
+
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    building = said[said.index("Building:") :]
+    # The request is the go-ahead, also when it says "publish": publishing a component is not the
+    # publishing Super Agent asks about first.
+    assert "is the go-ahead: delegate it in the same turn" in building
+    assert "Publishing a component only makes it available to run on this AgentOS" in building
+    assert "it is not the publishing you ask about first" in building
+    # A vague request and a schedule more often than hourly are still asked about.
+    assert "Still ask first when the request is too vague to build" in building
+    assert "or includes a schedule more often than hourly" in building
+    # The rule for work that sends, publishes, pushes or spends is unchanged.
+    assert "or work that sends, publishes, pushes or spends, say what it involves and ask first" in said
 
 
 def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():

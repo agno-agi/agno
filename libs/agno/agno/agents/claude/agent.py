@@ -99,6 +99,14 @@ _OAUTH_TOKEN_REFUSED = (
     "The Claude Code OAuth token was refused or has expired; make a new one with `claude setup-token`. "
     "No API key was used."
 )
+# RateLimitInfo.rate_limit_type values, as a person names the limit.
+_CLAUDE_LIMITS = {
+    "five_hour": "five-hour",
+    "seven_day": "weekly",
+    "seven_day_opus": "weekly Opus",
+    "seven_day_sonnet": "weekly Sonnet",
+    "overage": "extra usage",
+}
 # AssistantMessage.error values that fail the same way on every attempt.
 _PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
 
@@ -114,12 +122,15 @@ class ClaudeResultError(RuntimeError):
         errors: Optional[List[str]] = None,
         api_error_status: Optional[int] = None,
         assistant_error: Optional[str] = None,
+        subscription_limit: bool = False,
     ) -> None:
         super().__init__(message)
         self.subtype = subtype
         self.errors = errors
         self.api_error_status = api_error_status
         self.assistant_error = assistant_error
+        # The agent's Claude subscription limit is reached; the same run fails the same way until it resets.
+        self.subscription_limit = subscription_limit
 
 
 async def _ask_user_question(sdk: Any, arguments: Dict[str, Any], native: Dict[str, Any]) -> Any:
@@ -332,6 +343,46 @@ class ClaudeAgent(BaseExternalAgent):
         if self.oauth_token is not None:
             return True
         return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) and not os.environ.get("ANTHROPIC_API_KEY")
+
+    def _subscription_limit(self, error: ClaudeResultError, limit_reached: Any) -> ClaudeResultError:
+        """The error to raise for a failed run: one that says the subscription limit is reached, when it is.
+
+        Claude Code reports the limit with a rate limit event whose ``status`` is "rejected" and
+        that names the limit and when it resets. A temporary 429, which a retry can pass, carries
+        the same ``error == "rate_limit"`` on its assistant message and a rejected event too. Its
+        event names no limit, or names the one Claude Code worked out from the usage so far, with
+        the share of it used; it is left as it is. So is an agent on an API key: its rate limits
+        are the API's.
+        """
+        from agno.agents._limits import limit_message, note_possible_limit
+
+        if not self._signed_in_with_oauth_token():
+            return error
+        used = getattr(limit_reached, "utilization", None)
+        reached = (
+            limit_reached is not None
+            # Only a subscription limit is named. Claude Code says of the unnamed one: "not your usage limit".
+            and getattr(limit_reached, "rate_limit_type", None) is not None
+            # A limit named with part of it still unused is a warning about usage, not the limit reached.
+            and not (isinstance(used, (int, float)) and used < 1)
+            # With extra usage allowed the run carried on, so a later failure is about something else.
+            and getattr(limit_reached, "overage_status", None) not in ("allowed", "allowed_warning")
+            and error.subtype not in _LIMIT_SUBTYPES
+        )
+        if not reached:
+            note_possible_limit(self.get_id(), error)
+            return error
+        window = _CLAUDE_LIMITS.get(str(getattr(limit_reached, "rate_limit_type", None)))
+        return ClaudeResultError(
+            limit_message(
+                self.get_id(), "Claude", window, getattr(limit_reached, "resets_at", None), str(error), "Claude Code"
+            ),
+            subtype=error.subtype,
+            errors=error.errors,
+            api_error_status=error.api_error_status,
+            assistant_error=error.assistant_error,
+            subscription_limit=True,
+        )
 
     def _run_model(self) -> Tuple[Optional[str], Optional[str]]:
         return self._effective_model(), "Anthropic"
@@ -598,6 +649,8 @@ class ClaudeAgent(BaseExternalAgent):
             request = self._prompt_with_media(prompt, kwargs.get("inline_media"))
             received = False
             assistant_error: Optional[str] = None
+            # The last rate limit report that said a limit is reached, when Claude Code sent one.
+            limit_reached: Any = None
             run_id = kwargs.get("run_id") or str(uuid4())
             client = sdk.ClaudeSDKClient(options=options)
             try:
@@ -612,10 +665,19 @@ class ClaudeAgent(BaseExternalAgent):
                         continue
                     if isinstance(message, sdk.AssistantMessage) and getattr(message, "error", None):
                         assistant_error = message.error
+                    reported = getattr(message, "rate_limit_info", None)
+                    if reported is not None:
+                        limit_reached = reported if getattr(reported, "status", None) == "rejected" else None
                     if isinstance(message, sdk.ResultMessage):
-                        self._check_result_message(
-                            sdk, message, assistant_error, oauth_token=self._signed_in_with_oauth_token()
-                        )
+                        try:
+                            self._check_result_message(
+                                sdk, message, assistant_error, oauth_token=self._signed_in_with_oauth_token()
+                            )
+                        except ClaudeResultError as error:
+                            limited = self._subscription_limit(error, limit_reached)
+                            if limited is error:
+                                raise
+                            raise limited from None
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
                     sdk_session_id = None
@@ -1167,7 +1229,7 @@ class ClaudeAgent(BaseExternalAgent):
         # Read by attribute so the SDK's own ResultError classifies the same way.
         if isinstance(error, RunNotContinuableError):
             return False
-        if getattr(error, "subtype", None) in _LIMIT_SUBTYPES:
+        if getattr(error, "subtype", None) in _LIMIT_SUBTYPES or getattr(error, "subscription_limit", False):
             return False
         if getattr(error, "api_error_status", None) in ModelProviderError.NON_RETRYABLE_STATUS_CODES:
             return False
