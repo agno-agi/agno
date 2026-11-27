@@ -126,6 +126,17 @@ def _stored_compaction(
     if archive is None:
         return None
     row = archive.latest(up_to_run_id)
+    # A run that made no fold of its own saw the fold of the run it was forked or regenerated
+    # from. Without this, regenerating an answer a second time finds no fold and replays the
+    # whole history, summary left out.
+    seen = {up_to_run_id}
+    while not row and up_to_run_id is not None:
+        source = next((run for run in getattr(session, "runs", None) or [] if run.run_id == up_to_run_id), None)
+        up_to_run_id = _compaction_as_of(source)
+        if up_to_run_id is None or up_to_run_id in seen:
+            break
+        seen.add(up_to_run_id)
+        row = archive.latest(up_to_run_id)
     if not row:
         return None
     try:
