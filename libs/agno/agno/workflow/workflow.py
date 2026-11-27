@@ -1441,8 +1441,8 @@ class Workflow:
             if not isinstance(step, Step):
                 return
 
-            # Save agent if present
-            if step.agent and isinstance(step.agent, Agent):
+            # Save agent if present. An external agent is saved the same way: its link needs a version too.
+            if step.agent and isinstance(step.agent, (Agent, BaseExternalAgent)):
                 agent_version = step.agent.save(
                     db=db_,
                     stage=stage,
