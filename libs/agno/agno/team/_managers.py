@@ -228,7 +228,8 @@ def _process_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        # Learn from what the run keeps: a message sent with add_to_agent_memory=False is not the conversation.
+        messages = [m for m in run_messages.messages if m.add_to_agent_memory] if run_messages else []
         team._learning.process(
             messages=messages,
             user_id=user_id,
@@ -256,7 +257,8 @@ async def _aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = list(run_messages.messages) if run_messages else []
+        # Learn from what the run keeps: a message sent with add_to_agent_memory=False is not the conversation.
+        messages = [m for m in run_messages.messages if m.add_to_agent_memory] if run_messages else []
         await team._learning.aprocess(
             messages=messages,
             user_id=user_id,

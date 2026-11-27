@@ -649,12 +649,14 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
         payload["review_feedback"] = feedback
         # The result the person answered. The session holds the earlier turns; the result is repeated
         # so executors without session history still see what the feedback is about.
+        # A queued attempt that was withdrawn left no result: the reply is then given without one.
         previous = task.get("result") or {}
-        content = previous.get("content")
-        payload["previous_result"] = {
-            "status": previous.get("status"),
-            "content": content[:4000] if isinstance(content, str) else content,
-        }
+        if previous:
+            content = previous.get("content")
+            payload["previous_result"] = {
+                "status": previous.get("status"),
+                "content": content[:4000] if isinstance(content, str) else content,
+            }
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
@@ -670,7 +672,8 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 "State what you checked and how. If a person must decide before you can continue, "
                 "end with your recommendation and the one question they need to answer."
                 + (
-                    " This continues the same Task: act on review_feedback, a person's reply to previous_result."
+                    " This continues the same Task: act on review_feedback, a person's reply to "
+                    + ("previous_result." if "previous_result" in payload else "its last attempt.")
                     if feedback
                     else ""
                 )
@@ -680,14 +683,23 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The reviewer's reason when the last review sent the Task back, until an attempt reaches review again."""
-    reviews = [
-        entry
-        for entry in task.get("transitions") or []
-        if entry.get("from") == "in_review" or entry.get("target") == "in_review"
-    ]
-    last = reviews[-1] if reviews else {}
-    return last.get("reason") if last.get("from") == "in_review" and last.get("target") == "ready" else None
+    """What people said when they returned the Task to Ready after an attempt, oldest first, until an
+    attempt reaches review again.
+
+    A return from review answers a finished result. A return from In progress is a reply only when it
+    answered a run that failed or was cancelled, which its entry records as ended_run: the same move
+    withdraws a queued attempt, and the reason of that is a note. A return to Backlog withdraws the
+    acceptance, and the work that is accepted next starts without the earlier replies.
+    """
+    replies: List[str] = []
+    for entry in task.get("transitions") or []:
+        origin, target = entry.get("from"), entry.get("target")
+        if target in ("in_review", "backlog"):
+            replies = []
+        elif target == "ready" and (origin == "in_review" or (origin == "in_progress" and entry.get("ended_run"))):
+            if entry.get("reason"):
+                replies.append(entry["reason"])
+    return "\n\n".join(replies) or None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}
