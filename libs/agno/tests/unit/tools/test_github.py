@@ -1842,6 +1842,13 @@ def test_get_pull_request_changes_lists_files_without_patches_and_reads_one_file
     )
     assert same["patch"] == one["patch"]
 
+    # An empty path is no path: the listing, not an error.
+    for empty in ("", "  "):
+        blank = json.loads(
+            github_tools.get_pull_request_changes("test-org/test-repo", 7, path=empty, include_patches=False)
+        )
+        assert [file["filename"] for file in blank] == ["app/main.py", "docs/guide.md", "logo.png"]
+
     missing = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="app/other.py"))
     assert missing == {"error": "app/other.py is not among the files pull request #7 changes."}
 

@@ -348,6 +348,8 @@ class GithubTools(Toolkit):
             A JSON-formatted string containing the list of changed files.
         """
         log_debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
+        # A model that means "no path" often sends an empty one.
+        path = path.strip() if isinstance(path, str) and path.strip() else None
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
