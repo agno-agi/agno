@@ -142,3 +142,54 @@ def test_super_agent_is_told_where_to_read_who_the_person_is_and_not_to_ask():
     assert "Everyone who can reach you has the same permissions on this AgentOS" in said
     # Said only to a model that is sent the message.
     assert any(part is PERSON_INSTRUCTIONS for part in _SAID_WITH_THE_BLOCK)
+
+
+def test_the_time_line_uses_the_teams_timezone_and_format():
+    import re
+
+    from agno.os.manager.person import _now
+
+    assert re.fullmatch(
+        r"Now: \w+day \d{1,2} \w+ \d{4}, \d{2}:\d{2} Asia/Kolkata \(UTC\+05:30\)\.", _now("Asia/Kolkata")
+    )
+    # With no timezone it is the server's local time, with its offset.
+    assert re.fullmatch(r"Now: \w+day \d{1,2} \w+ \d{4}, \d{2}:\d{2} \S.* \(UTC[+-]\d{2}:\d{2}\)\.", _now())
+    # A format the Team set is used as it is; an unknown timezone falls back to the server's.
+    assert re.fullmatch(r"Now: \d{4}/\d{2}/\d{2}\.", _now(None, "%Y/%m/%d"))
+    assert _now("Not/AZone").startswith("Now: ")
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_the_time_comes_first_and_is_read_on_every_build(mode):
+    asked = []
+
+    def clock():
+        asked.append(1)
+        return ("UTC", "%H:%M")
+
+    turn = TurnContext(Person(), Work(None), clock=clock)
+    for _ in range(2):
+        text = turn.read(context(user="jonah")) if mode == "sync" else asyncio.run(turn.aread(context(user="jonah")))
+        first, second = text.split("\n")
+        assert first.startswith("Now: ") and second.startswith(HEADER + "user id jonah.")
+    assert len(asked) == 2
+    # A finished-work report carries the time too.
+    report = context(user="jonah", metadata={FINISHED_WORK_REPORT_METADATA_KEY: True})
+    text = turn.read(report) if mode == "sync" else asyncio.run(turn.aread(report))
+    assert text.startswith("Now: ") and "no person is typing" in text
+
+
+def test_a_model_that_is_not_sent_the_note_keeps_the_time_in_its_system_message(tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+    from agno.os import AgentOS, OSManager
+    from agno.os.manager.linked_work import _delivers
+
+    class Unlisted(OpenAIResponses):
+        pass
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    for model in (OpenAIResponses(id="x", api_key="k"), Unlisted(id="x", api_key="k")):
+        manager = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False).manager
+        assert manager.add_datetime_to_context is (not _delivers(model))
+    db.close()
