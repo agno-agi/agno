@@ -134,7 +134,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.step import Step, UnresolvableCallableError, _aclose_stream, running_as_workflow_step
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     OnError,
@@ -181,6 +181,18 @@ def _link_steps_to_db(steps: Any, db: Any) -> None:
         elif isinstance(item, (Steps, Loop, Parallel, Condition, Router)):
             for attr in ("steps", "else_steps", "choices"):
                 _link_steps_to_db(getattr(item, attr, None), db)
+
+
+def _prepare_nested_steps(steps: Any) -> None:
+    """Wrap the agents, teams, functions and workflows inside container steps in Steps, at any depth.
+
+    A container wraps its own entries when it executes. A workflow that continues a paused run without
+    having executed the container first needs them wrapped to find the step that owns a paused executor."""
+    for item in steps if isinstance(steps, list) else []:
+        if isinstance(item, (Steps, Loop, Parallel, Condition, Router)):
+            item._prepare_steps()
+            for attr in ("steps", "else_steps"):
+                _prepare_nested_steps(getattr(item, attr, None))
 
 
 STEP_TYPE_MAPPING = {
@@ -1441,8 +1453,8 @@ class Workflow:
             if not isinstance(step, Step):
                 return
 
-            # Save agent if present
-            if step.agent and isinstance(step.agent, Agent):
+            # Save agent if present. An external agent is saved the same way: its link needs a version too.
+            if step.agent and isinstance(step.agent, (Agent, BaseExternalAgent)):
                 agent_version = step.agent.save(
                     db=db_,
                     stage=stage,
@@ -5022,8 +5034,6 @@ class Workflow:
             files=files,  # type: ignore
         )
 
-        self.update_agents_and_teams_session_info()
-
         async def execute_workflow_background():
             """Background execution: waits for a concurrency slot (background_run_slot);
             the run stays PENDING while waiting in line and can be cancelled without
@@ -5220,8 +5230,6 @@ class Workflow:
             videos=videos,  # type: ignore
             files=files,  # type: ignore
         )
-
-        self.update_agents_and_teams_session_info()
 
         # Persist the PENDING run so it is visible (e.g. to polling) while it
         # waits for a concurrency slot.
@@ -5451,6 +5459,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
             dependencies=dependencies,
         )
 
@@ -5499,8 +5509,6 @@ class Workflow:
             videos=videos,  # type: ignore
             files=files,  # type: ignore
         )
-
-        self.update_agents_and_teams_session_info()
 
         # Create queue for forwarding SSE strings to the caller
         sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -6563,6 +6571,16 @@ class Workflow:
             await team_acancel_run(executor_run_id)
         return result
 
+    def _prepare_steps_for_continue(self) -> None:
+        """Prepare the steps of a workflow that may not have run yet, including those inside containers.
+
+        A run prepares the top-level steps and each container prepares its own as it executes. A continued
+        run goes straight to the paused step, which may sit inside a container that has not executed here."""
+        self._prepare_steps()
+        if isinstance(self.steps, list):
+            _prepare_nested_steps(self.steps)
+            _link_steps_to_db(self.steps, self.db)
+
     def _restore_paused_step_ids(self, run_response: WorkflowRunOutput) -> None:
         """Re-apply the original run's step_ids onto this freshly copied workflow.
 
@@ -6676,6 +6694,12 @@ class Workflow:
         # Validate the run is paused
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
+
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
 
         # Update step requirements if provided
         if step_requirements is not None:
@@ -6834,7 +6858,8 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Keep step identity stable across the run's pause/continue boundary
+        # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
+        self._prepare_steps_for_continue()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
@@ -6897,6 +6922,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 
@@ -7577,9 +7604,10 @@ class Workflow:
         self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response
-        continued_response = executor.continue_run(
-            run_response=paused_run_response,
-        )
+        with running_as_workflow_step(executor, self.id):
+            continued_response = executor.continue_run(
+                run_response=paused_run_response,
+            )
 
         # Store executor response for potential chained HITL
         inner_step._store_executor_response(workflow_run_response, continued_response)
@@ -7637,22 +7665,23 @@ class Workflow:
         self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response (streaming).
-        response_stream = executor.continue_run(
-            run_response=paused_run_response,
-            stream=True,
-            stream_events=True,
-            yield_run_output=True,
-        )
+        with running_as_workflow_step(executor, self.id):
+            response_stream = executor.continue_run(
+                run_response=paused_run_response,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
 
-        # Iterate over stream events, yielding them for the user to see
-        active_executor_run_response = None
-        for event in response_stream:
-            if isinstance(event, (RunOutput, TeamRunOutput)):
-                active_executor_run_response = event
-                continue
-            if stream_executor_events:
-                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
-                yield enriched_event
+            # Iterate over stream events, yielding them for the user to see
+            active_executor_run_response = None
+            for event in response_stream:
+                if isinstance(event, (RunOutput, TeamRunOutput)):
+                    active_executor_run_response = event
+                    continue
+                if stream_executor_events:
+                    enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                    yield enriched_event
 
         # Process the final response into a StepOutput
         if active_executor_run_response is None:
@@ -7727,21 +7756,26 @@ class Workflow:
 
         # Call executor's acontinue_run with the stored run_response (streaming).
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
-        response_stream = executor.acontinue_run(
-            run_response=paused_run_response,
-            stream=True,
-            stream_events=True,
-            yield_run_output=True,
-        )
+        with running_as_workflow_step(executor, self.id):
+            response_stream = executor.acontinue_run(
+                run_response=paused_run_response,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
 
-        active_executor_run_response = None
-        async for event in response_stream:
-            if isinstance(event, (RunOutput, TeamRunOutput)):
-                active_executor_run_response = event
-                continue
-            if stream_executor_events:
-                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
-                yield enriched_event
+            active_executor_run_response = None
+            try:
+                async for event in response_stream:
+                    if isinstance(event, (RunOutput, TeamRunOutput)):
+                        active_executor_run_response = event
+                        continue
+                    if stream_executor_events:
+                        enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                        yield enriched_event
+            finally:
+                # End the executor's stream while it is still marked, as Step.aexecute_stream does.
+                await _aclose_stream(response_stream)
 
         if active_executor_run_response is None:
             step_output = StepOutput(content="")
@@ -7811,9 +7845,10 @@ class Workflow:
         await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response
-        continued_response = await executor.acontinue_run(
-            run_response=paused_run_response,
-        )
+        with running_as_workflow_step(executor, self.id):
+            continued_response = await executor.acontinue_run(
+                run_response=paused_run_response,
+            )
 
         # Store executor response for potential chained HITL
         inner_step._store_executor_response(workflow_run_response, continued_response)
@@ -8713,6 +8748,12 @@ class Workflow:
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
 
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
+
         # Update step requirements if provided
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
@@ -8867,7 +8908,8 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Keep step identity stable across the run's pause/continue boundary
+        # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
+        self._prepare_steps_for_continue()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
@@ -8935,6 +8977,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 
@@ -10705,8 +10749,6 @@ class Workflow:
             log_level=2,
         )
 
-        self.update_agents_and_teams_session_info()
-
         # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
         resolved = self._resolve_run_params(
             dependencies=dependencies,
@@ -11009,8 +11051,6 @@ class Workflow:
             f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
             log_level=2,
         )
-
-        self.update_agents_and_teams_session_info()
 
         if self.agent is not None:
             return self._aexecute_workflow_agent(  # type: ignore
@@ -11459,26 +11499,6 @@ class Workflow:
             raise Exception("Session not found")
 
         return self._get_session_metrics(session=session)
-
-    def update_agents_and_teams_session_info(self):
-        """Update agents and teams with workflow session information"""
-        log_debug("Updating agents and teams with session information", log_level=2)
-        # Initialize steps - only if steps is iterable (not callable)
-        if self.steps and not callable(self.steps):
-            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
-            for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
-
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.id
-
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:  # type: ignore
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.id
 
     def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
         """

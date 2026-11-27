@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import inspect
+import threading
+from contextlib import contextmanager
 from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from typing import (
@@ -17,6 +19,8 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Set,
+    Tuple,
     Union,
     cast,
 )
@@ -114,8 +118,77 @@ def _harness_step_kwargs(executor: Any, workflow_run_response: Optional["Workflo
     return {}
 
 
+# id(agent or team) -> (how many steps run it right now, the workflow_id it had before the first of them)
+_STEP_EXECUTORS: Dict[int, Tuple[int, Optional[str]]] = {}
+_STEP_EXECUTORS_LOCK = threading.Lock()
+# Agents and teams already told that a workflow step does not load their own history
+_HISTORY_WARNED: Set[str] = set()
+
+
+@contextmanager
+def running_as_workflow_step(executor: Any, workflow_id: Optional[str]) -> Iterator[None]:
+    """Mark an agent or team, and a team's members, as this workflow's for as long as the step runs it.
+
+    A marked agent or team leaves the workflow's session row alone: its run is stored with the workflow's
+    run. An unmarked one would save its own session under the workflow's session id, and the workflow's
+    session would then be stored as that agent's.
+
+    The mark comes off when the step ends, so the same agent or team saves its own sessions when it is
+    run on its own. It is set here, where the step runs, so it reaches whichever step runs: one a Router
+    selector returned, or one continued after a pause on a new copy of the workflow.
+    """
+    marked: List[Any] = []
+    if workflow_id is not None and hasattr(executor, "workflow_id"):
+        marked.append(executor)
+        members = getattr(executor, "members", None)
+        marked.extend(
+            member for member in (members if isinstance(members, list) else []) if hasattr(member, "workflow_id")
+        )
+
+    with _STEP_EXECUTORS_LOCK:
+        for item in marked:
+            running, before = _STEP_EXECUTORS.get(id(item), (0, item.workflow_id))
+            _STEP_EXECUTORS[id(item)] = (running + 1, before)
+            item.workflow_id = workflow_id
+    try:
+        yield
+    finally:
+        with _STEP_EXECUTORS_LOCK:
+            for item in marked:
+                running, before = _STEP_EXECUTORS[id(item)]
+                if running > 1:
+                    # Another step still runs it, for example the same agent in two Parallel branches.
+                    _STEP_EXECUTORS[id(item)] = (running - 1, before)
+                else:
+                    del _STEP_EXECUTORS[id(item)]
+                    item.workflow_id = before
+
+
+async def _aclose_stream(stream: Any) -> None:
+    """Close an agent's or team's event stream, if it is one that can be closed."""
+    aclose = getattr(stream, "aclose", None)
+    if aclose is not None:
+        await aclose()
+
+
+def _warn_step_does_not_load_own_history(executor: Any, step_name: Optional[str]) -> None:
+    """Warn, once for each agent or team, that ``add_history_to_context`` adds nothing in a workflow step."""
+    if not isinstance(executor, (Agent, Team)) or not executor.add_history_to_context:
+        return
+    key = f"{type(executor).__name__}:{getattr(executor, 'id', None) or id(executor)}"
+    if key in _HISTORY_WARNED:
+        return
+    _HISTORY_WARNED.add(key)
+    log_warning(
+        f"Step '{step_name}': '{getattr(executor, 'name', None) or getattr(executor, 'id', None)}' has "
+        "add_history_to_context=True, but as a workflow step it does not load its own earlier runs. "
+        "Set add_workflow_history=True on the step, or add_workflow_history_to_steps=True on the workflow, "
+        "to give it the workflow's earlier runs."
+    )
+
+
 def _read_workflow_session(db: Any, session_id: Optional[str]) -> Optional[WorkflowSession]:
-    """The workflow session ``session_id`` from a harness step's database, if it has one."""
+    """The workflow session ``session_id`` from a step's database, if it has one."""
     from agno.db.base import BaseDb, SessionType
 
     if session_id is None or not isinstance(db, BaseDb):
@@ -400,7 +473,7 @@ class Step:
 
         config = data.copy()
 
-        agent = None
+        agent: Optional[Union[Agent, "BaseExternalAgent"]] = None
         team = None
         executor = None
         workflow = None
@@ -451,7 +524,12 @@ class Step:
                 registry_agent = registry.get_agent(agent_id)
                 from agno.agents.base import BaseExternalAgent
 
-                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
+                if isinstance(registry_agent, BaseExternalAgent):
+                    # An external agent (Claude Code, Codex, ...) keeps no per-run state on the instance:
+                    # each call is told its workflow, and its session is its own. The registry's
+                    # instance is the step, as it is in a workflow written in code.
+                    agent = registry_agent
+                elif registry_agent is not None:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
@@ -524,26 +602,20 @@ class Step:
                     loaded = get_agent_by_id(
                         db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
                     )
-                from agno.agents.base import BaseExternalAgent
+                # A stored external agent resolves here too, and is a step like an Agent. One without
+                # a sandbox runs on this host, so it needs the opt-in it needs when served on its own.
+                from agno.agents._storage import admit_stored_child
 
-                if isinstance(loaded, BaseExternalAgent):
-                    # A stored external adapter resolves here too; a step runs an Agent.
-                    message = (
-                        f"Step '{config.get('name')}' references agent '{agent_id}', which is a "
-                        f"{loaded.sdk!r} external agent; external agents cannot be workflow steps."
-                    )
-                    if strict:
-                        raise ComponentRehydrationError(message)
-                    log_warning(message)
-                else:
-                    agent = loaded
+                agent = admit_stored_child(loaded, registry, strict, f"Step '{config.get('name')}' agent '{agent_id}'")
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 from agno.agents.base import BaseExternalAgent
 
-                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
+                if isinstance(registry_agent, BaseExternalAgent):
+                    agent = registry_agent
+                elif registry_agent is not None:
                     try:
                         agent = registry_agent.deep_copy()
                     except Exception as e:
@@ -1332,21 +1404,27 @@ class Step:
                         executor_run_id = str(uuid4())
                         if workflow_run_response is not None and workflow_run_response.run_id:
                             register_member_run(workflow_run_response.run_id, executor_run_id)
-                        response = self.active_executor.run(  # type: ignore
-                            input=final_message,  # type: ignore
-                            images=images,
-                            videos=videos,
-                            audio=audios,
-                            files=step_input.files,
-                            session_id=session_id,
-                            user_id=run_context.user_id if run_context is not None else user_id,
-                            session_state=session_state_copy,  # Send a copy to the executor
-                            run_context=run_context,
-                            run_id=executor_run_id,
-                            add_dependencies_to_context=add_dependencies_to_context,
-                            add_session_state_to_context=add_session_state_to_context,
-                            **kwargs,
-                        )
+                        if not use_history:
+                            _warn_step_does_not_load_own_history(self.active_executor, self.name)
+                        with running_as_workflow_step(
+                            self.active_executor,
+                            workflow_run_response.workflow_id if workflow_run_response is not None else None,
+                        ):
+                            response = self.active_executor.run(  # type: ignore
+                                input=final_message,  # type: ignore
+                                images=images,
+                                videos=videos,
+                                audio=audios,
+                                files=step_input.files,
+                                session_id=session_id,
+                                user_id=run_context.user_id if run_context is not None else user_id,
+                                session_state=session_state_copy,  # Send a copy to the executor
+                                run_context=run_context,
+                                run_id=executor_run_id,
+                                add_dependencies_to_context=add_dependencies_to_context,
+                                add_session_state_to_context=add_session_state_to_context,
+                                **kwargs,
+                            )
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -1684,39 +1762,45 @@ class Step:
                         executor_run_id = str(uuid4())
                         if workflow_run_response is not None and workflow_run_response.run_id:
                             register_member_run(workflow_run_response.run_id, executor_run_id)
-                        response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
-                            input=final_message,
-                            images=images,
-                            videos=videos,
-                            audio=audios,
-                            files=step_input.files,
-                            session_id=session_id,
-                            user_id=run_context.user_id if run_context is not None else user_id,
-                            session_state=session_state_copy,  # Send a copy to the executor
-                            stream=True,
-                            stream_events=stream_events,
-                            yield_run_output=True,
-                            run_context=run_context,
-                            run_id=executor_run_id,
-                            add_dependencies_to_context=add_dependencies_to_context,
-                            add_session_state_to_context=add_session_state_to_context,
-                            **kwargs,
-                        )
+                        if not use_history:
+                            _warn_step_does_not_load_own_history(self.active_executor, self.name)
+                        with running_as_workflow_step(
+                            self.active_executor,
+                            workflow_run_response.workflow_id if workflow_run_response is not None else None,
+                        ):
+                            response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
+                                input=final_message,
+                                images=images,
+                                videos=videos,
+                                audio=audios,
+                                files=step_input.files,
+                                session_id=session_id,
+                                user_id=run_context.user_id if run_context is not None else user_id,
+                                session_state=session_state_copy,  # Send a copy to the executor
+                                stream=True,
+                                stream_events=stream_events,
+                                yield_run_output=True,
+                                run_context=run_context,
+                                run_id=executor_run_id,
+                                add_dependencies_to_context=add_dependencies_to_context,
+                                add_session_state_to_context=add_session_state_to_context,
+                                **kwargs,
+                            )
 
-                        active_executor_run_response = None
-                        executor_error_event = None
-                        for event in response_stream:
-                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
-                                active_executor_run_response = event
-                                continue
-                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
-                                executor_error_event = event
-                            # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                enriched_event = self._enrich_event_with_context(
-                                    event, workflow_run_response, step_index
-                                )
-                                yield enriched_event  # type: ignore[misc]
+                            active_executor_run_response = None
+                            executor_error_event = None
+                            for event in response_stream:
+                                if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                    active_executor_run_response = event
+                                    continue
+                                if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                    executor_error_event = event
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -2055,21 +2139,27 @@ class Step:
                         executor_run_id = str(uuid4())
                         if workflow_run_response is not None and workflow_run_response.run_id:
                             await aregister_member_run(workflow_run_response.run_id, executor_run_id)
-                        response = await self.active_executor.arun(  # type: ignore
-                            input=final_message,  # type: ignore
-                            images=images,
-                            videos=videos,
-                            audio=audios,
-                            files=step_input.files,
-                            session_id=session_id,
-                            user_id=run_context.user_id if run_context is not None else user_id,
-                            session_state=session_state_copy,
-                            run_context=run_context,
-                            run_id=executor_run_id,
-                            add_dependencies_to_context=add_dependencies_to_context,
-                            add_session_state_to_context=add_session_state_to_context,
-                            **kwargs,
-                        )
+                        if not use_history:
+                            _warn_step_does_not_load_own_history(self.active_executor, self.name)
+                        with running_as_workflow_step(
+                            self.active_executor,
+                            workflow_run_response.workflow_id if workflow_run_response is not None else None,
+                        ):
+                            response = await self.active_executor.arun(  # type: ignore
+                                input=final_message,  # type: ignore
+                                images=images,
+                                videos=videos,
+                                audio=audios,
+                                files=step_input.files,
+                                session_id=session_id,
+                                user_id=run_context.user_id if run_context is not None else user_id,
+                                session_state=session_state_copy,
+                                run_context=run_context,
+                                run_id=executor_run_id,
+                                add_dependencies_to_context=add_dependencies_to_context,
+                                add_session_state_to_context=add_session_state_to_context,
+                                **kwargs,
+                            )
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -2413,39 +2503,52 @@ class Step:
                         executor_run_id = str(uuid4())
                         if workflow_run_response is not None and workflow_run_response.run_id:
                             await aregister_member_run(workflow_run_response.run_id, executor_run_id)
-                        response_stream = self.active_executor.arun(  # type: ignore
-                            input=final_message,
-                            images=images,
-                            videos=videos,
-                            audio=audios,
-                            files=step_input.files,
-                            session_id=session_id,
-                            user_id=run_context.user_id if run_context is not None else user_id,
-                            session_state=session_state_copy,
-                            stream=True,
-                            stream_events=stream_events,
-                            run_context=run_context,
-                            yield_run_output=True,
-                            run_id=executor_run_id,
-                            add_dependencies_to_context=add_dependencies_to_context,
-                            add_session_state_to_context=add_session_state_to_context,
-                            **kwargs,
-                        )
+                        if not use_history:
+                            _warn_step_does_not_load_own_history(self.active_executor, self.name)
+                        with running_as_workflow_step(
+                            self.active_executor,
+                            workflow_run_response.workflow_id if workflow_run_response is not None else None,
+                        ):
+                            response_stream = self.active_executor.arun(  # type: ignore
+                                input=final_message,
+                                images=images,
+                                videos=videos,
+                                audio=audios,
+                                files=step_input.files,
+                                session_id=session_id,
+                                user_id=run_context.user_id if run_context is not None else user_id,
+                                session_state=session_state_copy,
+                                stream=True,
+                                stream_events=stream_events,
+                                run_context=run_context,
+                                yield_run_output=True,
+                                run_id=executor_run_id,
+                                add_dependencies_to_context=add_dependencies_to_context,
+                                add_session_state_to_context=add_session_state_to_context,
+                                **kwargs,
+                            )
 
-                        active_executor_run_response = None
-                        executor_error_event = None
-                        async for event in response_stream:
-                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
-                                active_executor_run_response = event
-                                break
-                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
-                                executor_error_event = event
-                            # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                enriched_event = self._enrich_event_with_context(
-                                    event, workflow_run_response, step_index
-                                )
-                                yield enriched_event  # type: ignore[misc]
+                            active_executor_run_response = None
+                            executor_error_event = None
+                            try:
+                                async for event in response_stream:
+                                    if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                        # Read the stream to its end, as execute_stream does. Leaving it
+                                        # here would end the executor's run as a cancelled one.
+                                        active_executor_run_response = event
+                                        continue
+                                    if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                        executor_error_event = event
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                        enriched_event = self._enrich_event_with_context(
+                                            event, workflow_run_response, step_index
+                                        )
+                                        yield enriched_event  # type: ignore[misc]
+                            finally:
+                                # End the executor's stream while it is still marked: closed later, it would
+                                # save the run as its own, in the workflow's session.
+                                await _aclose_stream(response_stream)
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -2575,13 +2678,10 @@ class Step:
         session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
 
         if self.agent:
-            from agno.agents.base import BaseExternalAgent
-
-            if isinstance(self.agent, BaseExternalAgent):
-                # A harness step's runs are stored by the workflow, in the workflow session.
-                session = _read_workflow_session(self._workflow_db or self.agent.db, session_id)
-            else:
-                session = self.agent.get_session(session_id=session_id)
+            # A step's runs are stored by the workflow, in the workflow session.
+            session = _read_workflow_session(
+                self._workflow_db or self.agent.db, session_id or getattr(self.agent, "session_id", None)
+            )
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2593,7 +2693,7 @@ class Step:
             return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         elif self.team:
-            session = self.team.get_session(session_id=session_id)
+            session = _read_workflow_session(self._workflow_db or self.team.db, session_id or self.team.session_id)
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2621,13 +2721,10 @@ class Step:
         session: Union[AgentSession, TeamSession, WorkflowSession, None] = None
 
         if self.agent:
-            from agno.agents.base import BaseExternalAgent
-
-            if isinstance(self.agent, BaseExternalAgent):
-                # A harness step's runs are stored by the workflow, in the workflow session.
-                session = await _aread_workflow_session(self._workflow_db or self.agent.db, session_id)
-            else:
-                session = await self.agent.aget_session(session_id=session_id)
+            # A step's runs are stored by the workflow, in the workflow session.
+            session = await _aread_workflow_session(
+                self._workflow_db or self.agent.db, session_id or getattr(self.agent, "session_id", None)
+            )
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2639,7 +2736,9 @@ class Step:
             return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         elif self.team:
-            session = await self.team.aget_session(session_id=session_id)
+            session = await _aread_workflow_session(
+                self._workflow_db or self.team.db, session_id or self.team.session_id
+            )
             if not session:
                 log_warning("Session not found")
                 return []

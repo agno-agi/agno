@@ -19,7 +19,7 @@ from agno.agents.claude.agent import ClaudeResultError
 from agno.agents.codex import CodexAgent, _subscription
 from agno.agents.codex import agent as codex_module
 from agno.exceptions import AgentBusyError
-from agno.run.agent import RunOutput
+from agno.run.agent import RunContentEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.sandbox import Sandbox, _harness
 from agno.sandbox.base import ExecResult, SandboxHandle
@@ -113,6 +113,14 @@ class FakeCoordinator:
             status=RunStatus.completed,
             content="done",
         )
+
+
+async def _fake_astream(self, session_id, **execution):
+    yield RunContentEvent(run_id=execution["run_id"], content="working")
+    yield await FakeCoordinator.arun(self, session_id, **execution)
+
+
+FakeCoordinator.astream = _fake_astream  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -487,6 +495,237 @@ async def test_a_second_request_to_a_codex_agent_on_the_host_is_told_it_is_busy(
     assert codex_sdk == []
     session = await agent.aget_session("s2")
     assert session is None or not session.runs
+
+
+@pytest.mark.parametrize("parent", ["workflow_id", "team_id"], ids=["workflow step", "team member"])
+@pytest.mark.parametrize("stream", [False, True], ids=["arun", "stream"])
+async def test_a_step_or_member_waits_its_turn_for_a_busy_codex_agent_in_a_sandbox(
+    coordinator, monkeypatch, parent, stream
+):
+    """Two steps of one workflow, or one member asked twice, both finish: the second after the first."""
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    coordinator.hold = 0.05
+    agent = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
+
+    async def piece(number: int) -> Any:
+        options = {"session_id": "shared", "run_id": f"r{number}", "_" + parent: "parent-1"}
+        if not stream:
+            return await agent.arun(f"piece {number}", **options)
+        result = None
+        async for item in agent.arun(f"piece {number}", stream=True, yield_run_output=True, **options):
+            result = item if isinstance(item, RunOutput) else result
+        return result
+
+    first, second = await asyncio.gather(piece(1), piece(2))
+    assert (first.status, second.status) == (RunStatus.completed, RunStatus.completed)
+    assert coordinator.most_at_once == 1
+    assert len(coordinator.calls) == 2
+    assert coordinator.order[1].startswith("end ") and coordinator.order[2].startswith("start ")
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["arun", "stream"])
+async def test_a_step_or_member_waits_its_turn_for_a_busy_codex_agent_on_the_host(
+    codex_sdk, tmp_path, monkeypatch, stream
+):
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    agent = CodexAgent(id="codex-1", auth_json=login(), env={"CODEX_HOME": str(tmp_path)})
+    running, most_at_once, order = 0, 0, []
+
+    async def turn(input: Any, **kwargs: Any) -> str:
+        nonlocal running, most_at_once
+        running += 1
+        most_at_once = max(most_at_once, running)
+        order.append("start")
+        await asyncio.sleep(0.05)
+        running -= 1
+        order.append("end")
+        return "done"
+
+    async def turn_stream(input: Any, **kwargs: Any):
+        yield RunContentEvent(content=await turn(input))
+
+    monkeypatch.setattr(agent, "_arun_adapter", turn)
+    monkeypatch.setattr(agent, "_arun_adapter_stream", turn_stream)
+
+    async def piece(number: int) -> Any:
+        options = {"session_id": "shared", "run_id": f"r{number}", "_workflow_id": "workflow-1"}
+        if not stream:
+            return await agent.arun(f"piece {number}", **options)
+        result = None
+        async for item in agent.arun(f"piece {number}", stream=True, yield_run_output=True, **options):
+            result = item if isinstance(item, RunOutput) else result
+        return result
+
+    first, second = await asyncio.gather(piece(1), piece(2))
+    assert (first.status, second.status) == (RunStatus.completed, RunStatus.completed), (first.content, second.content)
+    assert most_at_once == 1 and order == ["start", "end", "start", "end"]
+
+
+async def test_a_step_that_waits_too_long_says_so_and_never_starts(coordinator, monkeypatch):
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    monkeypatch.setattr(_subscription, "WAIT_SECONDS", 0.05)
+    agent = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
+    _subscription._busy.add("codex-1")  # another run of this agent, which does not finish in time
+    step = await agent.arun("piece", session_id="s", run_id="r1", _workflow_id="workflow-1")
+    # A workflow reads the refusal as this step's failed run, and the run says how long it waited.
+    assert step.status == RunStatus.error
+    assert "codex-1 was still busy after this work waited 1 minute for its turn" in str(step.content)
+    assert coordinator.calls == []
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["arun", "stream"])
+async def test_a_step_on_the_host_that_waits_too_long_for_its_own_workflows_other_step_says_so(
+    codex_sdk, tmp_path, monkeypatch, stream
+):
+    """The other step still holds the session the two share; the refusal is returned, not a busy session."""
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    monkeypatch.setattr(_subscription, "WAIT_SECONDS", 0.05)
+    agent = CodexAgent(id="codex-1", auth_json=login(), env={"CODEX_HOME": str(tmp_path)})
+    started = []
+
+    async def turn(input: Any, **kwargs: Any) -> str:
+        started.append(input)
+        await asyncio.sleep(0.3)
+        return "done"
+
+    async def turn_stream(input: Any, **kwargs: Any):
+        yield RunContentEvent(content=await turn(input))
+
+    monkeypatch.setattr(agent, "_arun_adapter", turn)
+    monkeypatch.setattr(agent, "_arun_adapter_stream", turn_stream)
+
+    async def piece(number: int) -> Any:
+        options = {"session_id": "shared", "run_id": f"r{number}", "_workflow_id": "workflow-1"}
+        if not stream:
+            return await agent.arun(f"piece {number}", **options)
+        result = None
+        async for item in agent.arun(f"piece {number}", stream=True, yield_run_output=True, **options):
+            result = item if isinstance(item, RunOutput) else result
+        return result
+
+    first, second = await asyncio.gather(piece(1), piece(2))
+    assert first.status == RunStatus.completed
+    assert second.status == RunStatus.error
+    assert "codex-1 was still busy after this work waited 1 minute for its turn" in str(second.content)
+    assert len(started) == 1
+
+
+async def test_a_cancelled_workflow_never_starts_the_codex_step_that_was_waiting(codex_sdk, tmp_path, monkeypatch):
+    """The first step is still stopping when the waiting step sees the cancel. It ends cancelled, and is not retried."""
+    from agno.db.in_memory import InMemoryDb
+    from agno.exceptions import RunCancelledException
+    from agno.run.cancel import ais_cancelled
+    from agno.workflow import Parallel, Step, Workflow
+
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    db = InMemoryDb()
+    agent = CodexAgent(id="codex-1", auth_json=login(), env={"CODEX_HOME": str(tmp_path)}, db=db)
+    started = []
+
+    async def turn(input: Any, **kwargs: Any) -> str:
+        started.append(kwargs["run_id"])
+        for _ in range(100):
+            await asyncio.sleep(0.01)
+            if await ais_cancelled(kwargs["run_id"]):
+                await asyncio.sleep(0.2)  # Codex takes a moment to stop
+                raise RunCancelledException("Run cancelled")
+        return "done"
+
+    monkeypatch.setattr(agent, "_arun_adapter", turn)
+    both = Parallel(Step(name="a", agent=agent), Step(name="b", agent=agent))
+    workflow = Workflow(name="two-codex", db=db, steps=[both])
+    run = asyncio.create_task(workflow.arun("do the work", run_id="workflow-run-1"))
+    await asyncio.sleep(0.1)
+    await workflow.acancel_run("workflow-run-1")
+    result = await run
+    assert result.status == RunStatus.cancelled
+    assert len(started) == 1
+
+
+async def test_a_waiting_step_that_is_cancelled_never_takes_the_slot(monkeypatch):
+    from agno.exceptions import RunCancelledException
+    from agno.run import cancel
+
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.01)
+    agent = CodexAgent(id="codex-1", auth_json=login())
+    cancelled = False
+
+    async def is_cancelled(run_id: str) -> bool:
+        return cancelled and run_id == "r2"
+
+    monkeypatch.setattr(cancel, "ais_cancelled", is_cancelled)
+
+    async def waiting_step() -> str:
+        async with _subscription.one_at_a_time(agent, wait=True, run_id="r2"):
+            return "ran"
+
+    async with _subscription.one_at_a_time(agent):
+        step = asyncio.create_task(waiting_step())
+        await asyncio.sleep(0.03)
+        assert not step.done()
+        cancelled = True
+        with pytest.raises(RunCancelledException):
+            await step
+    # The first run has let go and the cancelled one never held the slot: it is free.
+    async with _subscription.one_at_a_time(agent):
+        pass
+    # A run that does not wait is still refused at once.
+    async with _subscription.one_at_a_time(agent):
+        with pytest.raises(AgentBusyError, match="^codex-1 is busy"):
+            async with _subscription.one_at_a_time(agent):
+                pass
+
+
+async def test_a_waiting_step_cancelled_just_before_the_slot_comes_free_gives_it_back(monkeypatch):
+    """One cancel often stops both runs: the first lets go before the waiting one asks again."""
+    from agno.exceptions import RunCancelledException
+    from agno.run import cancel
+
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.05)
+    agent = CodexAgent(id="codex-1", auth_json=login())
+    cancelled = False
+
+    async def is_cancelled(run_id: str) -> bool:
+        return cancelled and run_id == "r2"
+
+    monkeypatch.setattr(cancel, "ais_cancelled", is_cancelled)
+
+    async def waiting_step() -> str:
+        async with _subscription.one_at_a_time(agent, wait=True, run_id="r2"):
+            return "ran"
+
+    async with _subscription.one_at_a_time(agent):
+        step = asyncio.create_task(waiting_step())
+        # The step has asked once, found the agent busy and not been cancelled; it asks again later.
+        await asyncio.sleep(0.01)
+        cancelled = True
+    with pytest.raises(RunCancelledException):
+        await step
+    assert "codex-1" not in _subscription._busy
+    # A run that never waited is not asked about a cancel here; its own run handles that.
+    cancelled = True
+    async with _subscription.one_at_a_time(agent, wait=True, run_id="r2"):
+        pass
+
+
+def test_a_codex_agent_on_a_sign_in_may_sit_in_two_parallel_branches():
+    from agno.workflow import Parallel, Step
+
+    on_a_sign_in = CodexAgent(id="codex-1", auth_json=login())
+    Parallel(Step(name="a", agent=on_a_sign_in), Step(name="b", agent=on_a_sign_in))
+    # Any other external agent in two branches would collide on its one conversation, and is refused as before.
+    for other in (CodexAgent(id="codex-key"), CodexAgent(id="codex-2", access_token="token")):
+        with pytest.raises(ValueError, match="used in more than one Parallel branch"):
+            Parallel(Step(name="a", agent=other), Step(name="b", agent=other))
+
+
+async def test_a_claude_step_never_waits(coordinator):
+    coordinator.hold = 0.03
+    agent = ClaudeAgent(id="claude-1", oauth_token="oauth-token-1", sandbox=FakeSandbox())
+    await asyncio.gather(
+        *(agent.arun("work", session_id="shared", run_id=f"r{n}", _workflow_id="workflow-1") for n in range(3))
+    )
+    assert coordinator.most_at_once == 3
 
 
 @pytest.mark.parametrize("own_app", [False, True], ids=["AgentOS's app", "the caller's FastAPI app"])

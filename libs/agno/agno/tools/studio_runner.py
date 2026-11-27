@@ -44,7 +44,8 @@ Semantics:
       continuity across sessionless calls.
     * External agents run on their registered adapter: run state is per call,
       and sharing the adapter preserves its concurrent-session guard. They are
-      available for dispatch, not for Studio edits or persisted composition.
+      available for dispatch and as a member or a step of a stored team or
+      workflow, not for Studio edits.
     * Native code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already. Two things sit
@@ -1973,8 +1974,13 @@ class StudioRunnerTools(Toolkit):
         callers. Each step node is judged both as an executor holder and as an
         executor itself, because a step list accepts a bare component. Reads and
         edits load the same workflow without this check, so the offending step
-        stays inspectable and editable."""
-        shared = self._registry_instances()
+        stays inspectable and editable.
+
+        An external agent (ClaudeAgent, CodexAgent, ...) is the exception: Step.from_dict
+        binds the registry's own instance on purpose. It keeps no per-run state on
+        the instance, each call is told its workflow, and a workflow written in code
+        holds the same object."""
+        shared = [instance for instance in self._registry_instances() if not isinstance(instance, BaseExternalAgent)]
         if not shared:
             return
 

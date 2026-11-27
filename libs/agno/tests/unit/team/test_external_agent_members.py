@@ -442,6 +442,83 @@ def test_a_codex_member_takes_a_delegated_task_and_resumes_its_thread(db, monkey
     assert db.get_session(session_id="s1", session_type=SessionType.TEAM) is not None
 
 
+@pytest.mark.parametrize(
+    "slot_comes_free", [False, True], ids=["the slot stays busy", "the slot comes free before the member asks again"]
+)
+def test_a_team_cancelled_while_its_codex_member_waits_its_turn_keeps_the_members_cancelled_run(
+    db, tmp_path, monkeypatch, slot_comes_free
+):
+    """The member never ran. The caller still gets its cancelled run, and the team session stores it."""
+    import threading
+
+    from agno.agents.codex import CodexAgent, _subscription
+    from agno.run import cancel
+    from agno.run.agent import RunCancelledEvent, RunStartedEvent
+    from agno.run.team import TeamRunOutput
+    from tests.unit.agents.test_subscription_credentials import login
+
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.2)
+    member = CodexAgent(
+        id="codex-coder", name="Codex Coder", auth_json=login(), db=db, env={"CODEX_HOME": str(tmp_path)}
+    )
+    found_busy, waiting = threading.Event(), threading.Event()
+    take, is_cancelled = _subscription._take, cancel.ais_cancelled
+
+    async def observed_take(agent: Any) -> Any:
+        release = await take(agent)
+        if release is None:
+            found_busy.set()
+        return release
+
+    async def observed_is_cancelled(run_id: str) -> bool:
+        cancelled = await is_cancelled(run_id)
+        # The member found its agent busy and saw no cancel: it now sleeps until it asks again.
+        if found_busy.is_set() and not cancelled:
+            waiting.set()
+        return cancelled
+
+    monkeypatch.setattr(_subscription, "_take", observed_take)
+    monkeypatch.setattr(cancel, "ais_cancelled", observed_is_cancelled)
+    team = Team(
+        id="team",
+        name="Team",
+        members=[member],
+        model=_ScriptedModel([_delegate("codex-coder", "Write it", "c1"), ("content", "done")]),
+        db=db,
+        store_member_responses=True,
+    )
+    events: List[Any] = []
+
+    def consume() -> None:
+        events.extend(
+            team.run(
+                "first", run_id="team-run-1", session_id="s1", stream=True, stream_events=True, yield_run_output=True
+            )
+        )
+
+    _subscription._busy.add("codex-coder")  # another run of this agent holds its slot
+    try:
+        caller = threading.Thread(target=consume)
+        caller.start()
+        assert waiting.wait(5)
+        assert team.cancel_run("team-run-1")
+        if slot_comes_free:
+            _subscription._busy.discard("codex-coder")
+        caller.join(10)
+        assert not caller.is_alive()
+    finally:
+        _subscription._busy.discard("codex-coder")
+    [output] = [event for event in events if isinstance(event, TeamRunOutput)]
+    assert output.status == RunStatus.cancelled
+    [member_run] = output.member_responses
+    assert member_run.agent_id == "codex-coder" and member_run.status == RunStatus.cancelled
+    from_member = [event for event in events if getattr(event, "agent_id", None) == "codex-coder"]
+    assert any(isinstance(event, RunCancelledEvent) for event in from_member)
+    assert not any(isinstance(event, RunStartedEvent) for event in from_member)
+    stored = db.get_session(session_id="s1", session_type=SessionType.TEAM)
+    assert member_run.run_id in [run.run_id for run in stored.runs]
+
+
 def test_agentos_lists_a_harness_member_on_the_team(db, sdk):
     from agno.os.routers.teams.schema import TeamResponse
 
