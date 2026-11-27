@@ -109,7 +109,8 @@ async def test_owner_without_run_scope_can_delegate_start_and_cancel(
             assert await worker.store.claim_job(worker.worker_id, worker.config.lock_grace_seconds) is None
             current = await _call(db, "get_task", task["id"])
             assert current["result"]["status"] == "CANCELLED"
-            assert current["transitions"][-1]["started_by"] == "bob"
+            # The cancelled run's end added the step into review after the reservation.
+            assert current["transitions"][-2]["started_by"] == "bob"
             assert (await _call(db, "get_run", run_id, deserialize=False))["user_id"] == "alice"
 
             # A regular scheduler transport still checks the owner's own authority.

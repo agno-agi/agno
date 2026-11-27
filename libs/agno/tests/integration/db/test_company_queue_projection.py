@@ -88,7 +88,7 @@ async def test_persistent_task_write_failure_finishes_ticket(system, monkeypatch
         assert response.status_code == 202, response.text
     saved = await _call(db, "get_task", value["id"])
     assert saved["result"]["status"] == expected and saved["result"]["run_id"] == run_id
-    assert saved["status"] == ("in_review" if outcome == "completed" else "in_progress")
+    assert saved["status"] == "in_review"
 
 
 async def test_cancelled_paused_ticket_finishes_when_task_write_fails(system, monkeypatch):

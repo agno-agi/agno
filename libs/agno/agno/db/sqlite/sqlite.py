@@ -9871,6 +9871,7 @@ class SqliteDb(BaseDb):
         has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
+        from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES
         from agno.db.sql.company import active_parents
 
         sort_by, sort_order = company_sort(sort_by, sort_order)
@@ -9885,10 +9886,10 @@ class SqliteDb(BaseDb):
         if failed is not None:
             result_status = table.c.result["status"].as_string()
             stmt = stmt.where(
-                and_(table.c.status == "in_progress", result_status.in_(["ERROR", "CANCELLED"]))
+                and_(table.c.status.in_(FAILED_RUN_TASK_STATUSES), result_status.in_(["ERROR", "CANCELLED"]))
                 if failed
                 else or_(
-                    table.c.status != "in_progress",
+                    table.c.status.not_in(FAILED_RUN_TASK_STATUSES),
                     result_status.is_(None),
                     result_status.not_in(["ERROR", "CANCELLED"]),
                 )
@@ -10076,7 +10077,7 @@ class SqliteDb(BaseDb):
     ) -> Optional[Dict[str, Any]]:
         from sqlalchemy import JSON, or_
 
-        from agno.db.schemas.tasks import task_transition_fields
+        from agno.db.schemas.tasks import task_run_end_fields
 
         table = self._get_table(table_type="tasks")
         if table is None:
@@ -10098,11 +10099,7 @@ class SqliteDb(BaseDb):
             existing = dict(row._mapping)
             if expected_transitions is not None and existing["transitions"] != expected_transitions:
                 return None
-            fields: Dict[str, Any] = (
-                task_transition_fields(existing, "in_review", "Execution completed; human review required")
-                if result.get("status") == "COMPLETED"
-                else {"updated_at": int(time.time())}
-            )
+            fields: Dict[str, Any] = task_run_end_fields(existing, result)
             if checkout is not None:
                 fields["metadata"] = {**(existing.get("metadata") or {}), "checkout": checkout}
             stmt = (

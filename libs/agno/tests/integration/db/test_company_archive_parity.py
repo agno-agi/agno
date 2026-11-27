@@ -675,7 +675,8 @@ async def test_attention_excludes_archived_ancestors_with_execution_results(db, 
         for params in [{}, {"goal_id": goal["id"]}]:
             response = await client.get("/company/attention", params=params)
             assert response.status_code == 200, response.text
-            assert response.json() == {"proposals": 1, "in_review": 1, "failed": 1}
+            # A Task in review whose run failed counts as failed too.
+            assert response.json() == {"proposals": 1, "in_review": 1, "failed": 2}
         # Reproduce parents archived by older releases, with live children left behind.
         monkeypatch.setattr(archive, "_archive_children", lambda *args: None)
         monkeypatch.setattr(archive, "_refuse_open_tasks", lambda *args: None)

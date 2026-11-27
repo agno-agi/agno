@@ -1512,7 +1512,8 @@ def test_summary_failure_predicate_matches_attention(task_status, run_status):
         "Observed state",
         "",
     )
-    unresolved = task_status == "in_progress" and run_status in {"ERROR", "CANCELLED"}
+    # A failed run moves its Task to review. One stored before that is still In progress.
+    unresolved = task_status in {"in_progress", "in_review"} and run_status in {"ERROR", "CANCELLED"}
     assert ("No failed Tasks." not in report) == unresolved
 
 

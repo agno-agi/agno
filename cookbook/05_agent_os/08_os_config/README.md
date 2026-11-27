@@ -11,6 +11,7 @@ Python and YAML, then read `GET /config` to prove what AgentOS rendered.
 | `config_basics.py` | Define available models, per-agent manifest metadata, quick prompts, and named session/memory domains in Python. |
 | `yaml_config.py` | Load those fields from `config.yaml` and verify the rendered configuration. |
 | `config.yaml` | Declarative AgentOSConfig values whose IDs match the Python runtime objects. |
+| `configuration_report.py` | Read the `authorization` block and the feature blocks of `GET /config` as an administrator and as a member, on an AgentOS with managed roles, a user directory and audit. |
 
 ## Prerequisites
 

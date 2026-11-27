@@ -338,7 +338,7 @@ async def test_competing_terminal_results_preserve_one_winner(system, statuses):
     assert len(winners) == 1
     saved = await _call(db, "get_task", task["id"])
     assert saved["result"] == winners[0]["result"]
-    assert saved["status"] == ("in_review" if saved["result"]["status"] == "COMPLETED" else "in_progress")
+    assert saved["status"] == "in_review"
 
 
 @pytest.mark.asyncio

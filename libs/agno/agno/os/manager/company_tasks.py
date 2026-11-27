@@ -17,7 +17,7 @@ from weakref import ReferenceType, ref
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.db.schemas.tasks import TASK_STATUS_MEANING
+from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES, TASK_STATUS_MEANING
 from agno.os.manager.linked_work import link_task
 from agno.run.authorization import FINISHED_WORK_REPORT_REFUSAL, in_finished_work_report
 from agno.tools import Toolkit
@@ -546,14 +546,15 @@ class CompanyTaskTools(Toolkit):
                     False,
                     f"'{title}' is still a proposal. A person must accept it with an executor before it can start.",
                 )
-            if value["status"] == "in_review":
-                return False, f"'{title}' is waiting for review. The person completes it or sends it back."
-            # A Task whose last attempt failed or was cancelled stays In progress. Starting it is a retry,
-            # and the start route decides whether the earlier run has ended.
-            ended = value["status"] == "in_progress" and (value.get("result") or {}).get("status") in (
+            # A Task whose last run failed or was cancelled waits in review, or is still In progress when it
+            # was stored before a run's end moved it. Starting it is a retry, and the start route decides
+            # whether the earlier run has ended.
+            ended = value["status"] in FAILED_RUN_TASK_STATUSES and (value.get("result") or {}).get("status") in (
                 "ERROR",
                 "CANCELLED",
             )
+            if value["status"] == "in_review" and not ended:
+                return False, f"'{title}' is waiting for review. The person completes it or sends it back."
             if value["status"] != "ready" and _pending_task_attempt(value) is None and not ended:
                 meaning = TASK_STATUS_MEANING.get(value["status"], value["status"])
                 return False, f"'{title}' is {meaning}; only accepted work can start."
@@ -647,7 +648,10 @@ class CompanyTaskTools(Toolkit):
                 return "Not sent: Task not found"
             title = value.get("title") or task_id
             status = value["status"]
-            ended = status == "in_progress" and (value.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+            ended = status in FAILED_RUN_TASK_STATUSES and (value.get("result") or {}).get("status") in (
+                "ERROR",
+                "CANCELLED",
+            )
             if status == "in_progress" and not ended:
                 if (await starter.state(value, app)).get("waiting_on"):
                     # A paused run does not end on its own: the person answers it, they do not wait for it.
@@ -677,7 +681,7 @@ class CompanyTaskTools(Toolkit):
             await _StartCaller.for_authority(app, authority, user_id).require_accept(starter.endpoint(executor))
             confirmed = (
                 "send it back with review_company_task, which pauses for their confirmation, then start it"
-                if status == "in_review"
+                if status == "in_review" and not ended
                 else "retry it unchanged with start_company_task, or send it back from the Company pages"
             )
             if _is_sandboxed(starter.executor(executor)):

@@ -1287,12 +1287,21 @@ class QueueWorker:
         # The message is the operator surface (it lands on job.error and
         # the polled run's content): it must answer the next question -
         # "why did my durable run not re-execute?" - not just state facts
+        allowed = job.get("max_attempts", 1)
         error = (
-            "Worker lost and attempt budget exhausted; run was not re-executed. "
-            "Crashed runs fail visibly instead of silently re-executing (at-most-once, "
-            "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
-            "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            "Worker lost and attempt budget exhausted; the run will not be executed again automatically. "
+            f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent"
         )
+        if (job.get("payload") or {}).get("company_task_id"):
+            # This is also the Task's result. A Task is retried by starting its next attempt: a requeue
+            # of this ticket is failed again from its stored run, and the queue's setting does not
+            # raise the executions a lost Task run gets.
+            error += ". Start the Task's next attempt to retry."
+        else:
+            error += (
+                " (QueueConfig.max_attempts, 1 by default): raise it to allow more automatic "
+                "re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            )
         # A run that failed on its own keeps its error on the Task result. Read before the
         # write below, which turns an unsettled row ERROR and keeps any partial draft in it.
         task_error = error
@@ -1767,7 +1776,7 @@ class QueueWorker:
             # (dead-producer TTL detection bounds the wait if no retry comes).
             will_retry = (
                 status == RunStatus.error
-                and job.get("attempt", 1) < job.get("max_attempts", 1)
+                and job.get("attempt", 1) < self._failure_attempts(job)
                 and not self._run_is_not_retryable(final_output)
             )
             if not will_retry:
@@ -2020,22 +2029,39 @@ class QueueWorker:
         ):
             # A direct native process belonged to the lost worker. Re-entering
             # arun would repeat its tools, not reconnect to that process.
-            error = "The native execution waiting for confirmation was lost; the turn cannot be replayed"
+            error = "The native execution was lost with its worker; the turn cannot be replayed"
             if not await self._persist_run_error(job, error):
                 return True
             await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
             await self._terminate_stream_view(job, "error")
             return True
-        if run is None or str(status).upper() != RunStatus.error.value or not self._run_is_not_retryable(run):
+        # A run that failed by itself before its worker was lost has also spent its own budget.
+        spent = job["attempt"] > self._failure_attempts(job)
+        if (
+            run is None
+            or str(status).upper() != RunStatus.error.value
+            or not (self._run_is_not_retryable(run) or spent)
+        ):
             return False
         error = str(getattr(run, "content", "") or "run errored")
         log_warning(
-            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row marked "
-            f"non-retryable by its component; failing the ticket without re-executing: {error}"
+            f"Job queue: reclaimed job {job['id']} (attempt {job['attempt']}) has a run row that failed and "
+            f"is not to be retried; failing the ticket without re-executing: {error}"
         )
         await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
         await self._terminate_stream_view(job, "error")
         return True
+
+    @staticmethod
+    def _failure_attempts(job: Dict[str, Any]) -> int:
+        """How many executions a ticket allows a run that fails by itself: an error, an exception, a timeout.
+
+        A ticket may allow more executions than that for a run whose worker was lost, and then names
+        this lower number in its payload as max_failed_attempts. Without it one budget covers both.
+        """
+        allowed = job.get("max_attempts", 1)
+        own = (job.get("payload") or {}).get("max_failed_attempts")
+        return min(own, allowed) if isinstance(own, int) and not isinstance(own, bool) and own >= 1 else allowed
 
     @staticmethod
     def _run_is_not_retryable(run: Any) -> bool:
@@ -2255,7 +2281,7 @@ class QueueWorker:
         the same row-first rule as an execution failure: the run row, reached
         through the row handle, is written before the ticket settles."""
         job_id, attempt = job["id"], job["attempt"]
-        if target.permanent or attempt >= job.get("max_attempts", 1):
+        if target.permanent or attempt >= self._failure_attempts(job):
             if not await self._persist_run_error(job, target.reason):
                 log_error(
                     f"Job queue: could not persist run-row error for unbuildable job {job_id}; "
@@ -2315,12 +2341,22 @@ class QueueWorker:
         return applied
 
     async def _aretry_or_fail_ticket(
-        self, job_id: str, attempt: int, error: str, delay: int, shielded: bool = False
+        self, job_id: str, attempt: int, error: str, delay: int, shielded: bool = False, interrupted: bool = False
     ) -> Optional[str]:
         """retry_or_fail_job with MANDATORY result handling (see
         _asettle_ticket). None means the store declined or could not commit -
         the ticket is left RUNNING for the sweep rather than silently
-        assumed requeued."""
+        assumed requeued.
+
+        interrupted says the worker stopped the run (a shutdown), so the run did not fail by itself
+        and the ticket's whole budget applies. Otherwise a ticket that allows a failed run fewer
+        executions than a lost one (see _failure_attempts) is failed once those are spent."""
+        if not interrupted:
+            held = None
+            with contextlib.suppress(Exception):
+                held = await self.store.get_job(job_id)
+            if held is not None and self._failure_attempts(held) <= attempt < held.get("max_attempts", 1):
+                return "failed" if await self._asettle_ticket(job_id, attempt, "failed", error, shielded) else None
         if not self._begin_ticket_write(job_id):
             return None
         try:
@@ -2711,6 +2747,7 @@ class QueueWorker:
                 "interrupted by worker shutdown",
                 self.config.retry_delay_seconds,
                 shielded=True,
+                interrupted=True,
             )
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
@@ -2761,7 +2798,7 @@ class QueueWorker:
             # retry's real output). Budget exhausted = genuinely terminal - and
             # the run-row persist gates the terminal ticket write: on failure
             # the job is left stale for the sweep instead of orphaning the row.
-            if attempt >= job.get("max_attempts", 1):
+            if attempt >= self._failure_attempts(job):
                 if not await self._persist_run_error(job, error):
                     log_error(
                         f"Job queue: could not persist run-row error for timed-out job {job_id}; "
@@ -2772,7 +2809,7 @@ class QueueWorker:
             await self._aretry_or_fail_ticket(job_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             permanent = self._is_permanent_failure(e, job.get("component_type") if payload.get("continue") else None)
-            if permanent or attempt >= job.get("max_attempts", 1):
+            if permanent or attempt >= self._failure_attempts(job):
                 # Terminal outcome either way: the run-row persist gates the
                 # terminal ticket write below. On failure, leave the job stale
                 # - budget-exhausted jobs are re-swept; a permanent failure

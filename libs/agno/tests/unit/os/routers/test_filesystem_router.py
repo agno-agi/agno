@@ -394,6 +394,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
     assert response.status_code == 200
     agents = {entry["id"]: entry for entry in response.json()["agents"]}
     assert response.json()["filesystem"] == {
+        "enabled": True,
         "namespaces": [
             {
                 "backend_type": "db",
@@ -412,6 +413,32 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
     }
     assert "filesystem" not in agents["notes"]
     assert "filesystem" not in agents["factory-notes"]
+
+
+def test_config_carries_each_filesystem_description(db, client_factory):
+    writer = Agent(
+        id="writer", db=db, filesystem=[FileSystem(db, namespace="team/handbook", description="Writer view.")]
+    )
+    analyst = Agent(
+        id="analyst",
+        db=db,
+        filesystem=[
+            FileSystem(db, namespace="team/handbook", read_only=True, description="The team handbook."),
+            FileSystem(db, namespace="analyst/drafts"),
+        ],
+    )
+    headers = _headers("alice", ["config:read", "agents:read"])
+
+    entries = _config_entries(client_factory(writer, analyst), headers)
+    assert {entry["namespace"]: entry.get("description") for entry in entries} == {
+        "analyst/drafts": None,
+        "team/handbook": "The team handbook.",
+    }
+    assert "description" not in next(entry for entry in entries if entry["namespace"] == "analyst/drafts")
+
+    declared = FileSystem(db, namespace="team/handbook", description="Declared view.")
+    entries = _config_entries(client_factory(writer, analyst, db=db, filesystem=declared), headers)
+    assert next(entry for entry in entries if entry["namespace"] == "team/handbook")["description"] == "Declared view."
 
 
 def test_manual_read_only_toolkit_is_discovered_and_browsable(db, client_factory):

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import (
@@ -36,17 +37,25 @@ from agno.os.routers.workflows.router import (
 )
 from agno.os.schema import (
     AgentSummaryResponse,
+    AuditStatus,
+    AuthorizationReport,
     BadRequestResponse,
     ConfigResponse,
+    FeatureStatus,
     InfoResponse,
     InterfaceResponse,
     InternalServerErrorResponse,
+    KnowledgeReport,
     McpInfo,
+    MediaStorageStatus,
     Model,
     NotFoundResponse,
+    PublicStatus,
     QueueCapabilities,
     TeamSummaryResponse,
+    TracesReport,
     UnauthenticatedResponse,
+    UserDirectoryStatus,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
     _extract_model,
@@ -107,7 +116,9 @@ def get_base_router(
             "- Available models and databases\n"
             "- Registered agents, teams, and workflows\n"
             "- Chat, session, memory, knowledge, and evaluation configurations\n"
-            "- Available interfaces and their routes"
+            "- Available interfaces and their routes\n"
+            "- How requests are authenticated and authorized (detail for administrators only)\n"
+            "- Which optional features are running"
         ),
         responses={
             200: {
@@ -178,7 +189,10 @@ def get_base_router(
             }
         },
     )
-    async def config(request: Request) -> ConfigResponse:
+    async def config(request: Request, response: Response) -> ConfigResponse:
+        # The component lists and the authorization detail both depend on who is asking.
+        response.headers["Vary"] = "Authorization"
+        is_admin = await _caller_is_admin(os, request)
         agents_in_scope = _listed(os.agents)
         teams_in_scope = list(os.teams or [])
         workflows_in_scope = list(os.workflows or [])
@@ -203,6 +217,7 @@ def get_base_router(
 
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
+            name=os.name,
             description=os.description,
             available_models=_collect_unique_models(os),
             os_database=os.db.id if os.db else None,
@@ -217,13 +232,13 @@ def get_base_router(
                 user_id=get_scoped_user_id(request) or getattr(request.state, "user_id", None),
                 agents=agents_in_scope,
             ),
-            knowledge=os._get_knowledge_config(),
+            knowledge=_knowledge_report(os),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             agents=agent_summaries,
             teams=team_summaries,
             workflows=workflow_summaries,
-            traces=os._get_traces_config(),
+            traces=TracesReport(**os._get_traces_config().model_dump(), enabled=_agno_tracing_is_active()),
             queue=QueueCapabilities(
                 durable=bool(os.queue is not None and os.queue.durable),
                 queue_per_session=bool(
@@ -235,7 +250,10 @@ def get_base_router(
                         os.queue.queue_per_session,
                     )
                 ),
+                cross_container=_cross_container(),
             ),
+            authorization=await _authorization_report(os, request, is_admin),
+            **_feature_blocks(os, request, is_admin),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces
@@ -243,6 +261,169 @@ def get_base_router(
         )
 
     return router
+
+
+async def _caller_is_admin(os: "AgentOS", request: Request) -> bool:
+    """Whether the caller may administer this AgentOS, by the rule the /users admin API applies:
+    everyone on an AgentOS with no authentication, the security-key holder, a token carrying the
+    admin scope where a scope plane runs, or a subject holding an admin role."""
+    from agno.os.authz.admin_router import _make_require_admin
+
+    require_admin = _make_require_admin(os._authz_role_store, auth_enabled=os._auth_configured())
+    try:
+        await require_admin(request)
+    except HTTPException:
+        return False
+    return True
+
+
+async def _authorization_report(os: "AgentOS", request: Request, is_admin: bool) -> AuthorizationReport:
+    """The /config authorization block: the mode for every caller, the detail for administrators."""
+    from agno.os.auth import _authorization_enforced, token_scopes_are_authoritative
+
+    app = request.app
+    enabled = _authorization_enforced(app)
+    report = AuthorizationReport(
+        enabled=enabled,
+        mode=get_effective_auth_mode(settings=os.settings, authorization=os.authorization, app=app),
+        user_isolation=bool(getattr(app.state, "user_isolation_enabled", False)),
+    )
+    if not is_admin:
+        return report
+
+    role_store = os._authz_role_store
+    report.managed_roles = bool(enabled and role_store is not None and role_store.roles_decide)
+    if report.managed_roles:
+        report.default_role = await role_store.adefault_role()
+    report.roles_from_token = bool(report.managed_roles and role_store.roles_claim)
+    report.token_scopes_trusted = bool(enabled and token_scopes_are_authoritative(request))
+    # The audience is checked only when a JWT is what authenticates the request and the
+    # check resolves to a value to compare against.
+    report.audience_verified = bool(
+        report.mode == "jwt"
+        and resolve_expected_audience(
+            verify_audience=bool(getattr(app.state, "jwt_verify_audience", False)),
+            audience=getattr(app.state, "jwt_audience", None),
+            os_id=getattr(app.state, "agent_os_id", None),
+        )
+    )
+    return report
+
+
+def _agno_tracing_is_active() -> bool:
+    try:
+        from agno.tracing.setup import is_agno_tracing_active
+    except ImportError:
+        return False
+    return is_agno_tracing_active()
+
+
+def _component_telemetry_flags(components: List[Any]) -> List[bool]:
+    """The telemetry flag of every local agent, team and workflow reachable from the given components.
+
+    Team members and the agents, teams and workflows inside workflow steps send their own run
+    telemetry, whatever the flag on the team or workflow that holds them.
+    """
+    from agno.agent import Agent
+    from agno.team import Team
+    from agno.workflow import Workflow
+
+    flags: List[bool] = []
+    visited: set = set()
+    pending: List[Any] = list(components)
+    while pending:
+        node = pending.pop()
+        if node is None or id(node) in visited:
+            continue
+        visited.add(id(node))
+        if isinstance(node, (Agent, Team, Workflow)):
+            flags.append(bool(node.telemetry))
+        if isinstance(node, Agent):
+            continue
+        # A team's members, a workflow's coordinator agent and step tree, a step's executor,
+        # and the branches of a step container.
+        for attr in ("members", "agent", "team", "workflow", "steps", "else_steps", "choices"):
+            child = getattr(node, attr, None)
+            if isinstance(child, (list, tuple)):
+                pending.extend(child)
+            elif child is not None:
+                pending.append(child)
+    return flags
+
+
+def _telemetry_is_on(os: "AgentOS") -> bool:
+    """AgentOS(telemetry=...) covers only the launch ping; each component sends its own run telemetry."""
+    if os.telemetry:
+        return True
+    flags = _component_telemetry_flags([*os._agents, *os._teams, *os._workflows])
+    # Components apply AGNO_TELEMETRY over their own flag each time they send.
+    env = getenv("AGNO_TELEMETRY")
+    if env is not None:
+        return bool(flags) and env.lower() == "true"
+    return any(flags)
+
+
+def _knowledge_report(os: "AgentOS") -> KnowledgeReport:
+    knowledge = os._get_knowledge_config()
+    return KnowledgeReport(**knowledge.model_dump(), enabled=bool(knowledge.knowledge_instances))
+
+
+def _cross_container() -> bool:
+    """Both transports are process-wide and a custom one wins over QueueConfig(redis=...), so read what is installed."""
+    from agno.os.event_streams import get_event_stream
+    from agno.os.event_streams.in_memory import InMemoryEventStream
+    from agno.run.cancel import get_cancellation_manager
+    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+
+    return not isinstance(get_event_stream(), InMemoryEventStream) and not isinstance(
+        get_cancellation_manager(), InMemoryRunCancellationManager
+    )
+
+
+def _feature_blocks(os: "AgentOS", request: Request, is_admin: bool) -> Dict[str, Any]:
+    """The /config feature blocks without a detail block of their own. Directory, audit and public are admin-only."""
+    blocks: Dict[str, Any] = dict(
+        # The poller starts only with a database to read schedules from.
+        scheduler=FeatureStatus(enabled=bool(os._scheduler_enabled and os.db is not None)),
+        mcp=FeatureStatus(enabled=bool(os.mcp)),
+        manager=FeatureStatus(enabled=os._manager is not None),
+        media_storage=MediaStorageStatus(
+            enabled=os.media_storage is not None,
+            backend=getattr(os.media_storage, "backend_name", None),
+        ),
+        telemetry=FeatureStatus(enabled=_telemetry_is_on(os)),
+    )
+    if not is_admin:
+        return blocks
+
+    state = request.app.state
+    directory_on = getattr(state, "user_store", None) is not None
+    blocks["user_directory"] = UserDirectoryStatus(
+        enabled=directory_on,
+        auto_provision=bool(directory_on and getattr(state, "user_auto_provision", False)),
+        fail_closed=bool(directory_on and getattr(state, "user_directory_fail_closed", False)),
+    )
+    audit_sink = getattr(state, "authz_audit", None)
+    # Both audit trails are served by the /authz router, which is mounted only with managed roles.
+    role_store = os._authz_role_store
+    blocks["audit"] = AuditStatus(
+        enabled=audit_sink is not None,
+        changes_readable=bool(role_store is not None and role_store._audit_readable),
+        decisions_readable=bool(
+            role_store is not None and audit_sink is not None and hasattr(audit_sink, "read_decisions")
+        ),
+    )
+    # The policy the public middleware admits outside requests by; absent without a public surface.
+    policy = getattr(state, "public_route_policy", None)
+    selected = policy.selected if policy is not None else {}
+    blocks["public"] = PublicStatus(
+        enabled=policy is not None,
+        agents=sorted(selected.get("agents", ())),
+        teams=sorted(selected.get("teams", ())),
+        workflows=sorted(selected.get("workflows", ())),
+        mcp=bool(policy is not None and policy.mcp),
+    )
+    return blocks
 
 
 def _collect_unique_models(os: "AgentOS") -> List[Model]:
