@@ -2471,8 +2471,8 @@ def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():
     assert 'Otherwise say "published, not run", or "published, not working" with the text the run returned.' in said
     assert "show that a component can be built, not what it returns" in said
     # The check run does not reach work that acts outside, and an agent or team is still run only on request.
-    assert "Skip the run only when a step's tools send, publish, push or spend, or wait for approval." in said
     assert "Run an agent or a team only if asked." in said
+    assert "Never run as a check a component whose tools send, publish, push or spend, or wait for approval." in said
     assert "Run the result only if asked" not in said
 
 
@@ -2491,15 +2491,15 @@ def test_platform_builder_is_told_what_a_workflow_returns():
     assert "give every workflow that can fail" not in said
 
 
-def test_super_agent_sends_a_broken_component_to_the_builder_and_adds_no_task():
+def test_super_agent_sends_a_broken_component_to_the_builder_and_reports_a_run_honestly():
     from agno.os.manager.prompts import COMPANY_INSTRUCTIONS, MANAGER_INSTRUCTIONS
 
     said = " ".join(MANAGER_INSTRUCTIONS.split())
     assert "Delegate creating, changing or fixing agents, teams, workflows and schedules to Platform Builder." in said
     assert "and the result the person wants back from the component" in said
-    assert "A component that returns the wrong thing is fixed by Platform Builder, never by a Task." in said
-    assert "add or propose no Task for the fix unless the person asks for a Task" in said
-    assert "Call a component verified or working only when Platform Builder ran it" in said
+    assert "Call a component verified or working only when it reported what a run returned" in said
+    # A new agent or team is not test-run unasked: the builder's own check run is for workflows.
+    assert "ask it to run an agent or team only when the person asked for a run" in said
     # Work for an agent that a person asks to have done is still recorded and started.
     company = " ".join(COMPANY_INSTRUCTIONS.split())
     assert "put it on record with add_company_task, start true only when asked to do it" in company
