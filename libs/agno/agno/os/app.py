@@ -22,7 +22,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.utils import database_error_message
-from agno.exceptions import AgnoError, MigrationRequiredError, SessionBusyError
+from agno.exceptions import AgentBusyError, AgnoError, MigrationRequiredError, SessionBusyError
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -2338,14 +2338,18 @@ class AgentOS:
         # Install on both owned and caller-supplied apps, unless a typed handler
         # already handles this conflict. A catch-all Exception handler remains the
         # server-error fallback; it should not turn routine conflicts into errors.
-        if not any(error_type in fastapi_app.exception_handlers for error_type in (SessionBusyError, AgnoError)):
+        async def busy_handler(_: Request, exc: Exception) -> JSONResponse:
+            # Handle this expected conflict without the catch-all handler's re-raise,
+            # which makes Uvicorn close the connection serving the request.
+            status_code = getattr(exc, "status_code", 409)
+            log_warning(f"{type(exc).__name__}: {status_code} {exc}")
+            return JSONResponse(status_code=status_code, content=_error_body(str(exc), exc))
 
-            @fastapi_app.exception_handler(SessionBusyError)
-            async def session_busy_handler(_: Request, exc: SessionBusyError) -> JSONResponse:
-                # Handle this expected conflict without the catch-all handler's re-raise,
-                # which makes Uvicorn close the connection serving the request.
-                log_warning(f"{type(exc).__name__}: {exc.status_code} {exc}")
-                return JSONResponse(status_code=exc.status_code, content=_error_body(str(exc), exc))
+        # A busy session and a busy agent: a caller-supplied app has no catch-all handler to
+        # read their 409 from, so without these it answers 500.
+        for conflict in (SessionBusyError, AgentBusyError):
+            if not any(error_type in fastapi_app.exception_handlers for error_type in (conflict, AgnoError)):
+                fastapi_app.add_exception_handler(conflict, busy_handler)
 
         if not self._app_set:
 

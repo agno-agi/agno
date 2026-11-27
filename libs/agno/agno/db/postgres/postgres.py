@@ -9258,6 +9258,40 @@ class PostgresDb(BaseDb):
             )
             return None
 
+    def release_job(self, job_id: str, worker_id: str, attempt: int, delay_seconds: int = 0) -> bool:
+        """Put a claimed job back in the queue as if this claim had not happened.
+
+        For a claim that could not start its run, because its agent runs one piece of work at
+        a time and had another: the attempt the claim counted is given back, so waiting for
+        the agent never spends the job's attempt budget."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .values(
+                        status="queued",
+                        attempt=max(attempt - 1, 0),
+                        locked_by=None,
+                        locked_at=None,
+                        available_at=now + delay_seconds,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: release failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}")
+            return False
+
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
         queue (see InMemoryQueueStore.settle_paused_job). Single conditional
