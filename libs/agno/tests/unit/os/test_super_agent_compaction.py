@@ -86,7 +86,7 @@ def summaries(request):
 
 def notes(request):
     """The linked-work notes in one request: each an unstored user message of its own."""
-    return [m for m in request if m.role == "user" and not m.from_history and str(m.content).startswith(_HEADER)]
+    return [m for m in request if m.role == "user" and not m.from_history and _HEADER in str(m.content)]
 
 
 async def talk_until_folded(system, start=0, limit=30):
