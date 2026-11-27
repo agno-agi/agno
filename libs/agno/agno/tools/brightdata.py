@@ -90,7 +90,7 @@ class BrightDataTools(Toolkit):
 
             return response.text
         except Exception as e:
-            raise Exception(f"Request failed: {e}")
+            raise Exception(f"Request failed: {e}") from e
 
     def scrape_as_markdown(self, url: str) -> str:
         """
