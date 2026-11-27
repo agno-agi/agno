@@ -7,7 +7,7 @@ from time import time
 from typing import TYPE_CHECKING, Any, Callable, Collection, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
-from agno.compaction._cut import choose_boundary, is_offload_envelope
+from agno.compaction._cut import choose_boundary, is_offload_envelope, leading_system_count
 from agno.compaction._tokens import TokenCounter, count_request, estimate_tokens, is_async_callable
 from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, render_message, render_messages, search_terms
@@ -922,6 +922,17 @@ class Compaction:
                 return index
         return 0
 
+    @staticmethod
+    def _span_to_fold(messages: List[Message], already: int, boundary: int) -> List[Message]:
+        """The messages this fold summarizes and archives: from the previous cut to the new one.
+
+        Never the leading system messages. The list folded after a refused request is the one the
+        model call holds, which has them in front, and every view keeps them as they are in front
+        of the summary. Folded, the instructions would be summarized as if they were conversation
+        and stored where a search finds them.
+        """
+        return messages[max(already, leading_system_count(messages)) : boundary]
+
     def _worth_compacting(self, to_compact: List[Message], kept: List[Message]) -> bool:
         """Whether folding this span can pay for the summary that replaces it.
 
@@ -1047,7 +1058,9 @@ class Compaction:
             return None
 
         already = self._resolved_boundary(messages, previous)
-        to_compact = messages[already:boundary]
+        to_compact = self._span_to_fold(messages, already, boundary)
+        if not to_compact:
+            return None
         archive = self.archive_for(session_id, db, user_id)
         started_at = int(time())
 
@@ -1114,7 +1127,9 @@ class Compaction:
             return None
 
         already = self._resolved_boundary(messages, previous)
-        to_compact = messages[already:boundary]
+        to_compact = self._span_to_fold(messages, already, boundary)
+        if not to_compact:
+            return None
         archive = self.archive_for(session_id, db, user_id)
         started_at = int(time())
 
