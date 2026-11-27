@@ -101,6 +101,27 @@ def require_host_execution_allowed(agent: "BaseExternalAgent", registry: Optiona
     )
 
 
+def admit_stored_child(agent: Any, registry: Optional["Registry"], strict: bool, label: str) -> Any:
+    """A stored agent resolved as a team member or a workflow step, or None when it may not run here.
+
+    A stored external agent without a sandbox runs on this host, so inside a team or a workflow it
+    needs the same opt-in as when it is served on its own. A strict load raises; a lenient load
+    returns None, and the parent loads without it. An Agent is returned as it is.
+    """
+    from agno.agents.base import BaseExternalAgent
+
+    if not isinstance(agent, BaseExternalAgent):
+        return agent
+    try:
+        require_host_execution_allowed(agent, registry)
+    except ComponentRehydrationError as refusal:
+        if strict:
+            raise
+        log_warning(f"{label}: {refusal}")
+        return None
+    return agent
+
+
 def is_external_agent_config(config: Any) -> bool:
     """Whether a stored agent config describes an external adapter rather than an Agent."""
     return isinstance(config, dict) and isinstance(config.get("sdk"), str)

@@ -1975,7 +1975,7 @@ class StudioRunnerTools(Toolkit):
         edits load the same workflow without this check, so the offending step
         stays inspectable and editable.
 
-        A coding engineer (ClaudeAgent, CodexAgent) is the exception: Step.from_dict
+        An external agent (ClaudeAgent, CodexAgent, ...) is the exception: Step.from_dict
         binds the registry's own instance on purpose. It keeps no per-run state on
         the instance, each call is told its workflow, and a workflow written in code
         holds the same object."""

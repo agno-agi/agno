@@ -3,7 +3,7 @@
 A stored config carries the adapter's settings plus references the registry
 resolves on load: the db, the sandbox and a Pydantic output schema. The db
 loaders rebuild the adapter the config names, AgentOS lists and runs it, and
-the composition surfaces refuse it where an Agent is required.
+a team or a workflow holds it as a member or a step.
 """
 
 import asyncio
@@ -624,7 +624,7 @@ class TestPersistence:
 
 
 # ---------------------------------------------------------------------------
-# Composition: an engineer is a team member and a workflow step
+# Composition: an external agent is a team member and a workflow step
 # ---------------------------------------------------------------------------
 
 
@@ -638,8 +638,8 @@ class TestComposition:
         assert [type(member) for member in team.members] == [ClaudeAgent]  # type: ignore[union-attr]
         assert team.members[0].id == "coder"  # type: ignore[index, union-attr]
 
-    def test_team_from_dict_uses_the_registry_engineer_as_a_member(self, db):
-        """An engineer defined in code is the member itself, as in a team written in code."""
+    def test_team_from_dict_uses_the_registry_external_agent_as_a_member(self, db):
+        """An external agent defined in code is the member itself, as in a team written in code."""
         coder = ClaudeAgent(id="coder")
         registry = Registry(agents=[coder, Agent(id="writer")])
         config = {
@@ -654,8 +654,8 @@ class TestComposition:
         # An Agent is still copied out of the registry.
         assert isinstance(team.members[1], Agent) and team.members[1] is not registry.get_agent("writer")  # type: ignore[index]
 
-    def test_a_team_keeps_its_engineer_member_when_stored(self, db):
-        """to_dict names an engineer member by id; it used to be left out of the stored team."""
+    def test_a_team_keeps_its_external_member_when_stored(self, db):
+        """to_dict names an external member by id; it used to be left out of the stored team."""
         team = Team(id="crew", name="Crew", members=[ClaudeAgent(id="coder"), Agent(id="writer")])
 
         assert team.to_dict()["members"] == [
@@ -676,8 +676,8 @@ class TestComposition:
         step_agent = workflow.steps[0].agent  # type: ignore[index, union-attr]
         assert isinstance(step_agent, ClaudeAgent) and step_agent.id == "coder"
 
-    def test_workflow_from_dict_uses_the_registry_engineer_as_a_step(self, db):
-        """An engineer defined in code is the step itself, nested or not, as in a workflow written in code."""
+    def test_workflow_from_dict_uses_the_registry_external_agent_as_a_step(self, db):
+        """An external agent defined in code is the step itself, nested or not, as in a workflow written in code."""
         claude, codex = ClaudeAgent(id="claude-1"), CodexAgent(id="codex-1")
         registry = Registry(agents=[claude, codex], dbs=[db])
         config = {
@@ -708,16 +708,16 @@ class TestComposition:
         assert reviews[0].agent is claude and reviews[1].agent is codex
 
     @pytest.mark.parametrize("mode", ["run", "arun"])
-    def test_a_stored_workflow_runs_its_engineer_step(self, db, mode):
-        """The engineer is told its workflow on the call, and keeps its own session beside the workflow's."""
+    def test_a_stored_workflow_runs_its_external_agent_step(self, db, mode):
+        """The external agent is told its workflow on the call, and keeps its own session beside the workflow's."""
         from agno.db.base import SessionType
 
-        engineer = EchoAgent(id="engineer", greeting="reviewed", db=db)
-        registry = Registry(agents=[engineer], dbs=[db])
+        reviewer = EchoAgent(id="reviewer", greeting="reviewed", db=db)
+        registry = Registry(agents=[reviewer], dbs=[db])
         config = {
             "id": "wf",
             "name": "WF",
-            "steps": [{"type": "Step", "name": "review", "step_id": "review", "agent_id": "engineer"}],
+            "steps": [{"type": "Step", "name": "review", "step_id": "review", "agent_id": "reviewer"}],
         }
         workflow = Workflow.from_dict(config, db=db, registry=registry, strict=True)
 
@@ -727,8 +727,57 @@ class TestComposition:
             result = asyncio.run(workflow.arun(input="the pull request", session_id="s1"))
 
         assert result.content == "reviewed: the pull request"
-        own = db.get_session(session_id="s1:engineer", session_type=SessionType.AGENT)
-        assert own is not None and own.agent_id == "engineer"
+        own = db.get_session(session_id="s1:reviewer", session_type=SessionType.AGENT)
+        assert own is not None and own.agent_id == "reviewer"
+
+    def test_a_stored_external_step_without_a_sandbox_needs_the_host_opt_in(self, db, agno_logs):
+        """Inside a workflow it runs on this host too, so the opt-in for serving it applies."""
+        ClaudeAgent(id="coder").save(db=db)
+        registry = Registry(dbs=[db])
+        config = {
+            "id": "wf",
+            "name": "WF",
+            "steps": [{"type": "Step", "name": "code", "step_id": "code", "agent_id": "coder"}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="allow_host_execution"):
+            Workflow.from_dict(config, db=db, registry=registry, strict=True)
+
+        # A lenient load keeps the workflow readable; the step refuses when it is run.
+        workflow = Workflow.from_dict(config, db=db, registry=registry, strict=False)
+        assert workflow.steps[0].agent is None  # type: ignore[index, union-attr]
+        assert "allow_host_execution" in agno_logs.text
+        with pytest.raises(Exception, match="coder"):
+            workflow.run(input="hi")
+
+    def test_a_stored_external_member_without_a_sandbox_needs_the_host_opt_in(self, db, agno_logs):
+        ClaudeAgent(id="coder").save(db=db)
+        registry = Registry(dbs=[db])
+        config = {"id": "crew", "name": "Crew", "members": [{"type": "agent", "agent_id": "coder"}]}
+
+        with pytest.raises(ComponentRehydrationError, match="allow_host_execution"):
+            Team.from_dict(config, db=db, registry=registry, strict=True)
+
+        team = Team.from_dict(config, db=db, registry=registry, strict=False)
+        assert team.members == []
+        assert "allow_host_execution" in agno_logs.text
+
+    def test_a_sandboxed_stored_external_step_needs_no_host_opt_in(self, db, sandbox):
+        from agno.db.postgres import PostgresDb
+
+        # A sandboxed agent needs Postgres; the engine connects lazily, so construction is enough.
+        postgres = PostgresDb(id="pg", db_url="postgresql+psycopg://ai:ai@127.0.0.1:1/none")
+        ClaudeAgent(id="coder", sandbox=sandbox, db=postgres).save(db=db)
+        registry = Registry(dbs=[db, postgres], sandboxes=[sandbox])
+        config = {
+            "id": "wf",
+            "name": "WF",
+            "steps": [{"type": "Step", "name": "code", "step_id": "code", "agent_id": "coder"}],
+        }
+
+        workflow = Workflow.from_dict(config, db=db, registry=registry, strict=True)
+
+        assert workflow.steps[0].agent.sandbox is sandbox  # type: ignore[index, union-attr]
 
     @pytest.fixture
     def components_client(self, db, registry) -> TestClient:
@@ -767,7 +816,7 @@ class TestComposition:
         )
 
         assert response.status_code == 201, response.text
-        # The workflow pins the engineer like any stored step agent, so the engineer cannot be archived under it.
+        # The workflow pins the external agent like any stored step agent, so it cannot be archived under the workflow.
         links = db.get_links(component_id="wf", version=1)
         assert [(link["link_kind"], link["child_component_id"]) for link in links] == [("step_agent", "coder")]
 
@@ -1034,6 +1083,37 @@ class TestAgentOS:
         run = client.post("/agents/echo-stored/runs", data={"message": "hi", "stream": "false"})
         assert run.status_code == 422, run.text
 
+    def test_a_stored_workflow_does_not_run_its_stored_external_step_without_the_host_opt_in(self, db, echo_storable):
+        """The opt-in holds when the agent is reached through a stored workflow instead of directly."""
+        EchoAgent(id="echo-stored", name="Echo", greeting="ran on the host").save(db=db)
+        app = AgentOS(id="test-os", db=db, registry=Registry(dbs=[db])).get_app()
+        client = TestClient(app, raise_server_exceptions=False)
+        created = client.post(
+            "/components",
+            json={
+                "name": "wf",
+                "component_id": "wf",
+                "component_type": "workflow",
+                "stage": "published",
+                "config": {
+                    "id": "wf",
+                    "name": "wf",
+                    "steps": [{"type": "Step", "name": "code", "step_id": "code", "agent_id": "echo-stored"}],
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        run = client.post("/workflows/wf/runs", data={"message": "hi", "stream": "false"})
+
+        assert run.status_code == 422, run.text
+        assert "allow_host_execution" in run.json()["detail"]
+        assert "ran on the host" not in run.text
+        # The workflow stays listed, like the agent it holds.
+        listed = client.get("/workflows")
+        assert listed.status_code == 200, listed.text
+        assert [workflow["id"] for workflow in listed.json()] == ["wf"]
+
     def test_unresolvable_external_config_stays_listed(self, db, registry):
         db.upsert_component(component_id="typo", component_type=ComponentType.AGENT, name="Typo")
         db.upsert_config(component_id="typo", config={"sdk": "claude-agent-sdkk", "id": "typo"}, stage="published")
@@ -1106,23 +1186,22 @@ class TestAgentOS:
 
 
 # ---------------------------------------------------------------------------
-# Studio tools: an engineer is a workflow step or a team member
+# Studio tools: an external agent is a workflow step or a team member
 # ---------------------------------------------------------------------------
 
 
-class TestStudioEngineerSteps:
+class TestStudioExternalAgents:
     @pytest.fixture
-    def engineers(self, db):
+    def external_agents(self, db):
         return ClaudeAgent(id="claude-1", name="Claude 1", db=db), CodexAgent(id="codex-1", name="Codex 1", db=db)
 
     @pytest.fixture
-    def studio(self, db, engineers):
+    def studio(self, db, external_agents):
+        from agno.models.openai import OpenAIResponses
         from agno.tools.studio import StudioTools
 
-        from agno.models.openai import OpenAIResponses
-
         registry = Registry(
-            agents=[*engineers, Agent(id="triage", name="Triage", db=db)],
+            agents=[*external_agents, Agent(id="triage", name="Triage", db=db)],
             dbs=[db],
             models=[OpenAIResponses(id="gpt-5.6-luna")],
         )
@@ -1130,7 +1209,7 @@ class TestStudioEngineerSteps:
             registry=registry, db=db, create_agents=True, create_teams=True, create_workflows=True, versions=True
         )
 
-    def test_engineers_are_listed_and_read_with_what_they_are_for(self, studio):
+    def test_external_agents_are_listed_and_read_with_what_they_are_for(self, studio):
         import json
 
         rows = {row["id"]: row for row in json.loads(studio.list_components("agent"))["data"]["components"]}
@@ -1139,20 +1218,38 @@ class TestStudioEngineerSteps:
         assert "workflow step" in rows["codex-1"]["use"] and "team member" in rows["codex-1"]["use"]
         assert "cannot be edited" in rows["codex-1"]["use"]
         assert "sdk" not in rows["triage"]
-        # Teams and workflows are not given engineer rows.
+        # Teams and workflows are not given external agent rows.
         assert json.loads(studio.list_components("team"))["data"]["components"] == []
 
         for identifier in ("codex-1", "Codex 1"):
             read = json.loads(studio.get_component(identifier))
             assert read["ok"] and read["data"]["id"] == "codex-1" and read["data"]["sdk"] == "codex"
 
-    def test_a_workflow_is_built_with_engineer_steps_and_loads_them(self, studio, db, engineers):
+    def test_every_external_agent_is_described_as_one_code_defined_or_stored(self, studio, db):
+        """An adapter that does no coding is not called a coding agent, and a stored one reads like a code-defined one."""
+        import json
+
+        studio.registry.agents.append(EchoAgent(id="qa-bot", name="QA bot", db=db))
+        ClaudeAgent(id="stored-coder", name="Stored coder").save(db=db)
+
+        rows = {row["id"]: row for row in json.loads(studio.list_components("agent"))["data"]["components"]}
+        uses = {rows[agent_id]["use"] for agent_id in ("claude-1", "qa-bot", "stored-coder")}
+        assert len(uses) == 1 and "external agent" in uses.pop()
+        assert rows["qa-bot"]["sdk"] == "echo" and rows["qa-bot"]["source"] == "code"
+        assert rows["stored-coder"]["sdk"] == "claude-agent-sdk" and rows["stored-coder"]["source"] == "db"
+        assert not any("engineer" in row.get("use", "") for row in rows.values())
+
+        read = json.loads(studio.get_component("stored-coder"))["data"]
+        assert read["sdk"] == "claude-agent-sdk" and read["use"] == rows["stored-coder"]["use"]
+        assert "sdk" not in json.loads(studio.get_component("triage"))["data"]
+
+    def test_a_workflow_is_built_with_external_agent_steps_and_loads_them(self, studio, db, external_agents):
         import json
 
         from agno.tools.studio import WorkflowStepSpec
         from agno.workflow.workflow import get_workflow_by_id
 
-        claude, codex = engineers
+        claude, codex = external_agents
         created = json.loads(
             studio.create_workflow(
                 name="Review rounds",
@@ -1185,17 +1282,17 @@ class TestStudioEngineerSteps:
         reviews = workflow.steps[0].steps[0].steps  # type: ignore[index, union-attr]
         assert reviews[0].agent is claude and reviews[1].agent is codex
 
-        # The runner refuses a step that is the registry's shared Agent; an engineer is shared by design.
+        # The runner refuses a step that is the registry's shared Agent; an external agent is shared by design.
         runnable = studio._runner_tools._workflow_for_run(created["data"]["id"])
         assert runnable is not None
         assert runnable.steps[0].steps[0].steps[0].agent is claude  # type: ignore[index, union-attr]
 
-    def test_a_team_is_built_with_an_engineer_member_and_loads_it(self, studio, db, engineers):
+    def test_a_team_is_built_with_an_external_member_and_loads_it(self, studio, db, external_agents):
         import json
 
         from agno.team.team import get_team_by_id
 
-        claude, _ = engineers
+        claude, _ = external_agents
         created = json.loads(
             studio.create_team(
                 name="Crew",
@@ -1213,6 +1310,6 @@ class TestStudioEngineerSteps:
         team = get_team_by_id(db=db, id="crew", registry=studio.registry, strict=True)
         assert team.members[0] is claude and isinstance(team.members[1], Agent)  # type: ignore[index, union-attr]
 
-        # The runner refuses a member that is the registry's shared Agent; an engineer is shared by design.
+        # The runner refuses a member that is the registry's shared Agent; an external agent is shared by design.
         runnable = studio._runner_tools._team_for_run("crew")
         assert runnable is not None and runnable.members[0] is claude  # type: ignore[index]

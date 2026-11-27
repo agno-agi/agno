@@ -314,7 +314,7 @@ class TestCreateComponent:
             },
         )
         assert response.status_code == 201, response.text
-        # A code-defined engineer is resolved from the registry when the team loads, so it gets no link row.
+        # A code-defined external agent is resolved from the registry when the team loads, so it gets no link row.
         assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
 
     def test_create_team_with_unresolved_member_returns_400(self, mock_db, settings):

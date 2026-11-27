@@ -138,8 +138,11 @@ def _not_found(identifier: str, noun: str = "Component") -> str:
     return message
 
 
-# What a listing or a read says of a coding engineer, so a builder knows where it fits.
-_ENGINEER_USE = "A coding engineer. Use it by its id as a workflow step or a team member. It cannot be edited here."
+# What a listing or a read says of an external agent, so a builder knows where it fits.
+_EXTERNAL_AGENT_USE = (
+    "An external agent: it runs on its own framework. Use it by its id as a workflow step or a team member. "
+    "It cannot be edited here."
+)
 
 
 # How many same-name rows a display-name lookup pulls before calling it
@@ -932,8 +935,8 @@ class StudioTools(Toolkit):
         # Non-dispatch lookups exclude external adapters from the build palette.
         return cast(List["Agent"], self._runner_tools._iter_agents())
 
-    def _iter_engineers(self) -> List[Any]:
-        """Code-defined coding engineers (ClaudeAgent, CodexAgent): workflow steps and team members, never edited here."""
+    def _iter_external_agents(self) -> List[Any]:
+        """Code-defined external agents (ClaudeAgent, CodexAgent, ...): workflow steps and team members, never edited here."""
         from agno.agents.base import BaseExternalAgent
         from agno.registry._reserved import RESERVED_MEMBER_IDS
 
@@ -946,8 +949,8 @@ class StudioTools(Toolkit):
         ]
 
     def _iter_composable_agents(self) -> List[Any]:
-        """Every code-defined agent a workflow step or a team may name: Agents and coding engineers."""
-        return [*self._iter_agents(), *self._iter_engineers()]
+        """Every code-defined agent a workflow step or a team may name: Agents and external agents."""
+        return [*self._iter_agents(), *self._iter_external_agents()]
 
     def _iter_teams(self) -> List["Team"]:
         return self._runner_tools._iter_teams()
@@ -958,21 +961,21 @@ class StudioTools(Toolkit):
     def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
         return cast(Optional["Agent"], self._runner_tools._find_agent(agent_id, actor=actor))
 
-    def _find_engineer(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
-        """A coding engineer by exact id, then display name. A stored one is found by exact id at its published version."""
-        engineers = self._iter_engineers()
-        for engineer in engineers:
-            if getattr(engineer, "id", None) == agent_id:
-                return engineer
-        named = [engineer for engineer in engineers if getattr(engineer, "name", None) == agent_id]
+    def _find_external_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
+        """An external agent by exact id, then display name. A stored one is found by exact id at its published version."""
+        external_agents = self._iter_external_agents()
+        for external in external_agents:
+            if getattr(external, "id", None) == agent_id:
+                return external
+        named = [external for external in external_agents if getattr(external, "name", None) == agent_id]
         if len(named) == 1:
             return named[0]
         return self._runner_tools._load_agent_from_db(agent_id, for_dispatch=True, actor=actor)
 
     def _find_step_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
-        """The agent a workflow step names: an Agent, else a coding engineer."""
+        """The agent a workflow step names: an Agent, else an external agent."""
         found: Optional[Any] = self._find_agent(agent_id, actor=actor)
-        return found if found is not None else self._find_engineer(agent_id, actor=actor)
+        return found if found is not None else self._find_external_agent(agent_id, actor=actor)
 
     def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._find_team(team_id, actor=actor)
@@ -2056,9 +2059,9 @@ class StudioTools(Toolkit):
                     }
                 )
         if component_type in (None, "agent"):
-            for engineer in self._iter_engineers():
-                seen_ids.add(engineer.get_id())
-                rows.append(self._engineer_view(engineer))
+            for external in self._iter_external_agents():
+                seen_ids.add(external.get_id())
+                rows.append(self._external_agent_view(external))
         db_total = 0
         if self.db is not None:
             from agno.db.base import ComponentType as _CT
@@ -2084,18 +2087,21 @@ class StudioTools(Toolkit):
                     # Collapse the hints onto the live version: a non-owner must
                     # not learn from a listing that a newer draft exists.
                     latest_row = {"version": r.get("current_version"), "stage": "published"}
-                rows.append(
-                    {
-                        "id": r["component_id"],
-                        "name": r.get("name"),
-                        "component_type": r.get("component_type"),
-                        "source": "db",
-                        "description": r.get("description"),
-                        "current_version": r.get("current_version"),
-                        "latest_version": latest_row.get("version"),
-                        "latest_stage": latest_row.get("stage"),
-                    }
-                )
+                db_row = {
+                    "id": r["component_id"],
+                    "name": r.get("name"),
+                    "component_type": r.get("component_type"),
+                    "source": "db",
+                    "description": r.get("description"),
+                    "current_version": r.get("current_version"),
+                    "latest_version": latest_row.get("version"),
+                    "latest_stage": latest_row.get("stage"),
+                }
+                # A stored external agent names its adapter on the component row.
+                stored_sdk = (r.get("metadata") or {}).get("sdk")
+                if isinstance(stored_sdk, str):
+                    db_row.update(sdk=stored_sdk, use=_EXTERNAL_AGENT_USE)
+                rows.append(db_row)
         return ok_result("listed", components=rows, count=len(rows), db_total=db_total)
 
     @requires_permission("components", "read")
@@ -2135,20 +2141,20 @@ class StudioTools(Toolkit):
         return result
 
     @staticmethod
-    def _engineer_view(engineer: Any) -> Dict[str, Any]:
-        """What a builder is shown of a code-defined coding engineer."""
-        repository = getattr(engineer, "repository", None)
+    def _external_agent_view(external: Any) -> Dict[str, Any]:
+        """What a builder is shown of a code-defined external agent."""
+        repository = getattr(external, "repository", None)
         return {
-            "id": engineer.get_id(),
-            "name": getattr(engineer, "name", None),
+            "id": external.get_id(),
+            "name": getattr(external, "name", None),
             "component_type": "agent",
             "source": "code",
-            "description": getattr(engineer, "description", None),
-            "sdk": engineer.sdk,
-            "model_id": getattr(engineer, "model", None) if isinstance(getattr(engineer, "model", None), str) else None,
-            "sandboxed": getattr(engineer, "sandbox", None) is not None,
+            "description": getattr(external, "description", None),
+            "sdk": external.sdk,
+            "model_id": getattr(external, "model", None) if isinstance(getattr(external, "model", None), str) else None,
+            "sandboxed": getattr(external, "sandbox", None) is not None,
             "repository": getattr(repository, "url", None),
-            "use": _ENGINEER_USE,
+            "use": _EXTERNAL_AGENT_USE,
         }
 
     def _read_component(
@@ -2180,9 +2186,9 @@ class StudioTools(Toolkit):
             for component in iterator():
                 if getattr(component, "id", None) == component_id:
                     return _code_result(type_name, component)
-        for engineer in self._iter_engineers():
-            if component_id in (engineer.get_id(), getattr(engineer, "name", None)):
-                return ok_result("read", **self._engineer_view(engineer))
+        for external in self._iter_external_agents():
+            if component_id in (external.get_id(), getattr(external, "name", None)):
+                return ok_result("read", **self._external_agent_view(external))
         db_id_hit = False
         if self.db is not None:
             try:
@@ -2231,6 +2237,10 @@ class StudioTools(Toolkit):
         except NotImplementedError:
             pass
         view = self._curated_config_view(str(row.get("component_type")), config_row["config"])
+        stored_sdk = config_row["config"].get("sdk")
+        if row.get("component_type") == "agent" and isinstance(stored_sdk, str):
+            # A stored external agent reads like a code-defined one: its adapter and where it fits.
+            view = {**view, "sdk": stored_sdk, "use": _EXTERNAL_AGENT_USE}
         return ok_result(
             "read",
             id=resolved_id,
@@ -5355,7 +5365,7 @@ class StudioTools(Toolkit):
                     )
                 member = agent_named or team_named
             if member is None:
-                member = self._find_engineer(mid, actor=actor)
+                member = self._find_external_agent(mid, actor=actor)
             if member is None:
                 missing.append(mid)
             else:

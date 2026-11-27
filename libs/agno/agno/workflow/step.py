@@ -525,7 +525,7 @@ class Step:
                 from agno.agents.base import BaseExternalAgent
 
                 if isinstance(registry_agent, BaseExternalAgent):
-                    # A coding engineer (Claude Code, Codex) keeps no per-run state on the instance:
+                    # An external agent (Claude Code, Codex, ...) keeps no per-run state on the instance:
                     # each call is told its workflow, and its session is its own. The registry's
                     # instance is the step, as it is in a workflow written in code.
                     agent = registry_agent
@@ -602,8 +602,11 @@ class Step:
                     loaded = get_agent_by_id(
                         db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
                     )
-                # A stored coding engineer resolves here too, and is a step like an Agent.
-                agent = loaded
+                # A stored external agent resolves here too, and is a step like an Agent. One without
+                # a sandbox runs on this host, so it needs the opt-in it needs when served on its own.
+                from agno.agents._storage import admit_stored_child
+
+                agent = admit_stored_child(loaded, registry, strict, f"Step '{config.get('name')}' agent '{agent_id}'")
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:

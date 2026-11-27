@@ -510,7 +510,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         from agno.agents.base import BaseExternalAgent
 
         for member in team.members:
-            # A coding engineer (Claude Code, Codex) is referenced by id like an Agent.
+            # An external agent (Claude Code, Codex, ...) is referenced by id like an Agent.
             if isinstance(member, (Agent, BaseExternalAgent)):
                 serialized_members.append({"type": "agent", "agent_id": member.id})
             elif isinstance(member, Team):
@@ -1031,6 +1031,11 @@ def from_dict(
                         agent = get_agent_by_id(
                             id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
                         )
+                # A stored external agent without a sandbox runs on this host, so it needs the
+                # opt-in it needs when served on its own.
+                from agno.agents._storage import admit_stored_child
+
+                agent = admit_stored_child(agent, registry, strict, f"{component_label} member agent '{agent_id}'")
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -1041,7 +1046,7 @@ def from_dict(
 
                     registered_agent = registry.get_agent(agent_id)
                     if isinstance(registered_agent, BaseExternalAgent):
-                        # A coding engineer (Claude Code, Codex) is not copied: the team sets nothing
+                        # An external agent (Claude Code, Codex, ...) is not copied: the team sets nothing
                         # on it and passes its own id on each member call, so the registry's instance
                         # is the member, as it is in a team written in code.
                         agent = registered_agent
