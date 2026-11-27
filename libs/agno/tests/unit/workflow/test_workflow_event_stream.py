@@ -79,6 +79,51 @@ class TestPublishStreamEvent:
         assert received == [(0, "wr1", "a")]
 
 
+class TestWebsocketBroadcastTaskIsNotDropped:
+    """Regression: both websocket-delivery paths schedule a fire-and-forget
+    `asyncio.create_task(...)`. asyncio only holds a *weak* reference to a
+    task, so if nothing else references it, it can be garbage-collected
+    before it runs - silently dropping the event. Both must retain the task
+    via the module-level `_workflow_background_tasks` set (the same pattern
+    already used elsewhere in this file for cancellation persistence), not
+    discard the return value.
+    """
+
+    def test_broadcast_to_websocket_keeps_strong_reference(self):
+        import inspect
+
+        source = inspect.getsource(Workflow._broadcast_to_websocket)
+        assert "_workflow_background_tasks.add(" in source, (
+            "_broadcast_to_websocket discards its create_task() result - the "
+            "task can be garbage-collected mid-run, silently dropping the event."
+        )
+        assert "_workflow_background_tasks.discard" in source
+
+    def test_apublish_stream_event_keeps_strong_reference(self):
+        import inspect
+
+        source = inspect.getsource(Workflow._apublish_stream_event)
+        assert "_workflow_background_tasks.add(" in source, (
+            "_apublish_stream_event discards its create_task() result - the "
+            "task can be garbage-collected mid-run, silently dropping the event."
+        )
+        assert "_workflow_background_tasks.discard" in source
+
+    @pytest.mark.asyncio
+    async def test_broadcast_to_websocket_delivers_event(self):
+        wf = Workflow(id="wf-1", name="wf", db=None)
+        received: list = []
+
+        class Handler:
+            async def handle_event(self, event: Any):
+                received.append(event)
+
+        wf._broadcast_to_websocket(FakeEvent("a"), websocket_handler=Handler())
+        await asyncio.sleep(0.05)  # delivery is fire-and-forget
+        assert len(received) == 1
+        assert received[0].content == "a"
+
+
 class TestHandleEventIsTransportFree:
     @pytest.mark.asyncio
     async def test_handle_event_no_longer_touches_buffer(self, fresh_stream):
