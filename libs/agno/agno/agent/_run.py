@@ -4680,13 +4680,6 @@ async def _acontinue_run_background_stream(
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
 
-            # The conversation that started this run is told how the continue left it. A fork or a
-            # regeneration ran under another id and left this run as it was.
-            if not (fork or regenerate):
-                from agno.run.background import anotify_continued_run_requester
-
-                await anotify_continued_run_requester(agent, _run_id, session_id)
-
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)

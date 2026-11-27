@@ -53,8 +53,9 @@ class OSManager:
             invocation. Defaults to 96; None disables the limit. Each delegation has
             its own budget, not a shared run-wide budget. Offloaded-result read-back
             tools retain their existing exemption from both limits.
-        work_updates: When work a conversation started ends, Super Agent says so in that
-            conversation without being asked. Each one is a model run. On by default.
+        work_updates: Tell a conversation when a Task or background run it started has
+            finished, without waiting for the person's next message. Each update is a
+            model run. Enabled by default; pass False to disable.
     """
 
     name: str = MANAGER_TEAM_NAME

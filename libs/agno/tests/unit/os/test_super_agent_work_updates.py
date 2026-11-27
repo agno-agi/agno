@@ -1622,7 +1622,10 @@ def test_a_pause_told_twice_without_a_continue_is_reported_once(plain):
     assert scenario(steps) == ["paused for a person."]
 
 
-def test_an_approval_through_the_resumable_streaming_continue_is_reported(plain):
+def test_an_approval_through_the_resumable_streaming_continue_is_shown_on_the_next_message(plain):
+    """That route has a producer of its own in the agent and team run code, which tells nobody. The
+    finish is not lost: the person's next message shows it."""
+
     async def steps():
         plain.writer.tools = confirmations()[:1]
         plain.writer.model.script = [("publish", {})]
@@ -1636,9 +1639,13 @@ def test_an_approval_through_the_resumable_streaming_continue_is_reported(plain)
         await plain.settle()
         await asyncio.sleep(0.3)
         await plain.settle()
-        return plain.row(run_id)["status"], notices(plain)
+        updates = notices(plain)
+        await plain.say("Anything new?")
+        return plain.row(run_id)["status"], updates, plain.chat.runs[-1]["sent"][0]
 
-    assert scenario(steps) == ("COMPLETED", ["paused for a person.", "finished."])
+    status, updates, block = scenario(steps)
+    assert (status, updates) == ("COMPLETED", ["paused for a person."])
+    assert 'agent "Writer"' in block and "finished" in block and "Changed since your last turn." in block
 
 
 def test_an_application_tool_named_like_a_read_is_not_offered_in_a_work_update(tmp_path):
