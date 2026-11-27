@@ -212,8 +212,8 @@ class CodexAgent(BaseExternalAgent):
             text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
             because Codex replaces its tokens as it works. The agent then never uses
             OPENAI_API_KEY and runs one piece of work at a time: a run the durable queue owns
-            waits its turn, as does a workflow step, a team member and a background run; a direct
-            run is refused at once with AgentBusyError. The refreshed sign-in is
+            waits its turn, as does a workflow step and a team member; any other run, direct or
+            in the background, is refused at once with AgentBusyError. The refreshed sign-in is
             saved, encrypted, in the agent's database after every run.
         access_token: Run on a ChatGPT Enterprise workspace instead of an API key: a Codex access
             token created on the workspace's Access tokens page, given to Codex as

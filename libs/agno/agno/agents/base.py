@@ -366,7 +366,8 @@ class BaseExternalAgent:
         Taken before the member reads and claims its session: two pieces of work for one agent under
         one parent share that session, so the second must wait for the first and then read what it
         left there. Returns the refusal, when the wait went on too long or the run was cancelled, for
-        the run to raise once it has started, so the parent reads it as this member's failed run.
+        the run to raise once it has started, so the parent reads it as this member's failed run. A
+        refused run does not read or claim the session, which the run it waited for may still hold.
         """
         if parent_id is None:
             return None
@@ -2311,10 +2312,12 @@ class BaseExternalAgent:
         slot = AsyncExitStack()
         refusal = await self._amember_slot(slot, parent_id, run_id)
         try:
-            session = (
-                await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
-            )
-            self._claim_session(session, state_session_id, run_id)
+            session: Optional[AgentSession] = None
+            # A refused step or member never ran: the session stays with the run that holds it.
+            if refusal is None:
+                if self.db:
+                    session = await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id)
+                self._claim_session(session, state_session_id, run_id)
         except BaseException:
             await slot.aclose()
             raise
@@ -2493,10 +2496,12 @@ class BaseExternalAgent:
         slot = AsyncExitStack()
         refusal = await self._amember_slot(slot, parent_id, run_id)
         try:
-            session = (
-                await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
-            )
-            self._claim_session(session, state_session_id, run_id)
+            session: Optional[AgentSession] = None
+            # A refused step or member never ran: the session stays with the run that holds it.
+            if refusal is None:
+                if self.db:
+                    session = await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id)
+                self._claim_session(session, state_session_id, run_id)
         except BaseException:
             await slot.aclose()
             raise
