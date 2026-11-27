@@ -1,4 +1,7 @@
 import json
+import time
+from datetime import datetime, timezone
+from functools import wraps
 from os import getenv
 from typing import Any, List, Optional
 from urllib.parse import quote
@@ -8,6 +11,7 @@ from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from urllib3.util import Retry
 
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
@@ -68,7 +72,39 @@ class GithubTools(Toolkit):
             self.create_review_request,
         ]
 
-        super().__init__(name="github", tools=tools, **kwargs)
+        super().__init__(name="github", tools=[self._without_waiting(tool) for tool in tools], **kwargs)
+
+    def _without_waiting(self, tool: Any) -> Any:
+        """The tool, answering a used-up rate limit at once with when it resets.
+
+        The GitHub client is built not to wait for the limit to reset (see authenticate), so a
+        call that hits it comes back as an error. That error is replaced with one that says when
+        to try again, which the agent can pass on.
+        """
+
+        @wraps(tool)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            result = tool(*args, **kwargs)
+            if isinstance(result, str) and '"error"' in result and "rate limit" in result.lower():
+                return json.dumps({"error": self._rate_limit_message()})
+            return result
+
+        return call
+
+    def _rate_limit_message(self) -> str:
+        """What to tell the person when GitHub's rate limit is used up. Makes no request."""
+        message = "GitHub's rate limit for this token is used up, so nothing was read."
+        try:
+            # The reset time the client saw on its last response. Read from the client's own record, never
+            # the property that asks GitHub when it has none.
+            reset = int(getattr(getattr(self.g, "requester", None), "rate_limiting_resettime", 0) or 0)
+        except (TypeError, ValueError):
+            reset = 0
+        if reset > 0:
+            minutes = max(1, round((reset - time.time()) / 60))
+            when = datetime.fromtimestamp(reset, tz=timezone.utc).strftime("%H:%M UTC")
+            message += f" It resets at {when}, in about {minutes} minute{'s' if minutes != 1 else ''}."
+        return message + " Do not retry before then; tell the person."
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
@@ -76,12 +112,16 @@ class GithubTools(Toolkit):
             raise ValueError("GitHub access token is required")
 
         auth = Auth.Token(self.access_token)
+        # The client's default retry waits for a used-up rate limit to reset, up to an hour, inside the
+        # tool call. Retry a server error a few times and nothing else: a rate limit comes back as an
+        # error at once.
+        retry = Retry(total=3, status_forcelist=(500, 502, 503, 504), backoff_factor=0.5, allowed_methods=None)
         if self.base_url:
             log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
-            return Github(base_url=self.base_url, auth=auth)
+            return Github(base_url=self.base_url, auth=auth, retry=retry)
         else:
             log_debug("Authenticating with public GitHub")
-            return Github(auth=auth)
+            return Github(auth=auth, retry=retry)
 
     def search_repositories(
         self,
