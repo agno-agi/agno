@@ -548,6 +548,21 @@ class RunNotContinuableError(ValueError):
     """
 
 
+class AgentBusyError(AgnoError):
+    """Raised when an agent that runs one piece of work at a time is asked to start a second.
+
+    A Codex agent signed in with a ChatGPT sign-in (auth.json) refreshes it while it works, and two runs
+    refreshing it at once can invalidate it. The OS layer maps this to HTTP 409. The durable queue
+    puts a run that meets it back in the queue, to start when the agent is free.
+    """
+
+    def __init__(self, message: str, agent_id: Optional[str] = None):
+        super().__init__(message, 409)
+        self.agent_id = agent_id
+        self.type = "agent_busy"
+        self.error_id = "agent_busy"
+
+
 class SessionBusyError(AgnoError):
     """Raised when a turn is started on a session that already has a turn in flight.
 
