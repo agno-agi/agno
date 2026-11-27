@@ -11,8 +11,8 @@ from agno.company.manager import CompanyManager
 from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.db.schemas.tasks import task_run_id
 from agno.os.manager import company_tasks
-from agno.os.manager.company_tasks import CompanyTaskTools
-from agno.os.manager.linked_work import _LISTED, LINKED_WORK_KEY, _task_phase
+from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
+from agno.os.manager.linked_work import _LISTED, LINKED_WORK_KEY, LinkedWork, _task_phase
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.os.routers.company.runs import _TaskStarter
 from agno.registry._reserved import MINI_AGENT_ID
@@ -499,6 +499,19 @@ def test_a_person_messages_a_teammates_task_under_their_own_name_and_authority(s
     assert reserved["requested_from"]["session_id"] == "bob-chat"
     assert [(item["id"], item["shown"]) for item in bob.session_state[LINKED_WORK_KEY]] == [
         (task["id"], _task_phase(saved))
+    ]
+    # Bob speaks again while the attempt runs. The Task stays in his conversation's list, so the
+    # attempt's end is still reported there.
+    reader = LinkedWork(db, _user_isolation(agent_os))
+    bob.run_id = "bob-next-turn"
+    assert f"(id {task['id']}" in reader.read(bob)
+    assert [item["id"] for item in bob.session_state[LINKED_WORK_KEY]] == [task["id"]]
+    # The attempt ends, and his next turn is told so.
+    finish(db, queue, task["id"], attempt=2)
+    bob.run_id = "bob-turn-after-the-end"
+    assert CHANGED in reader.read(bob)
+    assert [(item["id"], item["shown"]) for item in bob.session_state[LINKED_WORK_KEY]] == [
+        (task["id"], _task_phase(db.get_task(task["id"])))
     ]
 
 
