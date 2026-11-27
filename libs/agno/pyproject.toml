@@ -93,7 +93,7 @@ langfuse = ["langfuse"]
 
 # Dependencies for External Agent Harnesses
 claude = ["claude-agent-sdk>=0.2.148"]
-codex = ["openai-codex>=0.163.0"]
+codex = ["openai-codex>=0.163.0", "cryptography>=41.0"]
 
 # Dependencies for Models
 # >=0.77.0: the first release accepting output_config on the stable messages endpoint

@@ -4288,6 +4288,29 @@ class RedisDb(BaseDb):
         outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _retry)
         return outcome_status.get("status") if outcome == QueueWriteOutcome.APPLIED else None
 
+    def release_job(self, job_id: str, worker_id: str, attempt: int, delay_seconds: int = 0) -> bool:
+        """Put a claimed job back in the queue as if this claim had not happened.
+
+        For a claim that could not start its run, because its agent runs one piece of work at
+        a time and had another: the attempt the claim counted is given back, so waiting for
+        the agent never spends the job's attempt budget."""
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        now = self._q_server_now()
+
+        def _release(job: Dict[str, Any]) -> None:
+            job.update(
+                status="queued",
+                attempt=max(attempt - 1, 0),
+                locked_by=None,
+                locked_at=None,
+                available_at=now + delay_seconds,
+                updated_at=now,
+            )
+
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _release)
+        return outcome == QueueWriteOutcome.APPLIED
+
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
         queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on

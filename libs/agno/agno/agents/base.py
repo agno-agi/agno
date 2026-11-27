@@ -1,6 +1,6 @@
 import asyncio
 import json
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass, field
@@ -320,6 +320,40 @@ class BaseExternalAgent:
     def _uses_native_hitl(self) -> bool:
         """Whether native policy can ask for permission and a database can hold the paused run."""
         return False
+
+    # Variables that would make the harness bill something other than the subscription; see _subscription_env.
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = ()
+
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
+        """The variables that sign this agent's harness in with a vendor subscription; None on API keys.
+
+        When this is not None the harness is never given the variables in _subscription_blocked_env.
+        """
+        return None
+
+    def _check_subscription(self) -> None:
+        """Raise when this agent is set to run on a subscription and its subscription credential cannot be used."""
+
+    def _sandbox_login(self) -> Any:
+        """What writes this agent's login into a sandbox before a turn and saves it after; None for none."""
+        return None
+
+    @asynccontextmanager
+    async def _asubscription_slot(self) -> AsyncIterator[None]:
+        """Held for the length of one run by an agent that runs one piece of work at a time.
+
+        Raises AgentBusyError when another run holds it.
+        """
+        yield
+
+    async def _arefuse_if_busy(self) -> None:
+        """Raise AgentBusyError when another run holds this agent's slot, without keeping the slot.
+
+        For a run that is accepted before it starts, so the caller is refused instead of being
+        handed a run that then fails. The run still takes the slot itself when it starts.
+        """
+        async with self._asubscription_slot():
+            pass
 
     @property
     def sdk(self) -> str:
@@ -1642,6 +1676,8 @@ class BaseExternalAgent:
 
         # Checked before the pending row is written, so a busy session is refused at submission.
         self._assert_session_free(await self.aread_or_create_session(session_id, user_id), session_id, run_id)
+        # A busy agent likewise: refused here, not accepted and then stored as a failed run.
+        await self._arefuse_if_busy()
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
         transport = (
@@ -2245,8 +2281,12 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
+        slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:
+            if parent_id is None:
+                # Before anything starts: the caller of a busy agent is refused, and no run is stored.
+                await slot.enter_async_context(self._asubscription_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2257,6 +2297,9 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
+                    if parent_id is not None:
+                        # A team or workflow reads a busy member's refusal as that member's failed run.
+                        await slot.enter_async_context(self._asubscription_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2334,6 +2377,7 @@ class BaseExternalAgent:
             return run_output
         finally:
             self._release_session(state_session_id, run_id)
+            await slot.aclose()
 
     async def _native_non_stream_events(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         """Keep the adapter's nonstreaming result contract while multiplexing permission events."""
@@ -2414,8 +2458,12 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
+        slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:
+            if parent_id is None:
+                # Before the first event, as in the non-streaming path.
+                await slot.enter_async_context(self._asubscription_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2452,6 +2500,8 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
+                    if parent_id is not None:
+                        await slot.enter_async_context(self._asubscription_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2619,6 +2669,7 @@ class BaseExternalAgent:
                 yield run
         finally:
             self._release_session(state_session_id, run_id)
+            await slot.aclose()
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[Union[RunOutputEvent, RunOutput]]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""
