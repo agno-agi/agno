@@ -290,6 +290,28 @@ class TestAgent:
         assert db.get_session(session_id="s1", session_type=SessionType.AGENT) is None
         assert _runs(db, "s1") == 0
 
+    def test_temporary_regeneration_leaves_the_stored_source_untouched(self, db: SqliteDb):
+        agent = Agent(id="a", model=RecordingModel(), db=db)
+        first = agent.run("hi", session_id="s1")
+
+        regenerated = agent.continue_run(run_response=first, regenerate=True, store_run=False)
+
+        assert regenerated.content == "an answer"
+        runs = db.get_runs(session_id="s1")
+        assert isinstance(runs, list) and [run.run_id for run in runs] == [first.run_id]
+        assert runs[0].status == RunStatus.completed
+
+    @pytest.mark.asyncio
+    async def test_temporary_regeneration_leaves_the_stored_source_untouched_async(self, db: SqliteDb):
+        agent = Agent(id="a", model=RecordingModel(), db=db)
+        first = await agent.arun("hi", session_id="s1")
+
+        await agent.acontinue_run(run_response=first, regenerate=True, store_run=False)
+
+        runs = db.get_runs(session_id="s1")
+        assert isinstance(runs, list) and [run.run_id for run in runs] == [first.run_id]
+        assert runs[0].status == RunStatus.completed
+
     def test_media_is_not_offloaded_for_a_temporary_run(self, db: SqliteDb, tmp_path):
         media_root = tmp_path / "media"
         agent = Agent(id="a", model=RecordingModel(), db=db, media_storage=LocalMediaStorage(base_path=str(media_root)))
@@ -413,6 +435,29 @@ class TestTeam:
 
         assert done.status == RunStatus.completed
         assert _runs(db, "s1") == 0
+
+    def test_temporary_regeneration_leaves_the_stored_source_untouched(self, db: SqliteDb):
+        model = RecordingModel()
+        team = Team(id="t", name="T", model=model, members=[Agent(id="member", model=model)], db=db)
+        first = team.run("hi", session_id="s1")
+
+        team.continue_run(run_response=first, regenerate=True, store_run=False)
+
+        runs = db.get_runs(session_id="s1")
+        assert isinstance(runs, list) and [run.run_id for run in runs] == [first.run_id]
+        assert runs[0].status == RunStatus.completed
+
+    @pytest.mark.asyncio
+    async def test_temporary_regeneration_leaves_the_stored_source_untouched_async(self, db: SqliteDb):
+        model = RecordingModel()
+        team = Team(id="t", name="T", model=model, members=[Agent(id="member", model=model)], db=db)
+        first = await team.arun("hi", session_id="s1")
+
+        await team.acontinue_run(run_response=first, regenerate=True, store_run=False)
+
+        runs = db.get_runs(session_id="s1")
+        assert isinstance(runs, list) and [run.run_id for run in runs] == [first.run_id]
+        assert runs[0].status == RunStatus.completed
 
     def test_temporary_run_offloads_no_member_messages_to_the_result_store(self, db: SqliteDb):
         member = Agent(id="member", name="Member", model=RecordingModel())

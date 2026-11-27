@@ -7403,6 +7403,9 @@ def _mark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             save_run(
                 team,
                 run=r,
@@ -7424,6 +7427,9 @@ async def _amark_team_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             await asave_run(
                 team,
                 run=r,

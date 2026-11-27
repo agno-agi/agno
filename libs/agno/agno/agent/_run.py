@@ -6447,6 +6447,9 @@ def _mark_run_regenerated(
             flipped = shallow_copy(r)
             flipped.status = RunStatus.regenerated
             session.runs[i] = flipped  # type: ignore[index]
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             save_run(
                 agent,
                 run=cast(RunOutput, flipped),
@@ -6475,6 +6478,9 @@ async def _amark_run_regenerated(
             flipped = shallow_copy(r)
             flipped.status = RunStatus.regenerated
             session.runs[i] = flipped  # type: ignore[index]
+            # A temporary regeneration (store_run=False) must not rewrite the stored source run.
+            if is_transient(session):
+                return
             await asave_run(
                 agent,
                 run=cast(RunOutput, flipped),
