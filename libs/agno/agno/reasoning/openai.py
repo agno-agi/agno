@@ -12,6 +12,11 @@ if TYPE_CHECKING:
 
 
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
+    # A gateway or router client is an OpenAILike whose id is an opaque alias, so the
+    # id checks below can never identify it. It declares the capability itself instead.
+    if isinstance(reasoning_model, OpenAILike) and reasoning_model.supports_native_reasoning:
+        return True
+
     return (
         (
             reasoning_model.__class__.__name__ == "OpenAIChat"
