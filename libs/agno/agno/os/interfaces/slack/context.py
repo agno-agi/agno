@@ -51,6 +51,7 @@ class SlackContext:
     approvers: Optional[List[str]] = None
     users: Optional[Dict[str, str]] = None
     default_role: Optional[str] = None
+    authorize_senders: bool = False
     company: Any = None
     lookup_cache: LookupCache = field(default_factory=LookupCache)
     bot_names: BotNameResolver = field(default_factory=BotNameResolver)
@@ -96,6 +97,7 @@ def build_context(
     approvers: Optional[List[str]] = None,
     users: Optional[Dict[str, str]] = None,
     default_role: Optional[str] = None,
+    authorize_senders: bool = False,
 ) -> SlackContext:
     """Build the SlackContext from the Slack(...) arguments; see Slack.__init__ for each one.
 
@@ -138,6 +140,7 @@ def build_context(
         approvers=approvers,
         users=users,
         default_role=default_role,
+        authorize_senders=authorize_senders,
     )
 
 
@@ -252,7 +255,7 @@ async def event_context_from_run(
             owner = (response.get("user") or {}).get("id")
         except Exception as e:
             log_warning(f"Failed to look up the Slack user of a run: {str(e)}")
-    if not owner and ctx.users is None and not ctx.resolve_user_identity:
+    if not owner and not ctx.resolve_user_identity and (ctx.users is None or ctx.authorize_senders):
         # Without identity resolution the run's user is the Slack id itself
         owner = user_id
     return EventContext(

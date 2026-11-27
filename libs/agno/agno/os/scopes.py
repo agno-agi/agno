@@ -17,6 +17,11 @@ Examples:
 - `agents:*:run` - Run any agent (wildcard)
 - `agent_os:admin` - Full access to everything
 
+Built-in components:
+- Super Agent and its helpers (see `MANAGER_RESOURCES`) are never reached by a wildcard or a
+  type-wide scope. `teams:run` and `teams:*:run` run every team but Super Agent; only
+  `teams:superagent:run` or `agent_os:admin` runs it.
+
 Backwards compatibility:
 - Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
@@ -28,7 +33,8 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from functools import lru_cache
+from typing import Collection, Dict, FrozenSet, List, Optional, Set, Tuple
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
 # Keys are the legacy resource names, values are the current names.
@@ -36,6 +42,42 @@ LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
     "products": "goals",
 }
+
+
+@lru_cache(maxsize=1)
+def _built_in_resources() -> FrozenSet[str]:
+    """The built-in components as policy resources, ``type/id``. Read from the one list of them."""
+    from agno.registry._reserved import MANAGER_RESOURCES
+
+    return frozenset(MANAGER_RESOURCES.values())
+
+
+def is_built_in(resource_type: Optional[str], resource_id: Optional[str]) -> bool:
+    """Whether this is a built-in component: Super Agent or one of its helpers.
+
+    A wildcard or type-wide grant never reaches one. It is granted by its own scope
+    (``teams:superagent:run``) or by the admin scope, so that being able to run every team does
+    not mean being able to run Super Agent."""
+    return bool(resource_type and resource_id) and f"{resource_type}/{resource_id}" in _built_in_resources()
+
+
+def built_in_ids(resource_type: str) -> Set[str]:
+    """The ids of the built-in components of one type."""
+    prefix = f"{resource_type}/"
+    return {resource[len(prefix) :] for resource in _built_in_resources() if resource.startswith(prefix)}
+
+
+def accessible_ids_cover(
+    resource_type: Optional[str], resource_id: Optional[str], accessible_ids: Collection[str]
+) -> bool:
+    """Whether a set of accessible ids covers one resource.
+
+    The set is what ``get_accessible_resource_ids`` or a provider's ``accessible_resource_ids``
+    returns. ``"*"`` in it stands for every resource of the type that is not built in; a built-in
+    component is covered only when its own id is in the set."""
+    if resource_id in accessible_ids:
+        return True
+    return "*" in accessible_ids and not is_built_in(resource_type, resource_id)
 
 
 # Route paths that were renamed, by their old prefix. A scope mapping written for the old path
@@ -278,14 +320,17 @@ def matches_scope(
 
     # If required scope has a resource_id, check it
     if required_scope.resource_id:
-        # User has wildcard resource access
-        if user_scope.is_wildcard_resource:
-            return True
-        # User has global resource access (no resource_id in user scope)
-        if not user_scope.resource_id:
-            return True
+        # The component asked about: the one the request names, else the one the required scope
+        # itself names (a route with no id in its path, mapped to one component's scope)
+        target_id = resource_id
+        if target_id is None and not required_scope.is_wildcard_resource:
+            target_id = required_scope.resource_id
+        # User has wildcard resource access, or global resource access (no resource_id in user
+        # scope). Neither reaches a built-in component: only its own scope does.
+        if user_scope.is_wildcard_resource or not user_scope.resource_id:
+            return not is_built_in(user_scope.resource, target_id)
         # User has specific resource access - must match
-        return user_scope.resource_id == resource_id
+        return user_scope.resource_id == target_id
 
     # Required scope is global (no resource_id), user scope matches if:
     # - User has global scope (no resource_id), OR
@@ -401,7 +446,9 @@ def get_accessible_resource_ids(
                 If None, considers scopes with any action (backwards compatible for list filtering).
 
     Returns:
-        Set of resource IDs the user can access. Returns {"*"} for wildcard access.
+        Set of resource IDs the user can access. ``"*"`` in the set stands for every resource
+        of the type that is not a built-in component; a built-in is in the set by its own id.
+        Test one resource against the set with :func:`accessible_ids_cover`.
 
     Examples:
         >>> get_accessible_resource_ids(
@@ -413,11 +460,11 @@ def get_accessible_resource_ids(
         >>> get_accessible_resource_ids(["agents:*:read"], "agents")
         {'*'}
 
-        >>> get_accessible_resource_ids(["agents:read"], "agents")
-        {'*'}
+        >>> get_accessible_resource_ids(["teams:read", "teams:superagent:read"], "teams")
+        {'*', 'superagent'}
 
-        >>> get_accessible_resource_ids(["admin"], "agents")
-        {'*'}
+        >>> get_accessible_resource_ids(["agent_os:admin"], "teams")
+        {'*', 'superagent'}
 
         >>> get_accessible_resource_ids(
         ...     ["agents:agent-1:read"],
@@ -431,30 +478,18 @@ def get_accessible_resource_ids(
     # A legacy name for the resource type reads as the current one, the same as in a scope.
     resource_type = LEGACY_RESOURCE_ALIASES.get(resource_type, resource_type)
 
-    parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
-
-    # Check for admin or global wildcard access
-    for scope in parsed_scopes:
-        if scope.scope_type == "admin":
-            return {"*"}
-
-        # Check if resource type matches
-        if scope.resource == resource_type:
-            # Global resource scope (no resource_id) grants access to all
-            if not scope.resource_id and scope.action in allowed_actions:
-                return {"*"}
-            # Wildcard resource scope grants access to all
-            if scope.is_wildcard_resource and scope.action in allowed_actions:
-                return {"*"}
-
-    # Collect specific resource IDs
     accessible_ids: Set[str] = set()
-    for scope in parsed_scopes:
-        # Check if resource type matches
-        if scope.resource == resource_type:
-            # Specific resource ID
-            if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
-                accessible_ids.add(scope.resource_id)
+    for scope in (parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes):
+        if scope.scope_type == "admin":
+            # Admin reaches everything, the built-in components included
+            return {"*", *built_in_ids(resource_type)}
+        if scope.resource != resource_type or scope.action not in allowed_actions:
+            continue
+        if not scope.resource_id or scope.is_wildcard_resource:
+            # A global or wildcard scope: every resource of the type that is not built in
+            accessible_ids.add("*")
+        else:
+            accessible_ids.add(scope.resource_id)
 
     return accessible_ids
 
