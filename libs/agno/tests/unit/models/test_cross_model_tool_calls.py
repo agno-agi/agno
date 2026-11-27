@@ -2,11 +2,12 @@
 
 Covers reformat_tool_call_ids, normalize_tool_messages, and parallel tool calls
 across OpenAI Chat (call_*), OpenAI Responses (fc_*/call_*), Claude (toolu_*),
-and Gemini (UUID-style) ID formats.
+and Gemini (UUID-style) ID formats. Also covers reencode_tool_call_arguments:
+repairing tool call arguments emitted as Python literals instead of JSON.
 """
 
 from agno.models.message import Message
-from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+from agno.utils.message import normalize_tool_messages, reencode_tool_call_arguments, reformat_tool_call_ids
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -893,3 +894,68 @@ class TestMistralReformat:
         # Tool results match
         for i in range(3):
             assert result[i + 1].tool_call_id == result[0].tool_calls[i]["id"]
+
+
+# ---------------------------------------------------------------------------
+# reencode_tool_call_arguments — Python-literal argument repair
+# ---------------------------------------------------------------------------
+
+
+class TestReencodeToolCallArguments:
+    def test_single_quoted_literal_reencoded_as_json(self):
+        """Python-literal arguments (single quotes) should come back as valid JSON."""
+        tc = _make_tool_call("call_abc", arguments="{'city': 'Paris'}")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc")]
+        result = reencode_tool_call_arguments(msgs)
+        assert result[0].tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
+
+    def test_valid_json_returns_original_messages(self):
+        """Already-valid JSON needs no repair: the same list and objects are returned."""
+        tc = _make_tool_call("call_abc")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc")]
+        result = reencode_tool_call_arguments(msgs)
+        assert result is msgs
+        assert result[0] is msgs[0]
+        assert result[0].tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
+
+    def test_unparseable_arguments_left_untouched(self):
+        """Truncated/unparseable arguments stay as-is: no placeholder substitution."""
+        tc = _make_tool_call("call_abc", arguments='{"city": "Par')
+        result = reencode_tool_call_arguments([_assistant_msg([tc])])
+        assert result[0].tool_calls[0]["function"]["arguments"] == '{"city": "Par'
+
+    def test_input_messages_not_mutated(self):
+        """The caller's messages must never be modified in place."""
+        tc = _make_tool_call("call_abc", arguments="{'city': 'Paris'}")
+        msg = _assistant_msg([tc])
+        result = reencode_tool_call_arguments([msg])
+        assert result[0] is not msg
+        assert msg.tool_calls[0]["function"]["arguments"] == "{'city': 'Paris'}"
+
+    def test_non_assistant_messages_returned_unchanged(self):
+        """User/system/tool messages pass through untouched."""
+        msgs = [Message(role="user", content="hi"), _tool_msg("call_abc")]
+        result = reencode_tool_call_arguments(msgs)
+        assert result[0] is msgs[0]
+        assert result[1] is msgs[1]
+
+    def test_missing_or_non_string_arguments_ignored(self):
+        """tool_calls without a string arguments field are left alone."""
+        tc = {"id": "call_abc", "type": "function", "function": {"name": "get_weather"}}
+        result = reencode_tool_call_arguments([_assistant_msg([tc])])
+        assert result[0].tool_calls[0]["function"].get("arguments") is None
+
+
+class TestOpenAIChatRequestToolCallArguments:
+    def test_format_all_messages_reencodes_literal_arguments(self):
+        """End-to-end: the Chat Completions request builder must not emit non-JSON
+        arguments — strict OpenAI-compatible providers reject the whole request."""
+        from agno.models.openai.chat import OpenAIChat
+
+        tc = _make_tool_call("call_abc", arguments="{'city': 'Paris'}")
+        msgs = [_assistant_msg([tc]), _tool_msg("call_abc")]
+        model = OpenAIChat(id="gpt-test", api_key="test")
+        formatted = model._format_all_messages(msgs)
+        assert formatted[0]["tool_calls"][0]["function"]["arguments"] == '{"city": "Paris"}'
+        # Tool result pairing survives
+        assert formatted[1]["tool_call_id"] == "call_abc"
