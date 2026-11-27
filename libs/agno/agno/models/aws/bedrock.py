@@ -375,7 +375,10 @@ class AwsBedrock(Model):
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
-                    tool_use_content = []
+                    tool_use_content: List[Dict[str, Any]] = []
+                    # Text the model wrote ahead of its tool calls is replayed ahead of them
+                    if message.content:
+                        tool_use_content.append({"text": message.content})
                     for tool_call in message.tool_calls:
                         try:
                             # Parse arguments with error handling for empty or invalid JSON

@@ -293,3 +293,37 @@ def test_empty_user_message_is_not_mutated(model: AwsBedrock):
 
     assert empty.content is original
     assert empty.content == []
+
+
+def test_assistant_text_is_kept_beside_its_tool_calls(model: AwsBedrock):
+    """A Converse response with text and a toolUse is stored as one message and must be replayed whole."""
+    turns, _ = model._format_messages(
+        [
+            Message(role="user", content="Where is my order?"),
+            Message(
+                role="assistant",
+                content="Let me look that up.",
+                tool_calls=[{"id": "t1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+            ),
+            Message(role="tool", tool_call_id="t1", content="shipped"),
+        ]
+    )
+
+    assert _kinds(turns[1]) == ["text", "toolUse"]
+    assert turns[1]["content"][0] == {"text": "Let me look that up."}
+
+
+@pytest.mark.parametrize("content", [None, ""])
+def test_assistant_tool_calls_without_text_have_no_text_block(model: AwsBedrock, content: Any):
+    turns, _ = model._format_messages(
+        [
+            Message(role="user", content="Where is my order?"),
+            Message(
+                role="assistant",
+                content=content,
+                tool_calls=[{"id": "t1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+            ),
+        ]
+    )
+
+    assert _kinds(turns[1]) == ["toolUse"]
