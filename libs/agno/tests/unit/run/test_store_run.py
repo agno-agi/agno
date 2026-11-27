@@ -459,6 +459,24 @@ class TestTeam:
         assert isinstance(runs, list) and [run.run_id for run in runs] == [first.run_id]
         assert runs[0].status == RunStatus.completed
 
+    def test_continuing_a_paused_member_keeps_the_member_temporary(self, db: SqliteDb):
+        member_model = ToolCallingModel("needs_confirmation", {"city": "Paris"})
+        member = Agent(id="member", name="Member", model=member_model, tools=[needs_confirmation], cache_session=True)
+        team = Team(id="t", name="T", model=DelegatingModel("member"), members=[member], db=db)
+
+        paused = team.run("weather?", session_id="s1", store_run=False)
+        assert paused.is_paused
+        for requirement in paused.requirements or []:
+            requirement.confirm()
+
+        done = team.continue_run(run_response=paused, requirements=paused.requirements, store_run=False)
+
+        assert done.status == RunStatus.completed
+        cached = member._get_cached_session("s1")
+        assert cached is None or not cached.runs
+        assert db.get_session(session_id="s1", session_type=SessionType.TEAM) is None
+        assert _runs(db, "s1") == 0
+
     def test_temporary_run_offloads_no_member_messages_to_the_result_store(self, db: SqliteDb):
         member = Agent(id="member", name="Member", model=RecordingModel())
         team = Team(

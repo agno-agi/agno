@@ -6269,6 +6269,9 @@ def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) 
         kwargs["metadata"] = run_context.metadata
     if run_context.knowledge_filters is not None:
         kwargs["knowledge_filters"] = run_context.knowledge_filters
+    # A temporary team run continues its members temporarily too; the default stays theirs.
+    if getattr(run_context, "store_run", True) is False:
+        kwargs["store_run"] = False
     return kwargs
 
 
