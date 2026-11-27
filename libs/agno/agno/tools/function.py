@@ -25,6 +25,7 @@ from typing import (
 from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, field_validator, validate_call
+from pydantic.fields import FieldInfo
 
 from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
@@ -1130,8 +1131,9 @@ def _add_null_branches(parameters: Dict[str, Any], entrypoint: Optional[Callable
         param = params.get(name)
         if param is None or not isinstance(schema, dict) or not _admits_none(hints.get(name)):
             continue
+        default = param.default.default if isinstance(param.default, FieldInfo) else param.default
         # Identity checks: a default whose __eq__ misbehaves (a numpy array) must not raise here.
-        if param.default is not param.empty and param.default is not None:
+        if default is not param.empty and default is not None:
             continue
         if _schema_accepts_null(schema):
             continue
@@ -1912,8 +1914,6 @@ class Function(BaseModel):
                 elif key == "items" and isinstance(value, dict):
                     # This handles array items like List[KnowledgeFilter]
                     result[key] = make_nested_strict(value)
-                elif key in ("anyOf", "oneOf", "allOf") and isinstance(value, list):
-                    result[key] = [make_nested_strict(v) for v in value]
                 elif isinstance(value, dict):
                     result[key] = make_nested_strict(value)
 

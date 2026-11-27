@@ -3,7 +3,7 @@ from inspect import isasyncgen, isawaitable
 from typing import Annotated, Any, Callable, Dict, List, Optional, Union
 
 import pytest
-from pydantic import BaseModel, BeforeValidator, ValidationError
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 
 import agno.tools.function as function_module
 from agno.models.message import Message
@@ -445,6 +445,55 @@ def test_strict_does_not_make_a_parameter_with_a_non_none_default_nullable(sourc
     assert properties["max_results"] == {"type": "integer", "description": "Result count."}
 
 
+def _read_with_unset_versions(
+    item_id: str,
+    required_version: Optional[int],
+    field_version: Optional[int] = Field(default=None),
+) -> str:
+    """Read one item.
+
+    Args:
+        item_id: The item id.
+        required_version: Version, no default.
+        field_version: Version, defaulted through Field.
+    """
+    return item_id
+
+
+@pytest.mark.parametrize("from_callable", [False, True])
+def test_strict_makes_an_optional_without_a_default_or_with_a_field_none_default_nullable(from_callable):
+    """No default, or Field(default=None), still means None is what the call gets without a value."""
+    if from_callable:
+        function = Function.from_callable(_read_with_unset_versions, strict=True)
+    else:
+        function = Function(name="read", entrypoint=_read_with_unset_versions)
+        function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    for name in ("required_version", "field_version"):
+        assert properties[name]["anyOf"] == [{"type": "integer"}, {"type": "null"}], name
+
+
+def test_strict_leaves_a_dict_inside_a_union_open():
+    """A dict schema's additionalProperties is its value type; closing it would only accept {}."""
+
+    class Query(BaseModel):
+        text: str
+        weights: Optional[Dict[str, float]] = None
+
+    def search(q: Query, tags: Union[Dict[str, int], str] = "x") -> str:
+        return "ok"
+
+    function = Function(name="search", entrypoint=search)
+    function.process_entrypoint(strict=True)
+
+    properties = function.parameters["properties"]
+    weights_dict = properties["q"]["properties"]["weights"]["anyOf"][0]
+    tags_dict = properties["tags"]["anyOf"][0]
+    assert weights_dict["additionalProperties"] == {"type": "number"}
+    assert tags_dict["additionalProperties"] == {"type": "integer"}
+
+
 def test_strict_leaves_a_schema_without_python_types_unchanged():
     """An MCP tool's entrypoint takes **kwargs, so there is no annotation to say a parameter admits None."""
 
@@ -463,7 +512,7 @@ def test_strict_leaves_a_schema_without_python_types_unchanged():
     assert function.parameters["required"] == ["version"]
 
 
-def test_process_schema_for_strict_reaches_objects_inside_any_of():
+def test_strict_closes_an_optional_object_parameter():
     """An Optional object parameter is an anyOf; strict mode must still close the object inside it."""
 
     class Filter(BaseModel):
