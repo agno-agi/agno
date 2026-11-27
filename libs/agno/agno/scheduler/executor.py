@@ -6,9 +6,10 @@ import time
 from contextvars import ContextVar
 from inspect import signature
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlsplit
 
 from agno.db.schemas.scheduler import (
+    EVAL_SUITE_RUN_ENDPOINT_RE,
     RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
     SCHEDULED_RUN_METADATA_KEY,
@@ -67,6 +68,23 @@ def terminal_run_status(data: Dict[str, Any], company_routine: bool) -> Optional
         # A cancelled run was stopped on purpose, so it is neither a failure nor retried.
         return "cancelled", data.get("error") or "Run was cancelled"
     return "failed", company_error or data.get("error") or f"Run failed with status {run_status}"
+
+
+def terminal_eval_suite_status(data: Dict[str, Any]) -> Optional[Tuple[str, Optional[str]]]:
+    """Map a finished eval suite run to its schedule run status and error; None while it is RUNNING.
+
+    A FAIL is a failed run, as a Company routine that completed but failed its check is.
+    """
+    eval_data = data.get("eval_data") or {}
+    summary = eval_data.get("summary") or {}
+    suite_status = summary.get("status")
+    if suite_status == "RUNNING":
+        return None
+    if suite_status == "PASS":
+        return "success", None
+    if suite_status == "FAIL":
+        return "failed", f"{summary.get('failed')} of {summary.get('total')} cases failed"
+    return "failed", eval_data.get("error") or f"Eval suite run ended with status {suite_status}"
 
 
 _active_schedule_run: ContextVar[Optional[tuple]] = ContextVar("active_schedule_run", default=None)
@@ -487,6 +505,9 @@ class ScheduleExecutor:
                 resource_id,
                 timeout_seconds,
             )
+        elif method == "POST" and EVAL_SUITE_RUN_ENDPOINT_RE.match(endpoint):
+            headers["Content-Type"] = "application/json"
+            return await self._eval_suite_run(client, url, headers, payload if payload else None, timeout_seconds)
         else:
             headers["Content-Type"] = "application/json"
             return await self._simple_request(client, method, url, headers, payload if payload else None)
@@ -518,6 +539,147 @@ class ScheduleExecutor:
             "output": None,
             "requirements": None,
         }
+
+    async def _eval_suite_run(
+        self,
+        client: Any,
+        url: str,
+        headers: Dict[str, str],
+        payload: Optional[Dict[str, Any]],
+        timeout_seconds: int,
+    ) -> Dict[str, Any]:
+        """Start an eval suite run in the background and poll it until it finishes."""
+        # httpx replaces the URL's query with params, so the endpoint's own query is carried in them.
+        query = dict(parse_qsl(urlsplit(url).query))
+        kwargs: Dict[str, Any] = {"headers": headers, "params": {**query, "background": "true"}}
+        if payload is not None:
+            kwargs["json"] = payload
+
+        resp = await client.request("POST", url, **kwargs)
+
+        if resp.status_code >= 400:
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": resp.text,
+                "run_id": None,
+                "session_id": None,
+                "input": None,
+                "output": None,
+                "requirements": None,
+            }
+
+        try:
+            body = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": f"Invalid JSON in eval suite run response: {resp.text[:500]}",
+                "run_id": None,
+                "session_id": None,
+                "input": None,
+                "output": None,
+                "requirements": None,
+            }
+
+        run_id = body.get("id")
+        if not run_id:
+            return {
+                "status": "failed",
+                "status_code": resp.status_code,
+                "error": f"Missing id in eval suite run response: {body}",
+                "run_id": None,
+                "session_id": None,
+                "input": None,
+                "output": None,
+                "requirements": None,
+            }
+
+        active = _active_schedule_run.get()
+        if active is not None:
+            db, record_id = active
+            if asyncio.iscoroutinefunction(db.update_schedule_run):
+                await db.update_schedule_run(record_id, run_id=run_id, session_id=None)
+            else:
+                await asyncio.to_thread(db.update_schedule_run, record_id, run_id=run_id, session_id=None)
+
+        # The run route's db_id and table, so the poll reads the database the run is stored in.
+        poll_params = {k: v for k, v in query.items() if k in ("db_id", "table")}
+        return await self._poll_eval_suite_run(client, headers, run_id, timeout_seconds, poll_params)
+
+    async def _poll_eval_suite_run(
+        self,
+        client: Any,
+        headers: Dict[str, str],
+        run_id: str,
+        timeout_seconds: int,
+        params: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Poll an eval run until its suite is no longer RUNNING."""
+        poll_url = f"{self.base_url}/eval-runs/{run_id}"
+        deadline = time.monotonic() + timeout_seconds
+
+        while True:
+            if time.monotonic() >= deadline:
+                return {
+                    "status": "failed",
+                    "status_code": None,
+                    "error": f"Polling timed out after {timeout_seconds}s for eval run {run_id}",
+                    "run_id": run_id,
+                    "session_id": None,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
+                }
+
+            # Unlike _poll_run, every retried poll waits poll_interval first, so a 404 or a dropped
+            # request does not spin until the deadline.
+            try:
+                resp = await client.request("GET", poll_url, headers=headers, params=params)
+            except Exception as exc:
+                log_warning(f"Poll request failed for eval run {run_id}: {exc}")
+                await asyncio.sleep(self.poll_interval)
+                continue
+
+            if resp.status_code == 404:
+                await asyncio.sleep(self.poll_interval)
+                continue
+
+            if resp.status_code >= 400:
+                return {
+                    "status": "failed",
+                    "status_code": resp.status_code,
+                    "error": resp.text,
+                    "run_id": run_id,
+                    "session_id": None,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
+                }
+
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError) as e:
+                log_warning(f"Invalid JSON in poll response for eval run {run_id}: {str(e)}")
+                await asyncio.sleep(self.poll_interval)
+                continue
+
+            settled = terminal_eval_suite_status(data)
+            if settled is not None:
+                status, error = settled
+                return {
+                    "status": status,
+                    "status_code": resp.status_code,
+                    "error": error,
+                    "run_id": run_id,
+                    "session_id": None,
+                    "input": None,
+                    "output": None,
+                    "requirements": None,
+                }
+
+            await asyncio.sleep(self.poll_interval)
 
     async def _background_run(
         self,

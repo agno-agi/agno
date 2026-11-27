@@ -16,8 +16,9 @@ and configuration endpoints, and then terminated it cleanly.
 
 **Observed:** `GET /health` returned HTTP 200 with `status: ok`. `GET /config`
 identified `python-client-demo` and listed agent `assistant`, team
-`research-team`, and workflow `qa-workflow`. OpenAPI contained the agent-run,
-session, memory, knowledge-content, knowledge-search, and evaluation routes.
+`research-team`, and workflow `qa-workflow`; `GET /eval-suites` listed the
+`assistant-quality` suite. OpenAPI contained the agent-run, session, memory,
+knowledge-content, knowledge-search, and evaluation routes.
 
 ---
 
@@ -86,11 +87,16 @@ single result. The content item was deleted successfully.
 **Test mode:** LIVE
 
 **Description:** Ran accuracy and tool-call reliability evaluations, then
-listed and fetched their stored results.
+listed and fetched their stored results, then listed, fetched and ran the
+registered eval suite (a tag subset, and in the background) and ran cases
+posted in the request.
 
 **Observed:** The accuracy evaluation scored `10`. The reliability evaluation
 reported `PASSED` with `multiply` in both its passed tool calls and passed
 argument checks. The API listed two stored evaluations and fetched both by ID.
+`list_eval_suites` returned the `assistant-quality` suite with 2 cases; the
+`smoke` tag run passed 1 of 1; the background run returned RUNNING and was
+polled to PASS 2 of 2; the posted case passed 1 of 1.
 
 ---
 

@@ -95,6 +95,127 @@ class TestExecutorSimpleRequest:
         assert result["error"] == "Internal Server Error"
 
 
+class TestExecutorEvalSuiteRun:
+    """Test _eval_suite_run: start the suite in the background, then poll its eval run."""
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=0)
+
+    @staticmethod
+    def _resp(status_code, body):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.json.return_value = body
+        resp.text = str(body)
+        return resp
+
+    @staticmethod
+    def _eval_run(status, passed=0, failed=0, total=2, **extra):
+        summary = {"total": total, "passed": passed, "failed": failed, "status": status}
+        return {"id": "eval-1", "eval_data": {"summary": summary, "cases": [], **extra}}
+
+    @pytest.mark.asyncio
+    async def test_failing_suite_is_a_failed_run_linked_to_its_eval_run(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[
+                self._resp(202, self._eval_run("RUNNING")),
+                self._resp(200, self._eval_run("RUNNING")),
+                self._resp(200, self._eval_run("FAIL", passed=1, failed=1)),
+            ]
+        )
+
+        result = await executor._eval_suite_run(mock_client, "http://localhost:8000/eval-suites/s/runs", {}, None, 60)
+        assert result["status"] == "failed"
+        assert result["error"] == "1 of 2 cases failed"
+        assert result["run_id"] == "eval-1"
+        post, poll = mock_client.request.call_args_list[0], mock_client.request.call_args_list[1]
+        assert post.kwargs["params"] == {"background": "true"}
+        assert poll.args[:2] == ("GET", "http://localhost:8000/eval-runs/eval-1")
+
+    @pytest.mark.asyncio
+    async def test_suite_on_a_named_db_is_started_and_polled_on_that_db(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[self._resp(202, self._eval_run("RUNNING")), self._resp(200, self._eval_run("PASS", passed=2))]
+        )
+
+        result = await executor._eval_suite_run(
+            mock_client, "http://localhost:8000/eval-suites/s/runs?db_id=main-db", {}, None, 60
+        )
+        assert result["status"] == "success"
+        post, poll = mock_client.request.call_args_list[0], mock_client.request.call_args_list[1]
+        assert post.kwargs["params"] == {"db_id": "main-db", "background": "true"}
+        assert poll.kwargs["params"] == {"db_id": "main-db"}
+
+    @pytest.mark.asyncio
+    async def test_passing_suite_is_a_successful_run(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[self._resp(202, self._eval_run("RUNNING")), self._resp(200, self._eval_run("PASS", passed=2))]
+        )
+
+        result = await executor._eval_suite_run(mock_client, "http://localhost:8000/eval-suites/s/runs", {}, None, 60)
+        assert result["status"] == "success"
+        assert result["error"] is None
+        assert result["run_id"] == "eval-1"
+
+    @pytest.mark.asyncio
+    async def test_suite_that_errors_is_a_failed_run_with_its_error(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[
+                self._resp(202, self._eval_run("RUNNING")),
+                self._resp(200, self._eval_run("ERROR", error="judge unavailable")),
+            ]
+        )
+
+        result = await executor._eval_suite_run(mock_client, "http://localhost:8000/eval-suites/s/runs", {}, None, 60)
+        assert result["status"] == "failed"
+        assert result["error"] == "judge unavailable"
+
+    @pytest.mark.asyncio
+    async def test_suite_that_outlasts_the_schedule_timeout_keeps_its_eval_run(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=self._resp(202, self._eval_run("RUNNING")))
+
+        result = await executor._eval_suite_run(mock_client, "http://localhost:8000/eval-suites/s/runs", {}, None, 0)
+        assert result["status"] == "failed"
+        assert result["error"] == "Polling timed out after 0s for eval run eval-1"
+        assert result["run_id"] == "eval-1"
+
+    @pytest.mark.asyncio
+    async def test_suite_endpoint_is_started_in_the_background(self, executor):
+        schedule = Schedule(
+            id="s1",
+            name="nightly-suite",
+            cron_expr="0 0 * * *",
+            endpoint="/eval-suites/math/runs",
+            method="POST",
+            payload={"tag": "smoke"},
+        )
+        with patch.object(executor, "_eval_suite_run", new=AsyncMock(return_value={})) as suite_run:
+            await executor._call_endpoint(schedule)
+
+        assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites/math/runs"
+        assert suite_run.await_args.args[3] == {"tag": "smoke"}
+
+    @pytest.mark.asyncio
+    async def test_suite_endpoint_on_a_named_db_is_started_in_the_background(self, executor):
+        schedule = Schedule(
+            id="s1",
+            name="nightly-suite",
+            cron_expr="0 0 * * *",
+            endpoint="/eval-suites/math/runs?db_id=main-db",
+            method="POST",
+        )
+        with patch.object(executor, "_eval_suite_run", new=AsyncMock(return_value={})) as suite_run:
+            await executor._call_endpoint(schedule)
+
+        assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites/math/runs?db_id=main-db"
+
+
 class TestExecutorBackgroundRun:
     """Test _background_run for run endpoints."""
 

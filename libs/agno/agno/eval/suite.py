@@ -26,6 +26,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.reliability import ReliabilityEval
 from agno.filters import FilterExpr
+from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Case",
     "CaseResult",
+    "EvalSuite",
     "JudgeMode",
     "SuiteResult",
     "acli",
@@ -143,6 +145,30 @@ class Case:
             raise ValueError(f"case {self.name!r}: judge_threshold must be 1-10, got {self.judge_threshold}")
 
 
+@dataclass(frozen=True)
+class EvalSuite:
+    """A named set of cases, so AgentOS can list and run the suite by id."""
+
+    id: str
+    cases: Tuple[Case, ...]
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    def select(self, *, tag: Optional[str] = None, name: Optional[str] = None) -> Tuple[Case, ...]:
+        """The cases a tag or case name selects."""
+        return tuple(case for case in self.cases if _case_matches(case, tag=tag, name=name))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """The suite as listed, without running it."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            # No run default exists until a run is started, so a case without its own timeout lists null.
+            "cases": [_case_summary(case, default_timeout=None) for case in self.cases],
+        }
+
+
 @dataclass
 class CaseResult:
     """Outcome of one case, with enough evidence to debug a failure from the payload alone."""
@@ -171,9 +197,12 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
-    # Scorer verdict; None = check not configured. Must stay the last field: not
+    # Scorer verdict; None = check not configured. Stays after response: not
     # kw_only, so positional construction depends on field order.
     score: Optional[Score] = None
+    # A copy of the run's metrics with the judge's added, so a run held by a cached
+    # session is never changed. Appended last for the same field-order reason.
+    metrics: Optional[RunMetrics] = None
 
     @property
     def passed(self) -> bool:
@@ -243,6 +272,8 @@ class SuiteResult:
                     "score_value": result.score.value if result.score is not None else None,
                     "score_passed": result.score.passed if result.score is not None else None,
                     "score_reason": result.score.reason if result.score is not None else None,
+                    # The run's metrics with the judge's folded in; null when the run produced no output.
+                    "metrics": result.metrics.to_dict() if result.metrics is not None else None,
                 }
                 for result in self.results
             ],
@@ -289,6 +320,17 @@ def _component_id(case: Case) -> str:
     if case.team is not None:
         return case.team.id or case.name
     return case.name
+
+
+def _case_summary(case: Case, *, default_timeout: Optional[int]) -> Dict[str, Any]:
+    """The case as listed, without running it: the --list payload and the suite route share it."""
+    return {
+        "name": case.name,
+        "agent_id": _component_id(case) if case.agent is not None else None,
+        "team_id": _component_id(case) if case.team is not None else None,
+        "tags": list(case.tags),
+        "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else default_timeout,
+    }
 
 
 def _case_matches(case: Case, *, tag: Optional[str], name: Optional[str]) -> bool:
@@ -390,6 +432,7 @@ async def _run_case_body(
                 # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
+                result.metrics = RunMetrics.from_dict(event.metrics.to_dict()) if event.metrics is not None else None
                 _extract_evidence(result, event)
                 continue
             if isinstance(event, _RUN_ERROR_EVENTS):
@@ -412,6 +455,14 @@ async def _run_case_body(
                     # it once and stop forwarding for the rest of this case.
                     forward_events = False
                     _append_error(result, f"hook: on_run_event {type(exc).__name__}: {exc}")
+    except asyncio.CancelledError:
+        # A tool can raise CancelledError while the task is not cancelled: record it on the case. A real
+        # cancel (the case timeout, a shutdown) goes on; below Python 3.11 it cannot be told apart.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        if cancelling is None or cancelling() > 0:
+            raise
+        _append_error(result, f"{component_label}: CancelledError")
+        return
     except Exception as exc:
         # Only pre-stream failures (e.g. input validation) raise out of arun.
         _append_error(result, f"{component_label}: {type(exc).__name__}: {exc}")
@@ -459,7 +510,12 @@ async def _run_case_body(
                 # Preserve EvalSuite's existing policy: its internally-created evals
                 # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
-            ).arun(input=input_text, output=result.output or "")
+            ).arun(
+                input=input_text,
+                output=result.output or "",
+                # The judge's tokens and time are added to the case's run metrics, as AccuracyEval does.
+                run_metrics=result.metrics,
+            )
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
         else:
@@ -519,8 +575,9 @@ async def _arun_case(
         agent_id=_component_id(case) if case.agent is not None else None,
         team_id=_component_id(case) if case.team is not None else None,
         # Dedicated session per case so eval traffic doesn't pollute the agent or team's history,
-        # unless the case names the session to run in
-        session_id=case.session_id or f"eval-{case.name}-{uuid4().hex[:8]}",
+        # unless the case names the session to run in. The name is cut to fit a 128-char column and a
+        # "/" is replaced so the session route can fetch the id.
+        session_id=case.session_id or f"eval-{case.name[:100].replace('/', '-')}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
 
@@ -558,7 +615,7 @@ async def _arun_case(
 
 
 async def arun_cases(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     tag: Optional[str] = None,
     name: Optional[str] = None,
@@ -572,7 +629,7 @@ async def arun_cases(
     """Run the selected cases sequentially and return a SuiteResult.
 
     Args:
-        cases: The cases to select from.
+        cases: The cases to select from, or an EvalSuite.
         tag: Keep only cases with this tag.
         name: Keep only the case with this name.
         default_timeout: Per-case timeout in seconds, when Case.timeout_seconds is None.
@@ -594,6 +651,9 @@ async def arun_cases(
     fires on a cancelled RunOutput - a server-side cancel_run, or a KeyboardInterrupt
     agno converts into one.
     """
+    # An EvalSuite is its cases plus an id; the runner only needs the cases.
+    if isinstance(cases, EvalSuite):
+        cases = cases.cases
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
     results: List[CaseResult] = []
@@ -653,7 +713,7 @@ async def arun_cases(
 
 
 def run_cases(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     tag: Optional[str] = None,
     name: Optional[str] = None,
@@ -852,7 +912,7 @@ def _write_json_output(console: "Console", path: Path, payload: Dict[str, Any]) 
 
 
 async def acli(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,
@@ -895,6 +955,8 @@ async def acli(
         return exc.code if isinstance(exc.code, int) else 2
 
     console = Console()
+    if isinstance(cases, EvalSuite):
+        cases = cases.cases
     selected = [case for case in cases if _case_matches(case, tag=args.tag, name=args.name)]
     if not selected:
         console.print(f"[red]no cases selected[/red] {escape(f'(name={args.name!r}, tag={args.tag!r})')}")
@@ -904,18 +966,7 @@ async def acli(
     if args.list_cases:
         _print_case_list(console, selected, default_timeout=args.timeout)
         if args.json_output is not None:
-            payload = {
-                "cases": [
-                    {
-                        "name": case.name,
-                        "agent_id": _component_id(case) if case.agent is not None else None,
-                        "team_id": _component_id(case) if case.team is not None else None,
-                        "tags": list(case.tags),
-                        "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else args.timeout,
-                    }
-                    for case in selected
-                ]
-            }
+            payload = {"cases": [_case_summary(case, default_timeout=args.timeout) for case in selected]}
             if not _write_json_output(console, args.json_output, payload):
                 return 1
         return 0
@@ -1030,7 +1081,7 @@ async def acli(
 
 
 def cli(
-    cases: Sequence[Case],
+    cases: Union[EvalSuite, Sequence[Case]],
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,

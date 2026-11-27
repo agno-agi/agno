@@ -8,12 +8,12 @@ memory, knowledge, evaluations, and central Bearer authentication.
 
 | File | Concept |
 |---|---|
-| `_server.py` | Shared AgentOS server with an agent, team, workflow, and knowledge base |
+| `_server.py` | Shared AgentOS server with an agent, team, workflow, knowledge base, and eval suite |
 | `01_connect.py` | Synchronous and asynchronous configuration discovery |
 | `02_run_and_stream.py` | Non-streaming runs, typed SSE events, and cancellation |
 | `03_sessions_and_memory.py` | Session lifecycle and memory CRUD |
 | `04_knowledge.py` | Upload, status polling, list, search, and delete |
-| `05_evals.py` | Accuracy and reliability evaluations |
+| `05_evals.py` | Accuracy and reliability evaluations, and eval suites |
 | `06_auth.py` | `OS_SECURITY_KEY` Bearer authentication |
 
 ## Prerequisites
@@ -34,6 +34,7 @@ The server owns port `7778`. Its component IDs are stable:
 - Agent: `assistant`
 - Team: `research-team`
 - Workflow: `qa-workflow`
+- Eval suite: `assistant-quality`
 
 In another terminal, run any client:
 
@@ -72,6 +73,7 @@ For JWT, RBAC, and `agno_pat_` service accounts, continue to lesson
 
 ## Where run lifecycle continues
 
-The SDK does not yet expose background-run polling, checkpoint listing, or SSE
-stream resumption. Those raw HTTP patterns are taught in
+The SDK does not yet expose background agent-run polling, checkpoint listing,
+or SSE stream resumption; a background eval suite run is polled with
+`get_eval_run` in `05_evals.py`. The raw HTTP patterns are taught in
 [`04_run_lifecycle`](../04_run_lifecycle/).

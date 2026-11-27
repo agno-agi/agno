@@ -2089,6 +2089,24 @@ class InMemoryDb(BaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            for run_data in self._eval_runs:
+                if run_data.get("run_id") == eval_run_id:
+                    run_data["eval_data"] = deepcopy(eval_data)
+                    run_data["updated_at"] = int(time.time())
+                    break
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
         """Create or update a single trace record in the database.

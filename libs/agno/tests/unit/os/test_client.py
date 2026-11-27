@@ -457,6 +457,37 @@ async def test_get_eval_run():
 
 
 @pytest.mark.asyncio
+async def test_run_eval_suite():
+    """Verify run_eval_suite posts the selection to the suite's run route."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {"id": "run-1", "eval_type": "suite", "eval_data": {"summary": {"total": 1}}}
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_data
+        eval_run = await client.run_eval_suite("math-quality", tag="smoke")
+
+        assert mock_post.call_args.args[0] == "/eval-suites/math-quality/runs"
+        assert mock_post.call_args.args[1] == {"tag": "smoke", "default_timeout": 120}
+        assert eval_run.id == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_run_eval_suite_from_body():
+    """Verify run_eval_suite_from_body posts the cases to /eval-suites."""
+    from agno.os.routers.evals.schemas import EvalSuiteCaseInput
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {"id": "run-2", "eval_type": "suite", "eval_data": {"summary": {"total": 1}}}
+    case = EvalSuiteCaseInput(name="mul", agent_id="math-tutor", input="17 * 23", criteria="391")
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_data
+        eval_run = await client.run_eval_suite_from_body(name="nightly", cases=[case])
+
+        assert mock_post.call_args.args[0] == "/eval-suites"
+        assert mock_post.call_args.args[1]["cases"][0]["agent_id"] == "math-tutor"
+        assert eval_run.id == "run-2"
+
+
+@pytest.mark.asyncio
 async def test_list_content():
     """Verify list_content returns paginated content."""
     client = AgentOSClient(base_url="http://localhost:7777")

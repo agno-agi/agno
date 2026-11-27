@@ -877,6 +877,12 @@ def _normalize_eval_run(record: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(run_times, dict):
             run_times = eval_data  # older rows stored the numbers at the top level
         normalized["avg_run_time"] = run_times.get("avg_run_time")
+    elif eval_type == "suite":
+        summary = eval_data.get("summary") or {}
+        normalized["status"] = summary.get("status")
+        # A background run has no pass rate until it finishes.
+        if summary.get("total") and summary.get("status") in ("PASS", "FAIL"):
+            normalized["pass_rate"] = summary.get("passed", 0) / summary["total"] * 100
     else:
         normalized["status"] = "UNKNOWN"
 

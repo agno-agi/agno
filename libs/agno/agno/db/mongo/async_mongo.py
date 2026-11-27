@@ -3703,6 +3703,26 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    async def update_eval_run_data(self, eval_run_id: str, eval_data: Dict[str, Any]) -> None:
+        """Replace the eval_data of an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            eval_data (Dict[str, Any]): The eval data to store.
+        """
+        try:
+            collection = await self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
+            await collection.update_one(
+                {"run_id": eval_run_id}, {"$set": {"eval_data": eval_data, "updated_at": int(time.time())}}
+            )
+
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # --- Traces ---
     def _get_component_level(
         self, workflow_id: Optional[str], team_id: Optional[str], agent_id: Optional[str], name: str

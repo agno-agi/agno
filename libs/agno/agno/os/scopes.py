@@ -550,6 +550,10 @@ def get_default_scope_mappings(*, company: bool = False) -> Dict[str, List[str]]
         "POST /eval-runs": ["evals:write"],
         "PATCH /eval-runs/*": ["evals:write"],
         "DELETE /eval-runs": ["evals:delete"],
+        "GET /eval-suites": ["evals:read"],
+        "GET /eval-suites/*": ["evals:read"],
+        "POST /eval-suites": ["evals:write"],
+        "POST /eval-suites/*/runs": ["evals:write"],
         # Trace endpoints
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],

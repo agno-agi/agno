@@ -1,9 +1,9 @@
 # Scheduler
 
 AgentOS can persist cron schedules, claim due work, call an AgentOS endpoint,
-and store each execution attempt. This lesson covers the four ways operators
+and store each execution attempt. This lesson covers the five ways operators
 usually meet that surface: natural execution, REST, direct Python management,
-and an agentic `SchedulerTools` path.
+an agentic `SchedulerTools` path, and a scheduled eval suite.
 
 ## Files
 
@@ -13,6 +13,7 @@ and an agentic `SchedulerTools` path.
 | `02_rest_api.py` | Use raw HTTP for CRUD, enable/disable, manual trigger, and `{data, meta}` pagination. |
 | `03_manage_with_python.py` | Use sync and async `ScheduleManager` APIs, including `page`, `cron_expr`, validation, retry, and timeout settings. |
 | `04_scheduler_tools_agent.py` | Let an agent create a schedule while preserving a configured default endpoint and payload. |
+| `05_schedule_eval_suite.py` | Schedule a registered eval suite and read the suite's eval run from the schedule run. |
 
 ## Prerequisites
 
@@ -89,6 +90,28 @@ cannot override its execution target. The client reads the stored row back and
 proves that the toolkit used the canonical
 `/agents/scheduler-tools-agent/runs` endpoint and its complete default payload.
 
+## Scheduled eval suites
+
+Stop the other servers, then start the suite example:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/12_scheduler/05_schedule_eval_suite.py
+```
+
+In another terminal:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/12_scheduler/05_schedule_eval_suite.py --demo
+```
+
+The schedule calls `POST /eval-suites/{suite_id}/runs`. The executor starts the
+suite as a background run and polls its eval run: PASS records a `success`
+schedule run, FAIL records `failed` with "N of M cases failed". The schedule
+run's `run_id` is the eval run id, so the observer reads the suite summary from
+`GET /eval-runs/{run_id}`. On an AgentOS with more than one database, put the
+database on the endpoint, for example `/eval-suites/{suite_id}/runs?db_id=...`
+(and `&table=...`): the executor keeps them on the run and on the poll.
+
 ## Deployment notes
 
 - `scheduler_base_url` is the URL the in-process executor calls. It defaults to
@@ -101,7 +124,7 @@ proves that the toolkit used the canonical
   Postgres when multiple AgentOS workers share schedules: its claim uses an
   atomic update around a `FOR UPDATE SKIP LOCKED` selection so workers do not
   execute the same due row.
-- Run endpoints must receive a `message` in their payload. The executor forces
-  scheduled Agent, Team, and Workflow calls to `stream=false` and
-  `background=true`, then polls the persisted run until it reaches a terminal
-  state.
+- Agent, Team, and Workflow run endpoints must receive a `message` in their
+  payload. The executor forces scheduled Agent, Team, and Workflow calls to
+  `stream=false` and `background=true`, then polls the persisted run until it
+  reaches a terminal state.
