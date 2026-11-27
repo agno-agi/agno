@@ -13,7 +13,7 @@ where the filesystem backend is implemented for SQLite and PostgreSQL only.
 
 from __future__ import annotations
 
-from typing import Any, Collection, Dict, List, Optional
+from typing import Any, Callable, Collection, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.models.message import Message
@@ -88,7 +88,11 @@ class CompactionArchive:
     A Team and its members run in one session, so one session can hold the records of more than
     one conversation. ``message_ids`` names the messages of the conversation being read: a record
     is read only when the message it is anchored on is one of them. None reads every record of the
-    session, which is right when the session holds one conversation.
+    session, which is right when the session holds one conversation. Given as a function, the ids
+    are read each time records are, so a long-lived archive sees messages stored after it was made.
+
+    ``run_id`` is the run this archive is held by. A fold that run makes is anchored on a message
+    the session does not hold until the run is stored, so its records are read by their run id.
     """
 
     def __init__(
@@ -96,18 +100,26 @@ class CompactionArchive:
         db: Any,
         session_id: str,
         user_id: Optional[str] = None,
-        message_ids: Optional[Collection[str]] = None,
+        message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         self.db = db
         self.session_id = session_id
         self.user_id = user_id
         self.message_ids = message_ids
+        self.run_id = run_id
 
-    def _own(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """The rows anchored in this conversation, or every row when no conversation is named."""
-        if self.message_ids is None:
+    def _in_this_conversation(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The rows this conversation made, or every row when no conversation is named."""
+        message_ids = self.message_ids() if callable(self.message_ids) else self.message_ids
+        if message_ids is None:
             return rows
-        return [row for row in rows if row.get("first_kept_message_id") in self.message_ids]
+        return [
+            row
+            for row in rows
+            if row.get("first_kept_message_id") in message_ids
+            or (self.run_id is not None and row.get("run_id") == self.run_id)
+        ]
 
     def _row(self, record: Any, messages: List[Message]) -> Dict[str, Any]:
         return {
@@ -173,7 +185,7 @@ class CompactionArchive:
         except Exception as e:  # noqa: BLE001
             log_warning(f"Could not read compaction records: {e}")
             return None
-        rows = self._own(rows or [])
+        rows = self._in_this_conversation(rows or [])
         if not rows:
             return None
         if up_to_run_id is None:
@@ -199,7 +211,7 @@ class CompactionArchive:
         if not terms:
             return []
         try:
-            return self._own(self._method("search_compactions")(self.session_id, terms, limit))
+            return self._in_this_conversation(self._method("search_compactions")(self.session_id, terms, limit))
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001

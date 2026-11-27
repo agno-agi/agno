@@ -16,8 +16,10 @@ from agno.metrics import MessageMetrics
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.run.team import TeamRunOutput
+from agno.session import AgentSession, TeamSession
 from agno.team import Team
 from agno.team import _compaction as team_compaction
+from agno.team.mode import TeamMode
 from tests.unit.compaction.test_compaction import _RecordingModel, _StubModel
 
 MODES = ["run", "stream", "arun", "astream"]
@@ -85,6 +87,30 @@ def _leader(delegate=False, overflow_on=None):
     model.invoke_stream, model.ainvoke_stream = invoke_stream, ainvoke_stream
     model._parse_provider_response = lambda response, **kwargs: response
     model._parse_provider_response_delta = lambda response: response
+    return model
+
+
+def _searching_leader(overflow_on, pattern):
+    """A leader whose request ``overflow_on`` is refused as too long, and that searches the compacted
+    history for ``pattern`` in the request sent again. ``found`` holds what the search returned."""
+    model = _leader(overflow_on=overflow_on)
+    model.found = []
+    answer = model.invoke
+
+    def invoke(*args, **kwargs):
+        response = answer(*args, **kwargs)
+        results = [str(m.content) for m in kwargs.get("messages") or [] if m.role == "tool" and not m.from_history]
+        if model.calls == overflow_on + 1 and not results:
+            call = {"id": "call-search", "type": "function"}
+            call["function"] = {"name": "search_compacted_history", "arguments": json.dumps({"pattern": pattern})}
+            return ModelResponse(role="assistant", tool_calls=[call], response_usage=MessageMetrics())
+        model.found += results
+        return response
+
+    async def ainvoke(*args, **kwargs):
+        return invoke(*args, **kwargs)
+
+    model.invoke, model.ainvoke = invoke, ainvoke
     return model
 
 
@@ -395,7 +421,7 @@ def test_the_search_tool_finds_what_the_summary_dropped(mode):
     assert _rows(team)
     assert "search_compacted_history" in team.model.offered[-1]
 
-    (search,) = team_compaction.search_tools(team, team.get_session(session_id="s"))
+    (search,) = team_compaction.search_tools(team, team.get_session(session_id="s"), TeamRunOutput(run_id="later"))
     found = search("build hash")
     assert "9f3c2ab" in found and "5532" in found
     assert search("no such thing anywhere").startswith("No compacted history matches")
@@ -421,6 +447,25 @@ def test_the_retry_after_a_refused_request_can_search_what_it_folded(mode):
 
     assert len(_summaries(model.requests[7])) == 1
     assert "search_compacted_history" in model.offered[7]
+
+
+@pytest.mark.parametrize("mode", ["run", "arun"])
+def test_the_run_that_folds_after_a_refused_request_finds_that_fold(mode):
+    """compaction=True folds only after a refused request, and that fold is often anchored on the
+    run's own question, which the session does not hold until the run is stored. The request sent
+    again carries a summary that says to search, so the search has to find the fold just made."""
+    model = _searching_leader(overflow_on=4, pattern="9f3c2ab")
+    team = _team(model=model, compaction=Compaction(on_context_overflow=True, model=_Summarizer()))
+    _say(team, f"The build hash is 9f3c2ab. {PAD}", mode)
+    _talk(team, 2, mode)
+
+    _say(team, "Here is a long document. " + PAD * 12, mode)
+
+    (row,) = _rows(team)
+    question = [m for m in model.requests[4] if m.role == "user" and not m.from_history][-1]
+    assert row["first_kept_message_id"] == question.id
+    (found,) = model.found
+    assert "9f3c2ab" in found and not found.startswith("No compacted history matches")
 
 
 def test_search_can_be_switched_off():
@@ -492,68 +537,106 @@ def test_the_leader_does_not_read_a_fold_a_member_stored_in_the_same_session(mod
     # The leader went on folding from where it was, and did not start again from the first turn.
     newest = [row for row in _rows(team) if row["compaction_id"] != "member-fold"][0]
     assert "question 0 " not in (newest["archived_messages"] or "")
-    (search,) = team_compaction.search_tools(team, team.get_session(session_id="s"))
+    (search,) = team_compaction.search_tools(team, team.get_session(session_id="s"), TeamRunOutput(run_id="later"))
     assert search("private text").startswith("No compacted history matches")
 
 
-def test_a_member_does_not_read_the_leaders_fold():
-    """The other direction: a member folding its own live messages after an overflow must not take
-    the leader's summary as the summary it continues from."""
-    from functools import partial
+class _LeaderSummarizer(_Summarizer):
+    def response(self, messages, **kwargs):
+        super().response(messages)
+        return ModelResponse(content="THE LEADER'S SUMMARY")
 
-    from agno.agent._messages import _own_message_ids
-    from agno.compaction._conversation import _stored_compaction
 
-    team = _team(compaction=_folding())
+def _team_whose_member_folds(leader_compaction):
+    """A team whose leader delegates every turn to a member with compaction of its own. The member's
+    fifth request is refused as too long, so the member folds its own conversation once."""
+    db = _db()
+    member = Agent(
+        id="m1",
+        name="M1",
+        model=_leader(overflow_on=5),
+        db=db,
+        add_history_to_context=True,
+        num_history_runs=6,
+        compaction=Compaction(on_context_overflow=True, model=_Summarizer()),
+    )
+    team = _team(model=_leader(delegate=True), db=db, members=[member], compaction=leader_compaction)
+    _say(team, f"The build hash is 9f3c2ab. {PAD}")
     _talk(team, 8)
-    assert _rows(team)
-    session = team.get_session(session_id="s")
-    live = [Message(role="user", content="the member's task")]
-
-    member = Agent(id="m1", db=team.db, compaction=_folding())
-    member.team_id = "t"
-    own_message_ids = partial(_own_message_ids, member, session)
-    assert _stored_compaction(member, session, messages=live, own_message_ids=own_message_ids) is None
-    # A member that did fold reads its own record back.
-    _foreign_row(team.db)
-    live.append(Message(role="assistant", content="kept", id="a-member-message"))
-    stored = _stored_compaction(member, session, messages=live, own_message_ids=own_message_ids)
-    assert stored.summary == "A MEMBER'S SUMMARY"
+    return team, member
 
 
-@pytest.mark.parametrize("use_async", [False, True])
-def test_a_member_searches_its_own_folds_and_never_the_leaders(use_async):
-    """A member with compaction of its own runs in the leader's session. Its search tool reads the
-    folds anchored on its own messages, so what the leader was told stays with the leader."""
-    from agno.agent._tools import aget_tools, get_tools
+def _member_search(member):
+    """The search tool a later run of the member is given. A member's run holds a session with no
+    runs: its runs are stored in the team's session."""
+    from agno.agent._tools import get_tools
     from agno.run import RunContext
     from agno.run.agent import RunOutput
 
+    session = AgentSession(session_id="s", agent_id=member.id)
+    tools = get_tools(
+        member, RunOutput(run_id="later", session_id="s"), RunContext(run_id="later", session_id="s"), session
+    )
+    (search,) = [tool for tool in tools if getattr(tool, "__name__", None) == "search_compacted_history"]
+    return search
+
+
+def test_a_member_does_not_read_the_leaders_fold():
+    """A member folding its own messages after a refused request must not take the leader's summary
+    as the summary it continues from."""
+    team, member = _team_whose_member_folds(_folding(model=_LeaderSummarizer()))
+
+    summaries = [row["summary"] for row in _rows(team)]
+    assert "THE LEADER'S SUMMARY" in summaries and "SUMMARY OF THE EARLIER TURNS" in summaries
+    (asked,) = member.compaction.model.asked
+    assert "THE LEADER'S SUMMARY" not in asked
+
+
+def test_a_member_searches_its_own_folds_and_never_the_leaders():
+    """A member with compaction of its own runs in the leader's session. Its search tool reads the
+    folds the member made, on later runs too, and what the leader was told stays with the leader."""
+    team, member = _team_whose_member_folds(_folding())
+    assert "9f3c2ab" in "\n".join(row["archived_messages"] or "" for row in _rows(team))
+    assert all("search_compacted_history" in offered for offered in member.model.offered)
+
+    search = _member_search(member)
+
+    assert "look it up" in search("look it up")
+    assert search("build hash").startswith("No compacted history matches")
+
+
+def test_a_member_without_a_fold_finds_nothing_in_the_leaders():
     team = _team(model=_leader(delegate=True), compaction=_folding())
     _say(team, f"The build hash is 9f3c2ab. {PAD}")
     _talk(team, 8)
-    assert "9f3c2ab" in "\n".join(row["archived_messages"] or "" for row in _rows(team))
-    session = team.get_session(session_id="s")
-
     member = Agent(id="m1", name="M1", model=_RecordingModel.build(), db=team.db, compaction=_folding())
     member.team_id = "t"
     member.initialize_agent()
 
-    def search_tools():
-        build = aget_tools if use_async else get_tools
-        built = build(member, RunOutput(run_id="r", session_id="s"), RunContext(run_id="r", session_id="s"), session)
-        tools = asyncio.run(built) if use_async else built
-        return [tool for tool in tools if getattr(tool, "__name__", None) == "search_compacted_history"]
+    assert _member_search(member)("build hash").startswith("No compacted history matches")
 
-    # The session has folds, all of them the leader's: the member has nothing to search.
-    assert search_tools() == []
 
-    # A fold the member made, anchored on one of its own messages.
-    _foreign_row(team.db, anchor=session.get_messages(member_ids=["m1"])[-1].id)
+def test_a_nested_team_searches_its_own_folds():
+    """A team that is a member runs with a session that holds no runs, like a member agent."""
+    db = _db()
+    nested = Team(
+        id="m1",
+        name="Nested",
+        model=_leader(overflow_on=5),
+        db=db,
+        add_history_to_context=True,
+        num_history_runs=6,
+        members=[Agent(id="leaf", name="Leaf", model=_RecordingModel.build())],
+        compaction=Compaction(on_context_overflow=True, model=_Summarizer()),
+    )
+    team = _team(model=_leader(delegate=True), db=db, members=[nested])
+    _talk(team, 8)
+    assert len(_rows(team)) == 1
 
-    (search,) = search_tools()
-    assert "the member's private text" in search("private text")
-    assert search("build hash").startswith("No compacted history matches")
+    session = TeamSession(session_id="s", team_id="m1")
+    (search,) = team_compaction.search_tools(nested, session, TeamRunOutput(run_id="later"))
+
+    assert "look it up" in search("look it up")
 
 
 def test_the_archive_reads_only_the_records_anchored_on_the_named_messages():
@@ -565,6 +648,29 @@ def test_the_archive_reads_only_the_records_anchored_on_the_named_messages():
     assert CompactionArchive(db, "s", message_ids={"another"}).latest() is None
     assert len(CompactionArchive(db, "s", message_ids={"a-member-message"}).search("private")) == 1
     assert CompactionArchive(db, "s", message_ids=set()).search("private") == []
+
+
+def test_the_archive_also_reads_the_records_its_own_run_made():
+    """A fold a run makes is anchored on a message the session does not hold until the run is
+    stored. An archive held for that run, as a search tool's is, reads it by its run id."""
+    db = _db()
+    _foreign_row(db)
+
+    assert len(CompactionArchive(db, "s", message_ids=set(), run_id="member-run").search("private")) == 1
+    assert CompactionArchive(db, "s", message_ids=set(), run_id="another-run").search("private") == []
+    # Without the ids of a conversation every record of the session is read, whatever the run.
+    assert len(CompactionArchive(db, "s", run_id="another-run").search("private")) == 1
+
+
+def test_the_archive_reads_its_message_ids_each_time_when_given_a_function():
+    db = _db()
+    _foreign_row(db)
+    stored = set()
+    archive = CompactionArchive(db, "s", message_ids=lambda: stored)
+
+    assert archive.latest() is None
+    stored.add("a-member-message")
+    assert archive.latest()["compaction_id"] == "member-fold"
 
 
 # ----------------------------------------------------------------- overflow
@@ -605,9 +711,28 @@ def test_a_request_refused_as_too_long_is_folded_and_sent_again(mode):
     assert [m.content for m in stored if m.role == "user"][-1] == f"question 6 {PAD}"
 
 
+@pytest.mark.parametrize("mode", MODES)
+def test_a_refused_request_is_not_folded_in_tasks_mode(mode):
+    """A tasks run adds a user message with the task state on every iteration, which a fold would
+    take for the start of the current exchange. So a refused request is not folded and sent again:
+    the run ends as it would without compaction, and nothing is stored as folded."""
+    model = _leader(overflow_on=7)
+    team = _team(
+        model=model,
+        compaction=Compaction(on_context_overflow=True, model=_Summarizer()),
+        num_history_runs=6,
+        mode=TeamMode.tasks,
+        max_iterations=1,
+    )
+    _talk(team, 7, mode)
+
+    assert len(model.requests) == 7
+    assert _rows(team) == []
+    assert team.compaction.model.asked == []
+
+
 def test_the_unstored_context_is_kept_out_of_an_overflow_fold_that_reaches_the_newest_turn():
     """With one run kept, the cut lands on the person's newest message, right behind the context."""
-    from agno.session import TeamSession
 
     class _RunMessages:
         def __init__(self, messages):
@@ -695,13 +820,21 @@ def test_compact_reports_why_it_did_nothing(use_async):
 @pytest.mark.parametrize("use_async", [False, True])
 def test_a_manual_compactions_usage_is_added_to_the_leaders_latest_run_and_the_session(use_async):
     summarizer = _RecordingModel.build()
-    team = _team(compaction=_folding(compact_at_tokens=None, uncompacted_runs=1, model=summarizer))
+    team = _team(
+        model=_leader(delegate=True),
+        compaction=_folding(compact_at_tokens=None, uncompacted_runs=1, model=summarizer),
+    )
     _talk(team, 4)
+    assert "compaction_model" not in (team.get_session_metrics(session_id="s").details or {})
 
     result = _compact(team, use_async)
 
     assert result.compacted and result.metrics is not None
     session = team.get_session(session_id="s")
     leader_runs = [run for run in session.runs if run.parent_run_id is None]
+    member_runs = [run for run in session.runs if run.parent_run_id is not None]
     assert "compaction_model" in (leader_runs[-1].metrics.details or {})
     assert all("compaction_model" not in (run.metrics.details or {}) for run in leader_runs[:-1])
+    # The session's newest run is the leader's, but a member's run in it is never the one.
+    assert member_runs and all("compaction_model" not in (run.metrics.details or {}) for run in member_runs)
+    assert "compaction_model" in (team.get_session_metrics(session_id="s").details or {})

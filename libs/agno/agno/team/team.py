@@ -61,6 +61,7 @@ from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.team import (
+    _compaction,
     _default_tools,
     _init,
     _managers,
@@ -345,10 +346,12 @@ class Team:
     compression_manager: Optional["CompressionManager"] = None
 
     # --- Compaction ---
-    # Keep a long conversation inside the context window by storing the team
-    # leader's older messages verbatim and replacing them in context with a
-    # summary. True uses the defaults; a Compaction sets the thresholds, what
-    # to keep verbatim, and the summary model. Members are not compacted here.
+    # Keep a long conversation inside the context window: the team leader's
+    # older messages are stored as they were and replaced in context by a
+    # summary, and the leader can search what was stored. True compacts only
+    # when the model rejects a request as too long; a Compaction sets the size
+    # to compact at, what to keep verbatim and the summary model. Members are
+    # not compacted by this setting. Needs SqliteDb or PostgresDb.
     compaction: Optional[Union[bool, "Compaction"]] = None
 
     # --- Result Offloading ---
@@ -1787,18 +1790,15 @@ class Team:
         Only the leader's conversation is folded; members are left as they are. The stored
         conversation is never modified - compaction shortens what is sent to the model.
 
-        Returns a CompactionResult carrying a status and a human-readable message. A fold can
-        legitimately decline, so it is reported rather than performed. Check ``result.compacted``,
-        or show ``result.message``. ``result.metrics`` carries the summarizer's token usage under
+        Returns a CompactionResult carrying a status and a human-readable message. A fold can be
+        declined, for example when the span is too small to pay for its summary; a decline is
+        returned as a status, not raised. Check ``result.compacted``, or show ``result.message``. ``result.metrics`` carries the summarizer's token usage under
         ``compaction_model``, or None when no summary was made.
         """
-        from agno.team import _compaction
-
         return _compaction.compact_session(self, session_id=session_id, user_id=user_id)
 
     async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
-        from agno.team import _compaction
-
+        """Async variant of :meth:`compact`."""
         return await _compaction.acompact_session(self, session_id=session_id, user_id=user_id)
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:

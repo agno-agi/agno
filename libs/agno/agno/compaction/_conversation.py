@@ -1,23 +1,30 @@
 """Compaction over one stored conversation, whoever holds it: an Agent or a Team.
 
 The threshold, the cut, the summary, the stored record and the recovery after a rejected request
-are the same for both. What differs is passed in by the caller: which stored messages are its own
-conversation, the events it raises, and the history it was last sent.
+are the same for both. Two things differ and are passed in by the caller: how it reads its stored
+messages (``fetch``) and which of the session's messages are its own (``own_message_ids``).
 """
 
 from __future__ import annotations
 
 from collections import Counter
+from copy import copy as shallow_copy
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-from agno.metrics import RunMetrics
+from agno.compaction._cut import leading_system_count
+from agno.compaction._tokens import acount_request, count_request, estimate_tokens
+from agno.compaction.compaction import Compaction
+from agno.compaction.types import CompactionRecord, CompactionResult, CompactionStatus
+from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
 from agno.models.message import Message
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from agno.utils.log import log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.compaction.compaction import Compaction
-    from agno.run.agent import RunOutput
+    from agno.run.messages import RunMessages
     from agno.run.team import TeamRunOutput
     from agno.session import AgentSession, TeamSession
     from agno.team.team import Team
@@ -31,8 +38,8 @@ if TYPE_CHECKING:
 # session and compaction records are stored by session, so each reads only the records anchored
 # on its own messages.
 OwnMessageIds = Callable[[Optional[List[Message]]], Optional[Set[str]]]
-# The events one compaction raises: (run_response, record, started).
-CompactionEvents = Callable[..., List[Any]]
+# Reads the caller's stored messages: fetch(last_n_runs, limit).
+Fetch = Callable[[Optional[int], Optional[int]], List[Message]]
 
 
 def compaction_of(owner: "CompactionOwner") -> Optional["Compaction"]:
@@ -41,8 +48,6 @@ def compaction_of(owner: "CompactionOwner") -> Optional["Compaction"]:
     set_compaction turns compaction=True into a Compaction at init, so anything else left on the
     field means compaction is off.
     """
-    from agno.compaction import Compaction
-
     return owner.compaction if isinstance(owner.compaction, Compaction) else None
 
 
@@ -79,22 +84,21 @@ def _stored_compaction(
     messages: Optional[List[Message]] = None,
     *,
     own_message_ids: OwnMessageIds,
-) -> Optional[Any]:
+) -> Optional[CompactionRecord]:
     """The compaction in force for this run.
 
     Read from the record table rather than from a value on the session: records are immutable
     facts about single runs, so two containers writing different runs never clobber one another,
     and a resumed run can resolve the fold it actually saw.
     """
-    from agno.compaction.types import CompactionRecord
-
     compaction = compaction_of(owner)
     if compaction is None:
         return None
     archive = compaction.archive_for(session.session_id, owner.db, message_ids=own_message_ids(messages))
     if archive is None:
         return None
-    row = archive.latest(up_to_run_id, *_runs_before(session, up_to_run_id))
+    earlier_run_ids, started_at = _runs_before(session, up_to_run_id)
+    row = archive.latest(up_to_run_id, earlier_run_ids=earlier_run_ids, started_at=started_at)
     if not row:
         return None
     try:
@@ -128,7 +132,6 @@ def _estimated_context_tokens(
 
     Counted by the model or ``Compaction.token_counter`` when one is chosen, and locally otherwise.
     """
-    from agno.compaction._tokens import count_request
     from agno.utils.tokens import count_tokens
 
     counted = count_request(_sync_counter(owner), messages, tools)
@@ -180,8 +183,6 @@ async def _acount(owner: "CompactionOwner", messages: List[Message], tools: Opti
     a sync one is usually a network call, so it runs in a worker thread rather than blocking the
     event loop.
     """
-    from agno.compaction._tokens import acount_request
-
     compaction = owner.compaction
     if getattr(compaction, "use_model_token_count", False) and owner.model is not None:
         try:
@@ -195,21 +196,17 @@ async def _acount(owner: "CompactionOwner", messages: List[Message], tools: Opti
 def _request_tokens(owner: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]]) -> int:
     """A request's size for overflow recovery, counted the way the trigger counts it, so before and
     after are comparable."""
-    from agno.compaction._tokens import count_request, estimate_tokens
-
     counted = count_request(_sync_counter(owner), messages, tools)
     return counted if counted is not None else estimate_tokens(messages, tools)
 
 
 async def _arequest_tokens(owner: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]]) -> int:
     """``_request_tokens`` for async runs."""
-    from agno.compaction._tokens import estimate_tokens
-
     counted = await _acount(owner, messages, tools)
     return counted if counted is not None else estimate_tokens(messages, tools)
 
 
-def _log_compaction(record: Any) -> None:
+def _log_compaction(record: CompactionRecord) -> None:
     """Report what one fold achieved. Sizes were measured when the record was built."""
     detail = f"Compacted {record.messages_compacted} messages"
     if record.tokens_before and record.tokens_after:
@@ -220,20 +217,26 @@ def _log_compaction(record: Any) -> None:
     log_info(detail)
 
 
-def build_compaction_events(
-    run_response: Optional["CompactionRun"],
-    record: Any,
-    started: bool,
-    create_started: Callable[..., Any],
-    create_completed: Callable[..., Any],
+def _compaction_events(
+    run_response: Optional["CompactionRun"], record: Optional[CompactionRecord], started: bool = False
 ) -> List[Any]:
-    """The events one compaction raises, when there is a run to attach them to.
-
-    ``create_started`` and ``create_completed`` build the caller's own events.
-    """
+    """The events one compaction raises, when there is a run to attach them to. A Team's run raises
+    the Team's events."""
     if run_response is None:
         return []
-    if started:
+    from agno.utils.events import (
+        create_compaction_completed_event,
+        create_compaction_started_event,
+        create_team_compaction_completed_event,
+        create_team_compaction_started_event,
+    )
+
+    create_started: Any = create_compaction_started_event
+    create_completed: Any = create_compaction_completed_event
+    if not isinstance(run_response, RunOutput):
+        create_started, create_completed = create_team_compaction_started_event, create_team_compaction_completed_event
+
+    if started or record is None:
         return [create_started(from_run_response=run_response)]
     return [
         create_completed(
@@ -268,14 +271,14 @@ def _compaction_history_runs(owner: "CompactionOwner") -> Optional[int]:
     return max(owner.num_history_runs or 0, _PLANNER_WINDOW_MAX_RUNS)
 
 
-def history_from(
+def history_for_run(
     owner: "CompactionOwner",
     session: "CompactionSession",
     run_response: Optional["CompactionRun"],
-    fetch: Callable[[Optional[int], Optional[int]], List[Message]],
+    fetch: Fetch,
     *,
     own_message_ids: OwnMessageIds,
-) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
+) -> Tuple[List[Message], Optional[CompactionRecord], Optional[Counter[str]]]:
     """The history a run works from, the fold in force for it, and the ids of the messages a run
     replays before the first fold - or None when it replays all of the history.
     ``fetch(last_n_runs, limit)`` reads the conversation's stored messages.
@@ -314,8 +317,28 @@ def history_from(
     return history, record, Counter(m.id for m in replay if m.id is not None)
 
 
-def replayed_view(
-    compaction: Any, history: List[Message], record: Any, replay_ids: Optional[Counter[str]]
+def replayed_history(
+    owner: "CompactionOwner",
+    history: List[Message],
+    record: Optional[CompactionRecord],
+    replay_ids: Optional[Counter[str]],
+) -> List[Message]:
+    """What a continued run sends from ``history``: the stored fold replayed, never a new one.
+
+    The run checked this same history before it paused, and its own messages are never folded.
+    Without compaction the history comes back as it is.
+    """
+    compaction = compaction_of(owner)
+    if compaction is None:
+        return history
+    return _replayed_view(compaction, history, record, replay_ids)
+
+
+def _replayed_view(
+    compaction: Compaction,
+    history: List[Message],
+    record: Optional[CompactionRecord],
+    replay_ids: Optional[Counter[str]],
 ) -> List[Message]:
     """What a run sends from ``history``.
 
@@ -341,9 +364,24 @@ def replayed_view(
     return kept
 
 
-def _compaction_result(new_record: Any, metrics: Optional[RunMetrics] = None) -> Any:
-    from agno.compaction.types import CompactionResult, CompactionStatus
+def _last_sent(
+    owner: "CompactionOwner",
+    session: "CompactionSession",
+    compaction: Compaction,
+    fetch: Fetch,
+    own_message_ids: OwnMessageIds,
+) -> List[Message]:
+    """The history the model was last sent, which is what a fold's "before" size measures.
 
+    A manual fold folds everything the planner reads, but without a threshold the model was only
+    sent the num_history_runs window - recording the planner's read would overstate what the fold
+    reclaimed from the context.
+    """
+    history, record, replay_ids = history_for_run(owner, session, None, fetch, own_message_ids=own_message_ids)
+    return _replayed_view(compaction, history, record, replay_ids)
+
+
+def _compaction_result(new_record: CompactionRecord, metrics: Optional[RunMetrics] = None) -> CompactionResult:
     return CompactionResult(
         status=CompactionStatus.COMPACTED,
         message=(
@@ -360,17 +398,17 @@ def compact_history(
     session: "CompactionSession",
     history: List[Message],
     *,
-    last_sent: Callable[[], List[Message]],
+    fetch: Fetch,
     own_message_ids: OwnMessageIds,
-) -> Any:
+) -> CompactionResult:
     """Fold ``history`` now, without waiting for the size trigger.
 
     The explicit counterpart to the automatic path: same boundary, same guards, same archive.
     Only ``compact_at_tokens`` is bypassed - a caller asking to compact has supplied the
     judgement that threshold exists to make.
 
-    ``last_sent`` reads the history the model was last sent, which is what the fold's "before"
-    size measures. It is called only once there is something to fold.
+    ``fetch`` reads the caller's stored messages. It is used to work out the history the model
+    was last sent, which is what the fold's "before" size measures.
 
     Every other guard still applies, and a decline is reported rather than raised. The ratio
     guard in particular is not a preference: a summary costs a few hundred tokens whatever it
@@ -378,10 +416,9 @@ def compact_history(
     and discarding the prompt-cache prefix. Declining is the correct outcome, and the returned
     status says so in terms a UI can show.
     """
-    from agno.compaction.types import CompactionResult, CompactionStatus
-
     compaction = compaction_of(owner)
     if compaction is None:
+        # An Agent and a Team each report this in their own words before calling.
         return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled.")
     if not history:
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
@@ -401,7 +438,7 @@ def compact_history(
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        sent_messages=last_sent(),
+        sent_messages=_last_sent(owner, session, compaction, fetch, own_message_ids),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -419,14 +456,13 @@ async def acompact_history(
     session: "CompactionSession",
     history: List[Message],
     *,
-    last_sent: Callable[[], List[Message]],
+    fetch: Fetch,
     own_message_ids: OwnMessageIds,
-) -> Any:
+) -> CompactionResult:
     """Async variant of :func:`compact_history`."""
-    from agno.compaction.types import CompactionResult, CompactionStatus
-
     compaction = compaction_of(owner)
     if compaction is None:
+        # An Agent and a Team each report this in their own words before calling.
         return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled.")
     if not history:
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
@@ -446,7 +482,7 @@ async def acompact_history(
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        sent_messages=last_sent(),
+        sent_messages=_last_sent(owner, session, compaction, fetch, own_message_ids),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -459,17 +495,49 @@ async def acompact_history(
     return _compaction_result(new_record, metrics)
 
 
-def _plan_overflow_fold(owner: "CompactionOwner", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
+def add_usage_to_latest_run(
+    session: "CompactionSession", metrics: RunMetrics, is_own_run: Callable[[Any], bool]
+) -> Optional[Any]:
+    """Add a manual compaction's usage to the conversation's latest finished run, returned for saving.
+
+    A manual compaction has no run of its own, so that run carries its model call. With no such run
+    the usage is kept in the session's compaction metrics, which the session's metrics add to its
+    runs'. ``is_own_run`` says which of the session's runs belong to the caller's conversation. The
+    caller updates the session's metrics afterwards.
+    """
+    if session.session_data is None:
+        session.session_data = {}
+    runs = session.runs or []
+    # A run that can still change, failed and running runs included, would drop the usage when it is saved again, and
+    # a run copied into a forked session is counted in the session it was made in
+    finished = [
+        index
+        for index, run in enumerate(runs)
+        if is_own_run(run)
+        and run.status in (RunStatus.completed, RunStatus.cancelled)
+        and not run.forked_from_session_id
+    ]
+    if not finished:
+        compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
+        compaction_metrics.accumulate_from_run(metrics)
+        session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
+        return None
+    # Update a copy, never the loaded run: history run objects are shared between reads of the same session
+    latest_run = shallow_copy(runs[finished[-1]])
+    latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
+    merge_background_metrics(latest_run.metrics, [metrics])
+    runs[finished[-1]] = latest_run
+    return latest_run
+
+
+def _plan_overflow_fold(
+    owner: "CompactionOwner", run_messages: "RunMessages"
+) -> Optional[Tuple[Compaction, Compaction, List[Message]]]:
     """Where to cut after a context-window rejection: the Compaction, the variant that folds, and
     the message list the model call holds. None when there is nothing to do or no safe cut.
 
     Shared by the sync and async recovery, which differ only in how the summarizer is called.
     """
-    from dataclasses import replace
-
-    from agno.compaction._cut import leading_system_count
-    from agno.compaction._tokens import estimate_tokens
-
     compaction = compaction_of(owner)
     if compaction is None or not getattr(compaction, "on_context_overflow", False):
         return None
@@ -521,7 +589,7 @@ def _plan_overflow_fold(owner: "CompactionOwner", run_messages: Any) -> Optional
 
 def _finish_overflow_fold(
     messages: List[Message],
-    record: Any,
+    record: CompactionRecord,
     compacted: List[Message],
     before: int,
     after: int,
@@ -558,9 +626,6 @@ def _overflow_fold_kwargs(
     messages: List[Message],
     own_message_ids: OwnMessageIds,
 ) -> Dict[str, Any]:
-    from agno.compaction._cut import leading_system_count
-    from agno.compaction._tokens import estimate_tokens
-
     return dict(
         session_id=session.session_id,
         db=owner.db,
@@ -578,7 +643,7 @@ def _overflow_fold_kwargs(
 def recompact_after_overflow(
     owner: "CompactionOwner",
     session: "CompactionSession",
-    run_messages: Any,
+    run_messages: "RunMessages",
     run_response: Optional["CompactionRun"] = None,
     tools: Optional[List[Any]] = None,
     *,
@@ -597,8 +662,6 @@ def recompact_after_overflow(
     ratio does not: the request has already failed, so a fold that merely helps beats the run
     dying.
     """
-    from dataclasses import replace
-
     plan = _plan_overflow_fold(owner, run_messages)
     if plan is None:
         return False
@@ -619,7 +682,7 @@ def recompact_after_overflow(
 async def arecompact_after_overflow(
     owner: "CompactionOwner",
     session: "CompactionSession",
-    run_messages: Any,
+    run_messages: "RunMessages",
     run_response: Optional["CompactionRun"] = None,
     tools: Optional[List[Any]] = None,
     *,
@@ -627,8 +690,6 @@ async def arecompact_after_overflow(
 ) -> bool:
     """Async variant of :func:`recompact_after_overflow`. The summarizer is awaited, so a recovery
     on the async path does not block the event loop for the length of a model call."""
-    from dataclasses import replace
-
     plan = _plan_overflow_fold(owner, run_messages)
     if plan is None:
         return False
@@ -648,14 +709,12 @@ def apply_compaction(
     owner: "CompactionOwner",
     session: "CompactionSession",
     history: List[Message],
-    record: Any,
+    record: Optional[CompactionRecord],
     run_response: Optional["CompactionRun"] = None,
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
     replay_ids: Optional[Counter[str]] = None,
-    *,
-    compaction_events: CompactionEvents,
 ) -> List[Message]:
     """Replace the head of ``history`` with a summary once it grows too long.
 
@@ -670,7 +729,7 @@ def apply_compaction(
     # A stored compaction is replayed rather than recomputed, so the summary is
     # paid for once and the prompt prefix stays stable between runs. The trigger
     # measures this - what is actually sent - not the planner's wider read.
-    in_context = replayed_view(compaction, history, record, replay_ids)
+    in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
     # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
@@ -685,15 +744,13 @@ def apply_compaction(
     # pair-safe boundary or the size floor, so announcing on it alone reports
     # compactions that then never happen.
     # The system prompt and tools share the threshold with whatever the fold keeps.
-    from agno.compaction._tokens import estimate_tokens
-
     overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
     if compaction.plan(history, record, overhead) is None:
         return in_context
 
     log_info("Auto-compacting conversation history")
     if events is not None:
-        events.extend(compaction_events(run_response, None, started=True))
+        events.extend(_compaction_events(run_response, None, started=True))
 
     # Compact against the FULL history, so the boundary the record stores is an
     # absolute index into it. A boundary measured on the already-compacted list
@@ -724,7 +781,7 @@ def apply_compaction(
     if run_response is not None:
         run_response.compaction = new_record
     if events is not None:
-        events.extend(compaction_events(run_response, new_record))
+        events.extend(_compaction_events(run_response, new_record))
     return compacted
 
 
@@ -732,20 +789,19 @@ async def aapply_compaction(
     owner: "CompactionOwner",
     session: "CompactionSession",
     history: List[Message],
-    record: Any,
+    record: Optional[CompactionRecord],
     run_response: Optional["CompactionRun"] = None,
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
     replay_ids: Optional[Counter[str]] = None,
-    *,
-    compaction_events: CompactionEvents,
 ) -> List[Message]:
+    """Async variant of :func:`apply_compaction`."""
     compaction = compaction_of(owner)
     if compaction is None or not history:
         return history
 
-    in_context = replayed_view(compaction, history, record, replay_ids)
+    in_context = _replayed_view(compaction, history, record, replay_ids)
 
     prefix = context_prefix or []
     # Size is the only automatic trigger. Without a threshold nothing would read a count, so none
@@ -760,15 +816,13 @@ async def aapply_compaction(
     # pair-safe boundary or the size floor, so announcing on it alone reports
     # compactions that then never happen.
     # The system prompt and tools share the threshold with whatever the fold keeps.
-    from agno.compaction._tokens import estimate_tokens
-
     overhead = estimate_tokens(prefix, tools) if (prefix or tools) else 0
     if compaction.plan(history, record, overhead) is None:
         return in_context
 
     log_info("Auto-compacting conversation history")
     if events is not None:
-        events.extend(compaction_events(run_response, None, started=True))
+        events.extend(_compaction_events(run_response, None, started=True))
 
     # Compact against the FULL history so the stored boundary is absolute -
     # see the sync path for why a relative boundary never shrinks the context.
@@ -797,5 +851,5 @@ async def aapply_compaction(
     if run_response is not None:
         run_response.compaction = new_record
     if events is not None:
-        events.extend(compaction_events(run_response, new_record))
+        events.extend(_compaction_events(run_response, new_record))
     return compacted

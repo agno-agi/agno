@@ -5406,7 +5406,6 @@ def _build_continue_run_messages(
         run_messages.messages.append(system_message)
 
     if add_history_to_context and session is not None and not input_has_history:
-        from agno.team import _compaction
         from agno.utils.message import copy_history_message, filter_tool_calls
 
         history, stored_record, replay_ids = _compaction.history_for_run(

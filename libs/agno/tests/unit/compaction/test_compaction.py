@@ -1036,6 +1036,26 @@ def _folded_session(db, session_id: str, user_id: str):
     return agent
 
 
+@pytest.mark.parametrize("use_async", [False, True])
+def test_compact_works_on_an_agent_that_has_not_run_yet(use_async):
+    """compaction=True is resolved when the agent is initialized. A server that restarts and
+    compacts a stored session has not run the agent first."""
+    import asyncio
+
+    from agno.agent import Agent
+
+    db = _db()
+    earlier = Agent(model=_RecordingModel.build(), db=db, session_id="s", add_history_to_context=True)
+    for i in range(8):
+        earlier.run(f"question number {i} " + "pad " * 300)
+
+    agent = Agent(model=_RecordingModel.build(), db=db, session_id="s", add_history_to_context=True, compaction=True)
+    result = asyncio.run(agent.acompact(session_id="s")) if use_async else agent.compact(session_id="s")
+
+    assert result.compacted, result.message
+    assert len(db.get_compactions_for_session("s")) == 1
+
+
 def test_compaction_records_store_the_session_user():
     db = _db()
     _folded_session(db, "s1", "alice")

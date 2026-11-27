@@ -27,14 +27,14 @@ if TYPE_CHECKING:
 
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.compaction import _conversation
+from agno.compaction.types import CompactionResult, CompactionStatus
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
-from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
+from agno.metrics import RunMetrics
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.session import AgentSession, TeamSession
 from agno.session._utils import continue_history_session, resolve_run_index
@@ -53,7 +53,9 @@ from agno.utils.prompts import get_json_output_prompt, get_response_model_format
 from agno.utils.timer import Timer
 
 
-def _own_message_ids(agent: "Agent", session: Any, messages: Optional[List[Message]] = None) -> Optional[Set[str]]:
+def _own_message_ids(
+    agent: "Agent", session: Union[AgentSession, TeamSession], messages: Optional[List[Message]] = None
+) -> Optional[Set[str]]:
     """The ids of the messages in this agent's conversation, or None when the session holds no other.
 
     A Team and its members run in one session, and compaction records are stored by session. Each
@@ -70,22 +72,56 @@ def _own_message_ids(agent: "Agent", session: Any, messages: Optional[List[Messa
     return _conversation.message_ids_of(lambda: session.get_messages(agent_id=agent.id), messages)
 
 
-def _compaction_events(run_response: Optional[RunOutput], record: Any, started: bool = False) -> List[Any]:
-    """The events one compaction raises, when there is a run to attach them to."""
-    from agno.utils.events import create_compaction_completed_event, create_compaction_started_event
+def _stored_member_message_ids(agent: "Agent", session: AgentSession) -> Optional[Set[str]]:
+    """The ids of the messages a team member has stored in this session.
 
-    return _conversation.build_compaction_events(
-        run_response, record, started, create_compaction_started_event, create_compaction_completed_event
+    A member's runs are stored in its team's session, which a member's own run does not load: the
+    session a member runs with holds no runs. So the team's session is read from the database.
+    """
+    from agno.agent import _storage
+    from agno.db.base import SessionType
+
+    def read() -> List[Message]:
+        stored = _storage.read_session(
+            agent, session_id=session.session_id, session_type=SessionType.TEAM, user_id=session.user_id
+        )
+        return stored.get_messages(member_ids=[agent.id]) if isinstance(stored, TeamSession) and agent.id else []
+
+    return _conversation.message_ids_of(read)
+
+
+def search_tools(agent: "Agent", session: AgentSession, run_response: RunOutput) -> List[Any]:
+    """The tool that searches what this conversation compacted away, when there is one to offer.
+
+    A standalone agent is offered it once the session has a fold. A team member shares its session
+    with the leader, so its tool reads only the member's own folds: those anchored on the messages
+    it has stored, read when the model searches, and those this run makes. It is offered from the
+    start, because finding out whether the member has a fold would cost a session read every run.
+    """
+    compaction = _conversation.compaction_of(agent)
+    if compaction is None:
+        return []
+    if agent.team_id is None:
+        return compaction.tools_for(session.session_id, agent.db) or []
+    return (
+        compaction.tools_for(
+            session.session_id,
+            agent.db,
+            message_ids=partial(_stored_member_message_ids, agent, session),
+            run_id=run_response.run_id,
+            offer_before_first_fold=True,
+        )
+        or []
     )
 
 
-def _history_for_run(
-    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
-) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
-    """The history a run of the agent works from, the fold in force for it, and the replay window.
+def _skip_role(agent: "Agent") -> Optional[str]:
+    """The system role, when it is not a conversation role: history never replays it."""
+    return agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
 
-    See :func:`agno.compaction._conversation.history_from` for what each of the three is.
-    """
+
+def _fetch(agent: "Agent", session: AgentSession, skip_role: Optional[str]) -> _conversation.Fetch:
+    """Reads the agent's stored messages, the way a run without compaction reads its history."""
 
     def fetch(last_n_runs: Optional[int], limit: Optional[int]) -> List[Message]:
         return session.get_messages(
@@ -95,8 +131,22 @@ def _history_for_run(
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
-    return _conversation.history_from(
-        agent, session, run_response, fetch, own_message_ids=partial(_own_message_ids, agent, session)
+    return fetch
+
+
+def _history_for_run(
+    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], skip_role: Optional[str]
+) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
+    """The history a run of the agent works from, the fold in force for it, and the replay window.
+
+    See :func:`agno.compaction._conversation.history_for_run` for what each of the three is.
+    """
+    return _conversation.history_for_run(
+        agent,
+        session,
+        run_response,
+        _fetch(agent, session, skip_role),
+        own_message_ids=partial(_own_message_ids, agent, session),
     )
 
 
@@ -107,100 +157,56 @@ def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Messa
     much history a RUN replays, and applying them here would let them silently cap what compaction
     can ever see - the same starvation the automatic path guards against.
     """
-    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
-    return session.get_messages(
-        skip_roles=[skip_role] if skip_role else None,
-        agent_id=agent.id if agent.team_id is not None else None,
-    )
+    return _fetch(agent, session, _skip_role(agent))(None, None)
 
 
-def _last_sent(agent: "Agent", session: AgentSession, compaction: Any) -> List[Message]:
-    """The history the model was last sent, which is what a fold's "before" size measures.
-
-    A manual fold folds everything the planner reads, but without a threshold the model was only
-    sent the num_history_runs window - recording the planner's read would overstate what the fold
-    reclaimed from the context.
-    """
-    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
-    history, record, replay_ids = _history_for_run(agent, session, None, skip_role)
-    return _conversation.replayed_view(compaction, history, record, replay_ids)
-
-
-def _not_enabled() -> Any:
-    from agno.compaction.types import CompactionResult, CompactionStatus
-
+def _not_enabled() -> CompactionResult:
     return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
 
 
-def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> CompactionResult:
     """Fold ``history`` now, without waiting for the size trigger. A decline is reported, not raised."""
-    compaction = _conversation.compaction_of(agent)
-    if compaction is None:
+    if _conversation.compaction_of(agent) is None:
         return _not_enabled()
     return _conversation.compact_history(
         agent,
         session,
         history,
-        last_sent=partial(_last_sent, agent, session, compaction),
+        fetch=_fetch(agent, session, _skip_role(agent)),
         own_message_ids=partial(_own_message_ids, agent, session),
     )
 
 
-async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> CompactionResult:
     """Async variant of :func:`compact_now`."""
-    compaction = _conversation.compaction_of(agent)
-    if compaction is None:
+    if _conversation.compaction_of(agent) is None:
         return _not_enabled()
     return await _conversation.acompact_history(
         agent,
         session,
         history,
-        last_sent=partial(_last_sent, agent, session, compaction),
+        fetch=_fetch(agent, session, _skip_role(agent)),
         own_message_ids=partial(_own_message_ids, agent, session),
     )
 
 
 def _add_to_session_and_latest_run(agent: "Agent", session: AgentSession, metrics: RunMetrics) -> Optional[RunOutput]:
-    """Add a manual compaction's usage to its latest completed or cancelled run, returned for saving, and to the
-    session's metrics.
-
-    A manual compaction has no run of its own, so that run carries its model call. With no such run, the usage is kept
-    in the session's compaction metrics, which the session's metrics add to its runs'.
-    """
-    from copy import copy as shallow_copy
-
+    """Add a manual compaction's usage to the agent's latest finished run, returned for saving, and to the
+    session's metrics."""
     from agno.agent._session import update_session_metrics
 
-    if session.session_data is None:
-        session.session_data = {}
-    runs = session.runs or []
-    # A run that can still change, failed and running runs included, would drop the usage when it is saved again, and
-    # a run copied into a forked session is counted in the session it was made in
-    finished = [
-        index
-        for index, run in enumerate(runs)
-        if run.status in (RunStatus.completed, RunStatus.cancelled) and not run.forked_from_session_id
-    ]
-    latest_run = None
-    if finished:
-        # Update a copy, never the loaded run: history run objects are shared between reads of the same session
-        latest_run = cast(RunOutput, shallow_copy(runs[finished[-1]]))
-        latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
-        merge_background_metrics(latest_run.metrics, [metrics])
-        runs[finished[-1]] = latest_run
-    else:
-        compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
-        compaction_metrics.accumulate_from_run(metrics)
-        session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
-
+    latest_run = _conversation.add_usage_to_latest_run(session, metrics, is_own_run=lambda run: True)
     update_session_metrics(agent, session=session)
-    return latest_run
+    return cast(Optional[RunOutput], latest_run)
 
 
-def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+def compact_session(
+    agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> CompactionResult:
     from agno.agent import _session
-    from agno.compaction.types import CompactionResult, CompactionStatus
 
+    # compaction=True becomes a Compaction when the agent is initialized, which a run does and this must too
+    agent.initialize_agent()
     session = _session.get_session(agent, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
@@ -226,10 +232,13 @@ def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: O
     return result
 
 
-async def acompact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+async def acompact_session(
+    agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> CompactionResult:
     from agno.agent import _session
-    from agno.compaction.types import CompactionResult, CompactionStatus
 
+    # compaction=True becomes a Compaction when the agent is initialized, which a run does and this must too
+    agent.initialize_agent()
     session = await _session.aget_session(agent, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, AgentSession):
         return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
@@ -1449,7 +1458,6 @@ def get_run_messages(
                 context_prefix=run_messages.messages,
                 tools=tools,
                 replay_ids=replay_ids,
-                compaction_events=_compaction_events,
             )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
@@ -1665,7 +1673,6 @@ async def aget_run_messages(
                 context_prefix=run_messages.messages,
                 tools=tools,
                 replay_ids=replay_ids,
-                compaction_events=_compaction_events,
             )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
@@ -1840,8 +1847,7 @@ def _build_continue_run_messages(
 
             # Replay the stored fold, as a fresh run does. No new fold is planned here: the run
             # checked this same history before it paused, and its own messages are never folded.
-            if _conversation.compaction_of(agent) is not None:
-                history_copy = _conversation.replayed_view(agent.compaction, history_copy, stored_record, replay_ids)
+            history_copy = _conversation.replayed_history(agent, history_copy, stored_record, replay_ids)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy

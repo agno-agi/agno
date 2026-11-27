@@ -223,10 +223,9 @@ def _determine_tools_for_model(
         _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
 
     # Read-only search over the history this session compacted away
-    if team.compaction is not None:
-        from agno.team import _compaction
+    from agno.team import _compaction
 
-        _tools.extend(_compaction.search_tools(team, session))
+    _tools.extend(_compaction.search_tools(team, session, run_response))
 
     if team.search_past_sessions:
         _tools.append(
