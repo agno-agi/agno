@@ -692,9 +692,11 @@ several Tasks and answer the rest of the message.
 
 Super Agent is told about the work a conversation started. The Tasks it added,
 proposed, accepted or started from a chat are kept in that chat's session state under
-`linked_work`. Before every run a pre-hook reads their state under the person's own
-`tasks:read` and sends it to the model as a message of its own, right before the
-person's message:
+`linked_work`. When the Team builds a fresh run's messages, it reads those Tasks
+under the person's own `tasks:read` permission and sends the update as a user message
+of its own, right before the person's message. When the caller supplies earlier
+conversation turns, it goes before the last user message. A typical update looks like
+this.
 
 ```
 Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.
@@ -706,6 +708,9 @@ A state that differs from the one shown last is marked as changed in one run, so
 the person's next message Super Agent says what finished while they talked, without
 being asked. The list holds this conversation's work only, shows the 20 newest, and
 drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
+If a worker pauses for approval or input, the next turn says it is waiting for a
+person. If a confirmation completes a Task and the chat reply fails, the next
+fresh turn still announces the completion.
 
 The block is sent and not stored. The stored run holds the person's message as they
 wrote it, so the chat history, the history tools and later turns carry no block. It is
@@ -713,6 +718,20 @@ not in the instructions because a model that continues from its previous respons
 OpenAI's Responses API does by default, is sent a conversation's instructions on the
 first run only. With that kind of model the provider keeps the blocks sent on earlier
 turns as part of the conversation it holds.
+
+The block is delivered when Super Agent's model is OpenAI, Azure OpenAI, Claude (Anthropic,
+AWS, Azure or Vertex AI), Gemini or xAI: providers that accept two user messages in a
+row, or whose formatter merges them. On any other provider Super Agent behaves as it
+does without linked work: no block is sent and the sentences about it are left out of
+its instructions, so a provider that requires strictly alternating roles is never sent
+the second message. The list of Tasks is still kept in the chat's session state. The
+match is on the model's own class, so an adapter that subclasses an OpenAI class for
+another endpoint (vLLM, LM Studio, llama.cpp, DeepSeek, Perplexity and the like) is not
+sent the block; neither are AWS Bedrock's Converse API, Mistral or Gemini's
+Interactions API.
+
+When the conversation starts or otherwise acts on a Task it already lists, that Task
+moves to the newest place, so it is among the 20 that are read.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created
@@ -803,6 +822,13 @@ a new run and leaves the paused one as it is.
 A Task sent back keeps its executor. The person's reason is saved on the
 transition and given to the executor's next attempt as `review_feedback` in its
 input. Starting stays a separate step, with `start_company_task`.
+
+To reply to a Task that has run, a person says so in chat and Super Agent calls
+`message_company_task`: it returns the Task to Ready with the person's words as
+the reason and starts the next attempt, in the Task's own session, in one call
+with no confirmation. It takes a Task in review and a Task whose last run failed
+or was cancelled, and it refuses a Task that is still running. Completing a Task
+stays with `review_company_task` and its confirmation.
 
 Review confirmations include `reviewed_run_id` from `get_company_task_status`.
 If another attempt runs while a confirmation is pending, that confirmation is

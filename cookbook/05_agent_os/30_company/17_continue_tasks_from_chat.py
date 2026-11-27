@@ -94,7 +94,7 @@ investigator = Agent(
         "Investigate with your tools before concluding, and say which checks you ran.",
         "Change nothing until a person decides. When a fix needs a decision, give two options, recommend one and"
         " ask which to apply.",
-        "When the input has review_feedback, it is the person's answer to previous_result: act on it.",
+        "When the input has review_feedback, it is the person's reply to your last attempt: act on it.",
     ],
     telemetry=False,
 )

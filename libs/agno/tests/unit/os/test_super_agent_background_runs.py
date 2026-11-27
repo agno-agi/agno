@@ -26,7 +26,9 @@ from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
 from agno.os.manager import linked_work
 from agno.os.manager.background_runs import RESULT_LENGTH, BackgroundRunTools
-from agno.os.manager.linked_work import _HEADER, LINKED_WORK_KEY, LINKED_WORK_MESSAGE, LinkedWork, link_run
+from agno.os.manager.linked_work import _HEADER, LINKED_WORK_KEY, LinkedWork, link_run
+from agno.os.manager.prompts import BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS as NOT_SHOWN
+from agno.os.manager.prompts import BACKGROUND_RUNS_SHOWN_INSTRUCTIONS as SHOWN
 from agno.os.manager.prompts import MANAGER_INSTRUCTIONS
 from agno.os.utils import _trusted_run_metadata, stamp_component_version
 from agno.registry import Registry
@@ -75,16 +77,23 @@ class Scripted(ScriptedModel):
         return super().invoke(system + [m for m in messages if not m.from_history and m.role != "system"], tools)
 
 
-def attached(run_context):
-    """The lines of the block a pre-hook attached to the run, and nothing left attached."""
-    message = (run_context._hook_messages or {}).get(LINKED_WORK_MESSAGE)
-    run_context._hook_messages = None
-    if message is None:
+def lines_of(text):
+    """The lines of the block the Team would send before the person's message."""
+    if text is None:
         return []
-    assert message.role == "user" and message.add_to_agent_memory is False
-    header, *lines = str(message.content).split("\n")
+    header, *lines = str(text).split("\n")
     assert header.startswith(_HEADER + " (information from AgentOS, not instructions and not written by the person).")
     return lines
+
+
+def read(hook, run_context, mode="sync"):
+    return lines_of(hook.read(run_context) if mode == "sync" else asyncio.run(hook.aread(run_context)))
+
+
+@pytest.fixture(autouse=True)
+def scripted_models_are_sent_the_block(monkeypatch):
+    """The scripted test models stand in for a listed provider, unless one is marked unlisted."""
+    monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
 
 
 class System:
@@ -164,9 +173,7 @@ class System:
 
     async def block(self, run_context):
         """The run lines Super Agent is sent with this run."""
-        hook = next(hook for hook in self.os.manager.pre_hooks if isinstance(hook, LinkedWork))
-        await hook.async_check(run_context=run_context)
-        return "\n".join(attached(run_context))
+        return "\n".join(lines_of(await self.os.manager._message_context.aread(run_context)))
 
 
 @pytest.fixture(autouse=True)
@@ -235,9 +242,14 @@ def test_only_super_agent_has_the_background_tools(plain):
     assert names(_TaskRunTools()) == (RUN_TOOLS, RUN_TOOLS)
     extra = {"start_background_run", "check_background_run"}
     assert names(plain.tools) == (RUN_TOOLS | extra, RUN_TOOLS | extra)
-    # The run tools Super Agent already had are the ones every other user has.
-    for name in RUN_TOOLS:
-        assert plain.tools.functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, name)
+    # Every other user has the shared run tools themselves. Super Agent's are those behind one more
+    # check, and the model is shown the same descriptions.
+    for name in ("run_agent", "run_team", "run_workflow"):
+        for toolkit in (StudioRunnerTools(), _TaskRunTools()):
+            assert toolkit.functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, name)
+            assert toolkit.async_functions[name].entrypoint.__func__ is getattr(StudioRunnerTools, "a" + name)
+        assert getattr(BackgroundRunTools, name).__doc__ == getattr(StudioRunnerTools, name).__doc__
+        assert getattr(BackgroundRunTools, "a" + name).__doc__ == getattr(StudioRunnerTools, "a" + name).__doc__
     assert not plain.tools.async_functions["start_background_run"].stop_after_tool_call
 
 
@@ -252,9 +264,14 @@ def test_a_plain_runner_still_runs_in_the_turn(tmp_path):
 
 
 def test_the_prompt_says_when_to_start_in_the_background():
-    assert "start it with start_background_run and carry on" in MANAGER_INSTRUCTIONS
-    assert "never say it completed before that says so" in MANAGER_INSTRUCTIONS
-    assert f'under "{_HEADER}"' in MANAGER_INSTRUCTIONS
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    assert "start it with start_background_run and carry on" in said
+    assert "never say it completed before you have been shown that it ended" in said
+    # A named component run is a run: it is a Task only when the person asks for the record.
+    assert "that is a run, and becomes a Task only when the person asks for a Task" in said
+    # What it is shown depends on the model, so the block is described outside the fixed text.
+    assert _HEADER not in MANAGER_INSTRUCTIONS and f'under "{_HEADER}"' in " ".join(SHOWN.split())
+    assert "you are not shown their state" in NOT_SHOWN and _HEADER not in NOT_SHOWN
 
 
 # ----------------------------------------------------------------- the start
@@ -336,8 +353,8 @@ def test_the_run_is_the_persons_under_their_authority(system):
     assert stored["user_id"] == "alice"
     authority = SEEN["authority"]
     assert authority.context.principal_id == "alice" and set(authority.context.scopes) == set(SCOPES)
-    # The route receives the person's grants as a request of theirs would: tools check for themselves.
-    assert authority.enforce_tools is False and not authority.scheduled and not authority.service_account
+    # As in a run in the turn, the person's permissions are checked on the component's own tools.
+    assert authority.enforce_tools is True and not authority.scheduled and not authority.service_account
     if job is not None:
         assert job["user_id"] == "alice"
         assert job["payload"]["_agno_authorization"]["context"]["principal_id"] == "alice"
@@ -521,9 +538,7 @@ def test_a_later_run_continues_the_session_and_a_running_one_closes_it(system):
         run_context = system.context()
         first = await system.start(run_context)
         busy = await system.start(run_context)
-        assert busy == {
-            "error": f"Not started: Writer still has run {first['run_id']} going in this conversation. Wait for it."
-        }
+        assert busy == {"error": going(first["run_id"])}
         # Another component of the same conversation is not held up.
         other = await system.start(run_context, "workflow", "investigator")
         assert other.get("started") is True
@@ -553,7 +568,7 @@ def test_two_starts_in_one_step_do_not_both_enter_a_session(plain):
     assert sorted("started" in result for result in results) == [False, True]
     assert len(run_context.session_state[LINKED_WORK_KEY]) == 1
     refusal = next(result for result in results if "error" in result)
-    assert refusal == {"error": "Not started: a run of Writer is already being started here."}
+    assert refusal == {"error": TAKEN}
 
 
 def test_two_people_and_two_conversations_get_their_own_sessions(plain):
@@ -566,6 +581,213 @@ def test_two_people_and_two_conversations_get_their_own_sessions(plain):
         return sessions
 
     assert len(set(scenario(steps))) == 3
+
+
+def test_a_run_in_the_turn_is_refused_while_a_background_run_of_it_is_going(system):
+    async def steps():
+        run_context = system.context()
+        receipt = await system.start(run_context)
+        with authorization_scope(lambda: run_context.authorization):
+            by_id = json.loads(await system.tools.arun_agent("writer", "Shorter", _agno_run_context=run_context))
+            by_name = json.loads(await system.tools.arun_agent("Writer", "Shorter", _agno_run_context=run_context))
+            sync = json.loads(await asyncio.to_thread(system.tools.run_agent, "writer", "Shorter", run_context))
+            # Another component of the conversation still runs in the turn.
+            other = json.loads(await system.tools.arun_team("crew", "Hello", _agno_run_context=run_context))
+            inputs = list(SEEN["inputs"]) if system.queue is None else []
+            await finish(system)
+            after = json.loads(await system.tools.arun_agent("writer", "Shorter", _agno_run_context=run_context))
+        return receipt, by_id, by_name, sync, other, inputs, after
+
+    receipt, by_id, by_name, sync, other, inputs, after = scenario(steps)
+    assert by_id == by_name == sync == {"error": going(receipt["run_id"])}
+    assert other["status"] == "COMPLETED"
+    # The writer was entered once while its background run was going, by that run.
+    assert len(inputs) <= 1
+    assert after["status"] == "COMPLETED" and after["session_id"] == receipt["session_id"]
+
+
+def test_a_run_of_unknown_state_holds_its_session_for_an_hour(plain, monkeypatch):
+    async def steps():
+        run_context = plain.context()
+        first = await plain.start(run_context)
+        monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+        held = await plain.start(run_context)
+        # An hour on, a run whose process cannot be found is taken as lost.
+        run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3601
+        released = await plain.start(run_context)
+        return first, held, released
+
+    first, held, released = scenario(steps)
+    assert held == {"error": unknown(first["run_id"])}
+    assert released.get("started") is True
+
+
+def test_a_run_in_the_turn_and_a_start_in_one_step_do_not_share_a_session(plain):
+    async def steps():
+        run_context = plain.context()
+
+        async def in_the_turn():
+            with authorization_scope(lambda: run_context.authorization):
+                return json.loads(await plain.tools.arun_agent("Writer", "Now", _agno_run_context=run_context))
+
+        # The run in the turn is waiting on its model when the same step's other calls arrive.
+        first = asyncio.create_task(in_the_turn())
+        while not SEEN.get("inputs"):
+            await asyncio.sleep(0.01)
+        start = await plain.start(run_context)
+        second = await in_the_turn()
+        sync = json.loads(await asyncio.to_thread(plain.tools.run_agent, "writer", "Now", run_context))
+        other = await plain.start(run_context, "workflow", "investigator")
+        GATES["writer"].set()
+        GATES["investigator"].set()
+        done = await first
+        # The session is free once the run in the turn has returned.
+        after = await plain.start(run_context)
+        await finish(plain, run_id=other["run_id"])
+        return start, second, sync, other, done, after, run_context
+
+    start, second, sync, other, done, after, run_context = scenario(steps)
+    assert start == second == sync == {"error": TAKEN}
+    assert other.get("started") is True and done["status"] == "COMPLETED" and after.get("started") is True
+    assert [entry["component_id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["investigator", "writer"]
+
+
+@pytest.mark.parametrize("failure", [ConnectionError("database unavailable"), asyncio.CancelledError()])
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_a_failed_or_cancelled_status_read_gives_the_session_back(plain, failure, mode):
+    async def steps():
+        run_context = plain.context()
+        receipt = await plain.start(run_context)
+        read = plain.db.get_run
+
+        def broken(run_id, deserialize=True):
+            raise failure
+
+        async def in_the_turn():
+            with authorization_scope(lambda: run_context.authorization):
+                if mode == "sync":
+                    return json.loads(await asyncio.to_thread(plain.tools.run_agent, "writer", "Now", run_context))
+                return json.loads(await plain.tools.arun_agent("writer", "Now", _agno_run_context=run_context))
+
+        plain.db.get_run = broken
+        try:
+            if isinstance(failure, Exception):
+                assert await in_the_turn() == {
+                    "error": "Not started: could not check whether Writer has a run going: database unavailable"
+                }
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    await in_the_turn()
+        finally:
+            plain.db.get_run = read
+        # The session is not left reserved: the guard answers again, and the run goes once it is free.
+        held = await in_the_turn()
+        await finish(plain)
+        return receipt, held, await in_the_turn(), set(plain.tools._entering)
+
+    receipt, held, after, reserved = scenario(steps)
+    assert held == {"error": going(receipt["run_id"])}
+    assert after["status"] == "COMPLETED" and reserved == set()
+
+
+def test_the_guard_names_the_component_the_run_tool_would_run(plain):
+    # An identifier that resolves to nothing, or to another component, is not held by the writer's run.
+    async def steps():
+        run_context = plain.context()
+        receipt = await plain.start(run_context)
+        plain.crew.name = "writer"
+        with authorization_scope(lambda: run_context.authorization):
+            missing = json.loads(await plain.tools.arun_agent("WRITER", "Now", _agno_run_context=run_context))
+            other = json.loads(await plain.tools.arun_team("writer", "Now", _agno_run_context=run_context))
+            held = json.loads(await plain.tools.arun_agent("Writer", "Now", _agno_run_context=run_context))
+        await finish(plain)
+        return receipt, missing, other, held
+
+    receipt, missing, other, held = scenario(steps)
+    assert missing["error"].startswith("Agent not found: WRITER")
+    assert other["status"] == "COMPLETED" and other["team_id"] == "crew"
+    assert held == {"error": going(receipt["run_id"])}
+
+
+def test_a_turn_cancelled_after_the_run_was_accepted_still_lists_it(tmp_path):
+    value = System(tmp_path, queue=True)
+
+    async def cancelled(run_id):
+        raise asyncio.CancelledError()
+
+    async def steps():
+        run_context = value.context()
+        get_job, value.queue.store.get_job = value.queue.store.get_job, cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await value.start(run_context)
+        value.queue.store.get_job = get_job
+        linked = [dict(entry) for entry in run_context.session_state.get(LINKED_WORK_KEY, [])]
+        await finish(value)
+        return linked, value.row(linked[0]["id"]) if linked else None
+
+    linked, stored = scenario(steps)
+    assert len(linked) == 1 and linked[0]["durable"] is False
+    assert stored is not None and stored["status"] == "COMPLETED"
+    value.db.close()
+
+
+def test_the_components_own_tools_are_checked_as_in_a_run_in_the_turn(system):
+    from agno.run.authorization import requires_permission
+
+    ran = []
+
+    @requires_permission("components", "write")
+    def publish_component() -> str:
+        """Publish a component."""
+        ran.append("published")
+        return "published"
+
+    def give_tool(agent):
+        agent.model = ScriptedModel([("publish_component", {})])
+        agent.tools = [publish_component]
+
+    give_tool(system.writer)
+
+    async def steps():
+        run_context = system.context()
+        receipt = await system.start(run_context)
+        assert receipt.get("started") is True, receipt
+        if system.queue is not None:
+            await system.work()
+        await await_background_runs(timeout=5)
+        background = list(ran)
+        granted = system.context(session="granted", scopes=[*SCOPES, "components:write"])
+        receipt = await system.start(granted)
+        if system.queue is not None:
+            await system.work()
+        await await_background_runs(timeout=5)
+        return background, list(ran)
+
+    background, with_grant = scenario(steps)
+    # Alice may run the writer and may not write components: the writer's tool refuses her.
+    assert background == []
+    assert with_grant == ["published"]
+
+
+def test_an_accepted_run_is_listed_when_the_queue_cannot_be_asked(tmp_path):
+    value = System(tmp_path, queue=True)
+
+    async def broken(run_id):
+        raise ConnectionError("queue store unavailable")
+
+    async def steps():
+        run_context = value.context()
+        get_job, value.queue.store.get_job = value.queue.store.get_job, broken
+        receipt = await value.start(run_context)
+        value.queue.store.get_job = get_job
+        await finish(value)
+        return receipt, run_context.session_state[LINKED_WORK_KEY]
+
+    receipt, linked = scenario(steps)
+    assert receipt["started"] is True and [entry["id"] for entry in linked] == [receipt["run_id"]]
+    # Unconfirmed, the run is not called durable.
+    assert linked[0]["durable"] is False and "the run is lost" in receipt["note"]
+    value.db.close()
 
 
 # ----------------------------------------------------------------- the block
@@ -592,6 +814,24 @@ def person(scopes=None, user="alice", run_id="run-1", session="chat"):
     return RunContext(run_id=run_id, session_id=session, user_id=user, authorization=authority, session_state={})
 
 
+TAKEN = "Not started: another run of Writer is being started in this conversation right now."
+
+
+def unknown(run_id, name="Writer"):
+    return (
+        f"Not started: the state of {name}'s background run {run_id} is unknown. It was started without the "
+        "durable queue on another server process. Its session takes one run at a time, and is free again an "
+        "hour after that run started."
+    )
+
+
+def going(run_id, name="Writer"):
+    return (
+        f"Not started: {name} still has background run {run_id} going in this conversation, "
+        "and its session takes one run at a time. Wait for it to end."
+    )
+
+
 def listed_run(run_context, status="RUNNING", durable=True, run_id="r-1", at=None, **fields):
     """A run this conversation started, as its entry and its stored row."""
     session_id = StudioRunnerTools._sub_session_id(run_context, "workflow", "investigator")
@@ -605,13 +845,20 @@ def listed_run(run_context, status="RUNNING", durable=True, run_id="r-1", at=Non
         "durable": durable,
     }
     link_run(run_context, run)
-    return {"run_id": run_id, "session_id": session_id, "status": status, "updated_at": at, **fields}
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "run_type": "workflow",
+        "workflow_id": "investigator",
+        "run_data": {},
+        "status": status,
+        "updated_at": at,
+        **fields,
+    }
 
 
 def block(db, run_context, mode="async"):
-    hook = LinkedWork(None, run_db=lambda db_id: db)
-    hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
-    return "\n".join(attached(run_context))
+    return "\n".join(read(LinkedWork(None, run_db=lambda db_id: [db]), run_context, mode))
 
 
 modes = pytest.mark.parametrize("mode", ["sync", "async"])
@@ -676,23 +923,100 @@ def test_queued_to_running_is_not_a_change_and_a_pause_stays(mode):
     assert block(db, run_context, mode) == LINE + "paused for a person."
 
 
+UNKNOWN = (
+    "state unknown: stored as running, but it was started without the durable queue on another "
+    "server process, and is lost if that server restarted"
+)
+
+
 @modes
-def test_a_run_the_server_lost_is_reported_as_interrupted(mode, monkeypatch):
+def test_a_run_another_process_started_is_not_called_interrupted(mode, monkeypatch):
     run_context = person()
-    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1", at=int(time.time()))
+    memory = listed_run(run_context, "RUNNING", durable=False, run_id="r-1")
     queued = listed_run(run_context, "RUNNING", durable=True, run_id="r-2")
     db = Runs(memory, queued)
     assert CHANGED not in block(db, run_context, mode)
-    # The server restarted: this is another process, and the stored rows still say running.
+    # Another worker serves this turn, or the server restarted: from here the two look the same.
     monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
     run_context.run_id = "run-2"
-    going = '- Background run of workflow "Investigator" (id investigator, run r-2): running.'
-    assert sorted(block(db, run_context, mode).split("\n")) == [
-        f"{LINE}interrupted: the server restarted while it ran, and it was not on the durable queue. {CHANGED}",
-        going,
+    lines = sorted(block(db, run_context, mode).split("\n"))
+    assert lines == [
+        f"{LINE}{UNKNOWN}.",
+        '- Background run of workflow "Investigator" (id investigator, run r-2): running.',
     ]
+    # It is not taken as ended: it stays listed, and its real end is announced by whoever reads it.
+    assert not any(entry.get("ended") for entry in run_context.session_state[LINKED_WORK_KEY])
+    memory["status"] = "COMPLETED"
     run_context.run_id = "run-3"
-    assert block(db, run_context, mode) == going
+    assert f"{LINE}finished. {CHANGED}" in block(db, run_context, mode).split("\n")
+    assert run_context.session_state[LINKED_WORK_KEY][0].get("ended") is None
+    # Two workers taking turns do not report a change on each message.
+    memory["status"] = "RUNNING"
+    run_context.session_state[LINKED_WORK_KEY][0]["shown"] = "LIVE"
+    for turn, process in enumerate(["first", "another-process", "first"]):
+        monkeypatch.setattr(linked_work, "_PROCESS", process)
+        run_context.run_id = f"run-{turn + 4}"
+        assert CHANGED not in block(db, run_context, mode)
+
+
+LOST = (
+    "taken as lost: still stored as running an hour after it was started without the durable "
+    "queue on another server process"
+)
+
+
+@modes
+def test_a_run_still_unknown_after_an_hour_is_reported_once_as_lost_and_leaves(mode, monkeypatch):
+    run_context = person()
+    stored = listed_run(run_context, "RUNNING", durable=False)
+    db = Runs(stored)
+    monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+    assert block(db, run_context, mode) == f"{LINE}{UNKNOWN}."
+    # Within the hour it is waited for, however many turns pass.
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3599
+    run_context.run_id = "run-2"
+    assert block(db, run_context, mode) == f"{LINE}{UNKNOWN}."
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 2
+    run_context.run_id = "run-3"
+    assert block(db, run_context, mode) == f"{LINE}{LOST}. {CHANGED}"
+    run_context.run_id = "run-4"
+    assert block(db, run_context, mode) == ""
+    assert run_context.session_state[LINKED_WORK_KEY][0]["ended"] is True
+    # A durable run, or one this process started, is never taken as lost.
+    for durable, process in ((True, "another-process"), (False, "this-process")):
+        other = person()
+        row = listed_run(other, "RUNNING", durable=durable)
+        monkeypatch.setattr(linked_work, "_PROCESS", "this-process" if durable else process)
+        other.session_state[LINKED_WORK_KEY][0].update(added_at=1, process="this-process" if not durable else "x")
+        assert block(Runs(row), other, mode) == LINE + "running."
+
+
+class AsyncOnly(linked_work.AsyncBaseDb):
+    """An asynchronous database that holds run rows only."""
+
+    def __init__(self, *rows):
+        self.id = "runs"
+        self.rows = {row["run_id"]: row for row in rows}
+
+    async def get_run(self, run_id, deserialize=True):
+        return self.rows.get(run_id)
+
+
+# Only get_run is used: the rest of the interface stays unimplemented.
+AsyncOnly.__abstractmethods__ = frozenset()
+
+
+def test_a_synchronous_turn_keeps_a_run_it_cannot_look_for():
+    run_context = person()
+    stored = listed_run(run_context)
+    stores = [Runs(), AsyncOnly(stored)]
+    hook = LinkedWork(None, run_db=lambda db_id: stores)
+    assert read(hook, run_context) == []
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1"]
+    # An asynchronous turn reads it. With no asynchronous database to miss, a missing row is gone.
+    assert read(hook, run_context, "async") == [LINE + "running."]
+    assert read(LinkedWork(None, run_db=lambda db_id: [Runs()]), run_context) == []
+    assert run_context.session_state[LINKED_WORK_KEY] == []
 
 
 @modes
@@ -712,7 +1036,49 @@ def test_an_entry_a_client_sent_shows_nothing_of_another_conversation(mode):
     mine = person()
     mine.session_state[LINKED_WORK_KEY] = [dict(entry) for entry in theirs.session_state[LINKED_WORK_KEY]]
     assert block(Runs(stored), mine, mode) == ""
-    assert mine.session_state[LINKED_WORK_KEY] == []
+    # It is left alone, not removed: in a shared conversation it is another person's own entry.
+    assert [entry["id"] for entry in mine.session_state[LINKED_WORK_KEY]] == ["r-1"]
+
+
+@modes
+def test_one_persons_message_keeps_another_persons_run_in_a_shared_conversation(mode):
+    alice, bob = person(), person(user="bob")
+    stored = listed_run(alice)
+    db = Runs(stored)
+    # One conversation, one list: Bob's turn reads the state Alice's turn saved.
+    bob.session_state = alice.session_state
+    assert block(db, bob, mode) == ""
+    assert block(db, alice, mode) == LINE + "running."
+    stored["status"] = "COMPLETED"
+    bob.run_id, alice.run_id = "run-2", "run-3"
+    assert block(db, bob, mode) == ""
+    assert block(db, alice, mode) == f"{LINE}finished. {CHANGED}"
+
+
+@modes
+def test_a_member_run_in_a_teams_session_is_not_the_teams_run(mode):
+    run_context = person()
+    stored = listed_run(run_context, "COMPLETED")
+    # A row of that session that another component wrote, or that a parent run started.
+    others = (
+        {"run_type": "agent", "agent_id": "member", "workflow_id": None},
+        {"run_type": "agent", "agent_id": "investigator"},
+        {"parent_run_id": "r-0"},
+    )
+    for other in others:
+        assert block(Runs({**stored, **other}), run_context, mode) == ""
+    wrong_id = {**stored, "workflow_id": "another"}
+    assert block(Runs(wrong_id), run_context, mode) == ""
+    assert block(Runs(stored), run_context, mode) == f"{LINE}finished. {CHANGED}"
+
+
+@modes
+def test_a_run_is_found_in_whichever_database_of_that_id_holds_it(mode):
+    run_context = person()
+    stored = listed_run(run_context)
+    first, second = Runs(), Runs(stored)
+    hook = LinkedWork(None, run_db=lambda db_id: [first, second])
+    assert read(hook, run_context, mode) == [LINE + "running."]
 
 
 @modes
@@ -736,8 +1102,8 @@ def test_tasks_and_runs_share_one_block(plain):
     stored = listed_run(run_context)
     link_task(run_context, {"id": "task-1", "status": "ready"})
     db = Both(stored)
-    LinkedWork(db, run_db=lambda db_id: db).check(run_context=run_context)
-    assert attached(run_context) == ['- Task "Draft" (id task-1, writer): accepted, not started.', LINE + "running."]
+    lines = read(LinkedWork(db, run_db=lambda db_id: [db]), run_context)
+    assert lines == ['- Task "Draft" (id task-1, writer): accepted, not started.', LINE + "running."]
 
 
 def test_super_agent_is_sent_the_run_beside_the_next_message(system):
@@ -770,6 +1136,117 @@ def test_super_agent_is_sent_the_run_beside_the_next_message(system):
     # Its end was shown, so the next message carries no block, and the result can still be read.
     assert system.os.manager.model.sent == ["And?"]
     assert json.loads(checked.tools[0].result)["status"] == "COMPLETED"
+
+
+def test_a_model_that_is_not_sent_the_block_still_starts_and_checks_runs(plain):
+    async def steps():
+        unlisted = Scripted(
+            [("start_background_run", {"component_type": "agent", "component_id": "writer", "message": "Write"})]
+        )
+        unlisted.unlisted = True
+        plain.os.manager.model = unlisted
+        authority = plain.context().authorization
+        with authorization_scope(lambda: authority):
+            first = await plain.os.manager.arun("Start it", user_id="alice", session_id="chat")
+            receipt = json.loads(first.tools[0].result)
+            system_prompt = unlisted.system
+            await finish(plain)
+            quiet = Scripted()
+            quiet.unlisted = True
+            plain.os.manager.model = quiet
+            await plain.os.manager.arun("Hello", user_id="alice", session_id="chat")
+            kept = [
+                dict(entry) for entry in (await plain.os.manager.aget_session_state(session_id="chat"))["linked_work"]
+            ]
+            checking = Scripted([("check_background_run", {"run_id": receipt["run_id"]})])
+            checking.unlisted = True
+            plain.os.manager.model = checking
+            checked = await plain.os.manager.arun("And?", user_id="alice", session_id="chat")
+            # A model that is sent the block takes over the conversation: the list was kept for it.
+            second = await plain.start(plain.context(run_id="later"), "workflow", "investigator")
+            listed = Scripted()
+            plain.os.manager.model = listed
+            state = await plain.os.manager.aget_session_state(session_id="chat")
+            state["linked_work"].append(plain_entry(second, plain))
+            await plain.os.manager.arun("Hello", user_id="alice", session_id="chat", session_state=state)
+            GATES["investigator"].set()
+        return receipt, system_prompt, quiet, kept, checked, listed
+
+    receipt, system_prompt, quiet, kept, checked, listed = scenario(steps)
+    # The start works and its receipt promises nothing the model will not be shown.
+    assert receipt["started"] is True and "shown to you each turn" not in receipt["note"]
+    assert "check_background_run reads its state" in receipt["note"]
+    # The prompt says the state is not shown, and does not describe the block.
+    assert NOT_SHOWN in system_prompt and SHOWN not in system_prompt and _HEADER not in system_prompt
+    # Nothing is sent, read or marked: the entry is as the start left it.
+    assert quiet.sent == ["Hello"]
+    assert [entry["id"] for entry in kept] == [receipt["run_id"]]
+    assert kept[0]["shown"] == "LIVE" and not kept[0].get("ended") and kept[0].get("changed_in") is None
+    assert json.loads(checked.tools[0].result)["status"] == "COMPLETED"
+    assert len(listed.sent) == 2 and "investigator" in listed.sent[0] and SHOWN in listed.system
+
+
+def plain_entry(receipt, system):
+    """The list entry a start wrote, read back from the run context it was given."""
+    return {
+        "kind": "run",
+        "id": receipt["run_id"],
+        "component_type": receipt["component_type"],
+        "component_id": receipt["component_id"],
+        "name": receipt["name"],
+        "session_id": receipt["session_id"],
+        "db_id": system.db.id,
+        "durable": False,
+        "process": linked_work._PROCESS,
+        "added_at": int(time.time()),
+        "shown": "LIVE",
+        "changed_in": None,
+    }
+
+
+def test_the_prompt_describes_the_block_only_to_a_model_that_is_sent_it(plain):
+    async def steps():
+        prompts = []
+        for unlisted in (False, True):
+            model = Scripted()
+            model.unlisted = unlisted
+            plain.os.manager.model = model
+            with authorization_scope(lambda: plain.context().authorization):
+                await plain.os.manager.arun("Hello", user_id="alice", session_id=f"chat-{unlisted}")
+            prompts.append(model.system)
+        return prompts
+
+    shown, hidden = scenario(steps)
+    assert SHOWN in shown and NOT_SHOWN not in shown
+    assert NOT_SHOWN in hidden and SHOWN not in hidden and _HEADER not in hidden
+
+
+@modes
+def test_the_run_just_started_is_the_newest_and_is_listed_first(mode):
+    run_context = person()
+    first = listed_run(run_context, run_id="r-1")
+    second = listed_run(run_context, run_id="r-2")
+    # Started in the same second: the place in the list says which is newer, not the clock.
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1", "r-2"]
+    lines = block(Runs(first, second), run_context, mode).split("\n")
+    assert [line.split("run ")[2][:3] for line in lines] == ["r-2", "r-1"]
+    # A follow-up is a run of its own: it takes the newest place and the earlier run keeps its entry.
+    listed_run(run_context, run_id="r-3")
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1", "r-2", "r-3"]
+
+
+def test_a_start_is_a_receipt_of_its_own_run(plain):
+    # The run that started it is not told about it again, and a failed reply passes the notice on.
+    run_context = person(run_id="run-1")
+    stored = listed_run(run_context)
+    assert run_context.session_state[LINKED_WORK_KEY][0]["receipt_in"] == "run-1"
+    hook = LinkedWork(None, run_db=lambda db_id: [Runs(stored)])
+
+    class Session:
+        runs = [type("Run", (), {"run_id": "run-1", "status": "ERROR", "requirements": None})()]
+
+    run_context.run_id = "run-2"
+    assert lines_of(hook.read(run_context, Session())) == [f"{LINE}running. {CHANGED}"]
 
 
 # ----------------------------------------------------------------- the check
@@ -811,7 +1288,7 @@ def test_check_refuses_a_run_this_conversation_did_not_start(plain):
     assert refusal == {
         "error": f"Run {run_id} was not started from this conversation. Only runs started here can be read."
     }
-    assert forged == {"error": f"Run {run_id} is not stored for this conversation."}
+    assert forged == {"error": f"Run {run_id} is not a run you started in this conversation."}
 
 
 def checked(run_context, stored, mode="async", **row):
@@ -826,7 +1303,6 @@ def checked(run_context, stored, mode="async", **row):
 
 def run_data(status, content="Found it.", **fields):
     return {
-        "run_type": "workflow",
         "status": status,
         "run_data": {"run_id": "r-1", "workflow_id": "investigator", "status": status, "content": content, **fields},
     }
@@ -869,13 +1345,54 @@ def test_a_failed_and_a_cancelled_run_say_so(mode, keep_standins):
 
 
 @modes
-def test_a_lost_run_is_reported_as_interrupted_with_no_result(mode, keep_standins, monkeypatch):
+def test_a_run_another_process_started_is_checked_as_unknown_with_no_result(mode, keep_standins, monkeypatch):
     run_context = person()
     stored = listed_run(run_context, "RUNNING", durable=False)
     monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
     result = checked(run_context, stored, mode, **run_data("RUNNING", "half a thought"))
-    assert result["status"] == "INTERRUPTED" and "content" not in result
-    assert result["meaning"].startswith("interrupted: the server restarted while it ran")
+    assert result["status"] == "UNKNOWN" and "content" not in result
+    assert result["meaning"] == UNKNOWN
+
+
+@modes
+def test_a_run_taken_as_lost_is_checked_as_lost_with_no_result(mode, keep_standins, monkeypatch):
+    run_context = person()
+    stored = listed_run(run_context, "RUNNING", durable=False)
+    run_context.session_state[LINKED_WORK_KEY][0]["added_at"] -= 3601
+    monkeypatch.setattr(linked_work, "_PROCESS", "another-process")
+    result = checked(run_context, stored, mode, **run_data("RUNNING", "half a thought"))
+    assert result["status"] == "LOST" and "content" not in result and result["meaning"] == LOST
+
+
+@modes
+def test_a_result_read_by_the_check_is_not_announced_again(mode, keep_standins):
+    run_context = person()
+    stored = {**listed_run(run_context, "COMPLETED"), **run_data("COMPLETED")}
+    assert checked(run_context, stored, mode)["content"] == "Found it."
+    run_context.run_id = "run-2"
+    assert block(Runs(stored), run_context, mode) == ""
+    assert run_context.session_state[LINKED_WORK_KEY][0]["ended"] is True
+
+
+@modes
+def test_a_run_stored_inside_its_session_is_read_too(mode, keep_standins):
+    # A database that keeps runs in their session returns the run itself, with no run_data around it.
+    run_context = person()
+    entry_row = listed_run(run_context, "COMPLETED")
+    run = {
+        "run_id": "r-1",
+        "session_id": entry_row["session_id"],
+        "workflow_id": "investigator",
+        "status": "COMPLETED",
+        "content": "Found it.",
+    }
+    tools = BackgroundRunTools(type("OS", (), {"dbs": {}, "db": Runs(run)})())
+    with authorization_scope(lambda: run_context.authorization):
+        if mode == "sync":
+            result = json.loads(tools.check_background_run("r-1", _agno_run_context=run_context))
+        else:
+            result = json.loads(asyncio.run(tools.acheck_background_run("r-1", _agno_run_context=run_context)))
+    assert (result["status"], result["content"]) == ("COMPLETED", "Found it.")
 
 
 @modes
@@ -903,7 +1420,8 @@ def test_a_paused_run_reports_what_it_waits_for(tmp_path):
         run_context = value.context()
         receipt = await value.start(run_context)
         await await_background_runs(timeout=5)
-        return await value.check(run_context, receipt["run_id"]), await value.block(run_context)
+        lines = await value.block(run_context)
+        return await value.check(run_context, receipt["run_id"]), lines
 
     result, lines = scenario(steps)
     assert result["status"] == "PAUSED" and result["meaning"] == "paused for a person"
