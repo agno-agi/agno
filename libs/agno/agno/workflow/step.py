@@ -487,7 +487,7 @@ class Step:
 
         config = data.copy()
 
-        agent = None
+        agent: Optional[Union[Agent, "BaseExternalAgent"]] = None
         team = None
         executor = None
         workflow = None
@@ -538,7 +538,12 @@ class Step:
                 registry_agent = registry.get_agent(agent_id)
                 from agno.agents.base import BaseExternalAgent
 
-                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
+                if isinstance(registry_agent, BaseExternalAgent):
+                    # An external agent (Claude Code, Codex, ...) keeps no per-run state on the instance:
+                    # each call is told its workflow, and its session is its own. The registry's
+                    # instance is the step, as it is in a workflow written in code.
+                    agent = registry_agent
+                elif registry_agent is not None:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
@@ -611,26 +616,20 @@ class Step:
                     loaded = get_agent_by_id(
                         db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
                     )
-                from agno.agents.base import BaseExternalAgent
+                # A stored external agent resolves here too, and is a step like an Agent. One without
+                # a sandbox runs on this host, so it needs the opt-in it needs when served on its own.
+                from agno.agents._storage import admit_stored_child
 
-                if isinstance(loaded, BaseExternalAgent):
-                    # A stored external adapter resolves here too; a step runs an Agent.
-                    message = (
-                        f"Step '{config.get('name')}' references agent '{agent_id}', which is a "
-                        f"{loaded.sdk!r} external agent; external agents cannot be workflow steps."
-                    )
-                    if strict:
-                        raise ComponentRehydrationError(message)
-                    log_warning(message)
-                else:
-                    agent = loaded
+                agent = admit_stored_child(loaded, registry, strict, f"Step '{config.get('name')}' agent '{agent_id}'")
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 from agno.agents.base import BaseExternalAgent
 
-                if registry_agent is not None and not isinstance(registry_agent, BaseExternalAgent):
+                if isinstance(registry_agent, BaseExternalAgent):
+                    agent = registry_agent
+                elif registry_agent is not None:
                     try:
                         agent = registry_agent.deep_copy()
                     except Exception as e:
