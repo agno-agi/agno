@@ -53,10 +53,12 @@ RESULT_LENGTH = 6000
 _KINDS = ("agent", "team", "workflow")
 _ASYNC_ONLY = "Starting a background run needs an asynchronous run. Run the component in the turn instead."
 
-# The most of a sandbox checkout's diff the read tool returns. A longer diff is cut, and says so.
+# The most of a sandbox checkout's diff the read tool returns, and the most changed files it lists. More
+# is cut, and the result says so. Together they keep a result under the 16,000 characters past which
+# Super Agent is shown only the start of a tool result.
 DIFF_LENGTH = 8000
-# The most changed files it lists, and the newest runs of a session it looks through for a saved checkout.
-_FILES_LISTED = 200
+_FILES_LISTED = 50
+# The newest runs of a session that are looked through for a saved checkout.
 _NEWEST_RUNS: Dict[str, Any] = {"limit": 30, "sort_by": "run_index", "sort_order": "desc", "deserialize": False}
 # The longest one git command may take on a restored checkout.
 _GIT_SECONDS = 60
