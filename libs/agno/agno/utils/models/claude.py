@@ -644,7 +644,9 @@ def format_messages(
             continue
         elif message.role == "user":
             if isinstance(content, str):
-                content = [{"type": "text", "text": content}]
+                # Anthropic refuses an empty text block: a message with no text starts with no
+                # blocks, so one that carries only images or files is sent as those alone
+                content = [{"type": "text", "text": content}] if content else []
             elif isinstance(content, list):
                 # Work on a copy: appending media blocks into the live
                 # Message.content would duplicate them on every model round
