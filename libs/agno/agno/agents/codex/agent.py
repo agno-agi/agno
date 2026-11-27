@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import warnings
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -55,6 +56,10 @@ def _sdk() -> Any:
 
 
 # Accept the CLI spellings as well as the SDK enum names for the sandbox setting.
+_ACCESS_TOKEN_REFUSED = (
+    "The Codex access token (CODEX_ACCESS_TOKEN) was refused or has expired; create a new one on the "
+    "ChatGPT Enterprise workspace's Access tokens page. No API key was used."
+)
 # Stands for "read OPENAI_API_KEY from the environment" where None means "use no API key".
 _FROM_ENV: Any = object()
 
@@ -204,10 +209,16 @@ class CodexAgent(BaseExternalAgent):
             authenticates API-key sessions; existing non-API-key logins are preserved.
         auth_json: Run on a ChatGPT plan instead of an API key, signed in with the ChatGPT
             sign-in (`auth.json`): the contents of the auth.json that `codex login` writes, as
-            text or a mapping. Give each agent a sign-in of its own and use it nowhere else, because Codex replaces its tokens as it works. The agent
-            then never uses OPENAI_API_KEY and runs one piece of work at a time: a run the durable
-            queue owns waits its turn, any other is refused with AgentBusyError. The refreshed
-            sign-in is saved, encrypted, in the agent's database after every run.
+            text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
+            because Codex replaces its tokens as it works. The agent then never uses
+            OPENAI_API_KEY and runs one piece of work at a time: a run the durable queue owns
+            waits its turn, any other is refused with AgentBusyError. The refreshed sign-in is
+            saved, encrypted, in the agent's database after every run.
+        access_token: Run on a ChatGPT Enterprise workspace instead of an API key: a Codex access
+            token created on the workspace's Access tokens page, given to Codex as
+            CODEX_ACCESS_TOKEN. The agent then never uses OPENAI_API_KEY. Codex does not replace
+            this token, so the agent is not limited to one piece of work at a time and nothing
+            is stored. Cannot be combined with auth_json.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -266,6 +277,8 @@ class CodexAgent(BaseExternalAgent):
     env: Optional[Dict[str, str]] = None
     # The ChatGPT sign-in (auth.json), one way to run on a plan; never shown, stored as a component config or sent to a sandbox as configuration.
     auth_json: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
+    # A ChatGPT Enterprise Codex access token, the other way to run on a plan; handled like auth_json.
+    access_token: Optional[str] = field(default=None, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -278,6 +291,7 @@ class CodexAgent(BaseExternalAgent):
         "codex_bin": "a host path; configure it on the serving AgentOS",
         "env": "process credentials; set them in the serving environment",
         "auth_json": "a credential; set it on the agent in the serving AgentOS's code",
+        "access_token": "a credential; set it on the agent in the serving AgentOS's code",
     }
     _plan_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
     _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
@@ -298,6 +312,11 @@ class CodexAgent(BaseExternalAgent):
                 stacklevel=4,
             )
             self.sandbox_mode, self.sandbox = legacy_mode, None
+        if self.auth_json is not None and self.access_token is not None:
+            raise ValueError(
+                "CodexAgent takes auth_json (a ChatGPT sign-in) or access_token (a ChatGPT Enterprise "
+                "Codex access token), not both. Remove one."
+            )
         super().__post_init__()
         self._validate_options()
         if self._effective_model()[0] is None:
@@ -376,6 +395,8 @@ class CodexAgent(BaseExternalAgent):
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
     def _plan_env(self) -> Optional[Dict[str, str]]:
+        if self.access_token is not None:
+            return {"CODEX_ACCESS_TOKEN": self.access_token.strip()}
         return {} if self.auth_json is not None else None
 
     def _check_plan(self) -> None:
@@ -383,6 +404,24 @@ class CodexAgent(BaseExternalAgent):
             from agno.agents.codex._plan import check
 
             check(self)
+        if self.access_token is not None and not self.access_token.strip():
+            raise ValueError(
+                f"{self.get_id()} is set to run on a ChatGPT Enterprise workspace, but its Codex access token "
+                "is empty. Create one on the workspace's Access tokens page. OPENAI_API_KEY was not used."
+            )
+
+    def _signed_in_with_access_token(self) -> bool:
+        """Whether Codex has only an access token to sign in with, here or inside a sandbox."""
+        if self.access_token is not None:
+            return True
+        return bool(os.environ.get("CODEX_ACCESS_TOKEN")) and not os.environ.get("OPENAI_API_KEY")
+
+    def _turn_failure(self, error: Any) -> str:
+        """The message of a failed turn, saying so when it was the access token that was refused."""
+        text = f"Codex turn failed: {error}"
+        if self._signed_in_with_access_token() and re.search(r"\b401\b|unauthori[sz]ed", text, re.IGNORECASE):
+            return f"{text.rstrip('. ')}. {_ACCESS_TOKEN_REFUSED}"
+        return text
 
     def _sandbox_login(self) -> Any:
         if self.auth_json is None:
@@ -552,7 +591,8 @@ class CodexAgent(BaseExternalAgent):
 
         An agent on a ChatGPT plan must hold its slot (_aplan_slot) around this: a run takes it
         before it starts, so only one client uses the login at a time."""
-        if self.auth_json is None:
+        plan = self._plan_env()
+        if plan is None:
             async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
                 yield codex
             return
@@ -562,14 +602,22 @@ class CodexAgent(BaseExternalAgent):
         sdk = _sdk()
         config = self._codex_config(sdk)
         codex_home = home(self, config.env)
-        # The app-server inherits this process's environment: blank the API keys, and keep the
-        # login in a file in the agent's own CODEX_HOME, never in the operating system's keyring.
+        # The app-server inherits this process's environment: blank the API keys, and give the
+        # agent a CODEX_HOME of its own, so no other sign-in on this host is used or replaced.
         config.env = {
             **(config.env or {}),
             **{name: "" for name in self._plan_blocked_env},
+            **plan,
             "CODEX_HOME": str(codex_home),
         }
+        # A sign-in is kept in a file there, never in the operating system's keyring.
         config.config_overrides = (*config.config_overrides, 'cli_auth_credentials_store="file"')
+        if self.auth_json is None:
+            # The access token is the whole credential: nothing to write before or save after.
+            codex_home.mkdir(parents=True, exist_ok=True)
+            async with self._open_client(sdk, config, api_key=None) as codex:
+                yield codex
+            return
         async with host_login(self, codex_home):
             async with self._open_client(sdk, config, api_key=None) as codex:
                 yield codex
@@ -907,7 +955,7 @@ class CodexAgent(BaseExternalAgent):
             if result.status == "failed":
                 # The tools that completed are already in run_state for the base class to keep.
                 raise CodexTurnError(
-                    f"Codex turn failed: {getattr(result.error, 'message', None) or result.error}",
+                    self._turn_failure(getattr(result.error, "message", None) or result.error),
                     _error_info(result.error),
                 )
 
@@ -1035,7 +1083,7 @@ class CodexAgent(BaseExternalAgent):
                 self._clear_run_handle(run_id)
 
         if state.error:
-            raise CodexTurnError(f"Codex turn failed: {state.error}", state.error_info)
+            raise CodexTurnError(self._turn_failure(state.error), state.error_info)
         metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
         if metrics is not None:
             yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)

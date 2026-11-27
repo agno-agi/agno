@@ -493,8 +493,9 @@ async def test_a_second_request_to_a_codex_agent_on_the_host_is_told_it_is_busy(
         lambda sandbox: ClaudeAgent(id="claude-1", oauth_token="oauth-token-1", sandbox=sandbox),
         lambda sandbox: ClaudeAgent(id="claude-key", sandbox=sandbox),
         lambda sandbox: CodexAgent(id="codex-key", sandbox=sandbox),
+        lambda sandbox: CodexAgent(id="codex-1", access_token="enterprise-token", sandbox=sandbox),
     ],
-    ids=["claude on a plan", "claude on an API key", "codex on an API key"],
+    ids=["claude on a plan", "claude on an API key", "codex on an API key", "codex on an access token"],
 )
 async def test_other_agents_are_not_limited_to_one_at_a_time(coordinator, build):
     coordinator.hold = 0.03
@@ -519,3 +520,66 @@ async def test_agents_with_only_api_keys_are_given_them_as_before(coordinator, m
         pass
     assert [call for call in codex_sdk if call["op"] == "login"] == [{"op": "login", "api_key": OPENAI_KEY}]
     assert "CODEX_HOME" not in codex_sdk[0]["env"]
+
+
+# ---------------------------------------------------------------------------
+# Codex on a ChatGPT Enterprise access token
+# ---------------------------------------------------------------------------
+
+
+async def test_codex_access_token_is_the_only_credential_in_the_sandbox(coordinator):
+    sandbox = FakeSandbox(env={"OPENAI_API_KEY": "scoped-key", "CODEX_API_KEY": "scoped", "GH_TOKEN": "gh"})
+    agent = CodexAgent(id="codex-1", access_token=" enterprise-token \n", sandbox=sandbox)
+    await agent.arun("hello", session_id="s1")
+    _, execution = coordinator.calls[0]
+    assert execution["env"] == {"CODEX_ACCESS_TOKEN": "enterprise-token", "GH_TOKEN": "gh"}
+    assert "enterprise-token" not in json.dumps(execution["config"])
+    assert "enterprise-token" not in repr(agent)
+    # The token is not replaced as Codex works, so there is nothing to write into the sandbox or save after.
+    assert agent._sandbox_login() is None
+    with pytest.raises(ValueError, match="access_token cannot be stored"):
+        CodexAgent(id="codex-1", access_token="enterprise-token").to_dict()
+
+
+async def test_codex_on_the_host_signs_in_with_the_access_token_and_never_the_api_key(codex_sdk, tmp_path):
+    agent = CodexAgent(id="codex-1", access_token="enterprise-token", env={"CODEX_HOME": str(tmp_path), "KEEP": "1"})
+    async with agent._new_client():
+        pass
+    assert [call["op"] for call in codex_sdk] == ["client", "client_exit"]
+    assert codex_sdk[0]["env"] == {
+        "CODEX_HOME": str(tmp_path),
+        "KEEP": "1",
+        "OPENAI_API_KEY": "",
+        "CODEX_API_KEY": "",
+        "CODEX_ACCESS_TOKEN": "enterprise-token",
+    }
+    assert not (tmp_path / "auth.json").exists()
+
+
+def test_codex_takes_a_sign_in_or_an_access_token_not_both():
+    with pytest.raises(ValueError, match="takes auth_json .* or access_token .*, not both"):
+        CodexAgent(id="codex-1", auth_json=login(), access_token="enterprise-token")
+
+
+async def test_codex_with_an_empty_access_token_fails_instead_of_using_the_api_key(coordinator):
+    agent = CodexAgent(id="codex-1", access_token=" ", sandbox=FakeSandbox())
+    with pytest.raises(ValueError, match="codex-1 is set to run on a ChatGPT Enterprise workspace.*is empty"):
+        await agent.arun("hello", session_id="s1")
+    assert coordinator.calls == []
+    assert OPENAI_KEY not in json.dumps(_harness.env(agent))
+
+
+def test_a_refused_codex_access_token_says_so(monkeypatch):
+    refused = "unexpected status 401 Unauthorized: token expired"
+    message = CodexAgent(id="codex-1", access_token="enterprise-token")._turn_failure(refused)
+    assert "The Codex access token (CODEX_ACCESS_TOKEN) was refused or has expired" in message
+    assert "No API key was used" in message
+    # Another failure of the same agent, and the same failure of an agent on an API key, are left as they are.
+    assert CodexAgent(id="codex-1", access_token="enterprise-token")._turn_failure("out of disk") == (
+        "Codex turn failed: out of disk"
+    )
+    assert CodexAgent(id="codex-key")._turn_failure(refused) == "Codex turn failed: " + refused
+    # Inside a sandbox the agent has no access_token setting, only the variable and no API key.
+    monkeypatch.setenv("CODEX_ACCESS_TOKEN", "enterprise-token")
+    monkeypatch.delenv("OPENAI_API_KEY")
+    assert "Codex access token" in CodexAgent(id="codex-1")._turn_failure(refused)
