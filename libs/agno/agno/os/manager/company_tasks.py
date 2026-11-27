@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agno.db.schemas.tasks import TASK_STATUS_MEANING
 from agno.os.manager.linked_work import link_task
-from agno.run.authorization import WORK_UPDATE_REFUSAL, in_work_update
+from agno.run.authorization import FINISHED_WORK_REPORT_REFUSAL, in_finished_work_report
 from agno.tools import Toolkit
 from agno.tools.company import _CONTEXT_KINDS, _OptionalContext, _OptionalInt, _OptionalString
 
@@ -205,7 +205,7 @@ class CompanyTaskTools(Toolkit):
         authority, user_id = _run_context_identity(run_context)
         if agent_os is None or app is None:
             return agent_os, app, authority, user_id, "Company execution is not running here. Use AgentOS instead."
-        refusal = WORK_UPDATE_REFUSAL if in_work_update(run_context) else _refusal(authority)
+        refusal = FINISHED_WORK_REPORT_REFUSAL if in_finished_work_report(run_context) else _refusal(authority)
         if refusal is None and _unsigned(agent_os, authority, user_id):
             refusal = "A signed-in person is required."
         return agent_os, app, authority, user_id, refusal

@@ -99,7 +99,7 @@ REQUESTED_FROM_METADATA_KEY = "agno_requested_from"
 # Marks a run AgentOS started in a conversation to report that work the conversation started has
 # ended. Nobody is present in such a run, so it reads and reports and changes nothing. It holds what
 # ended: its kind, id and status. Runtime-owned: a request cannot set it, and a continued run keeps it.
-WORK_UPDATE_METADATA_KEY = "agno_work_update"
+FINISHED_WORK_REPORT_METADATA_KEY = "agno_finished_work_report"
 
 # Every run-metadata key the runtime owns. Component metadata is merged OVER
 # call-site metadata, so a stored config carrying one of these would overwrite
@@ -112,7 +112,7 @@ RESERVED_RUN_METADATA_KEYS = frozenset(
         DISPATCH_CHAIN_METADATA_KEY,
         DISPATCH_DEPTH_METADATA_KEY,
         REQUESTED_FROM_METADATA_KEY,
-        WORK_UPDATE_METADATA_KEY,
+        FINISHED_WORK_REPORT_METADATA_KEY,
     }
 )
 

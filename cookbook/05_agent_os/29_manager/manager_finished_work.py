@@ -1,17 +1,17 @@
 """Super Agent says when background work has finished, without being asked.
 
 Super Agent starts a slow workflow in the background and answers at once. When the workflow ends,
-AgentOS gives the conversation one run of Super Agent, called a work update. Super Agent reads the
+AgentOS gives the conversation one run of Super Agent, called a finished-work report. Super Agent reads the
 result and reports it, and the reply is stored in the conversation like any other.
 
-A work update reads and reports. Nobody is present, so it cannot start, accept, approve or change
+A finished-work report reads and reports. Nobody is present, so it cannot start, accept, approve or change
 anything. It is started only when no other run is going in the conversation, and at most three
 times in a row before the person speaks again.
 
-Turn it off with OSManager(work_updates=False). Each work update is a model run.
+Turn it off with OSManager(report_finished_work=False). Each finished-work report is a model run.
 
 Run:
-    .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_work_updates.py
+    .venvs/demo/bin/python cookbook/05_agent_os/29_manager/manager_finished_work.py
 """
 
 import asyncio
@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 SECONDS = 20
 SESSION = "demo-chat"
 Path("tmp").mkdir(exist_ok=True)
-db = SqliteDb(db_file=f"tmp/manager_work_updates_{int(time.time())}.db")
+db = SqliteDb(db_file=f"tmp/manager_finished_work_{int(time.time())}.db")
 
 
 async def investigate(step_input: StepInput) -> StepOutput:
@@ -43,7 +43,7 @@ investigator = Workflow(
     steps=[Step(name="investigate", executor=investigate)],
 )
 agent_os = AgentOS(
-    name="Work updates demo",
+    name="Finished work demo",
     db=db,
     workflows=[investigator],
     manager=OSManager(model=OpenAIResponses(id="gpt-5.6-luna"), access_docs=False),
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         print(f"> {message}")
         print("  " + (response.json().get("content") or "").replace("\n", "\n  "))
 
-        print(f"\nSending nothing. Waiting for the Investigator ({SECONDS} seconds) and the work update.")
+        print(f"\nSending nothing. Waiting for the Investigator ({SECONDS} seconds) and the finished-work report.")
         deadline = time.monotonic() + SECONDS + 60
         while time.monotonic() < deadline:
             stored = turns()
@@ -82,4 +82,4 @@ if __name__ == "__main__":
         print("  " + str(update["run_data"].get("content")).replace("\n", "\n  "))
         print("\nIts input, written by AgentOS:")
         print("  " + str(update["run_data"]["input"]["input_content"]).replace("\n", "\n  "))
-        print("\nIts mark:", update["run_data"]["metadata"].get("agno_work_update"))
+        print("\nIts mark:", update["run_data"]["metadata"].get("agno_finished_work_report"))

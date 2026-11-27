@@ -308,7 +308,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     from agno.company.routines import _RoutineBoundary
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
-    from agno.os.manager.work_update import WorkUpdateBoundary
+    from agno.os.manager.finished_work import FinishedWorkBoundary
     from agno.tools.agentos import AgentOSTools
     from agno.tools.studio import StudioTools
     from agno.utils.live_sequence import LiveSequence
@@ -414,8 +414,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     if workspace is not None:
         tools.extend(workspace.get_tools())
         instructions.append(SOURCE_INSTRUCTIONS)
-    # Every run is recorded as going, and a work update is given only the tools that read.
-    work_update_boundary = WorkUpdateBoundary()
+    # Every run is recorded as going, and a finished-work report is given only the tools that read.
+    finished_work_boundary = FinishedWorkBoundary()
     company_db = agent_os._company_db
     company_queue: Any = None
     user_isolation = False
@@ -475,7 +475,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         members=[builder],
         instructions=_ManagerInstructions(instructions, runner, company_db),
         # Super Agent can edit the platform, so a Company Routine never runs on it.
-        pre_hooks=[_RoutineBoundary(routine=False), work_update_boundary],
+        pre_hooks=[_RoutineBoundary(routine=False), finished_work_boundary],
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
@@ -483,7 +483,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
-    work_update_boundary.served = ref(team)
+    finished_work_boundary.served = ref(team)
     from agno.os.manager import linked_work
 
     # Decided from the model Super Agent holds when a run is built, so it follows a changed model.

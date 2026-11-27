@@ -1,19 +1,19 @@
 # Test log
 
-## Work updates, 2026-11-26
+## Finished-work reports, 2026-11-26
 
-### manager_work_updates.py
+### manager_finished_work.py
 
 **Status:** PASS
 
-**Description:** Ran `cookbook/05_agent_os/29_manager/manager_work_updates.py` with `.venv/bin/python`,
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_finished_work.py` with `.venv/bin/python`,
 `gpt-5.6-luna`, a new SQLite database, no Company and no durable queue. Super Agent is asked to run
 a 20-second workflow in the background, and then nothing is sent.
 
 **Result:** The first reply came with a receipt. After the workflow ended the conversation held a
 second run, started by AgentOS, whose reply said the Investigator finished and that the export job
-uses the old IAM role. Its input starts with "Work update from AgentOS" and its metadata holds
-`agno_work_update` with the run's id and status.
+uses the old IAM role. Its input starts with "Finished work report from AgentOS" and its metadata holds
+`agno_finished_work_report` with the run's id and status.
 
 ---
 ## Background runs from chat, 2026-11-26
