@@ -35,6 +35,7 @@ from agno.db.redis.utils import (
     get_all_keys_for_table,
     metrics_day_start,
     metrics_record_key,
+    redis_client_seed,
     remove_index_entries,
     reopen_metrics_day,
     reopen_metrics_days_from,
@@ -74,6 +75,7 @@ from agno.db.utils import (
     get_metrics_rows_by_key,
     get_months_to_calculate_metrics_for,
     list_metrics_totals_models,
+    log_unstable_client_id,
     merge_metrics_totals,
     merge_runs_table_with_legacy_blob,
     metric_record_day,
@@ -160,7 +162,12 @@ class RedisDb(BaseDb):
             ValueError: If neither redis_client nor db_url is provided.
         """
         if id is None:
-            base_seed = db_url or str(redis_client)
+            # str(client) holds memory addresses, so a client is seeded from the server it connects to.
+            base_seed = db_url or redis_client_seed(redis_client)
+            if base_seed is None:
+                if redis_client is not None:
+                    log_unstable_client_id(type(self).__name__)
+                base_seed = str(redis_client)
             seed = f"{base_seed}#{db_prefix}"
             id = generate_id(seed)
 

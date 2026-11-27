@@ -21,6 +21,26 @@ except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
 
+def redis_client_seed(redis_client: Any) -> Optional[str]:
+    """The server a client connects to, as a stable id seed; None when the client does not say."""
+    if isinstance(redis_client, RedisCluster):
+        # getattr: a redis-py release that does not keep startup_nodes on the client must not fail the constructor.
+        nodes = sorted(node.name for node in getattr(redis_client, "startup_nodes", None) or [])
+        return "redis-cluster://" + ",".join(nodes) if nodes else None
+    pool = getattr(redis_client, "connection_pool", None)
+    # A Sentinel client's str() names its service and holds no memory address, so its id was already stable.
+    if getattr(pool, "service_name", None) is not None:
+        return str(redis_client)
+    # Read by name: connection_kwargs also holds the password.
+    kwargs = getattr(pool, "connection_kwargs", None) or {}
+    if "path" in kwargs:
+        return f"unix://{kwargs['path']}?db={kwargs.get('db', 0)}"
+    if "host" in kwargs:
+        # from_url leaves the port out when the URL has none; 6379 is the port the connection then uses.
+        return f"redis://{kwargs['host']}:{kwargs.get('port', 6379)}/{kwargs.get('db', 0)}"
+    return None
+
+
 # -- Serialization and deserialization --
 
 

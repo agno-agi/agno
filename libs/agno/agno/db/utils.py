@@ -169,6 +169,14 @@ def database_error_message(exc: Exception) -> str:
     return str(getattr(exc, "orig", exc)).partition("\n")[0]
 
 
+def log_unstable_client_id(adapter_name: str) -> None:
+    """Warn that an adapter's id came from str(client), which changes in every process."""
+    log_warning(
+        f"{adapter_name} could not read the server address from its client, so its id will change on every restart "
+        "and saved references to it will stop resolving. Pass id=... to keep it stable."
+    )
+
+
 def detect_session_type(record: Dict[str, Any]) -> str:
     """Detect session type from a raw session dict, inferring from component IDs if needed.
 
