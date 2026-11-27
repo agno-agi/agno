@@ -195,7 +195,7 @@ class WorkUpdateBoundary(BaseGuardrail):
         self._enter(run_context, team, True)
 
 
-def _keep_stored_state(session: Any, stored: Any, run_id: Any) -> None:
+def _keep_stored_state(session: Any, stored: Any, run_id: Any, marks: Optional[Dict[Any, Any]] = None) -> None:
     """Make the state a work update is about to save the stored one, with this run's own marks.
 
     A run saves the whole session state it loaded when it started. The person cannot see that a work
@@ -205,6 +205,9 @@ def _keep_stored_state(session: Any, stored: Any, run_id: Any) -> None:
     person already reported is not put back to unreported. And only once the run has replied: a work
     update that failed or was cancelled told the person nothing, so what it would have shown stays
     unreported. Whatever else the conversation stored meanwhile, such as a new name, is kept too.
+
+    marks holds what this run marked, across its saves. A run that saves before it has ended has its
+    state replaced by the stored one here, without its marks, so they are kept aside until it replies.
     """
     data = getattr(session, "session_data", None)
     stored_data = stored.get("session_data") if isinstance(stored, dict) else None
@@ -219,11 +222,11 @@ def _keep_stored_state(session: Any, stored: Any, run_id: Any) -> None:
         return
     run = session.get_run(run_id) if run_id is not None and callable(getattr(session, "get_run", None)) else None
     replied = str(getattr(getattr(run, "status", None), "value", getattr(run, "status", None))) == "COMPLETED"
-    mine = {
-        (entry.get("kind"), entry.get("id")): entry
-        for entry in loaded.get(LINKED_WORK_KEY) or []
-        if replied and isinstance(entry, dict) and entry.get("changed_in") == run_id
-    }
+    marks = marks if marks is not None else {}
+    for entry in loaded.get(LINKED_WORK_KEY) or []:
+        if isinstance(entry, dict) and run_id is not None and entry.get("changed_in") == run_id:
+            marks[(entry.get("kind"), entry.get("id"))] = dict(entry)
+    mine = marks if replied else {}
     listed = []
     for entry in state.get(LINKED_WORK_KEY) or []:
         own = mine.get((entry.get("kind"), entry.get("id"))) if isinstance(entry, dict) else None
@@ -250,6 +253,7 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
     if not isinstance(session_id, str):
         return
     save, asave = team.save_session, team.asave_session
+    marks: Dict[Any, Any] = {}
 
     def read() -> Any:
         return team.db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
@@ -260,7 +264,7 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
                 stored = read()
                 if stored is None:
                     return None
-                _keep_stored_state(session, stored, run_id)
+                _keep_stored_state(session, stored, run_id, marks)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
         return save(session=session)
@@ -273,7 +277,7 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
                 stored = await asyncio.to_thread(read)
             if stored is None:
                 return None
-            _keep_stored_state(session, stored, run_id)
+            _keep_stored_state(session, stored, run_id, marks)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
         return await asave(session=session)

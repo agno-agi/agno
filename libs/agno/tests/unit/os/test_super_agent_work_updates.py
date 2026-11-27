@@ -1790,3 +1790,62 @@ def test_a_read_that_asks_for_a_confirmation_is_not_offered_in_a_work_update(tmp
     assert [function.name for function in offered] == ["list_files"]
     offered = work_update.WorkUpdateBoundary._reads(type("Team", (), {"tools": [plain_reads]})(), async_mode)
     assert {function.name for function in offered} == {"read_file", "list_files", "search_content"}
+
+
+def test_a_work_update_that_saves_before_it_ends_still_marks_what_it_showed():
+    """A run that checkpoints saves while it is still running. Its marks wait for the save after its reply."""
+
+    def stored():
+        entry = {"kind": "run", "id": "a", "shown": "LIVE", "changed_in": None}
+        return {"session_data": {"session_state": {LINKED_WORK_KEY: [entry]}}}
+
+    class Session:
+        status = "RUNNING"
+        session_data = {
+            "session_state": {
+                LINKED_WORK_KEY: [{"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": "update"}]
+            }
+        }
+
+        def get_run(self, run_id):
+            return type("Run", (), {"status": self.status})()
+
+    session, marks = Session(), {}
+    work_update._keep_stored_state(session, stored(), "update", marks)
+    # Saved mid-run without the mark, which is kept aside.
+    assert session.session_data["session_state"][LINKED_WORK_KEY][0]["shown"] == "LIVE"
+    session.status = "COMPLETED"
+    work_update._keep_stored_state(session, stored(), "update", marks)
+    assert session.session_data["session_state"][LINKED_WORK_KEY][0] == {
+        "kind": "run",
+        "id": "a",
+        "shown": "COMPLETED",
+        "changed_in": "update",
+    }
+    # A run that fails after a mid-run save still marks nothing.
+    session, marks = Session(), {}
+    work_update._keep_stored_state(session, stored(), "update", marks)
+    session.status = "ERROR"
+    work_update._keep_stored_state(session, stored(), "update", marks)
+    assert session.session_data["session_state"][LINKED_WORK_KEY][0]["shown"] == "LIVE"
+
+
+def test_a_checkpointing_work_update_reports_two_finishes_once(tmp_path):
+    system = System(tmp_path)
+    system.os.manager.checkpoint = "tool-batch"
+
+    async def steps():
+        first = await system.start()
+        second = await system.start("workflow", "investigator")
+        system.chat.scripts.append(
+            [("check_background_run", {"run_id": first}), ("check_background_run", {"run_id": second})]
+        )
+        await system.finish("writer", "investigator")
+        await asyncio.sleep(0.3)
+        await system.settle()
+        return len(system.updates_stored()), listed(system)
+
+    updates, entries = scenario(steps)
+    system.close()
+    assert updates == 1
+    assert entries == {"writer": "COMPLETED", "investigator": "COMPLETED"}
