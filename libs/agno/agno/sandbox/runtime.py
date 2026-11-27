@@ -101,6 +101,51 @@ def _process_start(pid: int) -> str | None:
         return None
 
 
+_CGROUP = Path("/sys/fs/cgroup")
+
+
+def _memory_kills() -> Optional[int]:
+    """How many processes the kernel has killed in this sandbox for reaching its memory limit.
+
+    None where the sandbox's own cgroup v2 counters cannot be read.
+    """
+    try:
+        for line in (_CGROUP / "memory.events").read_text().splitlines():
+            key, _, value = line.partition(" ")
+            if key == "oom_kill":
+                return int(value)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _memory_note(before: Optional[int]) -> str:
+    """One sentence saying the kernel killed processes for memory since ``before``, else nothing.
+
+    A process the kernel kills only reports "exit code -9" or disappears, which does not say
+    that the sandbox's memory limit was the cause.
+    """
+    after = _memory_kills()
+    if before is None or after is None or after <= before:
+        return ""
+    try:
+        limit = f"its {int((_CGROUP / 'memory.max').read_text()) // (1024 * 1024)} MB memory limit"
+    except (OSError, ValueError):
+        limit = "its memory limit"
+    count = after - before
+    return (
+        f"The sandbox reached {limit} during this turn and the kernel killed {count} "
+        f"process{'es' if count != 1 else ''} (out of memory). Files on the sandbox's in-memory "
+        "filesystems count toward that limit."
+    )
+
+
+def _with_memory_note(error: str, before: Optional[int]) -> str:
+    """A failed turn's error, followed by the memory note when there is one."""
+    note = _memory_note(before)
+    return f"{error.rstrip('. ')}. {note}" if note else error
+
+
 def _start(root: Path, request: Dict[str, Any]) -> Dict[str, Any]:
     _validate(request)
     if _process_start(os.getpid()) is None:
@@ -365,12 +410,21 @@ async def _execute_harness(directory: Path, request: Dict[str, Any], waits: Opti
 def _worker(directory: Path) -> None:
     request = json.loads((directory / "request.json").read_bytes())
     root = directory.parent.parent
+    # Read before the turn, so a kill is only reported for the turn it happened in.
+    memory_kills = _memory_kills()
     try:
         _validate(request)
         with _lock(root / "execution.lock"):
             _atomic(
                 directory / "status.json",
-                _encode({"phase": "running", "pid": os.getpid(), "start": _process_start(os.getpid())}),
+                _encode(
+                    {
+                        "phase": "running",
+                        "pid": os.getpid(),
+                        "start": _process_start(os.getpid()),
+                        "memory_kills": memory_kills,
+                    }
+                ),
             )
 
             async def bounded_execute() -> Dict[str, Any]:
@@ -396,12 +450,21 @@ def _worker(directory: Path) -> None:
                         await task
 
             result = asyncio.run(bounded_execute())
+            if (result.get("run") or {}).get("status") == "ERROR":
+                # A harness whose command was killed ends its own run with that error. The run is
+                # already stored as it is, so the reason travels beside it for the host to add.
+                note = _memory_note(memory_kills)
+                if note:
+                    result["memory_note"] = note
             payload = _encode(result)
             if len(payload) > _MAX_RESULT:
                 raise SandboxError("Runtime execution result exceeds its limit")
             _atomic(directory / "result.json", payload)
     except Exception as error:
-        result = {"type": "execution_error", "error": (str(error) or type(error).__name__)[:2000]}
+        result = {
+            "type": "execution_error",
+            "error": _with_memory_note((str(error) or type(error).__name__)[:2000], memory_kills),
+        }
         from agno.sandbox.repository import RepositoryPreparationError
 
         if isinstance(error, RepositoryPreparationError):
@@ -530,7 +593,9 @@ def _poll(root: Path, execution_id: str, cursor: int) -> Dict[str, Any]:
         if status["phase"] == "running" and _process_start(status["pid"]) != status.get("start"):
             result = {
                 "type": "execution_unknown",
-                "error": "Runtime worker disappeared; reconcile effects before retrying",
+                "error": _with_memory_note(
+                    "Runtime worker disappeared; reconcile effects before retrying", status.get("memory_kills")
+                ),
             }
         elif status["phase"] == "starting" and time.time() - status["created_at"] > 30:
             result = {"type": "execution_unknown", "error": "Runtime dispatch outcome is unknown"}

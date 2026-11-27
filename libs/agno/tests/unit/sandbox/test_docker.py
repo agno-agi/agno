@@ -1023,3 +1023,66 @@ async def test_runtime_rpc_rejects_arbitrary_commands():
     handle = await provider.acreate("s", agent_id="coder")
     with pytest.raises(ValueError, match="start/poll"):
         await provider.arpc(handle, "shell", b"{}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exit_code, stderr, oom_killed, expected",
+    [
+        (-9, "", b"true\n", "out of memory"),
+        (-9, "", b"false\n", ""),
+        (-9, "Traceback", b"true\n", "Traceback"),
+        (1, "", b"true\n", ""),
+    ],
+    ids=["killed in a sandbox out of memory", "killed for another reason", "left a message", "exited on its own"],
+)
+async def test_killed_runtime_request_says_when_the_sandbox_is_out_of_memory(exit_code, stderr, oom_killed, expected):
+    class KilledRequest(FakeDocker):
+        async def _docker(self, *args, **kwargs):
+            if args[:2] == ("container", "exec"):
+                result = {"exit_code": exit_code, "stdout": "", "stderr": stderr}
+                return 0, json.dumps({**result, "timed_out": False, "output_limited": False}).encode(), b""
+            if args[:3] == ("container", "inspect", "-f"):
+                self.calls.append((args, kwargs))
+                return 0, oom_killed, b""
+            return await super()._docker(*args, **kwargs)
+
+    provider = KilledRequest(memory_mb=1024)
+    handle = await provider.acreate("s", agent_id="coder")
+    result = await provider.arpc(handle, "poll", b"{}")
+    assert result.exit_code == exit_code
+    if expected == "out of memory":
+        assert "killed (signal 9)" in result.stderr and "1024 MB memory limit" in result.stderr
+    else:
+        assert result.stderr == expected
+    # A failed reply never touches compute, whatever the reason.
+    assert (await provider.aget(handle.provider_ref)).state == "running"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code, err, oom_killed, expected",
+    [
+        (137, b"", b"true\n", "the command runner was killed [(]signal 9[)]; the sandbox is out of memory"),
+        (137, b"", b"false\n", "Sandbox command transport failed: the command runner was killed [(]signal 9[)]$"),
+        (1, b"daemon error", b"true\n", "Sandbox command transport failed: daemon error$"),
+    ],
+    ids=["runner killed in a sandbox out of memory", "runner killed for another reason", "docker said why"],
+)
+async def test_killed_command_runner_says_when_the_sandbox_is_out_of_memory(code, err, oom_killed, expected):
+    class KilledRunner(FakeDocker):
+        async def _docker(self, *args, **kwargs):
+            if args[:2] == ("container", "exec"):
+                return code, b"", err
+            if args[:3] == ("container", "inspect", "-f"):
+                return 0, oom_killed, b""
+            return await super()._docker(*args, **kwargs)
+
+    provider = KilledRunner()
+    handle = await provider.acreate("s", agent_id="coder")
+    with pytest.raises(SandboxError, match=expected):
+        await provider.arpc(handle, "poll", b"{}")
+    assert (await provider.aget(handle.provider_ref)).state == "running"
+    with pytest.raises(SandboxError, match=expected):
+        await provider.aexec(handle, ["example"])
+    assert (await provider.aget(handle.provider_ref)).state == "exited"

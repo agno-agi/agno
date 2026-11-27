@@ -1041,3 +1041,104 @@ def test_text_only_fixture_turn_never_touches_attachment_staging(dispatch, tmp_p
     runtime._worker(runtime._job(root, "e"))
     assert runtime._poll(root, "e", 0)["result"]["type"] == "execution_finished"
     assert (tmp_path / "workspace/fixture-effects.txt").read_text() == "a:b\n"
+
+
+def _cgroup(tmp_path, monkeypatch, kills, limit="2147483648"):
+    folder = tmp_path / "cgroup"
+    folder.mkdir(exist_ok=True)
+    monkeypatch.setattr(runtime, "_CGROUP", folder, raising=False)
+    if kills is not None:
+        (folder / "memory.events").write_text(f"low 0\nhigh 0\nmax 12\noom 3\noom_kill {kills}\noom_group_kill 0\n")
+    (folder / "memory.max").write_text(limit + "\n")
+    return folder
+
+
+def test_failed_turn_says_when_the_kernel_killed_a_process_for_memory(dispatch, tmp_path, monkeypatch):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=2)
+
+    async def killed(directory, request, waits=None):
+        # The kernel kills the harness's command while the turn runs; the harness only sees the signal.
+        (folder / "memory.events").write_text("oom 4\noom_kill 3\n")
+        raise RuntimeError("Command failed with exit code -9 (exit code: -9)")
+
+    monkeypatch.setattr(runtime, "_execute", killed)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["type"] == "execution_error"
+    assert result["error"].startswith("Command failed with exit code -9 (exit code: -9)")
+    assert "reached its 2048 MB memory limit" in result["error"]
+    assert "killed 1 process (out of memory)" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [(2, 2), (None, 5), (2, None)],
+    ids=["no kill during the turn", "counter unreadable before", "counter unreadable after"],
+)
+def test_failed_turn_without_a_memory_kill_keeps_its_error(dispatch, tmp_path, monkeypatch, before, after):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=before)
+
+    async def failed(directory, request, waits=None):
+        if after is None:
+            (folder / "memory.events").unlink()
+        else:
+            (folder / "memory.events").write_text(f"oom_kill {after}\n")
+        raise RuntimeError("Command failed with exit code 1")
+
+    monkeypatch.setattr(runtime, "_execute", failed)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    assert runtime._poll(root, "e", 0)["result"]["error"] == "Command failed with exit code 1"
+
+
+def test_disappeared_worker_says_when_the_kernel_killed_processes_for_memory(dispatch, tmp_path, monkeypatch):
+    root, _, request = dispatch
+    _cgroup(tmp_path, monkeypatch, kills=2, limit="max")
+    runtime._start(root, request)
+    directory = runtime._job(root, "e")
+    status = {"phase": "running", "pid": 123, "start": "old", "memory_kills": 0}
+    runtime._atomic(directory / "status.json", runtime._encode(status))
+    monkeypatch.setattr(runtime, "_process_start", lambda pid: "new")
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["type"] == "execution_unknown"
+    assert result["error"].startswith("Runtime worker disappeared; reconcile effects before retrying")
+    # An unlimited cgroup reports "max", so the note names no number.
+    assert "reached its memory limit" in result["error"] and "killed 2 processes (out of memory)" in result["error"]
+
+
+def test_worker_records_the_memory_kill_count_it_started_with(dispatch, tmp_path, monkeypatch):
+    root, _, request = dispatch
+    _cgroup(tmp_path, monkeypatch, kills=7)
+    seen = {}
+
+    async def read_status(directory, request, waits=None):
+        seen.update(json.loads((directory / "status.json").read_bytes()))
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(runtime, "_execute", read_status)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    assert seen["phase"] == "running" and seen["memory_kills"] == 7
+
+
+@pytest.mark.parametrize("status, noted", [("ERROR", True), ("COMPLETED", False)])
+def test_errored_run_of_a_finished_execution_carries_the_memory_note(dispatch, tmp_path, monkeypatch, status, noted):
+    root, _, request = dispatch
+    folder = _cgroup(tmp_path, monkeypatch, kills=0)
+
+    async def finished(directory, request, waits=None):
+        # A harness whose command the kernel killed ends its own run with the error.
+        (folder / "memory.events").write_text("oom_kill 1\n")
+        return {"type": "execution_finished", "run": {"status": status, "content": "exit code -9"}, "session": {}}
+
+    monkeypatch.setattr(runtime, "_execute", finished)
+    runtime._start(root, request)
+    runtime._worker(runtime._job(root, "e"))
+    result = runtime._poll(root, "e", 0)["result"]
+    assert result["run"]["content"] == "exit code -9"
+    assert ("memory_note" in result) is noted
+    if noted:
+        assert result["memory_note"].startswith("The sandbox reached its 2048 MB memory limit during this turn")
