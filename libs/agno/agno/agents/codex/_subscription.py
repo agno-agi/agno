@@ -1,4 +1,4 @@
-"""A Codex agent signed in with a ChatGPT plan instead of an API key.
+"""A Codex agent signed in with a ChatGPT subscription instead of an API key.
 
 The login is the contents of an ``auth.json`` written by ``codex login``. Codex replaces the
 tokens in that file while it works, and the old ones stop working, so three things hold:
@@ -61,7 +61,7 @@ def parse_login(value: Any, agent_id: str) -> Dict[str, Any]:
             return value
         reason = "has no ChatGPT sign-in in it (an auth.json made with an API key cannot be used)"
     raise ValueError(
-        f"{agent_id} is set to run on a ChatGPT plan, but its auth_json {reason}. Run `codex login` and pass "
+        f"{agent_id} is set to run on a ChatGPT subscription, but its auth_json {reason}. Run `codex login` and pass "
         "the contents of the auth.json it writes. OPENAI_API_KEY was not used."
     )
 
@@ -377,7 +377,7 @@ async def one_at_a_time(agent: Any) -> AsyncIterator[None]:
     release = await _finish(asyncio.ensure_future(_take(agent)))
     if release is None:
         raise AgentBusyError(
-            f"{agent.get_id()} is busy. It runs on a ChatGPT plan, one piece of work at a time. "
+            f"{agent.get_id()} is busy. It runs on a ChatGPT subscription, one piece of work at a time. "
             "Try again when its current run finishes.",
             agent_id=agent.get_id(),
         )

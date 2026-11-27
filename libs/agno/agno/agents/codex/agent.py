@@ -207,7 +207,7 @@ class CodexAgent(BaseExternalAgent):
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
         env: Environment variables for the Codex process. OPENAI_API_KEY automatically
             authenticates API-key sessions; existing non-API-key logins are preserved.
-        auth_json: Run on a ChatGPT plan instead of an API key, signed in with the ChatGPT
+        auth_json: Run on a ChatGPT subscription instead of an API key, signed in with the ChatGPT
             sign-in (`auth.json`): the contents of the auth.json that `codex login` writes, as
             text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
             because Codex replaces its tokens as it works. The agent then never uses
@@ -275,9 +275,9 @@ class CodexAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
-    # The ChatGPT sign-in (auth.json), one way to run on a plan; never shown, stored as a component config or sent to a sandbox as configuration.
+    # The ChatGPT sign-in (auth.json), one way to run on a subscription; never shown, stored as a component config or sent to a sandbox as configuration.
     auth_json: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
-    # A ChatGPT Enterprise Codex access token, the other way to run on a plan; handled like auth_json.
+    # A ChatGPT Enterprise Codex access token, the other way to run on a subscription; handled like auth_json.
     access_token: Optional[str] = field(default=None, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -293,7 +293,7 @@ class CodexAgent(BaseExternalAgent):
         "auth_json": "a credential; set it on the agent in the serving AgentOS's code",
         "access_token": "a credential; set it on the agent in the serving AgentOS's code",
     }
-    _plan_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
     _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
     # Key under which the Codex thread id is stored in the Agno session.
     _THREAD_KEY = "codex_thread_id"
@@ -394,14 +394,14 @@ class CodexAgent(BaseExternalAgent):
         continuation = self.acontinue_run(run_response, **kwargs)
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
-    def _plan_env(self) -> Optional[Dict[str, str]]:
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
         if self.access_token is not None:
             return {"CODEX_ACCESS_TOKEN": self.access_token.strip()}
         return {} if self.auth_json is not None else None
 
-    def _check_plan(self) -> None:
+    def _check_subscription(self) -> None:
         if self.auth_json is not None:
-            from agno.agents.codex._plan import check
+            from agno.agents.codex._subscription import check
 
             check(self)
         if self.access_token is not None and not self.access_token.strip():
@@ -426,16 +426,16 @@ class CodexAgent(BaseExternalAgent):
     def _sandbox_login(self) -> Any:
         if self.auth_json is None:
             return None
-        from agno.agents.codex._plan import SandboxLogin
+        from agno.agents.codex._subscription import SandboxLogin
 
         return SandboxLogin(self)
 
     @asynccontextmanager
-    async def _aplan_slot(self) -> AsyncIterator[None]:
+    async def _asubscription_slot(self) -> AsyncIterator[None]:
         if self.auth_json is None:
             yield
             return
-        from agno.agents.codex._plan import one_at_a_time
+        from agno.agents.codex._subscription import one_at_a_time
 
         async with one_at_a_time(self):
             yield
@@ -495,7 +495,7 @@ class CodexAgent(BaseExternalAgent):
         if not thread_id:
             return False
         self._check_no_run_in_flight(session, session_id)
-        async with self._aplan_slot(), self._new_client() as codex:
+        async with self._asubscription_slot(), self._new_client() as codex:
             # Resume through the high-level client: it translates the adapter's options
             # (sandbox names, approval mode, instructions) into the wire parameters that the
             # low-level thread_resume would otherwise send verbatim.
@@ -589,16 +589,16 @@ class CodexAgent(BaseExternalAgent):
         """Create an AsyncCodex client. One app-server process per run keeps the
         client bound to the current event loop.
 
-        An agent on a ChatGPT plan must hold its slot (_aplan_slot) around this: a run takes it
+        An agent on a ChatGPT subscription must hold its slot (_asubscription_slot) around this: a run takes it
         before it starts, so only one client uses the login at a time."""
-        plan = self._plan_env()
-        if plan is None:
+        subscription = self._subscription_env()
+        if subscription is None:
             async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
                 yield codex
             return
-        from agno.agents.codex._plan import home, host_login
+        from agno.agents.codex._subscription import home, host_login
 
-        self._check_plan()
+        self._check_subscription()
         sdk = _sdk()
         config = self._codex_config(sdk)
         codex_home = home(self, config.env)
@@ -606,8 +606,8 @@ class CodexAgent(BaseExternalAgent):
         # agent a CODEX_HOME of its own, so no other sign-in on this host is used or replaced.
         config.env = {
             **(config.env or {}),
-            **{name: "" for name in self._plan_blocked_env},
-            **plan,
+            **{name: "" for name in self._subscription_blocked_env},
+            **subscription,
             "CODEX_HOME": str(codex_home),
         }
         # A sign-in is kept in a file there, never in the operating system's keyring.

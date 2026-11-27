@@ -262,7 +262,7 @@ class ClaudeAgent(BaseExternalAgent):
         "options_kwargs": "deprecated; use the named parameters instead",
         "oauth_token": "a credential; set it on the agent in the serving AgentOS's code",
     }
-    _plan_blocked_env: ClassVar[Tuple[str, ...]] = (
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = (
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "CLAUDE_CODE_USE_BEDROCK",
@@ -317,13 +317,13 @@ class ClaudeAgent(BaseExternalAgent):
         if self.project_key is None:
             self.project_key = self.get_id()
 
-    def _plan_env(self) -> Optional[Dict[str, str]]:
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
         return {"CLAUDE_CODE_OAUTH_TOKEN": self.oauth_token.strip()} if self.oauth_token is not None else None
 
-    def _check_plan(self) -> None:
+    def _check_subscription(self) -> None:
         if self.oauth_token is not None and not self.oauth_token.strip():
             raise ValueError(
-                f"{self.get_id()} is set to run on a Claude plan, but its OAuth token is empty. Make one with "
+                f"{self.get_id()} is set to run on a Claude subscription, but its OAuth token is empty. Make one with "
                 "`claude setup-token`. ANTHROPIC_API_KEY was not used."
             )
 
@@ -448,12 +448,16 @@ class ClaudeAgent(BaseExternalAgent):
         # Keep the old dictionary's precedence during migration, without allowing it to
         # override the native session selected by Agno or disable requested streaming.
         opts.update(self.options_kwargs)
-        plan = self._plan_env()
-        if plan is not None:
-            self._check_plan()
+        subscription = self._subscription_env()
+        if subscription is not None:
+            self._check_subscription()
             # Claude Code inherits this process's environment, where a variable cannot be removed:
             # an empty value is one it does not use.
-            opts["env"] = {**(opts.get("env") or {}), **{name: "" for name in self._plan_blocked_env}, **plan}
+            opts["env"] = {
+                **(opts.get("env") or {}),
+                **{name: "" for name in self._subscription_blocked_env},
+                **subscription,
+            }
         partial = opts.get("include_partial_messages", False)
         if (partial and not streaming) or ("include_partial_messages" in self.options_kwargs and partial != streaming):
             raise ValueError("ClaudeAgent manages include_partial_messages; use run/arun(stream=...).")

@@ -321,25 +321,25 @@ class BaseExternalAgent:
         """Whether native policy can ask for permission and a database can hold the paused run."""
         return False
 
-    # Variables that would make the harness bill something other than the plan; see _plan_env.
-    _plan_blocked_env: ClassVar[Tuple[str, ...]] = ()
+    # Variables that would make the harness bill something other than the subscription; see _subscription_env.
+    _subscription_blocked_env: ClassVar[Tuple[str, ...]] = ()
 
-    def _plan_env(self) -> Optional[Dict[str, str]]:
-        """The variables that sign this agent's harness in with a vendor plan; None on API keys.
+    def _subscription_env(self) -> Optional[Dict[str, str]]:
+        """The variables that sign this agent's harness in with a vendor subscription; None on API keys.
 
-        When this is not None the harness is never given the variables in _plan_blocked_env.
+        When this is not None the harness is never given the variables in _subscription_blocked_env.
         """
         return None
 
-    def _check_plan(self) -> None:
-        """Raise when this agent is set to run on a plan and its plan credential cannot be used."""
+    def _check_subscription(self) -> None:
+        """Raise when this agent is set to run on a subscription and its subscription credential cannot be used."""
 
     def _sandbox_login(self) -> Any:
         """What writes this agent's login into a sandbox before a turn and saves it after; None for none."""
         return None
 
     @asynccontextmanager
-    async def _aplan_slot(self) -> AsyncIterator[None]:
+    async def _asubscription_slot(self) -> AsyncIterator[None]:
         """Held for the length of one run by an agent that runs one piece of work at a time.
 
         Raises AgentBusyError when another run holds it.
@@ -2275,7 +2275,7 @@ class BaseExternalAgent:
         try:
             if parent_id is None:
                 # Before anything starts: the caller of a busy agent is refused, and no run is stored.
-                await slot.enter_async_context(self._aplan_slot())
+                await slot.enter_async_context(self._asubscription_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2288,7 +2288,7 @@ class BaseExternalAgent:
                 async with self._run_cancellation(run_id):
                     if parent_id is not None:
                         # A team or workflow reads a busy member's refusal as that member's failed run.
-                        await slot.enter_async_context(self._aplan_slot())
+                        await slot.enter_async_context(self._asubscription_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2452,7 +2452,7 @@ class BaseExternalAgent:
         try:
             if parent_id is None:
                 # Before the first event, as in the non-streaming path.
-                await slot.enter_async_context(self._aplan_slot())
+                await slot.enter_async_context(self._asubscription_slot())
             history = (
                 self._get_history_from_session(session, exclude_run_id=run_id) if session and not continuation else None
             )
@@ -2490,7 +2490,7 @@ class BaseExternalAgent:
             try:
                 async with self._run_cancellation(run_id):
                     if parent_id is not None:
-                        await slot.enter_async_context(self._aplan_slot())
+                        await slot.enter_async_context(self._asubscription_slot())
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1

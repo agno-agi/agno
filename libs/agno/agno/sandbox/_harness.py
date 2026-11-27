@@ -42,7 +42,7 @@ _RUNTIME_OWNED = frozenset(
         "exponential_backoff",
         # Shown to a team leader on the host; the harness inside the sandbox never reads it.
         "role",
-        # Plan credentials reach the sandbox as its environment or its login file, never in a request.
+        # Subscription credentials reach the sandbox as its environment or its login file, never in a request.
         "oauth_token",
         "auth_json",
         "access_token",
@@ -232,17 +232,17 @@ def env(agent: "BaseExternalAgent") -> Dict[str, str]:
         raise ValueError("Sandbox repository access requires GITHUB_READ_TOKEN; remove GITHUB_TOKEN")
     # Claude Code on Bedrock or Vertex authenticates with cloud credentials, so a host key
     # would go unused while agent code inside the sandbox could still read it.
-    plan = agent._plan_env()
-    if plan is None and runtime == "claude" and any(configured.get(flag) for flag in _CLAUDE_CLOUD_FLAGS):
+    subscription = agent._subscription_env()
+    if subscription is None and runtime == "claude" and any(configured.get(flag) for flag in _CLAUDE_CLOUD_FLAGS):
         return configured
     values = {key: os.environ[key] for key in _HARNESS_ENV_KEYS.get(runtime, ()) if key in os.environ}
     values.update(configured)
-    if plan is not None:
-        # An agent on a plan is signed in with the plan only: nothing that would bill an API key
+    if subscription is not None:
+        # An agent on a subscription is signed in with the subscription only: nothing that would bill an API key
         # or a cloud account reaches its sandbox, whether the host or the sandbox's env sets it.
-        for key in agent._plan_blocked_env:
+        for key in agent._subscription_blocked_env:
             values.pop(key, None)
-        values.update(plan)
+        values.update(subscription)
     return values
 
 
@@ -383,7 +383,7 @@ def _execution(agent: "BaseExternalAgent", input: Any, kwargs: Dict[str, Any]) -
     from agno.run.concurrency import get_worker_ownership
     from agno.sandbox.media import decode_media
 
-    agent._check_plan()
+    agent._check_subscription()
     # Metadata for the session the turn creates, set by the host for a team member; not a run option.
     session_metadata = kwargs.pop("_session_metadata", None)
     options = submission(agent, input, kwargs)
@@ -420,7 +420,7 @@ async def arun(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> RunOutp
     execution = _execution(agent, input, kwargs)
     await aregister_run(execution["run_id"])
     try:
-        async with agent._aplan_slot():
+        async with agent._asubscription_slot():
             run = await coordinator(agent).arun(kwargs.get("session_id") or str(uuid4()), **execution)
     finally:
         await acleanup_run(execution["run_id"])
@@ -439,7 +439,7 @@ async def astream(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> Asyn
     events: List[Dict[str, Any]] = []
     skipped = {event.value for event in agent.events_to_skip or []}
     try:
-        async with agent._aplan_slot():
+        async with agent._asubscription_slot():
             async for value in iterator:
                 if isinstance(value, RunOutput):
                     if agent.store_events:
