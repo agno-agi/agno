@@ -1754,7 +1754,9 @@ async def test_auto_accept_revocation_after_queue_and_scope_changes_during_check
     with pytest.raises(ValueError, match="revoked"):
         await executor._dispatch(ready)
     assert (await execute(worker))["status"] == "failed"
-    assert (await _call(db, "get_task", task["id"]))["status"] != "in_review"
+    # The refused run produced no work. Its Task is withdrawn to Backlog, or waits in review with the refusal.
+    saved = await _call(db, "get_task", task["id"])
+    assert saved["status"] == "backlog" or (saved["status"], saved["result"]["status"]) == ("in_review", "ERROR")
 
 
 @pytest.mark.asyncio
