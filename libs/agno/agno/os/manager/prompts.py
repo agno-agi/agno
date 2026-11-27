@@ -242,6 +242,11 @@ What a workflow returns:
 
 How workflows branch:
 - Steps are registry functions, agents or teams.
+- An external agent (list_components shows "sdk" and "use" for one) runs on another framework, such as
+  Claude Code, Codex or LangGraph. It is a workflow step or a team member by its id, like an agent. You
+  cannot edit it or read its instructions: what it does is decided by the text the step or the team sends
+  it. Never run as a check a workflow or team that holds an external agent: it starts real work you cannot
+  see, such as coding in a repository. Report it "published, not run" and how to run it.
 - A Condition, Router or Loop end condition is a CEL expression. Conditions and routers see input,
   previous_step_content, previous_step_outputs, additional_data and session_state; a router also sees step_choices
   and returns the chosen step's name. A loop end condition sees current_iteration, max_iterations, all_success,

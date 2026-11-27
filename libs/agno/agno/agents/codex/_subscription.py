@@ -19,7 +19,9 @@ import hashlib
 import json
 import os
 import re
+import random
 import threading
+import time
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +45,16 @@ _WRITE = (
     "f = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)\n"
     "os.write(f, sys.stdin.buffer.read())\nos.close(f)\nos.chmod(p, 0o600)\n"
 )
+
+# How long a run waits for a busy agent's slot before it gives up, and how often it asks again.
+WAIT_SECONDS = 30 * 60.0
+_ASK_AGAIN_SECONDS = 2.0
+
+
+def _minutes(seconds: float) -> str:
+    minutes = max(1, round(seconds / 60))
+    return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
 
 _busy_lock = threading.Lock()
 _busy: Set[str] = set()
@@ -368,20 +380,51 @@ async def _finish(task: "asyncio.Future[Any]") -> Any:
 
 
 @asynccontextmanager
-async def one_at_a_time(agent: Any) -> AsyncIterator[None]:
-    """Hold the agent's one slot for a run, or raise AgentBusyError when another run has it.
+async def one_at_a_time(agent: Any, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
+    """Hold the agent's one slot for a run.
 
-    Nothing waits here. A run the durable queue owns goes back to the queue on that error, because
-    the queue is where work waits, and is started again when the agent is free.
+    Without ``wait``, AgentBusyError is raised at once when another run has the slot. That is the
+    answer for a caller who should not be kept waiting, and for a run the durable queue owns: the
+    queue takes that run back and starts it again when the agent is free.
+
+    With ``wait``, the run waits its turn: it asks again every few seconds until the slot is free,
+    for up to WAIT_SECONDS, and then raises AgentBusyError saying it waited that long. Turns are
+    not taken in order: whichever waiting run asks first after a release gets the slot. A run
+    cancelled while it waits (``run_id``) raises RunCancelledException and never runs on the slot:
+    it stops waiting, or gives the slot straight back when it came free after the cancel.
     """
-    release = await _finish(asyncio.ensure_future(_take(agent)))
-    if release is None:
-        raise AgentBusyError(
-            f"{agent.get_id()} is busy. It runs on a ChatGPT subscription, one piece of work at a time. "
-            "Try again when its current run finishes.",
-            agent_id=agent.get_id(),
-        )
+    from agno.exceptions import RunCancelledException
+    from agno.run.cancel import ais_cancelled
+
+    agent_id = agent.get_id()
+    deadline = time.monotonic() + WAIT_SECONDS
+    waited = False
+    while True:
+        release = await _finish(asyncio.ensure_future(_take(agent)))
+        if release is not None:
+            break
+        waited = True
+        if not wait:
+            raise AgentBusyError(
+                f"{agent_id} is busy. It runs on a ChatGPT subscription, one piece of work at a time. "
+                "Try again when its current run finishes.",
+                agent_id=agent_id,
+            )
+        if time.monotonic() >= deadline:
+            raise AgentBusyError(
+                f"{agent_id} was still busy after this work waited {_minutes(WAIT_SECONDS)} for its turn, so it "
+                "was not started. It runs on a ChatGPT subscription, one piece of work at a time. Run it again "
+                "when its current work finishes.",
+                agent_id=agent_id,
+            )
+        if run_id is not None and await ais_cancelled(run_id):
+            raise RunCancelledException(run_id)
+        # A little apart, so runs waiting on one agent do not all ask at the same moment.
+        await asyncio.sleep(_ASK_AGAIN_SECONDS + random.uniform(0, _ASK_AGAIN_SECONDS / 4))
     try:
+        # The slot may have come free after the waiting run was cancelled: that run gives it back.
+        if waited and run_id is not None and await ais_cancelled(run_id):
+            raise RunCancelledException(run_id)
         yield
     finally:
         await _finish(asyncio.ensure_future(release()))
