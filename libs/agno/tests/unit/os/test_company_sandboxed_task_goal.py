@@ -183,6 +183,11 @@ def test_a_source_the_sandbox_cannot_read_is_reported_with_its_reason(system):
         # The Source is there already: the person is not told to add it again.
         assert "No Goal has one that can be used" in reply and "add " + URL not in reply, reply
     assert "Goal 'Private' has none it can use" in reply, reply
+    # Named another Goal, the person is told which Goal the Task goes under once that is fixed.
+    docs = goal(client, "Docs", reference=None)
+    reply = add(agent_os, goal_id=docs["id"], **ENGINEER)
+    assert "Goal 'Docs' has none" in reply and f"Goal 'Private' ({private['id']}) has one" in reply, reply
+    assert reply.endswith("fix that, then add the Task under that Goal."), reply
     assert tasks(db) == []
     # A Goal whose Source can be used is still the one the Task is filed under.
     platform = goal(client, "Platform")
@@ -192,6 +197,7 @@ def test_a_source_the_sandbox_cannot_read_is_reported_with_its_reason(system):
 def test_in_a_project_the_projects_goal_decides(system):
     client, db, agent_os, queue = system
     platform, docs = goal(client, "Platform"), goal(client, "Docs", reference=None)
+    maintenance = goal(client, "Maintenance")
     projects = {}
     for row in (platform, docs):
         project = client.post(
@@ -213,9 +219,13 @@ def test_in_a_project_the_projects_goal_decides(system):
     for project_id, has in ((projects["Docs"], "Goal 'Docs' has none"), (loose["id"], "its Project has no Goal")):
         for arguments in ({}, {"goal_id": platform["id"]}):
             reply = add(agent_os, project_id=project_id, **arguments, **ENGINEER)
-            assert has in reply and f"'Platform' ({platform['id']})" in reply, reply
-            assert "leave project_id out and pass that goal_id, or use a Project of that Goal" in reply, reply
-            assert "Ask the person which Goal" not in reply, reply
+            assert has in reply, reply
+            # The person still chooses among the Goals that fit: the tool does not pick one.
+            assert f"'Platform' ({platform['id']})" in reply and f"'Maintenance' ({maintenance['id']})" in reply
+            assert (
+                "Ask the person which Goal it belongs to, then pass that goal_id and leave project_id out, "
+                "or use a Project of that Goal"
+            ) in reply, reply
     assert tasks(db) == []
     assert add(agent_os, project_id=projects["Platform"], **ENGINEER).startswith("Recorded")
     assert add(agent_os, goal_id=platform["id"], **ENGINEER).startswith("Recorded")

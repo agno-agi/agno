@@ -128,15 +128,15 @@ def _no_sandbox_goal(
     )
     if goals:
         names = ", ".join(f"'{row['name']}' ({row['id']})" for row in goals[:10])
-        then = (
-            "A Task in a Project takes the Project's Goal, so leave project_id out and pass that goal_id, "
-            "or use a Project of that Goal"
-            if in_project
-            else "Ask the person which Goal it belongs to, then pass that goal_id"
-        )
+        then = "Ask the person which Goal it belongs to, then pass that goal_id"
+        if in_project:
+            # Another goal_id with the same Project is refused the same way.
+            then += (
+                " and leave project_id out, or use a Project of that Goal: a Task in a Project takes the Project's Goal"
+            )
         way = f"Goals that have one: {names}. {then}"
     elif unusable:
-        way = "No Goal has one that can be used: fix that, then add the Task"
+        way = "No Goal has one that can be used: fix that, then add the Task under that Goal"
     else:
         way = f"No Goal has one: add {url} as a git Source to the Goal this work belongs to, then add the Task"
     return (
