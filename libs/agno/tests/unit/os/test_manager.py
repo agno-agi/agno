@@ -2472,13 +2472,13 @@ def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():
     assert "show that a component can be built, not what it returns" in said
     # The check run does not reach work that acts outside, and an agent or team is still run only on request.
     assert "Run an agent or a team only if asked." in said
+    assert "Never run as a check a component whose tools send, publish, push or spend, or wait for approval." in said
+    # A step function is not a tool and runs for real: the check runs only when each one reads or computes.
+    assert "A step function runs for real on your sample input" in said
     assert (
-        "Never run as a check a component whose tools or step functions send, publish, push or spend, "
-        "or wait for approval."
+        "run the check only when the description of each one in list_functions shows that it only reads or computes"
     ) in said
-    # A step function is not a tool, and it runs for real: the check run leaves out one it cannot vouch for.
-    assert "Judge a step function by its description in list_functions" in said
-    assert "do not run it when that does not say what it does" in said
+    assert "not when it creates, saves, changes, sends or deletes anything, or does not say" in said
     assert "Run the result only if asked" not in said
 
 
@@ -2506,6 +2506,9 @@ def test_platform_builder_is_told_what_a_workflow_returns():
     assert "no verdict and no review notes" in said
     assert "Only when a loop end condition reads the verdict does the step add it, on the last line." in said
     assert "with its verdict on the last line" not in said
+    # The gate matches a word, so the rejection must not contain it.
+    assert 'Review gate: last_step_content.contains("APPROVED").' in said
+    assert "The reviewer's other verdict must not contain that word: REVISE, never NOT APPROVED" in said
     # A condition with no else branch is never the end of a workflow, nor what an agent step is sent.
     assert "and an agent or team step after it is sent that text as its input" in said
     assert "Never end a workflow or a loop with one, and never put an agent or team step straight after one" in said
