@@ -89,6 +89,7 @@ TASK_RUN_TOOLS = {
     "add_company_task",
     "move_company_task",
     "start_company_task",
+    "message_company_task",
     "get_company_task_status",
     "approve_company_project",
     "accept_company_task",

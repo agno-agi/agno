@@ -469,6 +469,7 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
             "add_company_task",
             "move_company_task",
             "start_company_task",
+            "message_company_task",
             "get_company_task_status",
             "approve_company_project",
             "accept_company_task",

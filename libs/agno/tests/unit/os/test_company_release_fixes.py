@@ -616,6 +616,7 @@ def test_every_optional_argument_of_the_chat_tools_is_nullable_in_the_schema(sys
     assert optional == {
         "add_company_task": {"project_id", "goal_id", "executor_type", "executor_id", "context"},
         "move_company_task": {"project_id"},
+        "message_company_task": {"context"},
         "approve_company_project": {"updated_at"},
         "accept_company_task": {"executor_type", "executor_id"},
         "review_company_task": {"executor_type", "executor_id"},
