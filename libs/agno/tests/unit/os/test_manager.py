@@ -2472,8 +2472,26 @@ def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():
     assert "show that a component can be built, not what it returns" in said
     # The check run does not reach work that acts outside, and an agent or team is still run only on request.
     assert "Run an agent or a team only if asked." in said
-    assert "Never run as a check a component whose tools send, publish, push or spend, or wait for approval." in said
+    assert (
+        "Never run as a check a component whose tools or step functions send, publish, push or spend, "
+        "or wait for approval."
+    ) in said
+    # A step function is not a tool, and it runs for real: the check run leaves out one it cannot vouch for.
+    assert "Judge a step function by its description in list_functions" in said
+    assert "do not run it when that does not say what it does" in said
     assert "Run the result only if asked" not in said
+
+
+def test_platform_builder_does_not_rewrite_or_publish_what_its_check_run_did_not_break():
+    from agno.os.manager.prompts import BUILDER_INSTRUCTIONS
+
+    said = " ".join(BUILDER_INSTRUCTIONS.split())
+    # A function that refuses the made-up input says nothing about the steps.
+    assert 'When a step function answered "Error: " because it could not use your sample input' in said
+    assert "the steps are not wrong: leave them and report the input and the text" in said
+    # A draft is checked as the draft, and a fix does not publish it.
+    assert "A draft the person asked to review stays a draft: run it by passing its version to run_workflow" in said
+    assert "and save a fix as a draft too" in said
 
 
 def test_platform_builder_is_told_what_a_workflow_returns():
@@ -2483,9 +2501,14 @@ def test_platform_builder_is_told_what_a_workflow_returns():
     assert "A workflow returns the output of its last step, and nothing from the steps before it." in said
     assert "is sent only the previous step's output: not the workflow input, not any earlier step" in said
     assert "End with the step that produces what the person asked for." in said
-    assert "that step must return the work in full, corrected where needed" in said
-    # A condition with no else branch is never the end of a workflow.
-    assert "Never end a workflow or a loop with one." in said
+    # The person asked for the work, so a verdict is added only where a loop reads it.
+    assert "that step must return the work in full, corrected where needed, and nothing else" in said
+    assert "no verdict and no review notes" in said
+    assert "Only when a loop end condition reads the verdict does the step add it, on the last line." in said
+    assert "with its verdict on the last line" not in said
+    # A condition with no else branch is never the end of a workflow, nor what an agent step is sent.
+    assert "and an agent or team step after it is sent that text as its input" in said
+    assert "Never end a workflow or a loop with one, and never put an agent or team step straight after one" in said
     # Only function steps return "Error: " text, so only they need an error branch.
     assert "Only a workflow with a function step needs an error branch" in said
     assert "give every workflow that can fail" not in said
