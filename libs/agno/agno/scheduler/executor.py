@@ -414,8 +414,10 @@ class ScheduleExecutor:
             "Authorization": f"Bearer {self.internal_service_token}",
         }
         if has_authority:
-            # Loaded from the schedule, where it was stored when a person saved it
-            headers[AUTHORIZATION_HEADER] = json.dumps({**snapshot, "saved": True}, ensure_ascii=True)
+            # Loaded from the schedule, where it was stored when a person saved it. It is None when the
+            # schedule was saved with authorization off, and is forwarded as it is.
+            saved = {**snapshot, "saved": True} if snapshot is not None else None
+            headers[AUTHORIZATION_HEADER] = json.dumps(saved, ensure_ascii=True)
         if schedule.user_id is not None:
             # Percent-encoded: header values must be latin-1, and padded ids stay distinct from bare ones
             headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
