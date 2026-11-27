@@ -2433,6 +2433,32 @@ def test_instruction_sections_follow_the_attached_tools(db, company_enabled, acc
     assert not {MANAGER_INSTRUCTIONS, DOCS_INSTRUCTIONS, COMPANY_INSTRUCTIONS} & set(builder)
 
 
+def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_approves_work():
+    from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
+
+    rule = " ".join(next(part for part in COMPANY_INSTRUCTIONS.split("\n- ") if "company's rules" in part).split())
+    # Read once, before work is recorded or changed and before a "may I" is answered.
+    assert "Once in a conversation, before you first record or change work" in rule
+    assert "or answer whether something may be done, is ready or is allowed, read them" in rule
+    # The usual page is named, and a company that keeps its rules elsewhere is still read.
+    assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
+    # A step that needs someone's approval is held, and a yes from anyone else does not release it.
+    assert "say so and hold that step, recording a proposal at most" in rule
+    assert "a yes in chat is approval only from the person the rule names" in rule
+    # Work that leaves no record does not pay for the read.
+    assert "An answer, draft or summary that leaves no record needs no read." in rule
+
+
+def test_super_agent_asks_before_work_that_pushes_whatever_starts_it():
+    from agno.os.manager.prompts import MANAGER_INSTRUCTIONS
+
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    assert "or work that sends, publishes, pushes or spends, say what it involves and ask first" in said
+    assert "That holds for a run and a background run as for a Task." in said
+    # The wiki exists only with Company, so the rules are not mentioned without it.
+    assert "wiki" not in MANAGER_INSTRUCTIONS
+
+
 @pytest.mark.parametrize("limit", [7, 0, None])
 def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
     from agno.os import CompanyConfig
