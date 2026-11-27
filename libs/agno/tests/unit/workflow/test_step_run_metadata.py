@@ -1,7 +1,7 @@
 """A workflow step can set the metadata of its agent's or team's run.
 
-A sandboxed coding engineer reads what to check out from that metadata, and works in a session of
-its own per checkout.
+A sandboxed external agent (Claude Code, Codex) reads what to check out from that metadata, and works in
+a session of its own per checkout.
 """
 
 import asyncio
@@ -86,7 +86,7 @@ MODES = ["run", "run_stream", "arun", "arun_stream"]
 
 
 def pull_request_of_the_input(step_input: StepInput) -> Dict[str, Any]:
-    """The pull request the workflow was given, as the checkout for a coding engineer."""
+    """The pull request the workflow was given, as the checkout for an external agent."""
     return {"repository": {"pull_request": int(str(step_input.input).rsplit("/", 1)[-1])}}
 
 
@@ -171,14 +171,82 @@ def test_run_metadata_is_stored_with_the_step_and_loaded_again():
     assert lenient.to_dict()["run_metadata_ref"] == "pull_request_of_the_input"
 
 
+def test_a_copy_of_the_workflow_keeps_run_metadata():
+    """AgentOS runs each request on a copy of the workflow, so the copy has to carry the option."""
+    from agno.os.utils import get_workflow_by_id
+
+    fixed = {"repository": {"branch": "release"}}
+    workflow = Workflow(
+        id="wf",
+        steps=[
+            Step(name="fixed", agent=Agent(id="fixed"), run_metadata=fixed),
+            Step(name="from-input", agent=Agent(id="from-input"), run_metadata=pull_request_of_the_input),
+        ],
+    )
+
+    for copy in (workflow.deep_copy(), get_workflow_by_id("wf", [workflow], create_fresh=True)):
+        assert copy is not None and copy is not workflow
+        first, second = copy.steps  # type: ignore[misc]
+        assert first.run_metadata == fixed
+        # A copy of the dict: a change made on one request's copy does not reach the next.
+        assert first.run_metadata is not fixed and first.run_metadata["repository"] is not fixed["repository"]
+        assert second.run_metadata is pull_request_of_the_input
+
+
+def test_a_run_metadata_function_is_collected_into_the_registry():
+    """It is stored by name, so the registry AgentOS builds from its workflows has to hold it for a reload."""
+    from agno.os.utils import collect_components_from_workflow
+
+    step = Step(name="from-input", agent=Agent(id="coder"), run_metadata=pull_request_of_the_input)
+    # The agent is registered by AgentOS itself; the walk is what has to find the function.
+    registry = Registry(agents=[Agent(id="coder")])
+    assert registry.get_function("pull_request_of_the_input") is None
+
+    collect_components_from_workflow(Workflow(id="wf", steps=[step]), registry, set())
+
+    assert registry.get_function("pull_request_of_the_input") is pull_request_of_the_input
+    loaded = Step.from_dict(step.to_dict(), registry=registry, strict=True)
+    assert loaded.run_metadata is pull_request_of_the_input
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_run_metadata_is_added_to_the_metadata_of_the_workflow_run(runs, mode):
+    """An agent or team reads the workflow run's metadata from the run context; the step's must not replace it."""
+    workflow = Workflow(
+        id="wf",
+        metadata={"tenant": "acme", "topic": "of the workflow"},
+        steps=[
+            Step(name="plain", agent=Agent(id="plain")),
+            Step(name="agent", agent=Agent(id="agent"), run_metadata={"repository": {"branch": "release"}}),
+            Step(name="team", team=Team(id="team", members=[Agent(id="m")]), run_metadata={"topic": "of the step"}),
+        ],
+    )
+
+    _drain(workflow, mode)
+
+    by_id = {run["id"]: run for run in runs}
+    # No run_metadata: nothing is passed, and the run reads the workflow's from its run context as before.
+    assert "metadata" not in by_id["plain"]
+    assert by_id["plain"]["run_context"].metadata == {"tenant": "acme", "topic": "of the workflow"}
+    assert by_id["agent"]["metadata"] == {
+        "tenant": "acme",
+        "topic": "of the workflow",
+        "repository": {"branch": "release"},
+    }
+    # The step's value wins on a key both set.
+    assert by_id["team"]["metadata"] == {"tenant": "acme", "topic": "of the step"}
+    # The workflow's own metadata is not changed by a step.
+    assert workflow.metadata == {"tenant": "acme", "topic": "of the workflow"}
+
+
 # ---------------------------------------------------------------------------
-# A sandboxed engineer: one session per checkout
+# A sandboxed external agent: one session per checkout
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def engineer(db, monkeypatch: pytest.MonkeyPatch):
-    """A sandboxed engineer whose sandbox turns are recorded and never started."""
+def external_agent(db, monkeypatch: pytest.MonkeyPatch):
+    """A sandboxed external agent whose sandbox turns are recorded and never started."""
     from agno.db.postgres import PostgresDb
     from agno.sandbox import _harness
 
@@ -203,8 +271,8 @@ def engineer(db, monkeypatch: pytest.MonkeyPatch):
     return coder, turns
 
 
-def test_a_sandboxed_steps_options_name_a_session_per_checkout(engineer):
-    coder, _ = engineer
+def test_a_sandboxed_steps_options_name_a_session_per_checkout(external_agent):
+    coder, _ = external_agent
 
     def session(metadata: Optional[Dict[str, Any]]) -> str:
         options = {"run_id": "r1", "session_id": "w1", **({"metadata": metadata} if metadata is not None else {})}
@@ -220,8 +288,8 @@ def test_a_sandboxed_steps_options_name_a_session_per_checkout(engineer):
 
 
 @pytest.mark.parametrize("mode", ["run", "arun"])
-def test_one_engineer_in_two_steps_checks_out_two_refs_in_two_sessions(db, engineer, mode):
-    coder, turns = engineer
+def test_one_external_agent_in_two_steps_checks_out_two_refs_in_two_sessions(db, external_agent, mode):
+    coder, turns = external_agent
     workflow = Workflow(
         id="wf",
         db=db,
@@ -246,9 +314,9 @@ def test_one_engineer_in_two_steps_checks_out_two_refs_in_two_sessions(db, engin
     ]
 
 
-def test_a_team_run_for_a_pull_request_sends_its_engineer_member_to_that_checkout(db, engineer):
-    """A team passes its run's metadata to each member call, so the team's run says what the engineer checks out."""
-    coder, turns = engineer
+def test_a_team_run_for_a_pull_request_sends_its_external_agent_member_to_that_checkout(db, external_agent):
+    """A team passes its run's metadata to each member call, so the team's run says what the member checks out."""
+    coder, turns = external_agent
     script = [_delegate("claude-1", "Review it", "c1"), ("content", "done")]
     team = Team(id="team", name="Team", members=[coder], model=_ScriptedModel(script), db=db)
 
@@ -258,3 +326,36 @@ def test_a_team_run_for_a_pull_request_sends_its_engineer_member_to_that_checkou
     [turn] = turns
     assert turn["session_id"] == "t1:claude-1@pr-7"
     assert turn["metadata"] == {"repository": {"pull_request": 7}}
+
+
+def test_a_copied_workflow_sends_its_external_agent_to_the_pull_request(db, external_agent):
+    """The path an AgentOS request takes: the workflow is copied, then run."""
+    coder, turns = external_agent
+    workflow = Workflow(
+        id="wf",
+        db=db,
+        steps=[Step(name="the pull request", agent=coder, run_metadata=pull_request_of_the_input)],
+    )
+
+    output = workflow.deep_copy().run(input="https://github.com/acme/app/pull/7", session_id="w1")
+
+    assert output.status == RunStatus.completed
+    assert [(turn["session_id"], turn["metadata"]) for turn in turns] == [
+        ("w1:claude-1@pr-7", {"repository": {"pull_request": 7}}),
+    ]
+
+
+def test_an_external_agent_step_gets_the_steps_metadata_alone(db, external_agent):
+    """An external agent takes no metadata from the run context, so its step adds the workflow's none."""
+    coder, turns = external_agent
+    workflow = Workflow(
+        id="wf",
+        db=db,
+        metadata={"tenant": "acme"},
+        steps=[Step(name="the pull request", agent=coder, run_metadata=pull_request_of_the_input)],
+    )
+
+    output = workflow.run(input="https://github.com/acme/app/pull/7", session_id="w1")
+
+    assert output.status == RunStatus.completed
+    assert [turn["metadata"] for turn in turns] == [{"repository": {"pull_request": 7}}]

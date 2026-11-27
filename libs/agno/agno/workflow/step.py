@@ -339,7 +339,8 @@ class Step:
 
     # Metadata for the run of this step's agent or team: a dict, or a function that is given the step
     # input (and the run context, when it names a run_context parameter) and returns a dict or None.
-    # A coding engineer in a sandbox reads its checkout from it, for example
+    # For an Agent or Team it is added to the metadata of the workflow's run, and wins on a shared key.
+    # An external agent in a sandbox reads its checkout from it, for example
     # {"repository": {"pull_request": 123}} or {"repository": {"branch": "release"}}.
     run_metadata: Optional[Union[Dict[str, Any], Callable[..., Optional[Dict[str, Any]]]]] = None
 
@@ -1539,6 +1540,14 @@ class Step:
             return {}
         if not isinstance(value, dict):
             raise ValueError(f"Step '{self.name}' run_metadata must be a dict, or a function that returns one")
+        from agno.agents.base import BaseExternalAgent
+
+        inherited = run_context.metadata if run_context is not None else None
+        if inherited and not isinstance(self.active_executor, BaseExternalAgent):
+            # An Agent or Team reads the workflow run's metadata from the run context, and metadata passed
+            # to its run replaces that. So the step's is added to it: the run keeps what it had without the
+            # step's. An external agent takes none from the run context, so it gets the step's alone.
+            value = {**inherited, **value}
         return {"metadata": value}
 
     def _function_has_run_context_param(self) -> bool:

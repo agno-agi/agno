@@ -11865,6 +11865,11 @@ class Workflow:
                     # Only include non-default values to avoid overriding defaults
                     if value is not None:
                         step_kwargs[attr] = value
+            if step.run_metadata is not None:
+                # A function is shared, like an executor; a dict is copied, so one request's copy never changes another's.
+                step_kwargs["run_metadata"] = (
+                    step.run_metadata if callable(step.run_metadata) else deepcopy(step.run_metadata)
+                )
             return Step(**step_kwargs)
 
         # Handle direct Agent
