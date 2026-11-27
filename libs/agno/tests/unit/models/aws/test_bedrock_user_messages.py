@@ -313,7 +313,7 @@ def test_assistant_text_is_kept_beside_its_tool_calls(model: AwsBedrock):
     assert turns[1]["content"][0] == {"text": "Let me look that up."}
 
 
-@pytest.mark.parametrize("content", [None, ""])
+@pytest.mark.parametrize("content", [None, "", "\n\n", "  "])
 def test_assistant_tool_calls_without_text_have_no_text_block(model: AwsBedrock, content: Any):
     turns, _ = model._format_messages(
         [

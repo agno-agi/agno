@@ -376,8 +376,9 @@ class AwsBedrock(Model):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
                     tool_use_content: List[Dict[str, Any]] = []
-                    # Text the model wrote ahead of its tool calls is replayed ahead of them
-                    if message.content:
+                    # Text the model wrote ahead of its tool calls is replayed ahead of them.
+                    # Whitespace alone is left out: Converse refuses a blank text block.
+                    if isinstance(message.content, str) and message.content.strip():
                         tool_use_content.append({"text": message.content})
                     for tool_call in message.tool_calls:
                         try:
