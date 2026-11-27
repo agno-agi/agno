@@ -47,7 +47,8 @@ from agno.run.authorization import requires_permission
 from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools
 from agno.utils.log import logger
 
-# The most of a run's result the check tool returns. A longer result is cut, and says so.
+# The most of a run's result the check tool returns in one call. A longer result is cut, the result says
+# so, and offset reads on from the cut.
 RESULT_LENGTH = 6000
 
 _KINDS = ("agent", "team", "workflow")
@@ -664,7 +665,7 @@ class BackgroundRunTools(StudioRunnerTools):
     # Check
     # ------------------------------------------------------------------
 
-    def _checked(self, run_context: Any, run_id: str, row: Any) -> str:
+    def _checked(self, run_context: Any, run_id: str, row: Any, offset: int = 0) -> str:
         """What check_background_run returns for a listed run and its stored row."""
         from agno.db.utils import deserialize_run
 
@@ -692,10 +693,18 @@ class BackgroundRunTools(StudioRunnerTools):
             payload["status"] = status
         payload["meaning"] = RUN_STATUS_MEANING.get(status, status.lower())
         content = payload.get("content")
-        if isinstance(content, str) and len(content) > RESULT_LENGTH:
-            payload["content"] = content[:RESULT_LENGTH]
-            payload["note"] = f"The result is cut to its first {RESULT_LENGTH} of {len(content)} characters."
-        return json.dumps(payload, default=str)
+        if isinstance(content, str):
+            # The part of the whole result this call returns.
+            start = min(max(offset if isinstance(offset, int) else 0, 0), len(content))
+            end = min(start + RESULT_LENGTH, len(content))
+            if start or end < len(content):
+                payload["content"] = content[start:end]
+                shown = f"characters {start} to {end}" if start else f"the first {end}"
+                more = f" Read on with offset={end}." if end < len(content) else " This is the end of the result."
+                payload["note"] = f"The result is long: this is {shown} of {len(content)} characters.{more}"
+        # Written as it is. Escaped, a part in Russian or Chinese is five or six times as long, which is
+        # over the size at which Super Agent's tool results are stored away and shown as a preview.
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
     def _check_refusal(self, run_context: Any, run_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         entry = run_entry(run_context, run_id)
@@ -706,14 +715,18 @@ class BackgroundRunTools(StudioRunnerTools):
         return entry, None
 
     @requires_permission()
-    def check_background_run(self, run_id: str, _agno_run_context: Optional[Any] = None) -> str:
+    def check_background_run(self, run_id: str, offset: int = 0, _agno_run_context: Optional[Any] = None) -> str:
         """Read a run this conversation started in the background: its status, and its result when it has one.
 
         A PAUSED run waits for a person: the result carries what it asks for. It is resumed through
         the platform, never by running the component again.
 
+        A long result comes in parts: 'note' says how much was returned and the offset to read on from.
+        Read the rest before you report on a result whose end you have not seen.
+
         Args:
             run_id (str): The run id from the start_background_run receipt.
+            offset (int): Where in the result to start, in characters. 0 reads from the start.
 
         Returns:
             str: JSON object with the component id, 'run_id', 'session_id', 'status', 'meaning' and,
@@ -734,7 +747,7 @@ class BackgroundRunTools(StudioRunnerTools):
             row = get_stored_run(stores, run_id)
             if row is _UNREAD:
                 return json.dumps({"error": "Reading this run needs an asynchronous run."})
-            return self._checked(_agno_run_context, run_id, row)
+            return self._checked(_agno_run_context, run_id, row, offset)
         except PermissionError as exc:
             return json.dumps({"error": f"Cannot read the run: {exc}"})
         except Exception as exc:
@@ -742,14 +755,18 @@ class BackgroundRunTools(StudioRunnerTools):
             return json.dumps({"error": f"Cannot read the run: {str(exc) or type(exc).__name__}"})
 
     @requires_permission()
-    async def acheck_background_run(self, run_id: str, _agno_run_context: Optional[Any] = None) -> str:
+    async def acheck_background_run(self, run_id: str, offset: int = 0, _agno_run_context: Optional[Any] = None) -> str:
         """Read a run this conversation started in the background: its status, and its result when it has one.
 
         A PAUSED run waits for a person: the result carries what it asks for. It is resumed through
         the platform, never by running the component again.
 
+        A long result comes in parts: 'note' says how much was returned and the offset to read on from.
+        Read the rest before you report on a result whose end you have not seen.
+
         Args:
             run_id (str): The run id from the start_background_run receipt.
+            offset (int): Where in the result to start, in characters. 0 reads from the start.
 
         Returns:
             str: JSON object with the component id, 'run_id', 'session_id', 'status', 'meaning' and,
@@ -764,7 +781,7 @@ class BackgroundRunTools(StudioRunnerTools):
             authority = _authority(_agno_run_context)
             if authority is not None:
                 await authority.arequire(f"{entry.get('component_type')}s", "run", entry.get("component_id"))
-            return self._checked(_agno_run_context, run_id, await self._aget_run(entry))
+            return self._checked(_agno_run_context, run_id, await self._aget_run(entry), offset)
         except PermissionError as exc:
             return json.dumps({"error": f"Cannot read the run: {exc}"})
         except Exception as exc:
