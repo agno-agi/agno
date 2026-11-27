@@ -5447,6 +5447,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
             dependencies=dependencies,
         )
 
@@ -6891,6 +6893,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 
@@ -8937,6 +8941,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 

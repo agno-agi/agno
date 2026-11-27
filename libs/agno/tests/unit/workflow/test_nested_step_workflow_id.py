@@ -399,3 +399,38 @@ def test_step_history_reads_the_executors_session_when_none_is_given(kind):
     given = step.get_chat_history(session_id="workflow-session")
     assert len(given) > 0
     assert len(asyncio.run(step.aget_chat_history())) == len(given)
+
+
+def test_a_step_stopped_after_a_pause_on_a_new_workflow_saves_no_run_of_its_own():
+    """The continued run's context names the workflow, as a new run's does."""
+    db = InMemoryDb()
+
+    def build() -> Workflow:
+        return Workflow(
+            id="workflow",
+            db=db,
+            steps=[
+                Step(
+                    name="gate",
+                    executor=lambda step_input: StepOutput(content="passed"),
+                    human_review=HumanReview(requires_confirmation=True),
+                ),
+                Step(name="step", **_step_executor("tasks team", db)),
+            ],
+        )
+
+    async def pause_continue_and_stop():
+        paused = await build().arun(input="hello", session_id="workflow-session")
+        for requirement in paused.active_step_requirements:
+            requirement.confirm()
+        stream = await build().acontinue_run(paused, stream=True, stream_events=True)
+        async for event in stream:
+            if "RunContent" in type(event).__name__:
+                break
+        await stream.aclose()
+        # Let the cancelled run's own save finish.
+        await asyncio.sleep(0.2)
+
+    asyncio.run(pause_continue_and_stop())
+
+    assert _stored(db, "workflow-session") == ("workflow", ["workflow"])
