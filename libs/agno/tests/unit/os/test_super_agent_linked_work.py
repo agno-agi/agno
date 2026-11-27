@@ -1290,22 +1290,19 @@ def test_claude_merges_the_block_and_the_message_with_the_block_first():
 
 
 IMAGE_INPUTS = {
-    "text plus image": (lambda Message, photo: dict(input_message="Describe it", images=[photo]), "Describe it", True),
-    "None input plus images": (lambda Message, photo: dict(input_message=None, images=[photo]), "", True),
+    "text plus image": (lambda Message, photo: dict(input_message="Describe it", images=[photo]), "Describe it"),
+    "None input plus images": (lambda Message, photo: dict(input_message=None, images=[photo]), ""),
     "message with content None": (
         lambda Message, photo: dict(input_message=Message(role="user", images=[photo])),
         None,
-        False,
     ),
     "message with empty list content": (
         lambda Message, photo: dict(input_message=Message(role="user", content=[], images=[photo])),
         [],
-        False,
     ),
     "message list with empty content plus images": (
         lambda Message, photo: dict(input_message=[Message(role="user", content=[])], images=[photo]),
         [],
-        False,
     ),
 }
 
@@ -1331,7 +1328,7 @@ def test_an_image_turn_is_sent_as_it_is_without_the_block_with_the_block_before_
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkGQAAAAASUVORK5CYII="
     )
     encoded = base64.b64encode(png).decode()
-    given, content, openai_sends_photo = IMAGE_INPUTS[shape]
+    given, content = IMAGE_INPUTS[shape]
     db = SqliteDb(db_file=str(tmp_path / "team.db"))
     team = Team(id="plain", members=[], model=Scripted(), db=db)
     team.initialize_team()
@@ -1369,8 +1366,8 @@ def test_an_image_turn_is_sent_as_it_is_without_the_block_with_the_block_before_
         first, second = dump(format_all([block_message, person]))
         assert first == {"role": "user", "content": block_message.content}
         assert second == alone
-        # An explicit message with no text content carries no photo to OpenAI, with or without the block.
-        assert (encoded in json.dumps(alone)) is openai_sends_photo
+        # OpenAI is sent the photo whether or not the message has text, with or without the block.
+        assert encoded in json.dumps(alone)
 
     # Claude joins the two user messages: the block's text first, then what it sends with no block.
     ((alone,), _), ((joined,), _) = claude_messages([plain]), claude_messages([block_message, person])
