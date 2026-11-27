@@ -462,6 +462,11 @@ class TestFeatureBlocks:
 
 
 class TestResponseContract:
+    def test_name_is_reported_like_info(self, db):
+        agent_os = _os(db, name="Support OS")
+        assert _config(agent_os).json()["name"] == "Support OS"
+        assert TestClient(agent_os.get_app()).get("/info").json()["name"] == "Support OS"
+
     def test_response_varies_by_caller(self, db):
         assert "Authorization" in _config(_os(db)).headers["Vary"]
         resp = _config(_os(db, authorization=_roles()), _bearer("bob"))

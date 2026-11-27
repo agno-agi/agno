@@ -217,6 +217,7 @@ def get_base_router(
 
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
+            name=os.name,
             description=os.description,
             available_models=_collect_unique_models(os),
             os_database=os.db.id if os.db else None,
