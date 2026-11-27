@@ -214,7 +214,8 @@ class CodexAgent(BaseExternalAgent):
             text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
             because Codex replaces its tokens as it works. The agent then never uses
             OPENAI_API_KEY and runs one piece of work at a time: a run the durable queue owns
-            waits its turn, any other is refused with AgentBusyError. The refreshed sign-in is
+            waits its turn, as does a workflow step and a team member; any other run, direct or
+            in the background, is refused at once with AgentBusyError. The refreshed sign-in is
             saved, encrypted, in the agent's database after every run.
         access_token: Run on a ChatGPT Enterprise workspace instead of an API key: a Codex access
             token created on the workspace's Access tokens page, given to Codex as
@@ -494,14 +495,18 @@ class CodexAgent(BaseExternalAgent):
 
         return SandboxLogin(self)
 
+    @property
+    def _runs_one_at_a_time(self) -> bool:
+        return self.auth_json is not None
+
     @asynccontextmanager
-    async def _asubscription_slot(self) -> AsyncIterator[None]:
+    async def _asubscription_slot(self, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
         if self.auth_json is None:
             yield
             return
         from agno.agents.codex._subscription import one_at_a_time
 
-        async with one_at_a_time(self):
+        async with one_at_a_time(self, wait=wait, run_id=run_id):
             yield
 
     def _refuse_host_operation(self, operation: str) -> None:
