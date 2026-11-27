@@ -1,8 +1,10 @@
 import json
+from contextvars import ContextVar
 from datetime import date, datetime, time, timezone
 from functools import partial
 from os import getenv
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -3017,6 +3019,67 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 
 from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, RESERVED_RUN_METADATA_KEYS  # noqa: E402
 
+# Run metadata that code in this process hands to a run route it enters itself: the dispatch lineage
+# and who asked for the run. It holds one mutable dict, and the route that reads it empties it, so a
+# task that inherits this context hands nothing on. Never read from a request.
+_trusted_run_metadata: ContextVar[Optional[Dict[str, Any]]] = ContextVar("trusted_run_metadata", default=None)
+
+
+def _take_trusted_run_metadata() -> Dict[str, Any]:
+    handed = _trusted_run_metadata.get()
+    if not handed:
+        return {}
+    taken = dict(handed)
+    handed.clear()
+    return taken
+
+
+async def enter_run_route(
+    app: Any,
+    authority: Any,
+    method: str,
+    path: str,
+    *,
+    owner: Optional[str] = None,
+    form: Optional[Dict[str, str]] = None,
+    key: Optional[str] = None,
+    session_id: Optional[str] = None,
+    state: Optional[Dict[str, Any]] = None,
+    run_metadata: Optional[Dict[str, Any]] = None,
+) -> Any:
+    """Call one of this app's own routes in process, as the internal service acting for a person.
+
+    The route sees the person's authority as a snapshot and the person as the owner of what it
+    writes, and applies its own checks, as it does for a scheduled run. run_metadata is merged into
+    the run's metadata after the route has removed every runtime-owned key a request may not set.
+    """
+    import httpx
+
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+    from agno.run.authorization import AUTHORIZATION_HEADER
+
+    headers = {"Authorization": "Bearer " + app.state.internal_service_token}
+    if authority is not None:
+        headers[AUTHORIZATION_HEADER] = json.dumps(authority.snapshot())
+    if owner is not None:
+        headers[SCHEDULE_OWNER_HEADER] = quote(owner, safe="")
+    if key:
+        headers["Idempotency-Key"] = key
+
+    async def target(scope: Any, receive: Any, send: Any) -> None:
+        if state:
+            scope = {**scope, "state": {**scope.get("state", {}), **state}}
+        await app(scope, receive, send)
+
+    token = _trusted_run_metadata.set(dict(run_metadata) if run_metadata else None)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=target), base_url="http://agentos") as client:
+            return await client.request(
+                method, path, data=form, headers=headers, params={"session_id": session_id} if session_id else None
+            )
+    finally:
+        _trusted_run_metadata.reset(token)
+
 
 def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> None:
     """Record an explicitly requested component version in the run metadata.
@@ -3035,6 +3098,7 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
     unless the caller sent their own (now-sanitized) metadata.
     """
     inbound = kwargs.get("metadata")
+    trusted = _take_trusted_run_metadata()
     if inbound is not None and not isinstance(inbound, dict):
         # Only a mapping can carry (or forge) the stamp. The run routes reject a
         # non-object ``metadata`` at the request seam, so this only guards callers
@@ -3042,7 +3106,7 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
         # write, so the value is left exactly as it arrived; with one pinned the
         # stamp is authoritative for lifecycle re-resolution and must not be
         # dropped, so it replaces a value nothing downstream could have read.
-        if version is None:
+        if version is None and not trusted:
             return
         inbound = None
     had_metadata = inbound is not None
@@ -3051,6 +3115,8 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
     # version; only the version key is (conditionally) rewritten below.
     for reserved_key in RESERVED_RUN_METADATA_KEYS:
         metadata.pop(reserved_key, None)
+    # What this process handed to the route it entered, written after the request's own keys are gone.
+    metadata.update(trusted)
     if version is not None:
         metadata[COMPONENT_VERSION_METADATA_KEY] = version
     # Only touch kwargs when there is a stamp to write or metadata to sanitize;
