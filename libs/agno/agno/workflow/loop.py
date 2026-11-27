@@ -334,10 +334,10 @@ class Loop:
 
         if callable(self.end_condition):
             try:
-                if inspect.iscoroutinefunction(self.end_condition):
-                    return await self.end_condition(iteration_results)
-                else:
-                    return self.end_condition(iteration_results)
+                result = self.end_condition(iteration_results)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
             except UnresolvableCallableError:
                 raise
             except Exception as e:

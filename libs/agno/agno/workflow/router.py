@@ -599,10 +599,9 @@ class Router:
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
-            if inspect.iscoroutinefunction(self.selector):
-                result = await self.selector(step_input, **kwargs)  # type: ignore[call-arg]
-            else:
-                result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
+            result = self.selector(step_input, **kwargs)  # type: ignore[call-arg]
+            if inspect.isawaitable(result):
+                result = await result
 
             return self._resolve_selector_result(result)
 

@@ -444,10 +444,9 @@ class Condition:
             if run_context is not None and self._evaluator_has_run_context_param():
                 kwargs["run_context"] = run_context
 
-            if inspect.iscoroutinefunction(self.evaluator):
-                result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
-            else:
-                result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
+            result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
+            if inspect.isawaitable(result):
+                result = await result
 
             if isinstance(result, bool):
                 return result
