@@ -118,16 +118,30 @@ def _policy_line(policy: Any) -> str:
     return "; ".join(parts)
 
 
-def _no_sandbox_goal(executor: str, url: str, has: str, goals: List[Dict[str, Any]]) -> str:
+def _no_sandbox_goal(
+    executor: str, url: str, has: str, goals: List[Dict[str, Any]], unusable: List[Dict[str, Any]], in_project: bool
+) -> str:
     """Why a sandboxed executor's Task is not recorded, with the Goals it can be filed under."""
+    held = "".join(
+        f" Goal '{row['name']}' ({row['id']}) has one that cannot be used: {row['sandbox_refusal']}."
+        for row in unusable[:10]
+    )
     if goals:
         names = ", ".join(f"'{row['name']}' ({row['id']})" for row in goals[:10])
-        way = f"Goals that have one: {names}. Ask the person which Goal it belongs to, then pass that goal_id"
+        then = (
+            "A Task in a Project takes the Project's Goal, so leave project_id out and pass that goal_id, "
+            "or use a Project of that Goal"
+            if in_project
+            else "Ask the person which Goal it belongs to, then pass that goal_id"
+        )
+        way = f"Goals that have one: {names}. {then}"
+    elif unusable:
+        way = "No Goal has one that can be used: fix that, then add the Task"
     else:
         way = f"No Goal has one: add {url} as a git Source to the Goal this work belongs to, then add the Task"
     return (
         f"Not done, and nothing was recorded: {executor} works in a sandbox on {url}, so its Task needs a "
-        f"Goal with a git Source for that repository, and {has}. {way}."
+        f"Goal with a git Source for that repository, and {has}.{held} {way}."
     )
 
 
@@ -305,7 +319,6 @@ class CompanyTaskTools(Toolkit):
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
         from agno.registry._reserved import MINI_AGENT_ID
         from agno.run.authorization import authorization_scope
-        from agno.tools.company import _scoped_user
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "add accepted Company work")
@@ -351,8 +364,9 @@ class CompanyTaskTools(Toolkit):
                 # named is filed under the only Goal that fits.
                 in_default = project is None or is_default_project(project)
                 wanted = goal if in_default else stored["goal_id"]
-                owner = _scoped_user(_agno_run_context, _user_isolation(agent_os))
-                goals = await _manager_call(starter.manager, "sandbox_goals", kind, name, user_id=owner)
+                found = await _manager_call(starter.manager, "sandbox_goals", kind, name)
+                goals = [row for row in found if row["sandbox_refusal"] is None]
+                unusable = [row for row in found if row["sandbox_refusal"] is not None]
                 url = component.repository.url
                 if wanted is None and in_default and len(goals) == 1:
                     goal = goals[0]["id"]
@@ -363,8 +377,9 @@ class CompanyTaskTools(Toolkit):
                         row = await _manager_call(starter.manager, "get", wanted)
                         if row is None:
                             return "Not done: Goal not found"
-                        has = f"Goal '{row['name']}' has none"
-                    return _no_sandbox_goal(f"{kind} {name}", url, has, goals)
+                        held = wanted in [item["id"] for item in unusable]
+                        has = f"Goal '{row['name']}' " + ("has none it can use" if held else "has none")
+                    return _no_sandbox_goal(f"{kind} {name}", url, has, goals, unusable, not in_default)
             elif not _take_acceptance(run_id):
                 waits = f"this run already added {ACCEPTED_TASKS_PER_RUN} accepted Tasks"
             # Asked only to add it, the Task is held for a person to start: the tick leaves it alone.

@@ -137,28 +137,56 @@ def test_a_named_goal_without_the_repository_leaves_no_task_behind(system):
     assert add(agent_os, goal_id=platform["id"], **ENGINEER).startswith("Recorded")
 
 
-def test_where_people_are_isolated_another_persons_goal_is_not_offered(system):
+def test_a_goal_a_teammate_created_is_used_like_any_other(system):
+    # Goals are company-wide, with or without user isolation: user_id records who created one.
     client, db, agent_os, queue = system
     theirs = goal(client, "Theirs", user="bob")
     reply = add(agent_os, **ENGINEER)
-    if agent_os.user_isolation:
-        assert reply.startswith("Not done, and nothing was recorded") and "Theirs" not in reply, reply
-        assert tasks(db) == []
-    else:
-        assert f"filed under Goal 'Theirs' ({theirs['id']})" in reply, reply
-    # A Goal declared in code has no owner and is offered to everyone.
-    declared = goal(client, "Declared")
-    with db.Session() as session, session.begin():
-        from sqlalchemy import update
-
-        table = db._get_table("goals")
-        session.execute(update(table).where(table.c.id == declared["id"]).values(user_id=None))
-    company_tasks._accepted_in_run.clear()
+    assert f"filed under Goal 'Theirs' ({theirs['id']})" in reply, reply
+    assert add(agent_os, goal_id=theirs["id"], **ENGINEER).startswith("Recorded")
+    assert [row["goal_id"] for row in tasks(db)] == [theirs["id"]] * 2
+    # With a Goal of the person's own that also has the repository, the person is asked which one.
+    mine = goal(client, "Mine")
     reply = add(agent_os, **ENGINEER)
-    if agent_os.user_isolation:
-        assert f"filed under Goal 'Declared' ({declared['id']})" in reply, reply
-    else:
-        assert reply.startswith("Not done, and nothing was recorded") and "Theirs" in reply and "Declared" in reply
+    assert reply.startswith("Not done, and nothing was recorded"), reply
+    assert f"'Theirs' ({theirs['id']})" in reply and f"'Mine' ({mine['id']})" in reply, reply
+    assert len(tasks(db)) == 2
+
+
+def locked_source(db, goal_id):
+    """A git Source for the repository that needs a token the engineer's sandbox does not hold."""
+    db.create_source(
+        {
+            "id": "locked-" + goal_id,
+            "goal_id": goal_id,
+            "type": "git",
+            "reference": URL,
+            "credential_ref": "GITHUB_READ_TOKEN",
+            "user_id": "alice",
+            "config": {},
+            "created_at": 1,
+            "updated_at": None,
+            "deleted_at": None,
+        }
+    )
+
+
+def test_a_source_the_sandbox_cannot_read_is_reported_with_its_reason(system):
+    client, db, agent_os, queue = system
+    private = goal(client, "Private", reference=None)
+    locked_source(db, private["id"])
+    reason = "Sandboxed executor requires GITHUB_READ_TOKEN in Sandbox.env for this git Source"
+    for arguments in ({}, {"goal_id": private["id"]}):
+        reply = add(agent_os, **arguments, **ENGINEER)
+        assert reply.startswith("Not done, and nothing was recorded"), reply
+        assert f"Goal 'Private' ({private['id']}) has one that cannot be used: {reason}." in reply, reply
+        # The Source is there already: the person is not told to add it again.
+        assert "No Goal has one that can be used" in reply and "add " + URL not in reply, reply
+    assert "Goal 'Private' has none it can use" in reply, reply
+    assert tasks(db) == []
+    # A Goal whose Source can be used is still the one the Task is filed under.
+    platform = goal(client, "Platform")
+    assert f"filed under Goal 'Platform' ({platform['id']})" in add(agent_os, **ENGINEER)
 
 
 def test_in_a_project_the_projects_goal_decides(system):
@@ -175,10 +203,27 @@ def test_in_a_project_the_projects_goal_decides(system):
             headers=headers(ENGINEER_SCOPES),
         )
         projects[row["name"]] = project["id"]
-    assert "Goal 'Docs' has none" in add(agent_os, project_id=projects["Docs"], **ENGINEER)
+    loose = client.post("/company/projects", json={"name": "Loose"}, headers=headers(ENGINEER_SCOPES)).json()
+    client.post(
+        f"/company/projects/{loose['id']}/transitions",
+        json={"target": "active", "reason": "Approved"},
+        headers=headers(ENGINEER_SCOPES),
+    )
+    # Passing another Goal with the same Project is refused the same way, so the result says what works.
+    for project_id, has in ((projects["Docs"], "Goal 'Docs' has none"), (loose["id"], "its Project has no Goal")):
+        for arguments in ({}, {"goal_id": platform["id"]}):
+            reply = add(agent_os, project_id=project_id, **arguments, **ENGINEER)
+            assert has in reply and f"'Platform' ({platform['id']})" in reply, reply
+            assert "leave project_id out and pass that goal_id, or use a Project of that Goal" in reply, reply
+            assert "Ask the person which Goal" not in reply, reply
     assert tasks(db) == []
     assert add(agent_os, project_id=projects["Platform"], **ENGINEER).startswith("Recorded")
-    assert [(row["goal_id"], row["project_id"]) for row in tasks(db)] == [(platform["id"], projects["Platform"])]
+    assert add(agent_os, goal_id=platform["id"], **ENGINEER).startswith("Recorded")
+    assert {(row["goal_id"], row["project_id"]) for row in tasks(db)} == {
+        (platform["id"], DEFAULT_PROJECT_ID),
+        (platform["id"], projects["Platform"]),
+    }
+    assert len(tasks(db)) == 2
 
 
 def test_work_for_an_executor_with_no_sandbox_still_has_no_goal(system):
@@ -201,22 +246,9 @@ def test_the_manager_lists_the_goals_a_sandboxed_executor_accepts_under(system, 
     client, db, agent_os, queue = system
     platform = goal(client, "Platform")
     goal(client, "Docs", reference="https://github.com/a/other")
-    # A Source whose credential the sandbox does not hold is not one the acceptance check takes.
-    locked = goal(client, "Locked", reference=None)
-    db.create_source(
-        {
-            "id": "locked-source",
-            "goal_id": locked["id"],
-            "type": "git",
-            "reference": URL,
-            "credential_ref": "GITHUB_READ_TOKEN",
-            "user_id": "alice",
-            "config": {},
-            "created_at": 1,
-            "updated_at": None,
-            "deleted_at": None,
-        }
-    )
+    # A Source whose credential the sandbox does not hold is listed with the reason it cannot be used.
+    locked = goal(client, "Locked", reference=None, user="bob")
+    locked_source(db, locked["id"])
     if use_async:
         from agno.db.sqlite import AsyncSqliteDb
 
@@ -228,5 +260,9 @@ def test_the_manager_lists_the_goals_a_sandboxed_executor_accepts_under(system, 
         result = manager.sandbox_goals(*arguments)
         return asyncio.run(result) if use_async else result
 
-    assert [row["id"] for row in read("agent", "engineer")] == [platform["id"]]
+    found = {row["id"]: row["sandbox_refusal"] for row in read("agent", "engineer")}
+    assert found == {
+        platform["id"]: None,
+        locked["id"]: "Sandboxed executor requires GITHUB_READ_TOKEN in Sandbox.env for this git Source",
+    }
     assert read("agent", "writer") is None

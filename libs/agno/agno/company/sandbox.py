@@ -24,11 +24,17 @@ def _task_response(task: Dict[str, Any], registry: Any) -> Dict[str, Any]:
     return {**task, "sandboxed": _is_sandboxed(component)}
 
 
+def _repository_sources(component: Any, sources: list) -> list:
+    """The git Sources that name the executor's repository."""
+    url = component.repository.url
+    return [source for source in sources if source["type"] == "git" and source["reference"] == url]
+
+
 def _accept_sandbox(component: Any, sources: list) -> Dict[str, Any]:
     repository = component.repository
     if repository is None:
         raise ValueError("Sandboxed executor requires repository=Repository(url, branch)")
-    matches = [source for source in sources if source["type"] == "git" and source["reference"] == repository.url]
+    matches = _repository_sources(component, sources)
     if not matches:
         raise ValueError("Sandboxed executor requires a Goal git Source matching repository URL " + repository.url)
     # A public repository needs no credential. The runtime reads only this variable.
