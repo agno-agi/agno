@@ -76,13 +76,6 @@ _SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCT
 _SAID_WITHOUT_THE_BLOCK = (BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS,)
 
 
-def _note_is_sent(model: Any) -> bool:
-    """Whether Super Agent's model is sent the message that comes before each of the person's."""
-    from agno.os.manager import linked_work
-
-    return linked_work._delivers(model)
-
-
 def _remembers_people(learning: Any) -> bool:
     """Whether Super Agent keeps a memory of each person: learning with a user profile or a user memory."""
     if learning is True:
@@ -496,10 +489,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
-        # The time is told in the message before each of the person's, where it is current on every turn
-        # and leaves the system message the same from one request to the next. A model that is not sent
-        # that message keeps the time in its system message.
-        add_datetime_to_context=not _note_is_sent(model),
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
@@ -525,6 +514,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         block_is_sent,
         clock=lambda: (team.timezone_identifier, team.datetime_format),
     )
+    # That message is where Super Agent reads the time, so the time is left out of its system message:
+    # a timestamp there differs on every request, which stops the provider caching the prompt, and it
+    # goes stale in a conversation the provider continues without being sent the system message again.
+    # A model that is not sent the message has no other clock, so it alone gets the time in its system
+    # message.
+    if not block_is_sent():
+        team.add_datetime_to_context = True
     team.instructions.linked_work = block_is_sent  # type: ignore[union-attr]
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})
     registry.exclude_components([team, builder])
