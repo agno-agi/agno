@@ -592,6 +592,12 @@ class CompanyTaskTools(Toolkit):
             status = value["status"]
             ended = status == "in_progress" and (value.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
             if status == "in_progress" and not ended:
+                if (await starter.state(value, app)).get("waiting_on"):
+                    # A paused run does not end on its own: the person answers it, they do not wait for it.
+                    return (
+                        f"Not sent: '{title}' is paused, not running: its run waits for a person to approve or "
+                        "answer it, and continues once they do. Nothing was sent or queued."
+                    )
                 return (
                     f"Not sent: '{title}' is still running. Nothing was interrupted and nothing is queued: "
                     "the person asks again when its run has ended."
@@ -600,8 +606,8 @@ class CompanyTaskTools(Toolkit):
                 return f"Not sent: '{title}' is a proposal that has not run. Edit its brief instead."
             if status == "ready":
                 return (
-                    f"Not sent: '{title}' is accepted and not started, so it has no result to answer. "
-                    "Edit its brief, or start it with start_company_task."
+                    f"Not sent: '{title}' is accepted and not started. Start it with start_company_task: "
+                    "a reply already recorded on it goes with that run."
                 )
             if status != "in_review" and not ended:
                 return f"Not sent: '{title}' is {status}, and a message does not reopen a closed Task."

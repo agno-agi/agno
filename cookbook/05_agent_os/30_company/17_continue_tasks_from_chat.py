@@ -70,7 +70,9 @@ def read_export_logs() -> str:
 
 def list_iam_roles() -> str:
     """List the IAM roles that can write billing exports."""
-    return "billing-export-new: s3:PutObject on billing-exports (created 2026-11-09)\nbilling-export-old: deleted policy"
+    return (
+        "billing-export-new: s3:PutObject on billing-exports (created 2026-11-09)\nbilling-export-old: deleted policy"
+    )
 
 
 def set_export_role(role: str) -> str:
@@ -94,7 +96,7 @@ investigator = Agent(
         "Investigate with your tools before concluding, and say which checks you ran.",
         "Change nothing until a person decides. When a fix needs a decision, give two options, recommend one and"
         " ask which to apply.",
-        "When the input has review_feedback, it is the person's answer to previous_result: act on it.",
+        "When the input has review_feedback, it is the person's reply to your last attempt: act on it.",
     ],
     telemetry=False,
 )
@@ -169,9 +171,7 @@ def chat(client: TestClient, message: str, session_id: str) -> str:
         requirements = body["requirements"]
         for requirement in requirements:
             execution = requirement["tool_execution"]
-            print(
-                f"  Confirm {execution['tool_name']}: {json.dumps(execution['tool_args'])}"
-            )
+            print(f"  Confirm {execution['tool_name']}: {json.dumps(execution['tool_args'])}")
             requirement["confirmation"] = True
             execution["confirmed"] = True
         response = client.post(
@@ -220,19 +220,13 @@ def scripted() -> None:
         first = wait_for_review(client, task["id"], 1)
         show(client, first)
         chat(client, "Any update on the export Task I started?", session)
-        chat(
-            client, f"For Task {task['id']}: go with your recommended option.", session
-        )
+        chat(client, f"For Task {task['id']}: go with your recommended option.", session)
 
         second = wait_for_review(client, task["id"], 2)
         show(client, second)
-        sent_back = [
-            entry for entry in second["transitions"] if entry.get("from") == "in_review"
-        ][-1]
+        sent_back = [entry for entry in second["transitions"] if entry.get("from") == "in_review"][-1]
         print(f"\nSent back by {sent_back.get('user_id')}: {sent_back['reason']}")
-        print(
-            f"Same worker session across attempts: {second['session_id'] == first['session_id']}"
-        )
+        print(f"Same worker session across attempts: {second['session_id'] == first['session_id']}")
 
 
 # ---------------------------------------------------------------------------

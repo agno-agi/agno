@@ -333,8 +333,8 @@ def staged(client, db, queue, stage):
         ("backlog", "Not sent: 'Draft' is a proposal that has not run. Edit its brief instead."),
         (
             "ready",
-            "Not sent: 'Draft' is accepted and not started, so it has no result to answer. "
-            "Edit its brief, or start it with start_company_task.",
+            "Not sent: 'Draft' is accepted and not started. Start it with start_company_task: "
+            "a reply already recorded on it goes with that run.",
         ),
         (
             "running",
@@ -350,6 +350,19 @@ def test_a_task_in_another_stage_is_refused_in_one_sentence_and_left_as_it_was(s
     task = staged(client, db, queue, stage)
     before, queued = state(db), jobs(queue)
     assert message(agent_os, context(), task["id"]) == sentence
+    assert state(db) == before and jobs(queue) == queued
+
+
+def test_a_paused_task_is_told_a_person_must_answer_it_not_to_wait(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    task = staged(client, db, queue, "running")
+    queue.store._jobs[task_run_id(task["id"], 1)]["status"] = "paused"
+    before, queued = state(db), jobs(queue)
+    reply = message(agent_os, context(), task["id"])
+    assert reply == (
+        "Not sent: 'Draft' is paused, not running: its run waits for a person to approve or answer it, "
+        "and continues once they do. Nothing was sent or queued."
+    )
     assert state(db) == before and jobs(queue) == queued
 
 
