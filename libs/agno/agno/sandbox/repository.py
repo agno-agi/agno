@@ -66,12 +66,16 @@ def checkout_key(metadata: Any) -> Optional[str]:
     kind, ref = next(iter(value.items()))
     if kind not in ("commit", "branch", "pull_request") or not isinstance(ref, (str, int)) or isinstance(ref, bool):
         return None
-    text = str(ref).lower()[:12] if kind == "commit" else str(ref)
-    name = re.sub(r"[^A-Za-z0-9._-]", "-", text)[:48]
-    if name != text:
-        # Two refs that differ only in a replaced character must not share a session.
-        name += "-" + hashlib.sha256(text.encode()).hexdigest()[:8]
-    return {"commit": "commit-", "branch": "branch-", "pull_request": "pr-"}[kind] + name
+    if kind == "pull_request":
+        return f"pr-{ref}"
+    if kind == "commit":
+        # The whole commit id: two commits never share a session.
+        return "commit-" + re.sub(r"[^0-9a-f]", "-", str(ref).lower())[:40]
+    # A branch name is made safe for a session id, and always carries a digest of the name as given,
+    # so two branches never share a session: neither two names that become the same safe text, nor a
+    # branch whose own name looks like another's safe text with a digest.
+    text = str(ref)
+    return "branch-" + re.sub(r"[^A-Za-z0-9._-]", "-", text)[:48] + "-" + hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
 def validate_repository_override(metadata: Any, repository: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

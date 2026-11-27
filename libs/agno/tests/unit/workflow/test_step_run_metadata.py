@@ -213,7 +213,7 @@ def test_a_sandboxed_steps_options_name_a_session_per_checkout(engineer):
     assert session(None) == "w1:claude-1"
     assert session({"topic": "billing"}) == "w1:claude-1"
     assert session({"repository": {"pull_request": 7}}) == "w1:claude-1@pr-7"
-    assert session({"repository": {"branch": "release"}}) == "w1:claude-1@branch-release"
+    assert session({"repository": {"branch": "release"}}) == "w1:claude-1@branch-release-a4d451ec2346"
     # A team member is keyed the same way.
     options = {"run_id": "r1", "session_id": "t1", "metadata": {"repository": {"pull_request": 7}}}
     assert coder._sandboxed_member_kwargs(options, "t1", "r1", team_id="team")["session_id"] == "t1:claude-1@pr-7"
@@ -240,7 +240,7 @@ def test_one_engineer_in_two_steps_checks_out_two_refs_in_two_sessions(db, engin
     assert output.status == RunStatus.completed
     assert [(turn["session_id"], turn["metadata"]) for turn in turns] == [
         ("w1:claude-1@pr-7", {"repository": {"pull_request": 7}}),
-        ("w1:claude-1@branch-release", {"repository": {"branch": "release"}}),
+        ("w1:claude-1@branch-release-a4d451ec2346", {"repository": {"branch": "release"}}),
         # The same checkout again: the same session, so the same files and conversation.
         ("w1:claude-1@pr-7", {"repository": {"pull_request": 7}}),
     ]

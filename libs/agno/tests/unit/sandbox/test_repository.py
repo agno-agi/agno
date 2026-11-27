@@ -477,8 +477,8 @@ async def test_first_turn_checks_out_a_pull_request_by_its_number(tmp_path, monk
     "metadata, expected",
     [
         ({"repository": {"pull_request": 7}}, "pr-7"),
-        ({"repository": {"branch": "release-3.3"}}, "branch-release-3.3"),
-        ({"repository": {"commit": "ABCDEF0123456789" + "0" * 24}}, "commit-abcdef012345"),
+        ({"repository": {"branch": "release-3.3"}}, "branch-release-3.3-6461e3c348f5"),
+        ({"repository": {"commit": "ABCDEF0123456789" + "0" * 24}}, "commit-abcdef0123456789" + "0" * 24),
         (None, None),
         ({}, None),
         ({"other": 1}, None),
@@ -492,12 +492,18 @@ def test_checkout_key_names_what_a_call_asks_to_check_out(metadata, expected):
     assert repository.checkout_key(metadata) == expected
 
 
-def test_checkout_keys_of_two_branches_never_collide():
-    """A branch name is made safe for a session id; two names that become the same text stay apart."""
-    slash = repository.checkout_key({"repository": {"branch": "fix/login"}})
-    dash = repository.checkout_key({"repository": {"branch": "fix-login"}})
-    assert dash == "branch-fix-login"
-    assert slash is not None and slash.startswith("branch-fix-login-") and slash != dash
+def test_checkout_keys_of_two_refs_never_collide():
+    """Two branches, or two commits, never get the same session."""
+
+    def key(kind, ref):
+        return repository.checkout_key({"repository": {kind: ref}})
+
+    slash, dash = key("branch", "fix/login"), key("branch", "fix-login")
+    assert slash != dash and slash.startswith("branch-fix-login-") and dash.startswith("branch-fix-login-")
+    # A branch named like another branch's key does not get that key.
+    assert key("branch", slash.removeprefix("branch-")) != slash
+    # Two commits that share their first twelve characters stay apart.
+    assert key("commit", "a" * 12 + "0" * 28) != key("commit", "a" * 12 + "1" * 28)
 
 
 @pytest.mark.parametrize(
