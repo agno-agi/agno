@@ -554,8 +554,10 @@ class AuthorizationReport(BaseModel):
     )
     managed_roles: Optional[bool] = Field(
         None,
-        description="Roles managed on this AgentOS decide requests. False under scope-only authorization "
-        "and when a custom authorization provider decides alone. Administrators only",
+        description="Roles managed on this AgentOS count toward requests, and /authz serves them. True "
+        "whenever authorization is on and the database can hold roles (SQLite or Postgres), with or "
+        "without a role defined yet. False on any other database, and when a custom authorization "
+        "provider decides alone. Administrators only",
     )
     roles_from_token: Optional[bool] = Field(
         None,
