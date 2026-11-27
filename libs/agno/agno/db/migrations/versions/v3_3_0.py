@@ -17,6 +17,8 @@ In the database that holds the Company tables (SQLite or PostgreSQL):
   on a Project and on a Task. PostgreSQL drops the constraint in place. SQLite cannot, so there the
   table is created again without it, its rows are copied, and it takes the old table's name and
   indexes. No row or id changes. This also runs for a table created by a 3.3.0 development build.
+- The tasks table gets the column ``context``: the list of what a run of the Task is given beside its
+  brief. Existing Tasks have none. This also runs for a table created by a 3.3.0 development build.
 
 In the database that holds the schedules (SQLite, PostgreSQL or MongoDB):
 - ``payload.metadata.product_id`` of a Routine becomes ``goal_id``.
@@ -483,10 +485,26 @@ def _make_goal_optional(sql: _Sql, table_name: str) -> bool:
     return True
 
 
+def _task_context_pending(sql: _Sql, table_name: str) -> bool:
+    """Whether an existing tasks table has no context column yet."""
+    return sql.table_exists(table_name) and "context" not in sql.columns(table_name)
+
+
+def _add_task_context(sql: _Sql, table_name: str) -> bool:
+    """Give the tasks table its context column. Existing Tasks keep an empty context."""
+    if not _task_context_pending(sql, table_name):
+        return False
+    kind = "JSONB" if sql.postgres else "JSON"
+    sql.sess.execute(text(f"ALTER TABLE {sql.ref(table_name)} ADD COLUMN {sql.quote('context')} {kind}"))
+    return True
+
+
 def _rename_pending(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
-    """Whether a Company table still has its 3.2.0 name or columns, or still requires a Goal."""
+    """Whether a Company table still has its 3.2.0 name or columns, still requires a Goal, or lacks a column."""
     sql = _Sql(sess, db_type, tables.schema)
     if any(_goal_optional_pending(sql, name) for name in _goal_optional_tables(tables)):
+        return True
+    if _task_context_pending(sql, tables.tasks):
         return True
     pairs = ((tables.legacy_goals, tables.goals), (tables.legacy_details, tables.details))
     if any(_is_pending(sql, tables, legacy, current) for legacy, current in pairs):
@@ -610,6 +628,7 @@ def _rename_company(sess: Any, db_type: str, tables: _CompanyTables) -> bool:
         changed = _rename_column(sql, name, "product_id", "goal_id") or changed
     for name in _goal_optional_tables(tables):
         changed = _make_goal_optional(sql, name) or changed
+    changed = _add_task_context(sql, tables.tasks) or changed
     for name in (tables.projects, tables.tasks):
         changed = _rename_archive_parents(sql, name) or changed
     changed = _move_version_stamps(sql, tables) or changed

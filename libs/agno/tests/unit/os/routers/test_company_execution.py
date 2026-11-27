@@ -956,7 +956,7 @@ def test_accepted_execution_preserves_scope_and_excludes_private_state(system):
     payload = json.loads(message)
     assert payload["brief"] == brief
     assert payload["evidence"] == (task.get("evidence") or [])
-    # An executor other than Mini Agent receives no wiki page and no Goal page.
+    # No executor receives a wiki page or a Goal page that was not attached to the Task.
     assert set(payload) == {"brief", "evidence", "execution_context"}
     assert payload["execution_context"]["stage"] == "accepted_task_execution"
     assert payload["execution_context"]["task_id"] == task["id"]

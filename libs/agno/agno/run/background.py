@@ -3,7 +3,7 @@
 import asyncio
 import json
 from contextlib import suppress
-from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Optional, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Union
 
 from agno.exceptions import RunCancelledException
 from agno.run.agent import (
@@ -46,6 +46,83 @@ TERMINAL_RUN_EVENT_TYPES = (
     TeamRunErrorEvent,
     TeamRunPausedEvent,
 )
+
+
+# What AgentOS calls when work a conversation asked for ends. Each takes the conversation that asked,
+# what ended and the saved authority of whoever started it.
+_requester_listeners: List[Callable[[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]], Awaitable[None]]] = []
+_requester_notices: set[asyncio.Task[None]] = set()
+
+
+def notify_requester(requested_from: Any, work: Dict[str, Any], authority: Optional[Dict[str, Any]] = None) -> None:
+    """Tell the conversation that asked for a piece of work that it ended or paused for a person.
+
+    Called by the durable queue and by a run executing in this process, after the final state is
+    stored. It returns at once: each listener runs as a task of its own, so nothing a listener does
+    can fail, delay or repeat the work it is told about. Work that names no conversation does nothing.
+    """
+    if not isinstance(requested_from, dict) or not requested_from.get("session_id") or not _requester_listeners:
+        return
+
+    async def tell(listener: Any) -> None:
+        try:
+            await listener(dict(requested_from), dict(work), authority)
+        except Exception:
+            log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
+
+    try:
+        for listener in list(_requester_listeners):
+            task = asyncio.ensure_future(tell(listener))
+            _requester_notices.add(task)
+            task.add_done_callback(_requester_notices.discard)
+    except Exception:
+        log_error(f"Could not tell a conversation that {work.get('kind')} {work.get('id')} ended", exc_info=True)
+
+
+def _notify_run_requester(run: Any, started_with: Any = None, continued: bool = False) -> None:
+    """Tell the conversation that started this in-process run, if one did, how the run ended.
+
+    started_with is the metadata the run was started with, for a run object that holds none of its
+    own: a WorkflowAgent that runs its workflow stores such a run. continued says the run was paused
+    and has been continued, so a pause is a new one.
+    """
+    try:
+        if not _requester_listeners:
+            return
+        from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
+
+        requested_from = None
+        for metadata in (getattr(run, "metadata", None), started_with):
+            if isinstance(metadata, dict) and metadata.get(REQUESTED_FROM_METADATA_KEY):
+                requested_from = metadata[REQUESTED_FROM_METADATA_KEY]
+                break
+        status = getattr(run.status, "value", run.status)
+        if not requested_from or status not in ("COMPLETED", "ERROR", "CANCELLED", "PAUSED"):
+            return
+        from agno.run.authorization import authorization_snapshot
+
+        # This task was started inside the request that started the run, so it holds that caller's authority.
+        work = {"kind": "run", "id": run.run_id, "status": status, **({"continued": True} if continued else {})}
+        notify_requester(requested_from, work, authorization_snapshot())
+    except Exception:
+        log_error("Could not tell a conversation that its background run ended", exc_info=True)
+
+
+async def anotify_continued_run_requester(component: Any, run_id: str, session_id: Optional[str]) -> None:
+    """After a paused run was continued in the foreground, tell the conversation that started it.
+
+    A run continued through the durable queue is told about by the queue. One continued in the
+    request that approved it ends here, so its stored state is read once, and only while something
+    listens. The authority is that of the person who continued it.
+    """
+    if not _requester_listeners:
+        return
+    try:
+        run = await component.aget_run_output(run_id=run_id, session_id=session_id)
+        if run is not None:
+            _notify_run_requester(run, continued=True)
+    except Exception:
+        log_error(f"Could not tell a conversation that continued run {run_id} ended", exc_info=True)
 
 
 def _spawn_background(coro: Awaitable[None]) -> None:
@@ -114,8 +191,11 @@ async def _execute_background(
             log_error(f"Failed to persist error for background run {run.run_id}", exc_info=True)
         await acleanup_run(run.run_id)
     finally:
-        if on_terminal is not None:
-            await on_terminal()
+        try:
+            if on_terminal is not None:
+                await on_terminal()
+        finally:
+            _notify_run_requester(run)
 
 
 class _BackgroundStream:

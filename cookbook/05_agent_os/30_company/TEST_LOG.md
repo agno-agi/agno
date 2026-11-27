@@ -1,3 +1,158 @@
+# Super Agent is told about the work a conversation started — November 26, 2026
+
+Branch: `claude/super-agent-linked-work-674b92`. Starting
+a Task no longer ends Super Agent's turn, and each message reaches it with the state
+of the Tasks the conversation started. The live run used a new, empty PostgreSQL
+database and `gpt-5.6-luna`, with this branch's `agno` on the path.
+
+### 13_start_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Run with `.venv/bin/python cookbook/05_agent_os/30_company/13_start_tasks_from_chat.py`.
+A person asks Super Agent to start an accepted Task, asks an unrelated question while
+it runs, waits for it to finish, and then says "Thanks. Anything else I should know?".
+
+**Result:** Exit 0. The start was answered in 5.2 seconds with the Task and its run id.
+The unrelated question was answered in 3.0 seconds. After the Task reached In review,
+the last reply opened with "The investigation Task 'Investigate the nightly export
+failure' finished and is waiting for review", without being asked about the Task. The
+attempt recorded the chat in `requested_from`. An earlier build of this branch that put
+the same state in the instructions did not say so: the model continued from its
+previous response and was not sent that run's instructions. `--serve` was NOT RUN.
+
+---
+
+# A Task run is given its brief and what was attached to it — November 26, 2026
+
+Branch: `claude/company-task-context-f5f45c`, on the chat acceptance branch. It
+replaces the rule in the section "Only Mini Agent receives wiki and Goal pages"
+below: no executor, Mini Agent included, receives a page that was not attached to
+the Task. Each live run used a new, empty PostgreSQL database and `gpt-5.6-luna`.
+
+### 20_task_handoff.py
+
+**Status:** PASS
+
+**Description:** Run with `.venv/bin/python cookbook/05_agent_os/30_company/20_task_handoff.py`,
+with this branch's `agno` on the path. No model call, SQLite. A first Task writes
+`upgrade-notes.md` and `handoff.md` in its folder. A second Task is created with
+the first attached, and the notes file is attached afterwards. The script builds
+the second Task's input and prints what the attempt would record.
+
+**Result:** The input held `brief`, `context` and `evidence`. The attached Task
+came with its title, status, the two file names and the full handoff note, and
+without the text of `upgrade-notes.md`; the attached file came with its text. Both
+records read `sent: full` with a version. A Task with nothing attached held
+`brief` and `evidence` only. It ended with "Task handoff example passed".
+
+---
+
+### 16_company_file_tree.py
+
+**Status:** PASS
+
+**Description:** Builds the input of one Task for a named agent and for Mini
+Agent, then attaches `wiki/priorities.md` and builds it again.
+
+**Result:** Both inputs held `brief` and `evidence` only. With the page attached
+the input held one context item, `wiki/priorities.md`, sent in full, and none of
+the Goal brief's text. No model call.
+
+---
+
+### Real run: add a Task, then start it on a yes
+
+**Status:** PASS, 3 of 3
+
+**Description:** The seed is a Goal "Developer docs", an active Project "3.3
+migration guide" and a Done Task whose `upgrade-notes.md` Mini Agent wrote. In a
+new chat: "Add a task to write the breaking-changes section of the 3.3 migration
+guide", then "Yes, start it." A run passes when the Task was created with the
+earlier Task or its notes file attached without being told to, the stored run
+input holds the notes, and the result is the section.
+
+**Result:** In all three runs Super Agent called `list_company_projects`,
+`list_company_tasks` and then `add_company_task` once, with `start` false and a
+`context` of the earlier Task and its `upgrade-notes.md`. The Task was Ready,
+accepted by the person, on Mini Agent, with no confirmation. "Yes, start it."
+called `start_company_task`. Each attempt recorded `context_sent` with both
+entries `full`, and Mini Agent wrote `breaking-changes.md` in the Task's folder
+with the four facts of the notes.
+
+---
+
+### Real run: "Do the breaking-changes task now: write ..." with no such Task
+
+**Status:** PASS in 6 of 7 runs
+
+**Description:** One message on the same seed: "Do the breaking-changes task now:
+write the breaking-changes section of the 3.3 migration guide". `add_company_task`
+queues the run in the call that creates the Task, so nothing can be attached
+afterwards. A run passes when that one turn created the Task accepted with the
+earlier Task and its notes file attached and started it, the stored input holds
+the notes, and the result is the section.
+
+**Result:**
+
+| Code | Runs | Created and started a Task in the one turn | With the earlier Task and its notes attached | Input held the notes, result was the section |
+| --- | --- | --- | --- | --- |
+| This branch | 7 | 6 | 6 of those 6 | 6 |
+| The acceptance branch alone, same harness and seed | 4 | 2 | it has no context to attach | not measured this way |
+| This branch, with one more sentence in the `add_company_task` description | 6 | 6 | 5 | 5 |
+
+In the run of seven that did not pass, Super Agent recorded no Task: it read the
+notes and ran the Docs Writer agent itself with a run tool. The acceptance branch
+alone did the same in two runs of four, so that is how the acceptance rule holds
+with this seed, which serves a Docs Writer agent; it is not about context. Every
+time a Task was created on this branch, both the earlier Task and its notes file
+were attached in that same call.
+
+The sentence tried in the tool description was "Reading the files the work needs
+and handing them to a run tool is doing the work yourself: attach them as context
+here instead." With it Super Agent created the Task in six runs of six, but in
+one it read the notes itself, wrote the facts into the brief and attached only
+the Goal's `brief.md`. Six of seven without the sentence and five of six with it
+are not different enough to choose it, so it is not in the code.
+
+Mini Agent was the executor in every run where a Task was created. It read the
+attached notes again with `read_company_file` before writing, and wrote
+`breaking-changes.md` in the Task's folder.
+
+---
+
+### Earlier runs of this change, before it was joined with the acceptance work
+
+**Status:** PASS with the wording now in the code, 6 of 6. 1 of 3 with the first wording.
+
+**Description:** The same seed on the optional-Goal branch, where "Add a task"
+goes through `propose_company_task` and the person accepts before the start. The
+executor Super Agent suggested was "Docs Writer", a plain agent with no tools.
+On `main` this request failed 3 of 3: the worker answered that the source facts
+were unavailable.
+
+**Result:**
+
+| Wording of what `kind: task` brings, in the tools' descriptions | Attached the earlier Task unasked | Also attached its file | Input held the notes | Result was the section |
+| --- | --- | --- | --- | --- |
+| First: "Attach the earlier Task whenever this one builds on its work." | 3 of 3 | 1 of 3 at creation | 1 of 3 | 1 of 3 |
+| In this branch: the same, then "It brings file names, not file text: when the work needs what a file says, attach that file too." | 6 of 6 | 6 of 6 at creation | 6 of 6 | 6 of 6 |
+
+With the first wording, two runs attached only the Task: its result said where
+the notes were saved and its file list named `upgrade-notes.md`, but no text of
+the file reached the worker, which reported that gap as it is told to. Docs
+Writer's result opened by saying it could not save `breaking-changes.md`, because
+the brief asked for a file and the agent holds no tool, and then gave the whole
+section. One more run gave the Task to Mini Agent with nothing attached: its
+input was 743 characters, it read the earlier Task's `upgrade-notes.md` with its
+file tools and wrote the section.
+
+Not covered by any live run: authorization on, SQLite, a Routine attaching
+context, and a handoff note. The seed's Mini Agent wrote no `handoff.md` in any
+run; nothing told it a next Task was coming.
+
+---
+
 # Work asked for in chat starts accepted — November 26, 2026
 
 Branch: `claude/company-chat-acceptance-01415f`, on the optional-Goal branch. Each
@@ -63,9 +218,6 @@ After adding a Task that is not started, Super Agent offers once to start it. In
 four runs on that wording, seven of eight replies made the offer ("Ask me to start
 it when you're ready"), one only said the Task was not started, and no added Task
 was started before the person said yes.
-
----
-
 ### Move a Task from chat, and a schedule aimed at Super Agent
 
 **Status:** PASS
@@ -84,6 +236,8 @@ history ended with a `move` entry naming the person. The scheduled run carried
 run has no person present, the reply said nothing was created, and no Task was
 created.
 # Only Mini Agent receives wiki and Goal pages in a Task's input — November 26, 2026
+
+Replaced the same day by the first section of this file: Mini Agent's input no longer carries pages either.
 
 Branch: `fix/company-task-wiki-mini-agent-only`. Run on a new, empty PostgreSQL
 database passed as `COMPANY_DB_URL` and `COMPANY_QUEUE_DB_URL`.

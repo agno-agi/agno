@@ -34,10 +34,6 @@ AREAS = ("wiki", "goals", "tasks", "notes")
 _KEYED = ("goals", "tasks")
 _GRAMMAR = "Paths start with wiki/, goals/<goal-id>/, tasks/<task-id>/ or notes/."
 
-# What Mini Agent's Task input carries: the Goal's brief and status, then the company wiki.
-ALWAYS_LOADED_PAGE_CHARS = 8_000
-ALWAYS_LOADED_TOTAL_CHARS = 40_000
-
 # One read returns at most this many characters; next_offset continues a longer file.
 READ_CHARS = 40_000
 LIST_ENTRIES = 200
@@ -538,47 +534,3 @@ class CompanyFiles:
         if not await (await self._afilesystem(location)).adelete(location.store_path):
             raise LookupError(f"{location.tree_path} not found")
         return {"path": location.tree_path, "deleted": True}
-
-
-async def _always_loaded(manager: Any, goal_id: Optional[str]) -> List[Dict[str, Any]]:
-    """The pages Mini Agent's Task input carries: the Goal's brief and status, then every company wiki page.
-
-    A Task with no Goal carries the company wiki pages only.
-
-    A page longer than ALWAYS_LOADED_PAGE_CHARS is cut. The first page that would take the total past
-    ALWAYS_LOADED_TOTAL_CHARS and every page after it are named without their content, and the pages
-    after it are not read. Each entry names the file to read for the rest.
-    """
-    listed: List[Any] = []
-    page = 1
-    while True:
-        rows, total = await _call(manager, "list_wiki", None, limit=100, page=page)
-        listed.extend(row.path for row in rows)
-        if page * 100 >= total:
-            break
-        page += 1
-    first = [path for path in ("brief.md", "status.md") if path in listed]
-    company = [*first, *(path for path in listed if path not in first)]
-    goal_pages = [(goal_id, "brief.md"), (goal_id, "status.md")] if goal_id is not None else []
-    wanted = [*goal_pages, *((None, path) for path in company)]
-    pages: List[Dict[str, Any]] = []
-    used = 0
-    spent = False
-    for owner, path in wanted:
-        file = f"goals/{owner}/{path}" if owner is not None else f"wiki/{path}"
-        entry: Dict[str, Any] = {"namespace": "company" if owner is None else "goal", "path": path, "file": file}
-        cut = content = ""
-        if not spent:
-            content = (await _call(manager, "read_wiki", owner, path)).content
-            cut = content[:ALWAYS_LOADED_PAGE_CHARS]
-            # The first page that does not fit ends the reading. Later pages are named and not read.
-            spent = used + len(cut) > ALWAYS_LOADED_TOTAL_CHARS
-        if spent:
-            entry["note"] = f"Not loaded: the input holds {ALWAYS_LOADED_TOTAL_CHARS} characters of pages. Read {file}."
-        else:
-            used += len(cut)
-            entry["content"] = cut
-            if len(cut) < len(content):
-                entry["note"] = f"Cut at {ALWAYS_LOADED_PAGE_CHARS} characters. Read {file} for the rest."
-        pages.append(entry)
-    return pages

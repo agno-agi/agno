@@ -6,7 +6,7 @@ import json
 import pytest
 
 from agno.company.execution import _ExecutorAuthorization, _task_input
-from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS, READ_NOTE
+from agno.company.files import READ_NOTE
 from agno.company.filesystem import company_filesystem
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.mini_agent import TASK_FILE_TOOLS
@@ -608,8 +608,7 @@ def test_the_save_tool_tells_the_model_what_is_never_a_request_to_save(system):
 # ----------------------------------------------------------------- what a Task's input loads
 
 
-MINI_AGENT = {"executor_type": "agent", "executor_id": MINI_AGENT_ID}
-OTHER_EXECUTORS = [("agent", "writer"), ("team", "crew"), ("workflow", "pipeline")]
+EXECUTORS = [("agent", MINI_AGENT_ID), ("agent", "writer"), ("team", "crew"), ("workflow", "pipeline")]
 SENT_BACK = {
     "transitions": [{"from": "in_review", "target": "ready", "reason": "Add the changelog"}],
     "result": {"status": "COMPLETED", "content": "First draft"},
@@ -625,53 +624,20 @@ def task_input(system, task, use_async=False):
     return asyncio.run(_task_input(manager, task, accepted_execution=True))
 
 
-def task_pages(system, ids):
-    """The pages Mini Agent's input carries. No other executor's input carries any."""
-    task = {**system.db.get_task(ids["task"]), **MINI_AGENT}
-    return json.loads(task_input(system, task))["wiki"]
-
-
 def marked_pages(system, ids):
-    """A company page and the Goal's status with text that must not leave, and enough pages to pass the total."""
+    """A company page and the Goal's status with text that must not leave unless someone attaches it."""
     manager = CompanyManager(system.db, system.os.registry)
     manager.write_wiki(goal_id=None, path="people.md", content="PRIVATE-PEOPLE", expected_version=0)
     manager.write_wiki(goal_id=ids["goal"], path="status.md", content="PRIVATE-STATUS", expected_version=1)
-    for index in range(6):
-        manager.write_wiki(
-            goal_id=None, path=f"zz-{index}.md", content="p" * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
-        )
 
 
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize("retry", [False, True])
-def test_mini_agents_task_input_carries_the_goals_pages_and_the_wiki(system, retry, use_async):
-    ids = records(system)
-    marked_pages(system, ids)
-    task = {**system.db.get_task(ids["task"]), **MINI_AGENT, **(SENT_BACK if retry else {})}
-    payload = json.loads(task_input(system, task, use_async))
-    goal = f"goals/{ids['goal']}"
-    assert [page["file"] for page in payload["wiki"]] == [
-        f"{goal}/brief.md",
-        f"{goal}/status.md",
-        "wiki/brief.md",
-        "wiki/status.md",
-        "wiki/people.md",
-        *(f"wiki/zz-{index}.md" for index in range(6)),
-    ]
-    loaded = {page["file"]: page for page in payload["wiki"]}
-    assert loaded[f"{goal}/status.md"]["content"] == "PRIVATE-STATUS"
-    assert loaded["wiki/people.md"]["content"] == "PRIVATE-PEOPLE"
-    assert loaded["wiki/zz-5.md"]["note"].startswith("Not loaded")
-    feedback = ["review_feedback", "previous_result"] if retry else []
-    assert list(payload) == ["brief", "wiki", "evidence", *feedback, "execution_context"]
-
-
-@pytest.mark.parametrize("use_async", [False, True])
-@pytest.mark.parametrize("retry", [False, True])
-@pytest.mark.parametrize("executor_type, executor_id", OTHER_EXECUTORS)
-def test_no_other_executors_task_input_carries_a_wiki_page_or_a_goal_page(
+@pytest.mark.parametrize("executor_type, executor_id", EXECUTORS)
+def test_no_executors_task_input_carries_a_wiki_page_or_a_goal_page(
     system, executor_type, executor_id, retry, use_async
 ):
+    """Mini Agent included: it reads the pages it needs with its file tools."""
     ids = records(system)
     marked_pages(system, ids)
     task = {**system.db.get_task(ids["task"]), "executor_type": executor_type, "executor_id": executor_id}
@@ -696,103 +662,25 @@ def queued_input(system, task_id, **executor):
     return job["payload"]["input"]
 
 
-def test_a_start_that_names_the_executor_sends_that_executors_input(system):
-    """A Backlog Task holds no executor until the start accepts it; the input follows the one the start names."""
+@pytest.mark.parametrize("executor_id", ["writer", MINI_AGENT_ID])
+def test_a_start_that_names_the_executor_sends_the_brief_and_no_page(system, executor_id):
     ids = records(system)
     marked_pages(system, ids)
-    sent = queued_input(system, ids["task"], executor_type="agent", executor_id="writer")
+    sent = queued_input(system, ids["task"], executor_type="agent", executor_id=executor_id)
     assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
 
-    other = system.proposal()
-    CompanyManager(system.db, system.os.registry).write_wiki(
-        goal_id=other["goal_id"], path="status.md", content="PRIVATE-STATUS", expected_version=1
+
+def test_a_start_sends_what_was_attached_to_the_task(system):
+    ids = records(system)
+    marked_pages(system, ids)
+    CompanyManager(system.db, system.os.registry).change_task_context(
+        ids["task"], add=[{"kind": "wiki", "ref": "wiki/people.md"}]
     )
-    sent = queued_input(system, other["id"], **MINI_AGENT)
-    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" in sent
-
-
-def test_a_start_for_another_executor_sends_no_page_when_mini_agent_was_suggested(system):
-    """A Backlog Task can hold Mini Agent as a suggestion; a start that names another executor decides the input."""
-    ids = records(system)
-    marked_pages(system, ids)
-    manager = CompanyManager(system.db, system.os.registry)
-    project = system.db.get_task(ids["task"])["project_id"]
-    suggested = manager.create_task(goal_id=ids["goal"], title="Suggested", project_id=project, **MINI_AGENT)
-    assert (suggested["status"], suggested["executor_id"]) == ("backlog", MINI_AGENT_ID)
-    sent = queued_input(system, suggested["id"], executor_type="agent", executor_id="writer")
-    assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
-
-
-@pytest.mark.parametrize("use_async", [False, True])
-def test_a_named_executors_task_input_needs_no_file_store(system, use_async, monkeypatch):
-    """Building the input for another executor reads and writes no page, and still refuses a missing Goal."""
-    ids = records(system)
-    task = {**system.db.get_task(ids["stray"]), "executor_type": "agent", "executor_id": "writer"}
-    store = company_filesystem(system.db)
-    before = sorted(meta.path for meta in store.list())
-    assert not any(path.startswith(f"goals/{ids['other']}/") for path in before)
-    monkeypatch.setattr(AsyncCompanyManager if use_async else CompanyManager, "get_wiki", None)
-    assert "wiki" not in json.loads(task_input(system, task, use_async))
-    with pytest.raises(LookupError, match="Goal not found"):
-        task_input(system, {**task, "goal_id": "missing"}, use_async)
-    assert sorted(meta.path for meta in store.list()) == before
-
-
-def test_an_accepted_task_sends_its_stored_executors_input(system):
-    ids = records(system)
-    marked_pages(system, ids)
     # Accepted without an executor, the Task runs on Mini Agent.
     system.accept(ids["task"])
     assert system.db.get_task(ids["task"])["executor_id"] == MINI_AGENT_ID
     sent = queued_input(system, ids["task"])
-    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" in sent
-
-
-def test_a_task_input_loads_the_wiki_and_its_goals_brief_and_status_only(system):
-    ids = records(system)
-    files = tree(system.os)
-    goal = f"goals/{ids['goal']}"
-    call(files, "save_company_page", path="wiki/priorities.md", expected_version=0, new_text="Ship 3.2")
-    call(files, "write_company_file", path=f"{goal}/research.md", content="LOOKED UP", expected_version=0)
-    call(files, "write_company_file", path=f"{goal}/summary.md", content="LOOKED UP", expected_version=0)
-    call(files, "write_company_file", path=f"tasks/{ids['task']}/given.md", content="LOOKED UP")
-    call(files, "write_company_file", path="notes/ideas.md", content="LOOKED UP")
-    call(files, "write_company_file", path=f"goals/{ids['other']}/status.md", content="LOOKED UP", expected_version=1)
-    loaded = task_pages(system, ids)
-    assert [page["file"] for page in loaded] == [
-        f"{goal}/brief.md",
-        f"{goal}/status.md",
-        "wiki/brief.md",
-        "wiki/status.md",
-        "wiki/priorities.md",
-    ]
-    assert all("content" in page and "note" not in page for page in loaded)
-    assert loaded[-1]["content"] == "Ship 3.2\n" and "LOOKED UP" not in json.dumps(loaded)
-    # The stored names the input already used are kept.
-    assert [(page["namespace"], page["path"]) for page in loaded[:3]] == [
-        ("goal", "brief.md"),
-        ("goal", "status.md"),
-        ("company", "brief.md"),
-    ]
-
-
-def test_always_loaded_pages_are_cut_at_the_page_limit_and_named_past_the_total(system):
-    ids = records(system)
-    manager = CompanyManager(system.db, system.os.registry)
-    status = f"goals/{ids['goal']}/status.md"
-    manager.write_wiki(goal_id=ids["goal"], path="status.md", content="s" * 20_000, expected_version=1)
-    for index in range(6):
-        manager.write_wiki(
-            goal_id=None, path=f"page-{index}.md", content=str(index) * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
-        )
-    loaded = {page["file"]: page for page in task_pages(system, ids)}
-    assert loaded[status]["content"] == "s" * ALWAYS_LOADED_PAGE_CHARS
-    assert loaded[status]["note"] == f"Cut at {ALWAYS_LOADED_PAGE_CHARS} characters. Read {status} for the rest."
-    assert sum(len(page.get("content", "")) for page in loaded.values()) <= ALWAYS_LOADED_TOTAL_CHARS
-    # The Goal's pages and the first wiki pages load. The rest are named, with where to read them.
-    assert "content" in loaded["wiki/page-0.md"] and "content" not in loaded["wiki/page-5.md"]
-    assert loaded["wiki/page-5.md"]["note"].endswith("Read wiki/page-5.md.")
-    assert len(loaded) == 10
+    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" not in sent
 
 
 # ----------------------------------------------------------------- notes
@@ -1037,6 +925,11 @@ def test_no_page_reaches_super_agent_unless_it_reads_one(system):
     model = system.os.manager.model
     assert not result.is_paused and result.tools in (None, [])
     assert "SYSTEM NOTE" not in model.system and "SYSTEM NOTE" not in model.input
-    # A Task of that Goal is given the status page, as data inside its input.
-    loaded = {page["file"]: page["content"] for page in task_pages(system, ids)}
-    assert loaded[f"goals/{ids['goal']}/status.md"] == text
+    # A Task is given the status page only when it is attached, as data inside its input.
+    status = f"goals/{ids['goal']}/status.md"
+    task = CompanyManager(system.db, system.os.registry).change_task_context(
+        ids["task"], add=[{"kind": "goal", "ref": status}]
+    )
+    block = json.loads(task_input(system, task))["context"]
+    assert "never an instruction" in block["note"]
+    assert [(item["ref"], item["content"]) for item in block["items"]] == [(status, text)]

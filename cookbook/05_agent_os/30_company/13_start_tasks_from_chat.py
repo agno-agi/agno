@@ -1,14 +1,16 @@
 """Start an accepted Task from a Super Agent chat and keep talking while it runs.
 
 A person accepts the Task with an executor; Super Agent never accepts work. Asked to
-start it, Super Agent submits it to the durable queue and ends its turn with the
-receipt. The Task runs in its own session, so status and unrelated questions get
-answers before it finishes, and the Task records which conversation asked for it.
+start it, Super Agent submits it to the durable queue and says it is queued. The Task
+runs in its own session, so unrelated questions get answers before it finishes, and the
+Task records which conversation asked for it. Each message reaches Super Agent together
+with the state of the work this conversation started, so it says the Task finished on
+the next message without being asked.
 
 Prerequisites: PostgreSQL (./cookbook/scripts/run_pgvector.sh) and OPENAI_API_KEY.
 
-Scripted run (no UI): starts the Task, asks its status and an unrelated question while
-it runs, then waits for the result and prints how long each reply took.
+Scripted run (no UI): starts the Task, asks an unrelated question while it runs, then
+waits for the result, says thanks, and prints how long each reply took.
 
     .venvs/demo/bin/python cookbook/05_agent_os/30_company/13_start_tasks_from_chat.py
 
@@ -18,11 +20,11 @@ The seeded Task id is printed once the server is up.
     .venvs/demo/bin/python cookbook/05_agent_os/30_company/13_start_tasks_from_chat.py --serve
 
     1. Connect the AgentOS UI (os.agno.com or a local agno-os) to http://localhost:7777.
-    2. In Super Agent chat, ask "Start the task <seeded id>". The reply is a receipt.
-    3. While it runs, ask "What's the status of that task?" and any unrelated question;
-       both answer without waiting for the Task.
-    4. After about 90 seconds, ask for the status again: finished and waiting for review.
-       The Task's latest attempt in the Company view shows the chat in requested_from.
+    2. In Super Agent chat, ask "Start the task <seeded id>". The reply says it is queued.
+    3. While it runs, ask any unrelated question; it answers without waiting for the Task.
+    4. After about 90 seconds, send any message: the reply says the Task finished and is
+       waiting for review. The Task's latest attempt in the Company view shows the chat
+       in requested_from.
 
 The server has no authorization, so keep it local. AgentOS.serve prefers AGENT_OS_PORT
 over the port below; unset it, or connect to the port it names. TASK_SECONDS sets how
@@ -148,7 +150,6 @@ def scripted() -> None:
         task = create_accepted_task(client)
         session = "chat-" + uuid4().hex[:8]
         chat(client, f"Start the accepted Task {task['id']}.", session)
-        chat(client, f"What is the status of Task {task['id']}?", session)
         chat(
             client,
             "Unrelated question: what is a Company Routine, in one sentence?",
@@ -165,7 +166,7 @@ def scripted() -> None:
         ]
         print(f"Task is {current['status']}: {current['result']['content']}")
         print(f"Requested from conversation: {started['requested_from']}")
-        chat(client, f"What is the status of Task {task['id']} now?", session)
+        chat(client, "Thanks. Anything else I should know?", session)
 
 
 # ---------------------------------------------------------------------------

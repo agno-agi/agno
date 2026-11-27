@@ -285,8 +285,7 @@ def test_work_with_no_goal_runs_the_whole_lifecycle(system):
     assert manager.restore_project(project["id"])["deleted_at"] is None
 
 
-def test_the_input_of_a_task_with_no_goal_carries_the_company_wiki_only(system):
-    """Mini Agent's input holds the pages. A named executor's holds none, and a Task with no Goal still builds."""
+def test_the_input_of_a_task_carries_no_page_with_or_without_a_goal(system):
     manager = system.manager
     goal = manager.create(name="Developer docs")
     mini = {"executor_type": "agent", "executor_id": "miniagent"}
@@ -295,15 +294,13 @@ def test_the_input_of_a_task_with_no_goal_carries_the_company_wiki_only(system):
     named = {**loose, "executor_type": "agent", "executor_id": "writer"}
     assert list(json.loads(asyncio.run(_task_input(manager, named)))) == ["brief", "evidence"]
 
-    pages = json.loads(asyncio.run(_task_input(manager, loose)))["wiki"]
-    assert pages and {page["namespace"] for page in pages} == {"company"}
-    with_goal = json.loads(asyncio.run(_task_input(manager, tagged)))["wiki"]
-    assert [page["file"] for page in with_goal[:2]] == [
-        f"goals/{goal['id']}/brief.md",
-        f"goals/{goal['id']}/status.md",
-    ]
-    # The same company pages are sent either way.
-    assert [page["file"] for page in with_goal[2:]] == [page["file"] for page in pages]
+    for task in (loose, tagged):
+        for executor in ({}, {"executor_type": "agent", "executor_id": "miniagent"}):
+            assert set(json.loads(asyncio.run(_task_input(manager, {**task, **executor})))) == {"brief", "evidence"}
+    # A page reaches a run only when it is attached, for a Task with no Goal as for any other.
+    attached = manager.change_task_context(loose["id"], add=[{"kind": "wiki", "ref": "wiki/brief.md"}])
+    items = json.loads(asyncio.run(_task_input(manager, attached)))["context"]["items"]
+    assert [(item["kind"], item["ref"], item["sent"]) for item in items] == [("wiki", "wiki/brief.md", "full")]
 
 
 def test_the_api_takes_a_project_and_a_task_with_no_goal(system):
