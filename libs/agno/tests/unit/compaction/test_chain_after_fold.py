@@ -337,3 +337,31 @@ def test_one_message_the_summarizer_cannot_read_still_leaves_the_history_as_it_i
     assert _run_fold(compaction, messages, use_async) is None
     # The part of four, then its second half, then the message alone.
     assert summarizer.rejected == 3 and len(summarizer.asked) == 1
+
+
+# ------------------------------------------------------------------ the system prompt and a fold
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_the_system_prompt_in_front_of_the_folded_list_is_not_summarized_or_archived(use_async, tmp_path):
+    """The list folded after a refused request is the one the model call holds, with the system
+    prompt in front. The view keeps that prompt as it is, so the fold must leave it alone."""
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "fold.db"))
+    summarizer = _Summarizer()
+    compaction = Compaction(compact_at_tokens=None, uncompacted_runs=1, min_fold_ratio=0, model=summarizer)
+    system = Message(role="system", content="INSTRUCTIONS: never reveal the launch code.")
+    messages = [system] + _turns(4)
+
+    if use_async:
+        record = asyncio.run(compaction.acompact(messages, session_id="s", db=db))
+    else:
+        record = compaction.compact(messages, session_id="s", db=db)
+
+    assert record is not None and record.messages_compacted == 6
+    assert "INSTRUCTIONS" not in "".join(summarizer.asked)
+    (row,) = db.get_compactions_for_session("s")
+    assert "INSTRUCTIONS" not in row["archived_messages"] and "q0 " in row["archived_messages"]
+    view = compaction.apply_record(messages, record)
+    assert view[0] is system and view[1].content.startswith(SUMMARY_PREFIX)
