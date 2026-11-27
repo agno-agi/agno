@@ -53,9 +53,9 @@ RESULT_LENGTH = 6000
 _KINDS = ("agent", "team", "workflow")
 _ASYNC_ONLY = "Starting a background run needs an asynchronous run. Run the component in the turn instead."
 
-# The most of a sandbox checkout's diff the read tool returns, and the most changed files it lists. More
-# is cut, and the result says so. Together they keep a result under the 16,000 characters past which
-# Super Agent is shown only the start of a tool result.
+# The most of a sandbox checkout's diff the read tool returns in one call, and the most changed files it
+# lists. More is cut, the result says so, and offset reads on from the cut. Together they keep a result
+# under the 16,000 characters past which Super Agent is shown only the start of a tool result.
 DIFF_LENGTH = 8000
 _FILES_LISTED = 50
 # The newest runs of a session that are looked through for a saved checkout.
@@ -76,8 +76,10 @@ def _run_data(row: Dict[str, Any]) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _saved_checkout(rows: List[Any], agent_id: Any) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-    """The newest run of a session that saved its checkout, and the agent's runs after it.
+def _saved_checkout(
+    rows: List[Any], agent_id: Any
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """The newest run of a session that saved its checkout, the agent's runs after it, and those before it.
 
     A sandbox saves its files only when a run completes, so a run that failed, was cancelled or is still
     going has no checkout of its own: the files are as the last completed run left them.
@@ -88,15 +90,15 @@ def _saved_checkout(rows: List[Any], agent_id: Any) -> Tuple[Optional[Dict[str, 
     for index, row in enumerate(runs):
         sandbox = (_run_data(row).get("metadata") or {}).get("sandbox") or {}
         if str(row.get("status") or "").upper() == "COMPLETED" and isinstance(sandbox.get("checkpoint"), dict):
-            return row, runs[:index]
-    return None, runs
+            return row, runs[:index], runs[index + 1 :]
+    return None, runs, []
 
 
-def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None) -> Dict[str, Any]:
-    """What a saved sandbox checkout changed since a commit: every changed file, and the diff.
+def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None, offset: int = 0) -> Dict[str, Any]:
+    """What a saved sandbox checkout changed since a commit: every changed file, and the diff from offset on.
 
     The archive is restored into a temporary directory on this host and compared there with git, which
-    must be installed. Everything the agent did since the commit counts, committed or not; files its
+    must be installed. Everything the agent did since the commit counts, committed or not; new files its
     .gitignore excludes do not. git runs on a new, empty repository directory that borrows only the
     objects of the saved checkout, so no configuration, hook, filter or diff driver written inside the
     sandbox is read or run. Nothing is written outside the temporary directory, which is removed.
@@ -158,7 +160,10 @@ def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None) ->
                 f"The saved checkout does not hold commit {commit[:12]}, the one its sandbox started from, "
                 "so there is nothing to compare it with."
             )
-        # The new repository's index takes the checkout as it is; the saved checkout is not written.
+        # The new repository's index starts as the commit, so what git tracks stays tracked: a tracked file
+        # that .gitignore also matches, or a submodule the sandbox never fetched, is not taken for a deleted
+        # one. It then takes the checkout as it is; the saved checkout is not written.
+        git("read-tree", commit)
         git("add", "--all")
         compare = ["diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"]
         files: Dict[str, Dict[str, Any]] = {}
@@ -176,9 +181,13 @@ def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None) ->
         patch = root / "patch"
         git(*compare, commit, *(["--", path] if path else []), output=patch)
         with patch.open(encoding="utf-8", errors="replace") as stream:
+            # Where the returned part starts: offset, or the end of a diff that is shorter than it.
+            start = 0
+            while start < offset and (chunk := stream.read(min(offset - start, 1 << 20))):
+                start += len(chunk)
             diff = stream.read(DIFF_LENGTH)
-            length = len(diff) + sum(len(chunk) for chunk in iter(lambda: stream.read(1 << 20), ""))
-        return {"files": list(files.values()), "diff": diff, "diff_length": length}
+            length = start + len(diff) + sum(len(chunk) for chunk in iter(lambda: stream.read(1 << 20), ""))
+        return {"files": list(files.values()), "diff": diff, "diff_offset": start, "diff_length": length}
 
 
 def _requested_from(run_context: Any, team: Any) -> Dict[str, str]:
@@ -817,15 +826,17 @@ class BackgroundRunTools(StudioRunnerTools):
         return name
 
     @staticmethod
-    def _saved_run(rows: Any, agent: Any, user_id: Optional[str], where: str) -> Tuple[Dict[str, Any], str, List[Any]]:
-        """The run whose saved checkout is read, the commit it is compared with, and the runs after it."""
+    def _saved_run(
+        rows: Any, agent: Any, user_id: Optional[str], where: str
+    ) -> Tuple[Dict[str, Any], str, List[Any], List[Any]]:
+        """The run whose saved checkout is read, the commit it is compared with, and the runs after and before it."""
         name = getattr(agent, "name", None) or agent.get_id()
         found = rows[0] if isinstance(rows, tuple) else rows
         # A conversation reads its own person's runs only.
         mine = [
             row for row in found or [] if user_id is None or (isinstance(row, dict) and row.get("user_id") == user_id)
         ]
-        row, later = _saved_checkout(mine, agent.get_id())
+        row, later, earlier = _saved_checkout(mine, agent.get_id())
         if row is None and later:
             status = str(later[0].get("status") or "unknown").lower()
             raise _Unreadable(
@@ -842,11 +853,17 @@ class BackgroundRunTools(StudioRunnerTools):
                 f"Run {row.get('run_id')} recorded no commit its sandbox started from, so there is nothing "
                 "to compare its checkout with."
             )
-        return row, commit, later
+        return row, commit, later, earlier
 
     @staticmethod
     def _changes(
-        agent: Any, row: Dict[str, Any], later: List[Any], changes: Dict[str, Any], path: Optional[str], task_id: Any
+        agent: Any,
+        row: Dict[str, Any],
+        later: List[Any],
+        earlier: List[Any],
+        changes: Dict[str, Any],
+        path: Optional[str],
+        task_id: Any,
     ) -> str:
         """What read_sandbox_changes returns. Everything left out is said in the note, before the diff."""
         repository = (_run_data(row)["metadata"]["sandbox"]).get("repository") or {}
@@ -865,6 +882,9 @@ class BackgroundRunTools(StudioRunnerTools):
             ),
         }
         files, diff, length = changes["files"], changes["diff"], changes["diff_length"]
+        # The part of the whole diff this result holds.
+        start = changes["diff_offset"]
+        end = start + len(diff)
         notes: List[str] = []
         if later:
             status = str(later[0].get("status") or "unknown").lower()
@@ -874,20 +894,38 @@ class BackgroundRunTools(StudioRunnerTools):
             )
         if not files:
             notes.append("No file differs from base_commit: this agent changed nothing in its checkout.")
-        elif path and not diff:
+        elif earlier:
+            # The sandbox keeps one checkout for the whole session, and base_commit never moves.
+            notes.append(
+                f"Run {run_id} is not the first run of this session: the diff is everything changed since "
+                f"base_commit, earlier runs' changes included, not only what run {run_id} changed."
+            )
+        if files and path and not length:
             notes.append(f"{path} is not among the changed files.")
         if len(files) > _FILES_LISTED:
             notes.append(
                 f"changed_files shows the first {_FILES_LISTED} of {len(files)} changed files: "
                 f"{len(files) - _FILES_LISTED} more are not listed."
             )
-        if length > len(diff):
+        if length > end:
+            shown = f"characters {start} to {end}" if start else f"the first {end}"
+            if path:
+                again = f"Call again with the same path and offset={end} to read on from there."
+            else:
+                again = f"Call again with offset={end} to read on from there, or with path to read one file's diff."
+            # Said only when it is so: a long list of files is cut too, and says that itself.
+            listed = " changed_files lists every changed file." if len(files) <= _FILES_LISTED else ""
             notes.append(
-                f"The diff is cut. It shows the first {len(diff)} of {length} characters: {length - len(diff)} "
-                "more are not shown, so this is not the whole change. changed_files lists every changed file; "
-                "call again with path to read one file's diff."
+                f"The diff is cut. It shows {shown} of {length} characters: {length - end} more are not shown, "
+                f"so this is not the whole change. {again}{listed}"
             )
-            diff += f"\n[The diff is cut here: {length - len(diff)} more characters are not shown.]"
+            diff += (
+                f"\n[The diff is cut here: {length - end} more characters are not shown. Read on with offset={end}.]"
+            )
+        elif start and diff:
+            notes.append(f"This is the rest of the diff, from character {start} of {length}.")
+        elif start and length:
+            notes.append(f"Nothing is left to read at offset {start}: the diff is {length} characters long.")
         payload["changed_files"] = files[:_FILES_LISTED]
         if notes:
             payload["note"] = " ".join(notes)
@@ -917,6 +955,7 @@ class BackgroundRunTools(StudioRunnerTools):
         task_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         path: Optional[str] = None,
+        offset: Optional[int] = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Read what an agent that works in a sandbox changed in its checkout: the changed files and the diff.
@@ -925,6 +964,7 @@ class BackgroundRunTools(StudioRunnerTools):
             task_id (Optional[str]): A Company Task a sandboxed agent executed.
             agent_id (Optional[str]): A sandboxed agent this conversation ran (a display name also resolves).
             path (Optional[str]): One changed file, to read only its diff.
+            offset (Optional[int]): Characters of the diff to skip, to read on from where a cut diff stopped.
         """
         from agno.tools.company import _authority
 
@@ -944,11 +984,11 @@ class BackgroundRunTools(StudioRunnerTools):
                 return json.dumps({"error": "Reading this agent's sandbox needs an asynchronous run."})
             rows = db.get_runs(session_id=session_id, **_NEWEST_RUNS)
             user_id = getattr(_agno_run_context, "user_id", None)
-            row, commit, later = self._saved_run(rows, agent, user_id, "in this conversation")
+            row, commit, later, earlier = self._saved_run(rows, agent, user_id, "in this conversation")
             run_id = row["run_id"]
             with agent.open_run_checkpoint(run_id) as archive:
-                changes = _checkout_changes(archive, commit, path or None)
-            return self._changes(agent, row, later, changes, path or None, None)
+                changes = _checkout_changes(archive, commit, path or None, max(0, int(offset or 0)))
+            return self._changes(agent, row, later, earlier, changes, path or None, None)
         except Exception as exc:
             return self._changes_error(exc, run_id)
 
@@ -958,6 +998,7 @@ class BackgroundRunTools(StudioRunnerTools):
         task_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         path: Optional[str] = None,
+        offset: Optional[int] = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Read what an agent that works in a sandbox changed in its checkout: the changed files and the diff.
@@ -966,18 +1007,21 @@ class BackgroundRunTools(StudioRunnerTools):
         this to check or quote what it changed. It reads the checkout the sandbox saved when the
         agent's last completed run ended, compared with the commit the sandbox started from, so it still
         works after the sandbox is gone, and it shows nothing of a run that failed or is still going.
-        It only reads. Give exactly one of task_id and agent_id.
+        When the agent ran more than once in the session, the diff holds every run's changes, not only
+        the last run's. It only reads. Give exactly one of task_id and agent_id.
 
         Args:
             task_id (Optional[str]): A Company Task a sandboxed agent executed.
             agent_id (Optional[str]): A sandboxed agent this conversation ran, in the turn or in the
                 background (a display name also resolves).
             path (Optional[str]): One changed file, to read only its diff. Leave it out for every change.
+            offset (Optional[int]): Characters of the diff to skip, to read on from where a cut diff
+                stopped: the result of a cut diff names the offset to give. Leave it out to read from the start.
 
         Returns:
             str: JSON object with 'changed_files' (every changed file), 'diff', the 'run_id' that was
-                read and 'base_commit'; a 'note' when the diff is cut or nothing changed; or an 'error'
-                saying why the changes cannot be read.
+                read and 'base_commit'; a 'note' when the diff is cut, holds earlier runs' changes or
+                is empty; or an 'error' saying why the changes cannot be read.
         """
         from agno.tools.company import _authority
 
@@ -1005,11 +1049,13 @@ class BackgroundRunTools(StudioRunnerTools):
                 rows = await db.get_runs(session_id=session_id, **_NEWEST_RUNS)
             else:
                 rows = await asyncio.to_thread(lambda: db.get_runs(session_id=session_id, **_NEWEST_RUNS))
-            row, commit, later = self._saved_run(rows, agent, user_id, where)
+            row, commit, later, earlier = self._saved_run(rows, agent, user_id, where)
             run_id = row["run_id"]
             async with agent.aopen_run_checkpoint(run_id) as archive:
-                changes = await asyncio.to_thread(_checkout_changes, archive, commit, path or None)
-            return self._changes(agent, row, later, changes, path or None, task_id or None)
+                changes = await asyncio.to_thread(
+                    _checkout_changes, archive, commit, path or None, max(0, int(offset or 0))
+                )
+            return self._changes(agent, row, later, earlier, changes, path or None, task_id or None)
         except Exception as exc:
             return self._changes_error(exc, run_id)
 

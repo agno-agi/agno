@@ -226,6 +226,53 @@ def test_the_changed_files_and_the_diff_are_read_from_the_saved_checkout(reader,
 
 
 @modes
+def test_what_git_tracks_is_not_reported_deleted(reader, saved, mode):
+    """A tracked file that .gitignore also matches, and a submodule the sandbox never fetched, are unchanged."""
+    (saved.checkout / "build").mkdir()
+    (saved.checkout / "build" / "kept.bin").write_text("tracked although build/ is ignored\n")
+    (saved.checkout / ".gitmodules").write_text(
+        '[submodule "vendor/lib"]\n\tpath = vendor/lib\n\turl = https://github.com/acme/lib\n'
+    )
+    (saved.checkout / "vendor" / "lib").mkdir(parents=True)
+    git(saved.checkout, "add", "--force", "build/kept.bin", ".gitmodules")
+    git(saved.checkout, "update-index", "--add", "--cacheinfo", "160000," + "1" * 40 + ",vendor/lib")
+    git(saved.checkout, "commit", "--quiet", "-m", "a tracked ignored file and a submodule")
+    saved.commit = git(saved.checkout, "rev-parse", "HEAD")
+    assert git(saved.checkout, "status", "--short") == ""
+    run_context = person()
+    session = reader.session(run_context)
+    reader.rows.append(saved.row(saved.capture(), session=session))
+    clean = reader.read(run_context, mode, agent_id="engineer")
+    assert clean["changed_files"] == [] and clean["diff"] == ""
+    assert clean["note"] == "No file differs from base_commit: this agent changed nothing in its checkout."
+    # A change to the tracked file is still a change, and a new ignored file still is not.
+    (saved.checkout / "build" / "kept.bin").write_text("changed\n")
+    (saved.checkout / "build" / "out.bin").write_text("ignored\n")
+    reader.rows.append(saved.row(saved.capture(), run_id="run-2", session=session, index=2))
+    changed = reader.read(run_context, mode, agent_id="engineer")
+    assert [(entry["path"], entry["change"]) for entry in changed["changed_files"]] == [("build/kept.bin", "modified")]
+    assert "out.bin" not in changed["diff"]
+
+
+@modes
+def test_a_second_run_says_the_diff_holds_the_first_runs_changes(reader, saved, mode):
+    """A session keeps one checkout, compared with the commit it started from whichever run is read."""
+    edit(saved)
+    run_context = person()
+    session = reader.session(run_context)
+    reader.rows.append(saved.row(saved.capture(), session=session))
+    assert "note" not in reader.read(run_context, mode, agent_id="engineer")
+    # The second run is asked only to report, and changes nothing.
+    reader.rows.append(saved.row(saved.capture(), run_id="run-2", session=session, index=2))
+    result = reader.read(run_context, mode, agent_id="engineer")
+    assert result["run_id"] == "run-2" and "+Reviewed." in result["diff"]
+    assert result["note"] == (
+        "Run run-2 is not the first run of this session: the diff is everything changed since base_commit, "
+        "earlier runs' changes included, not only what run run-2 changed."
+    )
+
+
+@modes
 def test_a_display_name_names_the_agent(reader, saved, mode):
     edit(saved)
     run_context = person()
@@ -255,10 +302,10 @@ def test_a_cut_diff_says_how_much_is_missing(reader, saved, mode):
     missing = length - DIFF_LENGTH
     assert result["note"] == (
         f"The diff is cut. It shows the first {DIFF_LENGTH} of {length} characters: {missing} more are not "
-        "shown, so this is not the whole change. changed_files lists every changed file; call again with path "
-        "to read one file's diff."
+        f"shown, so this is not the whole change. Call again with offset={DIFF_LENGTH} to read on from there, "
+        "or with path to read one file's diff. changed_files lists every changed file."
     )
-    marker = f"\n[The diff is cut here: {missing} more characters are not shown.]"
+    marker = f"\n[The diff is cut here: {missing} more characters are not shown. Read on with offset={DIFF_LENGTH}.]"
     assert result["diff"].endswith(marker) and len(result["diff"]) == DIFF_LENGTH + len(marker)
     assert result["diff"].startswith("diff --git a/README.md b/README.md")
     # A cut result is still short enough to be shown to Super Agent whole, not as a preview.
@@ -287,6 +334,55 @@ def test_a_long_list_of_files_is_cut_and_says_so(reader, saved, mode, monkeypatc
     result = reader.read(run_context, mode, agent_id="engineer")
     assert len(result["changed_files"]) == 2
     assert "changed_files shows the first 2 of 3 changed files: 1 more are not listed." in result["note"]
+
+
+@modes
+def test_a_cut_list_of_files_is_not_called_whole(reader, saved, mode, monkeypatch):
+    monkeypatch.setattr(background_runs, "_FILES_LISTED", 2)
+    edit(saved)
+    (saved.checkout / "big.txt").write_text("".join(f"line {number}\n" for number in range(3000)))
+    run_context = person()
+    reader.rows.append(saved.row(saved.capture(), session=reader.session(run_context)))
+    note = reader.read(run_context, mode, agent_id="engineer")["note"]
+    assert "2 more are not listed." in note and "The diff is cut." in note
+    assert "lists every changed file" not in note
+
+
+@modes
+def test_a_file_longer_than_one_result_is_read_to_its_end(reader, saved, mode):
+    """One file's diff can be longer than a result holds: offset reads on from where the last result stopped."""
+    functions = [f"def handler_{number}():\n    return {number}\n\n" for number in range(400)]
+    (saved.checkout / "handlers.py").write_text("".join(functions))
+    run_context = person()
+    reader.rows.append(saved.row(saved.capture(), session=reader.session(run_context)))
+    first = reader.read(run_context, mode, agent_id="engineer", path="handlers.py")
+    length = int(re.search(r"of (\d+) characters", first["note"]).group(1))
+    assert length > DIFF_LENGTH
+    assert f"Call again with the same path and offset={DIFF_LENGTH} to read on from there." in first["note"]
+    assert "+def handler_399():" not in first["diff"]
+    # Every result names the offset of the next one, and the last one says it is the last.
+    parts, offset, result = [], 0, first
+    while True:
+        cut = re.search(
+            r"\n\[The diff is cut here: \d+ more characters are not shown\. Read on with offset=(\d+)\.\]$",
+            result["diff"],
+        )
+        if cut is None:
+            parts.append(result["diff"])
+            break
+        parts.append(result["diff"][: cut.start()])
+        assert int(cut.group(1)) == offset + DIFF_LENGTH
+        assert f"It shows characters {offset} to {offset + DIFF_LENGTH} of {length}" in result["note"] or offset == 0
+        offset = int(cut.group(1))
+        result = reader.read(run_context, mode, agent_id="engineer", path="handlers.py", offset=offset)
+    assert len(parts) > 1 and result["note"] == f"This is the rest of the diff, from character {offset} of {length}."
+    whole = "".join(parts)
+    assert len(whole) == length
+    assert all(f"+def handler_{number}():" in whole for number in range(400))
+    # Past the end there is nothing, and that is said.
+    past = reader.read(run_context, mode, agent_id="engineer", path="handlers.py", offset=length + 500)
+    assert past["diff"] == ""
+    assert past["note"] == f"Nothing is left to read at offset {length}: the diff is {length} characters long."
 
 
 # ----------------------------------------------------------------- the sandbox is gone
@@ -336,7 +432,9 @@ def test_the_newest_saved_checkout_is_the_one_read(reader, saved, mode):
     edit(saved)
     reader.rows.append(saved.row(saved.capture(), run_id="run-2", session=session, index=2))
     result = reader.read(run_context, mode, agent_id="engineer")
-    assert result["run_id"] == "run-2" and "+Reviewed." in result["diff"] and "note" not in result
+    assert result["run_id"] == "run-2" and "+Reviewed." in result["diff"]
+    # The only note is that an earlier run's changes are in the diff too: nothing is said of a later run.
+    assert result["note"].startswith("Run run-2 is not the first run of this session") and "later" not in result["note"]
 
 
 @modes
