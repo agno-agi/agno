@@ -187,11 +187,10 @@ class ClaudeAgent(BaseExternalAgent):
         strict_mcp_config: Use only explicitly configured MCP servers when True.
         skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
         plugins: Native SDK plugin configurations.
-        oauth_token: Run on a Claude plan instead of an API key: the OAuth token that
-            `claude setup-token` prints, given to Claude Code as CLAUDE_CODE_OAUTH_TOKEN.
-            Claude Code is then never given ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or a cloud
-            provider switch, on this host or in a sandbox, so a missing, expired or refused token
-            fails the run instead of billing an API key.
+        oauth_token: Run on a Claude subscription instead of an API key. Pass the token that
+            `claude setup-token` prints. When set, the agent never uses ANTHROPIC_API_KEY, so an
+            expired or refused token fails the run instead of billing the API key. Leave it
+            unset to use the API key.
         options: Native ClaudeAgentOptions for advanced configuration. Non-None constructor
             fields override these options, including empty collections and False. Agno owns
             native session selection and token streaming; configure them through run/arun.
