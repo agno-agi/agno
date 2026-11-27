@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import Future
+from concurrent.futures import thread as _worker_threads  # noqa: F401
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -44,6 +45,8 @@ class _Attempt:
     # Set from any thread to give the attempt up.
     cancelled: threading.Event = field(default_factory=threading.Event)
     started: "Future[None]" = field(default_factory=Future)
+    # Set when the attempt's thread has let go of Codex.
+    ended: threading.Event = field(default_factory=threading.Event)
 
     def view(self) -> Dict[str, Any]:
         """What a caller may see. Never the sign-in."""
@@ -157,6 +160,25 @@ async def _arun(agent: Any, attempt: _Attempt, caller_loop: Optional[asyncio.Abs
         if not attempt.started.done():
             attempt.started.set_result(None)
         shutil.rmtree(codex_home, ignore_errors=True)
+        attempt.ended.set()
+
+
+def _give_up_all() -> None:
+    """Give up every waiting attempt, so a process that is stopping does not wait for a code."""
+    with _lock:
+        waiting = list(_attempts.values())
+    for attempt in waiting:
+        attempt.cancelled.set()
+    for attempt in waiting:
+        attempt.ended.wait(10)
+
+
+# A waiting attempt holds a worker thread inside the Codex SDK, and the interpreter waits for
+# worker threads before it runs ordinary exit handlers. This hook runs before that wait, and
+# before the one concurrent.futures registered, because it is registered after it.
+_before_threads_are_joined = getattr(threading, "_register_atexit", None)
+if _before_threads_are_joined is not None:
+    _before_threads_are_joined(_give_up_all)
 
 
 async def astart(agent: Any) -> Dict[str, Any]:
