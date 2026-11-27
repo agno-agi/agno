@@ -1280,6 +1280,95 @@ def test_claude_merges_the_block_and_the_message_with_the_block_first():
     assert image["source"]["data"] == base64.b64encode(png).decode()
 
 
+IMAGE_INPUTS = {
+    "text plus image": (lambda Message, photo: dict(input_message="Describe it", images=[photo]), "Describe it", True),
+    "None input plus images": (lambda Message, photo: dict(input_message=None, images=[photo]), "", True),
+    "message with content None": (
+        lambda Message, photo: dict(input_message=Message(role="user", images=[photo])),
+        None,
+        False,
+    ),
+    "message with empty list content": (
+        lambda Message, photo: dict(input_message=Message(role="user", content=[], images=[photo])),
+        [],
+        False,
+    ),
+    "message list with empty content plus images": (
+        lambda Message, photo: dict(input_message=[Message(role="user", content=[])], images=[photo]),
+        [],
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(IMAGE_INPUTS))
+def test_an_image_turn_is_sent_as_it_is_without_the_block_with_the_block_before_it(tmp_path, shape):
+    """The block is one extra user message. What each formatter makes of the person's message, text
+    and image, is what it makes of it with no block at all: nothing is gained or lost by the block."""
+    import base64
+
+    pytest.importorskip("anthropic")
+    from agno.db.sqlite import SqliteDb
+    from agno.media import Image
+    from agno.models.message import Message
+    from agno.models.openai import OpenAIChat, OpenAIResponses
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team import Team
+    from agno.team._messages import _get_run_messages
+    from agno.utils.models.claude import format_messages as claude_messages
+
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkGQAAAAASUVORK5CYII="
+    )
+    encoded = base64.b64encode(png).decode()
+    given, content, openai_sends_photo = IMAGE_INPUTS[shape]
+    db = SqliteDb(db_file=str(tmp_path / "team.db"))
+    team = Team(id="plain", members=[], model=Scripted(), db=db)
+    team.initialize_team()
+    task = row()
+
+    def build(with_block):
+        run_context = context()
+        if with_block:
+            link_task(run_context, task)
+        team._message_context = LinkedWork(Tasks(task)) if with_block else None
+        arguments = dict(
+            run_response=TeamRunOutput(run_id="r", team_id="plain", session_id="s"),
+            run_context=run_context,
+            session=TeamSession(session_id="s", team_id="plain", runs=[]),
+            add_history_to_context=False,
+        )
+        arguments.update(given(Message, Image(content=png, mime_type="image/png", format="png")))
+        return [m for m in _get_run_messages(team, **arguments).messages if m.role != "system"]
+
+    (plain,) = build(False)
+    block_message, person = build(True)
+    db.close()
+    # Built: the block, then the person's message as it is built with no block.
+    assert (block_message.role, block_message.add_to_agent_memory, block_message.images) == ("user", False, None)
+    assert block_message.content.startswith(NOTE) and task["id"] in block_message.content
+    assert (person.role, person.content, len(person.images)) == (plain.role, plain.content, 1) == ("user", content, 1)
+
+    def dump(value):
+        return json.loads(json.dumps(value, default=lambda part: part.model_dump()))
+
+    # OpenAI Chat and Responses: the block is a user item of its own; the person's item is unchanged.
+    for model in (OpenAIChat(id="gpt-5.6-luna", api_key="test"), OpenAIResponses(id="gpt-5.6-luna", api_key="test")):
+        format_all = getattr(model, "_format_all_messages", None) or model._format_messages
+        (alone,) = dump(format_all([plain]))
+        first, second = dump(format_all([block_message, person]))
+        assert first == {"role": "user", "content": block_message.content}
+        assert second == alone
+        # An explicit message with no text content carries no photo to OpenAI, with or without the block.
+        assert (encoded in json.dumps(alone)) is openai_sends_photo
+
+    # Claude joins the two user messages: the block's text first, then what it sends with no block.
+    ((alone,), _), ((joined,), _) = claude_messages([plain]), claude_messages([block_message, person])
+    assert dump(joined["content"]) == [{"type": "text", "text": block_message.content}, *dump(alone["content"])]
+    assert dump(alone["content"])[-1]["source"]["data"] == encoded
+
+
 def test_gemini_sends_a_completion_notice_with_an_image_only_turn(tmp_path):
     import base64
 
