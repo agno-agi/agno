@@ -145,6 +145,23 @@ async def mcp_lifespan(_, mcp_tools):
 
 
 @asynccontextmanager
+async def manager_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Give Super Agent the served app: its tools start background runs through this app's run routes."""
+    from agno.os.manager.finished_work import FinishedWorkReports
+    from agno.run.background import _requester_listeners
+
+    agent_os._manager_app = app
+    # Told when work a conversation started ends, by the durable queue and by runs in this process.
+    report_finished_work = FinishedWorkReports(agent_os, app)
+    _requester_listeners.append(report_finished_work)
+    try:
+        yield
+    finally:
+        _requester_listeners.remove(report_finished_work)
+        agent_os._manager_app = None
+
+
+@asynccontextmanager
 async def http_client_lifespan(_):
     """Manage httpx client lifecycle for proper connection pool cleanup."""
     from agno.utils.http import aclose_default_clients
@@ -753,7 +770,8 @@ class AgentOS:
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if (self._scheduler_enabled or company is not None) and not internal_service_token:
+        # Super Agent starts background runs through the run routes, as the scheduler and Company do.
+        if (self._scheduler_enabled or company is not None or manager) and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -797,7 +815,9 @@ class AgentOS:
                 company_model = manager.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._mini_agent = _build_mini_agent(self, company_model)
+            # Mini Agent runs under Super Agent's tool call limit: OSManager(tool_call_limit=...), or its default.
+            limits = manager if isinstance(manager, OSManager) else OSManager()
+            self._mini_agent = _build_mini_agent(self, company_model, tool_call_limit=limits.tool_call_limit)
             if self._mini_agent is None:
                 self._mini_agent_unavailable_reason = (
                     "Mini Agent unavailable: configure CompanyConfig(model=...), OSManager(model=...) "
@@ -807,6 +827,7 @@ class AgentOS:
                 )
 
         self._manager: Optional["_Manager"] = None
+        self._manager_app: Optional[Any] = None
         if manager is not None and not isinstance(manager, (bool, OSManager)):
             raise TypeError("AgentOS.manager must be True, False, None, or OSManager")
         if manager:
@@ -2169,6 +2190,9 @@ class AgentOS:
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
 
+            if self._manager is not None:
+                lifespans.append(partial(manager_lifespan, agent_os=self))
+
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))
 
@@ -2229,6 +2253,9 @@ class AgentOS:
                 from agno.company.bootstrap import _company_lifespan
 
                 lifespans.append(partial(_company_lifespan, agent_os=self))
+
+            if self._manager is not None:
+                lifespans.append(partial(manager_lifespan, agent_os=self))
 
             # The interface lifespan
             lifespans.append(partial(interface_lifespan, agent_os=self))  # type: ignore

@@ -66,6 +66,8 @@ Conversations use the configured model and incur provider charges.
 | `manager_source.py` | “How does learning work?” | Super Agent can search docs directly and answer the concept question without a deployment audit. |
 | `manager_source.py` | “What is Agno?” or “Can you tell me about learning machines?” | A brief explanation grounded in the Agno documentation, with links. An explicitly general machine-learning question retains its broader meaning. |
 | `check_manager_permissions.py` | Run it directly; no chat or model key needed. | Seven HTTP checks confirm discovery, session access, rejected audiences, and denied publication. |
+| `manager_background_runs.py` | Run it directly. It asks “Run the Investigator on last night's export failure in the background. Do not wait for it.”, then “What is 17 times 23?”, then “Thanks. Anything else?” after the workflow has finished. | The first reply comes in a few seconds with a receipt while the 20-second workflow runs. The second is answered at once. The third says the Investigator finished and what it found. |
+| `manager_finished_work.py` | Run it directly. It asks “Run the Investigator on last night's export failure in the background.” and then sends nothing. | The first reply comes in a few seconds. About ten seconds after the 20-second workflow ends, the conversation holds a new reply that nobody asked for: it says the Investigator finished and what it found. The script prints that reply, the input AgentOS wrote for it, and its mark. |
 | `manager_with_resources.py` | “Save a note in project.md: the demo is on Friday.” Then: “Read project.md.” | The shared notebook stores and retrieves the note. |
 | `manager_with_resources.py` | “Remember that I prefer short answers.” Then ask about your preference in a new session with the same user id. | The manager can save and retrieve a user preference across sessions. |
 
@@ -145,8 +147,8 @@ persisted team/workflow members.
 | `tools`, `knowledge`, `learning` | Empty / `None` | Extra resources for Super Agent; not automatically available for builds. |
 | `instructions` | `None` | Appends instructions to Super Agent's prompt. |
 | `required_env` | Empty | Names whose presence diagnostics checks; values are never returned. |
-| `tool_call_limit` | `24` | Ordinary tool executions per Super Agent run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. |
-| `member_tool_call_limit` | `24` | Ordinary tool executions per Platform Builder invocation. `None` disables the limit. |
+| `tool_call_limit` | `96` | Ordinary tool executions per Super Agent run, including delegations. `None` disables the limit; `0` refuses all ordinary tools. With Company on, Mini Agent runs under the same limit. |
+| `member_tool_call_limit` | `96` | Ordinary tool executions per Platform Builder invocation. `None` disables the limit. |
 | `num_history_runs` | `5` | Super Agent history depth. Platform Builder keeps five runs. |
 | `offload_tool_results` | `True` | Stores large tool results on supported databases; accepts `False` or a `ResultStore`. |
 
@@ -167,8 +169,10 @@ report verified progress and gaps. These limits do not bound model turns, tokens
 latency, or application components dispatched through runner tools.
 
 Increase the limits for larger builds or plans. Set either limit to `None` to
-restore unlimited ordinary tool executions for that level. Ordinary application
-agents and Mini Agent are not affected. Model choices still
+restore unlimited ordinary tool executions for that level. With Company on, Mini
+Agent runs under `tool_call_limit` too, so `None` there also removes the limit from
+its unattended Routine and Task runs. `member_tool_call_limit` does not bound Mini
+Agent, and ordinary application agents are not affected by either limit. Model choices still
 determine routing and answer quality; prompt guidance is not a guarantee.
 
 ## When to use a registry
@@ -394,3 +398,13 @@ When upgrading:
 Before upgrading, audit existing components, sessions and authorization grants for the newly reserved names. Rename custom components and migrate their references; do not let a grant intended for a custom component authorize a built-in manager. Catalog collisions fail at startup, but external token scopes and custom policy stores require an operator audit.
 
 Drain queued or paused manager runs before upgrading. Mixed pre-3.2 and 3.2 servers sharing manager state are unsupported; do not roll back without restoring or migrating the corresponding state and policies. Updating template code does not rewrite already-saved Routine endpoints.
+
+## Upgrading from 3.2: tool call limits
+
+- `OSManager.tool_call_limit` and `member_tool_call_limit` default to 96, up from 24.
+  Each delegation gives Platform Builder its own allowance, so a Super Agent run that
+  delegates on every call can reach 96 × 96 Platform Builder tool executions, up from 24 × 24.
+- With Company on, Mini Agent runs under `OSManager.tool_call_limit`. Its limit was 30 and
+  could not be changed. If you set `tool_call_limit=None`, Mini Agent's unattended Routine
+  and Task runs now have no limit either, and a low value stops them early. Set a number
+  to keep a limit on those runs.

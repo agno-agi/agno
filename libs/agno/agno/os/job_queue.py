@@ -1335,7 +1335,8 @@ class QueueWorker:
             # ticket we swept. The row and stream belong to that newer
             # writer - touch neither - but the ticket bookkeeping still
             # settles, or it would sit sweep-locked and re-sweep forever
-            await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+            if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+                self._notify_requester(job, "failed")
             log_warning(
                 f"Job queue: swept job {job['id']} is owned by a newer attempt on the run row; "
                 "ticket failed without touching the row or stream"
@@ -1346,11 +1347,70 @@ class QueueWorker:
             from agno.company.execution import _project_run_before_settle
 
             await _project_run_before_settle(self, job, "failed", task_error)
-        await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
+        if await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error):
+            self._notify_requester(job, "failed")
         log_warning(
             f"Job queue: swept job {job['id']} to failed; its lease held by {job.get('locked_by')} was last "
             f"renewed at {_epoch_text(job.get('locked_at'))} by the store clock ({error})"
         )
+
+    @staticmethod
+    def _requested_from(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """The conversation that asked for a ticket's work, read from the ticket alone, or None."""
+        from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
+
+        payload = job.get("payload") or {}
+        asked = payload.get("company_requested_from")
+        if asked is None:
+            metadata = (payload.get("kwargs") or {}).get("metadata")
+            asked = metadata.get(REQUESTED_FROM_METADATA_KEY) if isinstance(metadata, dict) else None
+        return asked if isinstance(asked, dict) else None
+
+    def _notify_requester(self, job: Dict[str, Any], status: Optional[str] = None) -> None:
+        """Tell the conversation that asked for a ticket's work that the ticket reached a final state.
+
+        Called after the ticket is written, beside the places that save a Task's result. status is the
+        ticket status just written; without it the ticket is read, and nothing is told while it is
+        still queued or running. A ticket that names no conversation is not read. It returns at once
+        and raises nothing: the notice runs as a task of its own, so it cannot fail, delay or repeat
+        the work.
+        """
+        try:
+            asked = self._requested_from(job)
+            if asked is None:
+                return
+            from agno.run.authorization import AUTHORIZATION_KEY
+            from agno.run.background import _requester_listeners, _requester_notices, notify_requester
+
+            if not _requester_listeners:
+                return
+            payload = job.get("payload") or {}
+            task_id = payload.get("company_task_id")
+            work = {"kind": "task" if task_id else "run", "id": task_id or job["id"], "run_id": job["id"]}
+            if payload.get("continue"):
+                # The run was paused and has been continued: a pause now is a new one.
+                work["continued"] = True
+            # The authority saved when the work was started, not that of a later continue.
+            authority = payload.get(AUTHORIZATION_KEY)
+            states = {"completed": "COMPLETED", "failed": "ERROR", "cancelled": "CANCELLED", "paused": "PAUSED"}
+
+            async def read_then_tell() -> None:
+                try:
+                    ticket = await self.store.get_job(job["id"])
+                    final = states.get(str((ticket or {}).get("status")))
+                    if final is not None:
+                        notify_requester(asked, {**work, "status": final}, authority)
+                except Exception as exc:
+                    log_error(f"Job queue: could not tell a conversation that job {job['id']} ended: {exc}")
+
+            if status is not None:
+                notify_requester(asked, {**work, "status": states[status]}, authority)
+                return
+            task = asyncio.ensure_future(read_then_tell())
+            _requester_notices.add(task)
+            task.add_done_callback(_requester_notices.discard)
+        except Exception as exc:
+            log_error(f"Job queue: could not tell a conversation that job {job.get('id')} ended: {exc}")
 
     async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
         """The component for run-row reads and writes: an unbuildable factory
@@ -1420,6 +1480,7 @@ class QueueWorker:
                 await _project_run_before_settle(self, job, ticket_status)
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, ticket_status)
             if settled:
+                self._notify_requester(job, ticket_status)
                 log_warning(
                     f"Job queue: reconciled swept job {job['id']} to {ticket_status} - the leg had "
                     "settled before the sweep (only the ticket write was lost)"
@@ -1447,6 +1508,7 @@ class QueueWorker:
                     )
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, "paused")
             if settled:
+                self._notify_requester(job, "paused")
                 log_warning(
                     f"Job queue: parked swept job {job['id']} back to paused - the leg pausing IS "
                     "settlement, and a failed ticket would obstruct its continuation"
@@ -1553,6 +1615,7 @@ class QueueWorker:
             # not an unknown run
             await event_stream.register_run(run_id, RunStatus.pending)
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
+        self._notify_requester(prior, "cancelled")
         return True
 
     async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
@@ -2322,8 +2385,11 @@ class QueueWorker:
                 authority = _ExecutorAuthorization(
                     authority, task_id=payload.get("company_task_id") or (snapshot or {}).get("company_task_id")
                 )
-            with authorization_scope(lambda: authority):
-                await self._execute_claimed_inner(job, ownership)
+            try:
+                with authorization_scope(lambda: authority):
+                    await self._execute_claimed_inner(job, ownership)
+            finally:
+                self._notify_requester(job)
 
     async def _await_with_timeout(self, execution: Any, ownership: Any, component: Any = None, job: Any = None) -> Any:
         """asyncio.wait_for with cause attribution: the cancellation cause is

@@ -450,6 +450,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         "run_team",
         "list_workflows",
         "run_workflow",
+        "start_background_run",
+        "check_background_run",
     }
     assert isinstance(agentos, AgentOSTools) and set(agentos.functions) == {"get_run_activity", "list_schedules"}
     assert diagnostics.name == "manager_diagnostics" and set(diagnostics.functions) == {"run_diagnostics"}
@@ -466,7 +468,10 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         assert not {"summarize_company_goal", "refresh_company_goal"} & set(company.functions)
         task_runs = rest.pop(0)
         assert set(task_runs.functions) == {
+            "add_company_task",
+            "move_company_task",
             "start_company_task",
+            "message_company_task",
             "get_company_task_status",
             "approve_company_project",
             "accept_company_task",
@@ -2260,9 +2265,9 @@ def test_manager_limits_cover_the_lead_and_builder_without_changing_application_
     os = AgentOS(
         db=db, agents=[application_agent], manager=config, company=CompanyConfig(model=OfflineModel()), telemetry=False
     )
-    assert os.manager.tool_call_limit == limits.get("tool_call_limit", 24)
+    assert os.manager.tool_call_limit == limits.get("tool_call_limit", 96)
     assert [member.id for member in os.manager.members] == [BUILDER_ID]
-    assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 24) for member in os.manager.members)
+    assert all(member.tool_call_limit == limits.get("member_tool_call_limit", 96) for member in os.manager.members)
     assert application_agent.tool_call_limit is None
     assert "Application context" in os.manager.instructions()
     assert all(
@@ -2428,8 +2433,50 @@ def test_instruction_sections_follow_the_attached_tools(db, company_enabled, acc
     assert not {MANAGER_INSTRUCTIONS, DOCS_INSTRUCTIONS, COMPANY_INSTRUCTIONS} & set(builder)
 
 
+def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_approves_work():
+    from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
+
+    rule = " ".join(next(part for part in COMPANY_INSTRUCTIONS.split("\n- ") if "company's rules" in part).split())
+    # Read once, before work is recorded or changed and before a "may I" is answered.
+    assert "Once in a conversation, before you first record or change work" in rule
+    assert "or answer whether something may be done, is ready or is allowed, read them" in rule
+    # The usual page is named, and a company that keeps its rules elsewhere is still read.
+    assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
+    # A step that needs someone's approval is held, and a yes from anyone else does not release it.
+    assert "say so and hold that step, recording a proposal at most" in rule
+    assert "a yes in chat is approval only from the person the rule names" in rule
+    # Work that leaves no record does not pay for the read.
+    assert "An answer, draft or summary that leaves no record needs no read." in rule
+
+
+def test_super_agent_asks_before_work_that_pushes_whatever_starts_it():
+    from agno.os.manager.prompts import MANAGER_INSTRUCTIONS
+
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    assert "or work that sends, publishes, pushes or spends, say what it involves and ask first" in said
+    assert "That holds for a run and a background run as for a Task." in said
+    # The wiki exists only with Company, so the rules are not mentioned without it.
+    assert "wiki" not in MANAGER_INSTRUCTIONS
+
+
+@pytest.mark.parametrize("limit", [7, 0, None])
+def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
+    from agno.os import CompanyConfig
+
+    os = AgentOS(
+        db=db,
+        company=CompanyConfig(model=OfflineModel()),
+        manager=OSManager(model=OfflineModel(), tool_call_limit=limit, member_tool_call_limit=3),
+        telemetry=False,
+    )
+    assert os.manager.tool_call_limit == limit
+    assert os._mini_agent.tool_call_limit == limit
+    os.resync(os.get_app())
+    assert os._mini_agent.tool_call_limit == limit
+
+
 @pytest.mark.parametrize("with_manager", [False, True])
-def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
+def test_mini_agent_ignores_the_member_limit_and_manager_instructions(db, with_manager):
     from agno.os import CompanyConfig
     from agno.os.manager.prompts import FOCUSED_EXECUTION_INSTRUCTIONS
 
@@ -2439,14 +2486,14 @@ def test_mini_agent_keeps_its_own_execution_policy(db, with_manager):
         manager=OSManager(model=OfflineModel(), member_tool_call_limit=7) if with_manager else None,
         telemetry=False,
     )
-    # Mini Agent keeps its own limit; the manager's member limits do not bound it.
-    assert os._mini_agent.tool_call_limit == 30
+    # Mini Agent takes Super Agent's limit, the default here; the member limit does not bound it.
+    assert os._mini_agent.tool_call_limit == 96
     assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
     if with_manager:
         assert manager_member(os, MINI_AGENT_ID) is None
         assert manager_member(os, BUILDER_ID).tool_call_limit == 7
         os.resync(os.get_app())
-        assert os._mini_agent.tool_call_limit == 30
+        assert os._mini_agent.tool_call_limit == 96
         assert FOCUSED_EXECUTION_INSTRUCTIONS not in os._mini_agent.instructions()
 
 

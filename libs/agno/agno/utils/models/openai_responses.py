@@ -110,6 +110,7 @@ def sanitize_response_schema(schema: dict):
     - Ensures that all fields defined in "properties" are listed in "required",
       making every property explicitly required as per OpenAI's expectations,
       EXCEPT for Dict fields which should not be in the required array.
+    - Removes "title" beside "$ref", which OpenAI rejects.
     """
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
@@ -137,6 +138,10 @@ def sanitize_response_schema(schema: dict):
         # Remove only default: null
         if "default" in schema and schema["default"] is None:
             schema.pop("default")
+
+        # The referenced definition keeps its own title
+        if isinstance(schema.get("$ref"), str) and isinstance(schema.get("title"), str):
+            schema.pop("title")
 
         # Recurse into all values
         for value in schema.values():

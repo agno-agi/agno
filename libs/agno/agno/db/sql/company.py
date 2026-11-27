@@ -12,12 +12,25 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, literal, or_, select, union_all
 
 from agno.db.schemas.company import validate_company_details
-from agno.db.schemas.tasks import OPEN_TASK_STATUSES, CancelledProjectError, OpenTaskLimitError
+from agno.db.schemas.projects import is_default_project, refuse_default_project
+from agno.db.schemas.tasks import (
+    MOVABLE_TASK_STATUSES,
+    OPEN_TASK_STATUSES,
+    TASK_MOVE_REFUSAL,
+    CancelledProjectError,
+    OpenTaskLimitError,
+    task_context_after,
+)
 
 
 def active_parents(stmt: Any, table: Any, goals: Any, projects: Any = None) -> Any:
-    """Hide children of archived parents before counting or paging."""
-    stmt = stmt.where(select(goals.c.id).where(goals.c.id == table.c.goal_id, goals.c.deleted_at.is_(None)).exists())
+    """Hide children of archived parents before counting or paging. A record with no Goal has none to hide it."""
+    stmt = stmt.where(
+        or_(
+            table.c.goal_id.is_(None),
+            select(goals.c.id).where(goals.c.id == table.c.goal_id, goals.c.deleted_at.is_(None)).exists(),
+        )
+    )
     if projects is not None:
         stmt = stmt.where(
             or_(
@@ -40,6 +53,28 @@ def lock_goal(sess: Any, goals: Any, goal_id: str) -> None:
     row = sess.execute(stmt.values(updated_at=goals.c.updated_at).returning(goals.c.id)).first()
     if row is None:
         raise ValueError("Goal is missing or archived")
+
+
+def lock_parent(sess: Any, goals: Any, projects: Any, goal_id: Optional[str], project_id: Optional[str] = None) -> None:
+    """Serialize a hierarchy write on the record's Goal, or on its Project when the record has no Goal.
+
+    A Project and its Tasks with no Goal share the Project's row as their lock, the way records
+    of a Goal share the Goal's row. A new Project with no Goal has nothing to wait for.
+    """
+    if goal_id is not None:
+        lock_goal(sess, goals, goal_id)
+    elif project_id is not None:
+        sess.execute(projects.update().where(projects.c.id == project_id).values(updated_at=projects.c.updated_at))
+
+
+def lock_adopted_goal(sess: Any, goals: Any, locked_goal_id: Optional[str], goal_id: Optional[str]) -> None:
+    """Lock the Goal a Task took in a move that finished while this write waited for its lock.
+
+    The write locked the parent the Task had when it was first read. A Task with no Goal can take
+    its new Project's Goal in between, and from then on its writes are serialized on that Goal.
+    """
+    if goal_id is not None and goal_id != locked_goal_id:
+        lock_goal(sess, goals, goal_id)
 
 
 def require_open_room(sess: Any, tasks: Any, task_id: str, auto_accept: Dict[str, Any]) -> None:
@@ -71,7 +106,7 @@ def require_project(
     sess: Any,
     projects: Any,
     project_id: Optional[str],
-    goal_id: str,
+    goal_id: Optional[str],
     task_status: Optional[str] = None,
     *,
     reject_proposed: bool = False,
@@ -79,10 +114,16 @@ def require_project(
 ) -> None:
     if project_id is None:
         return
+    if goal_id is None:
+        # No Goal row serializes this write with the Project's own transitions, so the Project is
+        # locked before it is read. A move then cannot land in a Project that completes meanwhile.
+        lock_parent(sess, None, projects, None, project_id)
     row = sess.execute(select(projects).where(projects.c.id == project_id)).first()
     if row is None or row._mapping["deleted_at"] is not None:
         raise ValueError("Project is missing or archived")
-    if row._mapping["goal_id"] != goal_id:
+    # A Task carries its Project's Goal, or none when the Project has none. The Default Project
+    # holds Tasks of any Goal and of none.
+    if not is_default_project(project_id) and row._mapping["goal_id"] != goal_id:
         raise ValueError("Task and Project must belong to the same Goal")
     if reject_cancelled and row._mapping["status"] == "cancelled":
         raise CancelledProjectError("Cannot change Task status in a cancelled Project")
@@ -94,6 +135,53 @@ def require_project(
         and row._mapping["status"] in {"done", "cancelled"}
     ):
         raise ValueError("Cannot add open work to a completed or cancelled Project")
+
+
+def require_move(
+    sess: Any, goals: Any, projects: Any, task: Any, project_id: str, moved_by: Optional[str] = None
+) -> Dict[str, Any]:
+    """Check a Task's move into a Project, and return the fields the move also changes.
+
+    task is the stored row's goal_id, status, project_id and transitions. A Task with no Goal that
+    moves into a Project with a Goal takes that Goal. The Goal is locked first, as for every write
+    under it. A Task that has a Goal keeps it, so its Project must have the same one or be the
+    Default Project. A Backlog draft may sit in a proposed Project; an accepted Task moves only
+    into an active one, and not while a policy's acceptance holds it Ready, because the policy
+    accepted it for the Project it was in. A move that changes the Project is added to the Task's
+    history with who made it.
+    """
+    task_goal_id, status = task["goal_id"], task["status"]
+    changed: Dict[str, Any] = {}
+    if status not in MOVABLE_TASK_STATUSES:
+        # The update that follows matches no row in this stage, as for any other frozen field.
+        return changed
+    if task_goal_id is None and not is_default_project(project_id):
+        goal_id = sess.execute(select(projects.c.goal_id).where(projects.c.id == project_id)).scalar()
+        if goal_id is not None:
+            lock_goal(sess, goals, goal_id)
+            changed = {"goal_id": goal_id}
+    require_project(sess, projects, project_id, changed.get("goal_id", task_goal_id), "backlog")
+    if project_id == task["project_id"]:
+        return changed
+    history = task["transitions"] or []
+    if status != "backlog":
+        target = sess.execute(select(projects.c.status).where(projects.c.id == project_id)).scalar()
+        if target != "active":
+            raise ValueError(TASK_MOVE_REFUSAL["inactive"])
+        acceptances = [entry for entry in history if entry.get("target") == "ready" and not entry.get("action")]
+        if status == "ready" and acceptances and acceptances[-1].get("auto_accept"):
+            raise ValueError(TASK_MOVE_REFUSAL["policy"])
+    changed["transitions"] = [
+        *history,
+        {
+            "action": "move",
+            "reason": "Moved to another Project",
+            "project": {"from": task["project_id"], "to": project_id},
+            "created_at": int(time.time()),
+            "user_id": moved_by,
+        },
+    ]
+    return changed
 
 
 def existing_task_proposal(sess: Any, tasks: Any, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -114,20 +202,69 @@ def lock_child(
     record_id: str,
     restoring: bool = False,
     reject_cancelled: bool = False,
+    moving_to: Optional[str] = None,
 ) -> None:
-    """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project."""
+    """Restoring checks the record's own status, so hidden open work cannot re-enter a terminal Project.
+
+    moving_to is the Project a Task is being moved into. A Task with no Goal locks its Project's
+    row, so a move between two Projects with no Goal locks both, lower id first: two opposite moves
+    then wait for each other instead of deadlocking. A Project that has a Goal is protected by its
+    Goal's lock, which the move takes afterwards, so its row is not locked here: a write to that
+    Project holds the Goal and then writes the row, and the two would wait on each other.
+    """
     row = sess.execute(select(table).where(table.c.id == record_id)).first()
     if row is None:
         return
     record = row._mapping
-    lock_goal(sess, goals, record["goal_id"])
-    # Read the Project again after taking the Goal lock: a move may have won it.
+    own_project = record["project_id"] if "project_id" in table.c else record_id
+    both_rows = record["goal_id"] is None and bool(moving_to) and bool(own_project) and moving_to != own_project
+    if both_rows:
+        # A Project's Goal never changes, so it is read before any lock is held.
+        target_goal = sess.execute(select(projects.c.goal_id).where(projects.c.id == moving_to)).scalar()
+        both_rows = target_goal is None
+    if both_rows:
+        for project_id in sorted((str(own_project), str(moving_to))):
+            lock_parent(sess, goals, projects, None, project_id)
+    else:
+        lock_parent(sess, goals, projects, record["goal_id"], own_project)
+    # Read the Task again after taking the lock: a move may have won it, and given the Task a Goal.
     if "project_id" in table.c:
         row = sess.execute(select(table).where(table.c.id == record_id)).one()
+        lock_adopted_goal(sess, goals, record["goal_id"], row._mapping["goal_id"])
         status = row._mapping["status"] if restoring else None
         require_project(
-            sess, projects, row._mapping["project_id"], record["goal_id"], status, reject_cancelled=reject_cancelled
+            sess,
+            projects,
+            row._mapping["project_id"],
+            row._mapping["goal_id"],
+            status,
+            reject_cancelled=reject_cancelled,
         )
+
+
+def change_task_context(
+    sess: Any,
+    goals: Any,
+    projects: Any,
+    tasks: Any,
+    task_id: str,
+    add: Optional[List[Dict[str, Any]]],
+    remove: Optional[List[str]],
+    expected_status: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Change a Task's context list under the lock its other writes take, so two changes never lose one."""
+    lock_child(sess, goals, projects, tasks, task_id)
+    # The row lock covers a Task that has neither a Goal nor a Project to lock on.
+    found = select(tasks).where(tasks.c.id == task_id, tasks.c.deleted_at.is_(None)).with_for_update()
+    row = sess.execute(found).first()
+    if row is None or (expected_status is not None and row._mapping["status"] != expected_status):
+        return None
+    context = task_context_after(dict(row._mapping), add, remove)
+    if context == (row._mapping["context"] or []):
+        # Nothing changed, so the Task keeps its updated_at and a decision made on that version still applies.
+        return dict(row._mapping)
+    stmt = tasks.update().where(tasks.c.id == task_id).values(context=context, updated_at=int(time.time()))
+    return dict(sess.execute(stmt.returning(tasks)).one()._mapping)
 
 
 def open_project_tasks(tasks: Any, project_id: str) -> Any:
@@ -250,6 +387,7 @@ def archive_project(
     user_id: Optional[str],
     updated_before: Optional[int] = None,
 ) -> bool:
+    refuse_default_project(project_id, "archive")
     lock_child(sess, goals, projects, projects, project_id)
     stmt = select(projects).where(projects.c.id == project_id, projects.c.deleted_at.is_(None))
     if user_id is not None:

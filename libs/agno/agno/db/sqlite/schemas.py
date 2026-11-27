@@ -386,7 +386,8 @@ GOALS_TABLE_SCHEMA = {
 
 TASKS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True},
-    "goal_id": {"type": String, "nullable": False, "index": True},
+    # A Goal is optional: a Project, and a Task in the Default Project, may have none.
+    "goal_id": {"type": String, "nullable": True, "index": True},
     "project_id": {"type": String, "nullable": True, "index": True},
     "title": {"type": String, "nullable": False, "index": True},
     "brief": {"type": Text, "nullable": True},
@@ -399,6 +400,8 @@ TASKS_TABLE_SCHEMA = {
     "session_id": {"type": String, "nullable": True, "index": True},
     "job_id": {"type": String, "nullable": True, "index": True},
     "evidence": {"type": JSON, "nullable": True},
+    # What a run of this Task is given beside its brief: a list of references, each with who added it and when.
+    "context": {"type": JSON, "nullable": True},
     "result": {"type": JSON, "nullable": True},
     "origin": {"type": String, "nullable": True},
     "routine_id": {"type": String, "nullable": True},
@@ -422,7 +425,8 @@ PROJECTS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "deleted_at": {"type": BigInteger, "nullable": True},
-    "goal_id": {"type": String, "nullable": False, "index": True},
+    # A Goal is optional: a Project, and a Task in the Default Project, may have none.
+    "goal_id": {"type": String, "nullable": True, "index": True},
     "status": {"type": String, "nullable": False, "index": True},
     "target_date": {"type": BigInteger, "nullable": True},
 }

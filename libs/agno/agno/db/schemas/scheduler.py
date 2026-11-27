@@ -89,13 +89,35 @@ COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 DISPATCH_CHAIN_METADATA_KEY = "agno_dispatch_chain"
 DISPATCH_DEPTH_METADATA_KEY = "agno_dispatch_depth"
 
+# Marks a run the scheduler fired when the schedule has no saved authority to carry that fact, as
+# in a deployment without authorization. Tools that act only for a person present read it. It is
+# not among the reserved keys below: the run routes strip those from inbound metadata, and this
+# one arrives inbound from the scheduler. A caller who sets it only gets the same refusals.
+SCHEDULED_RUN_METADATA_KEY = "agno_scheduled"
+
+# The conversation that started a run and waits for its result: its session, run, team and user ids.
+# Written when a chat starts a run in the background, and read when that run ends. Runtime-owned:
+# a caller who could set it would point a run's result at another person's conversation.
+REQUESTED_FROM_METADATA_KEY = "agno_requested_from"
+
+# Marks a run AgentOS started in a conversation to report that work the conversation started has
+# ended. Nobody is present in such a run, so it reads and reports and changes nothing. It holds what
+# ended: its kind, id and status. Runtime-owned: a request cannot set it, and a continued run keeps it.
+FINISHED_WORK_REPORT_METADATA_KEY = "agno_finished_work_report"
+
 # Every run-metadata key the runtime owns. Component metadata is merged OVER
 # call-site metadata, so a stored config carrying one of these would overwrite
 # the value the runtime just wrote: a forged version stamp would continue a
 # paused run on the wrong version, and a forged (or emptied) dispatch lineage
 # would reset the cycle guard on every hop and re-open unbounded self-dispatch.
 RESERVED_RUN_METADATA_KEYS = frozenset(
-    {COMPONENT_VERSION_METADATA_KEY, DISPATCH_CHAIN_METADATA_KEY, DISPATCH_DEPTH_METADATA_KEY}
+    {
+        COMPONENT_VERSION_METADATA_KEY,
+        DISPATCH_CHAIN_METADATA_KEY,
+        DISPATCH_DEPTH_METADATA_KEY,
+        REQUESTED_FROM_METADATA_KEY,
+        FINISHED_WORK_REPORT_METADATA_KEY,
+    }
 )
 
 

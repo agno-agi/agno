@@ -644,7 +644,9 @@ def format_messages(
             continue
         elif message.role == "user":
             if isinstance(content, str):
-                content = [{"type": "text", "text": content}]
+                # Anthropic refuses an empty text block: a message with no text starts with no
+                # blocks, so one that carries only images or files is sent as those alone
+                content = [{"type": "text", "text": content}] if content else []
             elif isinstance(content, list):
                 # Work on a copy: appending media blocks into the live
                 # Message.content would duplicate them on every model round
@@ -817,6 +819,13 @@ def format_messages(
             merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
         else:
             merged_messages.append(msg)
+
+    # Anthropic refuses a user message with no content. One is left when a message had neither text
+    # nor media, as a turn from history does once its media has been removed. It keeps its place in
+    # the conversation with a short text.
+    for msg in merged_messages:
+        if msg["role"] == "user" and msg["content"] == []:
+            msg["content"] = [{"type": "text", "text": "(no text)"}]
 
     # Claude 4.6+ models do not support assistant message prefill.
     # Append a trailing user turn so the request ends with a user message.

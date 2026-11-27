@@ -14,11 +14,13 @@ from weakref import ReferenceType
 
 from pydantic import BeforeValidator
 
+from agno.company.context import ContextRef, read_permissions
 from agno.company.declarations import Goal, Routine, Source
 from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.routines import _require_routine_goal, _RoutineAuthorization, _run_kind
 from agno.company.sources import is_remote_git
 from agno.db.base import AsyncBaseDb
+from agno.db.schemas.projects import refuse_default_project
 from agno.run.authorization import current_authorization, requires_permission
 from agno.tools import Toolkit
 
@@ -43,6 +45,19 @@ _OptionalString = Annotated[Optional[str], BeforeValidator(_empty_to_none)]
 _OptionalInt = Annotated[Optional[int], BeforeValidator(_empty_to_none)]
 _OptionalBool = Annotated[Optional[bool], BeforeValidator(_empty_to_none)]
 _OptionalSourceConfig = Annotated[Optional[Dict[str, List[str]]], BeforeValidator(_empty_to_none)]
+_OptionalContext = Annotated[Optional[List[ContextRef]], BeforeValidator(_empty_to_none)]
+
+# What each kind of context reference brings into a Task run. The tools that take references share it.
+_CONTEXT_KINDS = """\
+A run of a Task starts with its brief and evidence only: no wiki page, Goal page or earlier Task
+                reaches it unless it is attached here. Each reference is {kind, ref}, read when the run starts:
+                - kind "task", ref a Task id: that Task's title, status and result, the names of the files in its
+                  folder, and its handoff note tasks/<id>/handoff.md when it wrote one. Attach the earlier Task
+                  whenever this one builds on its work. It brings file names, not file text: when the work needs
+                  what a file says, attach that file too.
+                - kind "file", ref tasks/<task-id>/<path>: one file a Task wrote.
+                - kind "wiki", ref wiki/<page>.md: one wiki page.
+                - kind "goal", ref goals/<goal-id>/<page>.md: one page of a Goal, such as brief.md or status.md."""
 
 
 def _authority(run_context):
@@ -115,14 +130,22 @@ def _require_decision_log_write(run_context):
 def _require_human_creation(run_context, operation="create Company Goals and Routines"):
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+    from agno.run.authorization import FINISHED_WORK_REPORT_REFUSAL, in_finished_work_report
 
+    if in_finished_work_report(run_context):
+        raise PermissionError(FINISHED_WORK_REPORT_REFUSAL)
     authority = _authority(run_context)
     if isinstance(authority, _ExecutorAuthorization) or _automatic_task.get() is not None:
         hint = "; Routines propose work" if operation == "create Company Goals and Routines" else ""
         raise PermissionError(f"Only a calling human may {operation} from chat; automated runs are refused{hint}")
     if (authority is not None and authority.service_account) or _identity(run_context) == INTERNAL_SCHEDULER_USER_ID:
         raise PermissionError(f"Only a calling human may {operation} from chat")
-    if getattr(authority, "scheduled", False):
+    from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
+
+    # A schedule with a saved authority marks the run on it. One with none marks the run's metadata.
+    metadata = getattr(run_context, "metadata", None)
+    marked = isinstance(metadata, dict) and bool(metadata.get(SCHEDULED_RUN_METADATA_KEY))
+    if getattr(authority, "scheduled", False) or marked:
         raise PermissionError(f"Only a calling human may {operation} from chat; a scheduled run has no person present")
 
 
@@ -205,6 +228,61 @@ def _with_source_note(row, routine, sources):
     return row
 
 
+_AUTO_ACCEPT_OFF_HOW = "Turn it off with turn_off_routine_auto_accept."
+_AUTO_ACCEPT_ON_HOW = "Turn it on with turn_on_routine_auto_accept."
+
+
+def _auto_accept_left_off(asked_off):
+    """What a person is told when a new Routine keeps auto-accept off.
+
+    A synchronous run cannot reach the Routine API, which authorizes the policy and stamps the grant.
+    """
+    from agno.company.routines import _auto_accept_note
+
+    reason = None if _empty_to_none(asked_off) else "turning it on needs an asynchronous run"
+    return _auto_accept_note(None, reason, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+
+
+async def _adefault_auto_accept(agent_os, row, asked_off, run_context):
+    """Give a Routine a person just created in chat the default auto-accept policy, as that person.
+
+    The policy is authorized and stamped by the Routine API's own handler, exactly as when the person
+    turns it on afterwards. Where that is refused, the Routine stays as created, with auto-accept
+    off. Returns what to tell the person.
+    """
+    from agno.company.declarations import AutoAccept
+    from agno.company.routines import _auto_accept_note, _set_auto_accept_as
+
+    if _empty_to_none(asked_off):
+        return _auto_accept_note(None, None, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+    reason = "the Routine API is not running here"
+    if agent_os is not None:
+        from fastapi import HTTPException
+
+        from agno.os.manager.company_tasks import _unsigned
+
+        authority, user_id = _authority(run_context), _identity(run_context)
+        policy = AutoAccept()
+        try:
+            if _unsigned(agent_os, authority, user_id):
+                raise PermissionError("a signed-in person is required")
+            await _set_auto_accept_as(agent_os, authority, user_id, row["id"], policy)
+        except HTTPException as exc:
+            reason = str(exc.detail)
+        except (PermissionError, LookupError, ValueError) as exc:
+            reason = str(exc)
+        else:
+            row["payload"] = {**row["payload"], "metadata": {**row["payload"]["metadata"]}}
+            row["payload"]["metadata"]["auto_accept"] = policy.model_dump()
+            return _auto_accept_note(policy, None, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+    return _auto_accept_note(None, reason, _AUTO_ACCEPT_OFF_HOW, _AUTO_ACCEPT_ON_HOW)
+
+
+def _with_auto_accept_notes(goal, notes):
+    """A created Goal, with what each of its new Routines does with its own proposals."""
+    return {**goal, "routines_auto_accept": notes} if notes else goal
+
+
 def _page(result, limit, page, **notes):
     rows, total = result
     from agno.db.schemas.tasks import public_task
@@ -285,6 +363,7 @@ class CompanyTools(Toolkit):
             "propose_company_task",
             "edit_company_project",
             "edit_company_task",
+            "update_company_task_context",
         ]
         if wiki_tools:
             names += ["list_company_wiki", "read_company_wiki", "update_goal_status"]
@@ -496,6 +575,7 @@ class CompanyTools(Toolkit):
         objective: _OptionalString = None,
         sources: Annotated[Optional[List[Source]], BeforeValidator(_empty_to_none)] = None,
         routines: Annotated[Optional[List[Routine]], BeforeValidator(_empty_to_none)] = None,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_agent: Optional[Any] = None,
         _agno_team: Optional[Any] = None,
         _agno_run_context: Optional[Any] = None,
@@ -505,7 +585,13 @@ class CompanyTools(Toolkit):
         Args:
             objective: Goal objective; null leaves it unspecified.
             sources: Source declarations as in config; null adds no Sources. Websites only.
-            routines: Routine declarations as in config; null adds no Routines.
+            routines: Routine declarations as in config; null adds no Routines. Leave auto_accept out of
+                each. Each Routine is created with auto-accept on, under the calling human's
+                permissions: the Tasks it proposes are accepted and run with no person, at most five
+                open at once, and finished work waits In review. The result's routines_auto_accept
+                says so for each. Tell the person.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routines'
+                proposals then wait for a person.
         """
         from agno.company.routines import _declared_schedule_fields
 
@@ -548,7 +634,8 @@ class CompanyTools(Toolkit):
         except Exception:
             manager.discard_goal(goal_id, source_ids=source_ids, schedule_ids=schedule_ids, user_id=identity)
             raise
-        return _public_json(manager.get(goal_id))
+        notes = {routine.name: _auto_accept_left_off(leave_auto_accept_off) for routine, _ in plans}
+        return _public_json(_with_auto_accept_notes(manager.get(goal_id), notes))
 
     @requires_permission()
     def create_goal_routine(
@@ -562,9 +649,14 @@ class CompanyTools(Toolkit):
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
         enabled: _OptionalBool = True,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
+
+        The Routine is created with auto-accept on, under the calling human's permissions: the Tasks
+        it proposes are accepted and run with no person. The result's auto_accept says whether it is
+        on, its limits and how to turn it off. Tell the person.
 
         Args:
             executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
@@ -574,6 +666,10 @@ class CompanyTools(Toolkit):
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
+                proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
+                open at once, on Mini Agent unless a proposal names another executor, and finished work
+                waits In review.
         """
         _require_human_creation(_agno_run_context)
         _permission("goals", "write", _agno_run_context)
@@ -592,7 +688,8 @@ class CompanyTools(Toolkit):
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
         _, sources = manager.list_sources(goal_id=goal_id, limit=1)
-        return _public_json(_with_source_note(row, routine, sources))
+        note = _auto_accept_left_off(leave_auto_accept_off)
+        return _public_json({**_with_source_note(row, routine, sources), "auto_accept": note})
 
     @requires_permission()
     async def acreate_company_goal(
@@ -601,6 +698,7 @@ class CompanyTools(Toolkit):
         objective: _OptionalString = None,
         sources: Annotated[Optional[List[Source]], BeforeValidator(_empty_to_none)] = None,
         routines: Annotated[Optional[List[Routine]], BeforeValidator(_empty_to_none)] = None,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_agent: Optional[Any] = None,
         _agno_team: Optional[Any] = None,
         _agno_run_context: Optional[Any] = None,
@@ -610,7 +708,13 @@ class CompanyTools(Toolkit):
         Args:
             objective: Goal objective; null leaves it unspecified.
             sources: Source declarations as in config; null adds no Sources. Websites only.
-            routines: Routine declarations as in config; null adds no Routines.
+            routines: Routine declarations as in config; null adds no Routines. Leave auto_accept out of
+                each. Each Routine is created with auto-accept on, under the calling human's
+                permissions: the Tasks it proposes are accepted and run with no person, at most five
+                open at once, and finished work waits In review. The result's routines_auto_accept
+                says so for each. Tell the person.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routines'
+                proposals then wait for a person.
         """
         from agno.company.routines import _declared_schedule_fields
 
@@ -648,12 +752,19 @@ class CompanyTools(Toolkit):
                     _agno_run_context=_agno_run_context,
                 )
                 source_ids.append(json.loads(row)["id"])
+            written = []
             for routine, fields in plans:
-                schedule_ids.append((await manager._write_routine(goal_id, routine, fields, identity))["id"])
+                written.append((routine, await manager._write_routine(goal_id, routine, fields, identity)))
+                schedule_ids.append(written[-1][1]["id"])
         except Exception:
             await manager.discard_goal(goal_id, source_ids=source_ids, schedule_ids=schedule_ids, user_id=identity)
             raise
-        return _public_json(await manager.get(goal_id))
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        notes = {
+            routine.name: await _adefault_auto_accept(agent_os, row, leave_auto_accept_off, _agno_run_context)
+            for routine, row in written
+        }
+        return _public_json(_with_auto_accept_notes(await manager.get(goal_id), notes))
 
     @requires_permission()
     async def acreate_goal_routine(
@@ -667,9 +778,14 @@ class CompanyTools(Toolkit):
         cron_expr: _OptionalString = None,
         timezone: _OptionalString = "UTC",
         enabled: _OptionalBool = True,
+        leave_auto_accept_off: _OptionalBool = False,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Routine for the calling human; automated runs cannot create Routines.
+
+        The Routine is created with auto-accept on, under the calling human's permissions: the Tasks
+        it proposes are accepted and run with no person. The result's auto_accept says whether it is
+        on, its limits and how to turn it off. Tell the person.
 
         Args:
             executor_type: agent, team or workflow. Null with a null executor_id runs it on Mini Agent.
@@ -679,6 +795,10 @@ class CompanyTools(Toolkit):
             cron_expr: Cron expression; null creates an on-demand Routine.
             timezone: Schedule timezone; null uses UTC.
             enabled: Whether the new Routine starts enabled; null uses true. False requires a human to resume it.
+            leave_auto_accept_off: True only when the person asks for auto-accept off: the Routine's
+                proposals then wait for a person. Otherwise it accepts and runs them itself, at most five
+                open at once, on Mini Agent unless a proposal names another executor, and finished work
+                waits In review.
         """
         _require_human_creation(_agno_run_context)
         await _apermission("goals", "write", _agno_run_context)
@@ -703,7 +823,9 @@ class CompanyTools(Toolkit):
             agent_os=self._agent_os_ref() if self._agent_os_ref else None,
         )
         _, sources = await manager.list_sources(goal_id=goal_id, limit=1)
-        return _public_json(_with_source_note(row, routine, sources))
+        agent_os = self._agent_os_ref() if self._agent_os_ref else None
+        note = await _adefault_auto_accept(agent_os, row, leave_auto_accept_off, _agno_run_context)
+        return _public_json({**_with_source_note(row, routine, sources), "auto_accept": note})
 
     @requires_permission()
     def list_company_goals(
@@ -757,8 +879,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List proposed and active Projects across owners.
 
+        The Project with is_default true is the Default Project: it holds Tasks that fit no other
+        Project, is always active and never finishes.
+
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Projects under no Goal.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
@@ -785,7 +910,7 @@ class CompanyTools(Toolkit):
         person to complete or cancel an open Task. Say so when listing what needs a decision.
 
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Tasks under no Goal.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
@@ -802,7 +927,7 @@ class CompanyTools(Toolkit):
         at_limit: List[Dict[str, Any]] = []
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
-            for listed in dict.fromkeys(row["goal_id"] for row in result[0]):
+            for listed in dict.fromkeys(row["goal_id"] for row in result[0] if row["goal_id"] is not None):
                 at_limit.extend(manager.auto_accept_status(listed, decisions=False)["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
@@ -811,13 +936,20 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     def propose_company_project(
-        self, goal_id: str, name: str, outcome: _OptionalString = None, _agno_run_context: Optional[Any] = None
+        self,
+        goal_id: _OptionalString,
+        name: str,
+        outcome: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Propose a Project for human review; never activate or complete it.
 
         Args:
+            goal_id: The Goal this Project serves; null when it serves no Goal. In a Routine run
+                null means the Routine's Goal.
             outcome: Expected or observed outcome; null leaves it unspecified.
         """
+        goal_id = _empty_to_none(goal_id)
         outcome = _empty_to_none(outcome)
         _permission("projects", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -830,12 +962,13 @@ class CompanyTools(Toolkit):
     @requires_permission()
     def propose_company_task(
         self,
-        goal_id: str,
+        goal_id: _OptionalString,
         title: str,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Backlog proposal with an optional suggested executor; never accept work.
@@ -846,21 +979,27 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
-                proposed Project can hold Backlog drafts; human approval is required before accepting or
-                running them.
+            context: What the run is given beside the brief; null attaches nothing. CONTEXT_KINDS
+            project_id: The Project this Task is part of: check list_company_projects for the one it
+                serves. Null only when none fits, which puts the Task in the Default Project, the place
+                for a single piece of work. A proposed Project can hold Backlog drafts; human approval
+                is required before accepting or running them.
+            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
+                Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         brief = _empty_to_none(brief)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
+        goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            _permission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
             self._sync().create_task(
+                context=context,
                 goal_id=goal_id,
                 title=title,
                 brief=brief,
@@ -885,6 +1024,7 @@ class CompanyTools(Toolkit):
             raise LookupError("Project not found")
         self._scoped_user(_agno_run_context)
         _require_routine_goal(row["goal_id"])
+        refuse_default_project(project_id, "edit")
         if row["status"] != "proposed":
             raise ValueError("Only proposed Projects may be edited by Company tools")
         return _public_json(
@@ -907,6 +1047,30 @@ class CompanyTools(Toolkit):
         stage = _automated_edit_stage(row, _agno_run_context)
         edited = manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
         return _public_json(_require_edited(edited, stage))
+
+    @requires_permission()
+    def update_company_task_context(
+        self,
+        task_id: str,
+        add: _OptionalContext = None,
+        remove: Annotated[Optional[List[str]], BeforeValidator(_empty_to_none)] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Attach context to a Task, or remove it, at any status before Done or Cancelled.
+
+        Returns the Task with its context list. A reference that does not exist, or that you may not
+        read, is refused and nothing is attached. A Task run cannot call this.
+
+        Args:
+            add: References to attach; null adds none. CONTEXT_KINDS
+            remove: The id of each entry to remove, as the Task's context list shows it; null removes none.
+        """
+        _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(add):
+            _permission(resource, action, _agno_run_context)
+        self._scoped_user(_agno_run_context)
+        user_id = _identity(_agno_run_context)
+        return _public_json(self._sync().change_task_context(task_id, add=add, remove=remove, user_id=user_id))
 
     @requires_permission()
     def list_company_wiki(
@@ -1085,8 +1249,11 @@ class CompanyTools(Toolkit):
     ) -> str:
         """List proposed and active Projects across owners.
 
+        The Project with is_default true is the Default Project: it holds Tasks that fit no other
+        Project, is always active and never finishes.
+
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Projects under no Goal.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
         """
@@ -1113,7 +1280,7 @@ class CompanyTools(Toolkit):
         person to complete or cancel an open Task. Say so when listing what needs a decision.
 
         Args:
-            goal_id: Goal ID; null includes all Goals.
+            goal_id: Goal ID; null includes all Goals and the Tasks under no Goal.
             status: backlog, ready, in_progress, in_review, done or cancelled; null includes all statuses.
             limit: Maximum results per page; null uses 20.
             page: One-based page number; null uses 1.
@@ -1130,7 +1297,7 @@ class CompanyTools(Toolkit):
         at_limit: List[Dict[str, Any]] = []
         # A listing that holds Backlog work is where a person looks for what needs a decision.
         if status in (None, "backlog"):
-            for listed in dict.fromkeys(row["goal_id"] for row in result[0]):
+            for listed in dict.fromkeys(row["goal_id"] for row in result[0] if row["goal_id"] is not None):
                 at_limit.extend((await manager.auto_accept_status(listed, decisions=False))["auto_accept_at_limit"])
         # A Routine waiting to be turned on has proposed nothing, so it is listed whatever the page holds.
         decides = status in (None, "backlog") and self._authorization_on()
@@ -1139,13 +1306,20 @@ class CompanyTools(Toolkit):
 
     @requires_permission()
     async def apropose_company_project(
-        self, goal_id: str, name: str, outcome: _OptionalString = None, _agno_run_context: Optional[Any] = None
+        self,
+        goal_id: _OptionalString,
+        name: str,
+        outcome: _OptionalString = None,
+        _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Propose a Project for human review; never activate or complete it.
 
         Args:
+            goal_id: The Goal this Project serves; null when it serves no Goal. In a Routine run
+                null means the Routine's Goal.
             outcome: Expected or observed outcome; null leaves it unspecified.
         """
+        goal_id = _empty_to_none(goal_id)
         outcome = _empty_to_none(outcome)
         await _apermission("projects", "write", _agno_run_context)
         self._scoped_user(_agno_run_context)
@@ -1158,12 +1332,13 @@ class CompanyTools(Toolkit):
     @requires_permission()
     async def apropose_company_task(
         self,
-        goal_id: str,
+        goal_id: _OptionalString,
         title: str,
         brief: _OptionalString = None,
         project_id: _OptionalString = None,
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
+        context: _OptionalContext = None,
         _agno_run_context: Optional[Any] = None,
     ) -> str:
         """Create a Backlog proposal with an optional suggested executor; never accept work.
@@ -1174,21 +1349,27 @@ class CompanyTools(Toolkit):
             brief: Task brief. A brief the person dictated is saved in their words. Otherwise write it for the
                 executor: the outcome, the deliverable, how it is checked and any restrictions the person gave.
                 Null leaves it unspecified.
-            project_id: Required Project ID within the Goal. Propose a Project first when none fits. A
-                proposed Project can hold Backlog drafts; human approval is required before accepting or
-                running them.
+            context: What the run is given beside the brief; null attaches nothing. CONTEXT_KINDS
+            project_id: The Project this Task is part of: check list_company_projects for the one it
+                serves. Null only when none fits, which puts the Task in the Default Project, the place
+                for a single piece of work. A proposed Project can hold Backlog drafts; human approval
+                is required before accepting or running them.
+            goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
+                Project's Goal and another Goal is refused.
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         brief = _empty_to_none(brief)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
+        goal_id = _empty_to_none(goal_id)
         _require_plain_proposal(_agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            await _apermission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         return _public_json(
             await self._async().create_task(
+                context=context,
                 goal_id=goal_id,
                 title=title,
                 brief=brief,
@@ -1213,6 +1394,7 @@ class CompanyTools(Toolkit):
             raise LookupError("Project not found")
         self._scoped_user(_agno_run_context)
         _require_routine_goal(row["goal_id"])
+        refuse_default_project(project_id, "edit")
         if row["status"] != "proposed":
             raise ValueError("Only proposed Projects may be edited by Company tools")
         return _public_json(
@@ -1239,6 +1421,21 @@ class CompanyTools(Toolkit):
         stage = _automated_edit_stage(row, _agno_run_context)
         edited = await manager.update_task(task_id, user_id=None, expected_status=stage, title=title, brief=brief)
         return _public_json(_require_edited(edited, stage))
+
+    @requires_permission()
+    async def aupdate_company_task_context(
+        self,
+        task_id: str,
+        add: _OptionalContext = None,
+        remove: Annotated[Optional[List[str]], BeforeValidator(_empty_to_none)] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(add):
+            await _apermission(resource, action, _agno_run_context)
+        self._scoped_user(_agno_run_context)
+        user_id = _identity(_agno_run_context)
+        return _public_json(await self._async().change_task_context(task_id, add=add, remove=remove, user_id=user_id))
 
     @requires_permission()
     async def alist_company_wiki(
@@ -1490,6 +1687,7 @@ class CompanyTools(Toolkit):
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
         project_id: _OptionalString = None,
+        context: _OptionalContext = None,
     ) -> str:
         """Propose actionable work backed by selected Source links.
 
@@ -1501,20 +1699,24 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Goal. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
+                with that Goal. A proposed Project can hold Backlog drafts; human approval is required
+                before accepting or running them.
+            context: What the run is given beside the brief; null attaches nothing. A Routine attaches only
+                pages and Tasks of its Goal, and wiki pages. CONTEXT_KINDS
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         _permission("sources", "read", _agno_run_context)
         _permission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            _permission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         run_id = self._source_context(source_id, _agno_run_context)
         return _public_json(
             self._sync().intake(
+                context=context,
                 source_id=source_id,
                 run_id=run_id,
                 proposal={
@@ -1691,6 +1893,7 @@ class CompanyTools(Toolkit):
         executor_type: _OptionalString = None,
         executor_id: _OptionalString = None,
         project_id: _OptionalString = None,
+        context: _OptionalContext = None,
     ) -> str:
         """Propose actionable work backed by selected Source links.
 
@@ -1702,20 +1905,24 @@ class CompanyTools(Toolkit):
         Args:
             executor_type: Suggested executor kind; null leaves selection to acceptance.
             executor_id: Suggested executor ID; null leaves selection to acceptance.
-            project_id: Required Project ID within the Goal. A proposed Project can hold Backlog drafts;
-                human approval is required before accepting or running them.
+            project_id: A Project of the Source's Goal; null puts the Task in the Default Project, tagged
+                with that Goal. A proposed Project can hold Backlog drafts; human approval is required
+                before accepting or running them.
+            context: What the run is given beside the brief; null attaches nothing. A Routine attaches only
+                pages and Tasks of its Goal, and wiki pages. CONTEXT_KINDS
         """
         executor_type = _empty_to_none(executor_type)
         executor_id = _empty_to_none(executor_id)
         project_id = _empty_to_none(project_id)
-        if not project_id:
-            raise ValueError("A Task requires a Project")
         await _apermission("sources", "read", _agno_run_context)
         await _apermission("tasks", "write", _agno_run_context)
+        for resource, action in read_permissions(context):
+            await _apermission(resource, action, _agno_run_context)
         self._scoped_user(_agno_run_context)
         run_id = self._source_context(source_id, _agno_run_context)
         return _public_json(
             await self._async().intake(
+                context=context,
                 source_id=source_id,
                 run_id=run_id,
                 proposal={
@@ -1844,3 +2051,10 @@ def _public_json(value, **kwargs):
         return item
 
     return json.dumps(clean(value), **kwargs)
+
+
+for _name in ("propose_company_task", "intake_goal_source", "update_company_task_context"):
+    _tool = getattr(CompanyTools, _name)
+    # A run with docstrings stripped (python -OO) has none to fill in.
+    _tool.__doc__ = (_tool.__doc__ or "").replace("CONTEXT_KINDS", _CONTEXT_KINDS)
+    getattr(CompanyTools, "a" + _name).__doc__ = _tool.__doc__
