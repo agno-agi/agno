@@ -1085,7 +1085,7 @@ def test_failed_turn_without_a_memory_kill_keeps_its_error(dispatch, tmp_path, m
         if after is None:
             (folder / "memory.events").unlink()
         else:
-            (folder / "memory.events").write_text(f"oom_kill {after}\n")
+            (folder / "memory.events").write_text(f"oom 3\noom_kill {after}\n")
         raise RuntimeError("Command failed with exit code 1")
 
     monkeypatch.setattr(runtime, "_execute", failed)
@@ -1094,19 +1094,40 @@ def test_failed_turn_without_a_memory_kill_keeps_its_error(dispatch, tmp_path, m
     assert runtime._poll(root, "e", 0)["result"]["error"] == "Command failed with exit code 1"
 
 
-def test_disappeared_worker_says_when_the_kernel_killed_processes_for_memory(dispatch, tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "limit, own_limit_hits, expected, absent",
+    [
+        (
+            "2147483648",
+            3,
+            "The sandbox reached its 2048 MB memory limit during this turn and the kernel killed 2",
+            "host",
+        ),
+        # The limit cannot be read as a number, so the note names none.
+        ("unreadable", 3, "The sandbox reached its memory limit during this turn and the kernel killed 2", "host"),
+        # The kernel also kills a sandbox's processes when the host runs out of memory. The sandbox's
+        # own counter did not move, so its limit is not blamed: raising it would make the host worse.
+        ("2147483648", 0, "The sandbox had not reached its own memory limit, so memory ran out outside it", "2048 MB"),
+    ],
+    ids=["the sandbox reached its limit", "limit unreadable", "the host ran out of memory"],
+)
+def test_disappeared_worker_says_when_the_kernel_killed_processes_for_memory(
+    dispatch, tmp_path, monkeypatch, limit, own_limit_hits, expected, absent
+):
     root, _, request = dispatch
-    _cgroup(tmp_path, monkeypatch, kills=2, limit="max")
+    _cgroup(tmp_path, monkeypatch, kills=2, limit=limit)
     runtime._start(root, request)
     directory = runtime._job(root, "e")
-    status = {"phase": "running", "pid": 123, "start": "old", "memory_kills": 0}
+    # The cgroup's counters read "oom 3, oom_kill 2" now; the worker started the turn with these.
+    started_with = {"oom_kill": 0, "oom": 3 - own_limit_hits}
+    status = {"phase": "running", "pid": 123, "start": "old", "memory_events": started_with}
     runtime._atomic(directory / "status.json", runtime._encode(status))
     monkeypatch.setattr(runtime, "_process_start", lambda pid: "new")
     result = runtime._poll(root, "e", 0)["result"]
     assert result["type"] == "execution_unknown"
     assert result["error"].startswith("Runtime worker disappeared; reconcile effects before retrying")
-    # An unlimited cgroup reports "max", so the note names no number.
-    assert "reached its memory limit" in result["error"] and "killed 2 processes (out of memory)" in result["error"]
+    assert expected in result["error"] and "killed 2 processes" in result["error"]
+    assert absent not in result["error"]
 
 
 def test_worker_records_the_memory_kill_count_it_started_with(dispatch, tmp_path, monkeypatch):
@@ -1121,7 +1142,7 @@ def test_worker_records_the_memory_kill_count_it_started_with(dispatch, tmp_path
     monkeypatch.setattr(runtime, "_execute", read_status)
     runtime._start(root, request)
     runtime._worker(runtime._job(root, "e"))
-    assert seen["phase"] == "running" and seen["memory_kills"] == 7
+    assert seen["phase"] == "running" and seen["memory_events"] == {"oom_kill": 7, "oom": 3}
 
 
 @pytest.mark.parametrize("status, noted", [("ERROR", True), ("COMPLETED", False)])
@@ -1131,7 +1152,7 @@ def test_errored_run_of_a_finished_execution_carries_the_memory_note(dispatch, t
 
     async def finished(directory, request, waits=None):
         # A harness whose command the kernel killed ends its own run with the error.
-        (folder / "memory.events").write_text("oom_kill 1\n")
+        (folder / "memory.events").write_text("oom 4\noom_kill 1\n")
         return {"type": "execution_finished", "run": {"status": status, "content": "exit code -9"}, "session": {}}
 
     monkeypatch.setattr(runtime, "_execute", finished)

@@ -104,43 +104,52 @@ def _process_start(pid: int) -> str | None:
 _CGROUP = Path("/sys/fs/cgroup")
 
 
-def _memory_kills() -> Optional[int]:
-    """How many processes the kernel has killed in this sandbox for reaching its memory limit.
+def _memory_events() -> Optional[Dict[str, int]]:
+    """This sandbox's own out-of-memory counters, from its cgroup v2 ``memory.events``.
 
-    None where the sandbox's own cgroup v2 counters cannot be read.
+    ``oom_kill`` counts the processes the kernel killed in the sandbox for memory, whichever
+    memory ran out: the sandbox's own limit or the host's. ``oom`` counts the times the
+    sandbox's own limit left an allocation nothing to use. None where they cannot be read.
     """
     try:
+        events = {}
         for line in (_CGROUP / "memory.events").read_text().splitlines():
             key, _, value = line.partition(" ")
-            if key == "oom_kill":
-                return int(value)
-    except (OSError, ValueError):
-        pass
-    return None
+            events[key] = value
+        return {"oom_kill": int(events["oom_kill"]), "oom": int(events["oom"])}
+    except (OSError, ValueError, KeyError):
+        return None
 
 
-def _memory_note(before: Optional[int]) -> str:
-    """One sentence saying the kernel killed processes for memory since ``before``, else nothing.
+def _memory_note(before: Optional[Dict[str, int]]) -> str:
+    """One or two sentences saying the kernel killed processes for memory since ``before``, else nothing.
 
     A process the kernel kills only reports "exit code -9" or disappears, which does not say
-    that the sandbox's memory limit was the cause.
+    that memory was the cause. The sandbox's limit is named only when the sandbox itself
+    reached it: the kernel also kills a sandbox's processes when the host runs out of memory,
+    and raising the sandbox's limit makes that worse.
     """
-    after = _memory_kills()
-    if before is None or after is None or after <= before:
+    after = _memory_events()
+    if before is None or after is None or after["oom_kill"] <= before["oom_kill"]:
         return ""
+    count = after["oom_kill"] - before["oom_kill"]
+    killed = f"the kernel killed {count} process{'es' if count != 1 else ''}"
+    if after["oom"] <= before["oom"]:
+        return (
+            f"During this turn {killed} in the sandbox (out of memory). The sandbox had not reached "
+            "its own memory limit, so memory ran out outside it, on the host that runs it."
+        )
     try:
         limit = f"its {int((_CGROUP / 'memory.max').read_text()) // (1024 * 1024)} MB memory limit"
     except (OSError, ValueError):
         limit = "its memory limit"
-    count = after - before
     return (
-        f"The sandbox reached {limit} during this turn and the kernel killed {count} "
-        f"process{'es' if count != 1 else ''} (out of memory). Files on the sandbox's in-memory "
-        "filesystems count toward that limit."
+        f"The sandbox reached {limit} during this turn and {killed} (out of memory). Files on the "
+        "sandbox's in-memory filesystems count toward that limit."
     )
 
 
-def _with_memory_note(error: str, before: Optional[int]) -> str:
+def _with_memory_note(error: str, before: Optional[Dict[str, int]]) -> str:
     """A failed turn's error, followed by the memory note when there is one."""
     note = _memory_note(before)
     return f"{error.rstrip('. ')}. {note}" if note else error
@@ -411,7 +420,7 @@ def _worker(directory: Path) -> None:
     request = json.loads((directory / "request.json").read_bytes())
     root = directory.parent.parent
     # Read before the turn, so a kill is only reported for the turn it happened in.
-    memory_kills = _memory_kills()
+    memory_events = _memory_events()
     try:
         _validate(request)
         with _lock(root / "execution.lock"):
@@ -422,7 +431,7 @@ def _worker(directory: Path) -> None:
                         "phase": "running",
                         "pid": os.getpid(),
                         "start": _process_start(os.getpid()),
-                        "memory_kills": memory_kills,
+                        "memory_events": memory_events,
                     }
                 ),
             )
@@ -453,7 +462,7 @@ def _worker(directory: Path) -> None:
             if (result.get("run") or {}).get("status") == "ERROR":
                 # A harness whose command was killed ends its own run with that error. The run is
                 # already stored as it is, so the reason travels beside it for the host to add.
-                note = _memory_note(memory_kills)
+                note = _memory_note(memory_events)
                 if note:
                     result["memory_note"] = note
             payload = _encode(result)
@@ -463,7 +472,7 @@ def _worker(directory: Path) -> None:
     except Exception as error:
         result = {
             "type": "execution_error",
-            "error": _with_memory_note((str(error) or type(error).__name__)[:2000], memory_kills),
+            "error": _with_memory_note((str(error) or type(error).__name__)[:2000], memory_events),
         }
         from agno.sandbox.repository import RepositoryPreparationError
 
@@ -594,7 +603,7 @@ def _poll(root: Path, execution_id: str, cursor: int) -> Dict[str, Any]:
             result = {
                 "type": "execution_unknown",
                 "error": _with_memory_note(
-                    "Runtime worker disappeared; reconcile effects before retrying", status.get("memory_kills")
+                    "Runtime worker disappeared; reconcile effects before retrying", status.get("memory_events")
                 ),
             }
         elif status["phase"] == "starting" and time.time() - status["created_at"] > 30:
