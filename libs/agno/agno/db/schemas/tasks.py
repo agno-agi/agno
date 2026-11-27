@@ -159,6 +159,11 @@ def task_transition_fields(
         *(existing.get("transitions") or []),
         {"from": existing["status"], "target": target, "reason": reason, "user_id": accepted_by, "created_at": now},
     ]
+    ended = (existing.get("result") or {}).get("status") in ("ERROR", "CANCELLED")
+    if target == "ready" and existing["status"] == "in_progress" and ended:
+        # The return answers a run that failed or was cancelled, so its reason is a reply to that run.
+        # The same move on a queued attempt withdraws it, and the reason of that is a note.
+        fields["transitions"][-1]["ended_run"] = existing.get("job_id")
     if target == "ready":
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_snapshot
 
