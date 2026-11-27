@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.in_memory import InMemoryDb
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.eval import Case, EvalSuite, SuiteResult
 from agno.models.response import ToolExecution
@@ -23,6 +24,7 @@ from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.cancel import acleanup_run, ais_cancelled
 from agno.session import AgentSession
 from agno.team import Team
 
@@ -450,7 +452,7 @@ def test_run_eval_suite_from_body_forwards_session_fields(client):
 def test_run_eval_suite_from_body_checks_run_access_before_the_lookup(client):
     """A caller without run rights gets 403 before the target is looked up, so ids cannot be probed."""
     headers = {"Authorization": f"Bearer {create_token('alice', scopes=['evals:write'])}"}
-    with patch("agno.os.routers.evals.evals.get_agent_by_id") as lookup:
+    with patch("agno.os.routers.evals.utils.get_agent_by_id") as lookup:
         resp = client.post("/eval-suites", json=_posted_suite(), headers=headers)
     assert resp.status_code == 403
     assert lookup.call_count == 0
@@ -521,7 +523,7 @@ def test_run_eval_suite_in_background_stores_a_running_row_then_the_result(clien
 )
 def test_run_eval_suite_in_background_stores_an_error_when_the_run_fails(client, failure, error):
     """A failed or cancelled background run leaves the row as ERROR, never RUNNING."""
-    with patch("agno.os.routers.evals.evals.arun_cases", side_effect=failure):
+    with patch("agno.os.routers.evals.utils.arun_cases", side_effect=failure):
         resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
     assert resp.status_code == 202
     finished = client.get(f"/eval-runs/{resp.json()['id']}", headers=auth_header("alice")).json()
@@ -596,3 +598,77 @@ def test_run_eval_suite_in_background_fails_when_the_owner_is_not_stored(client,
         resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
     assert resp.status_code == 500
     assert db.get_eval_runs(deserialize=False, eval_type=["suite"])[1] == 0
+
+
+def _store_suite_run(db, status: str, user_id: str = "alice") -> str:
+    """Store a suite run as the background route does, with the given summary status."""
+    record = EvalRunRecord(
+        run_id=f"suite-run-{status.lower()}",
+        eval_type=EvalType.SUITE,
+        eval_data={"summary": {"total": 2, "passed": 0, "failed": 0, "status": status}, "cases": []},
+        eval_input={"suite_id": "assistant-quality"},
+        agent_id="assistant",
+        name="Assistant quality",
+    )
+    db.create_eval_run(record)
+    db.update_eval_run_user_id(eval_run_id=record.run_id, user_id=user_id)
+    return record.run_id
+
+
+def _delete_header(user_id: str) -> dict:
+    return {"Authorization": f"Bearer {create_token(user_id, scopes=['evals:read', 'evals:delete'])}"}
+
+
+def test_deleting_a_running_suite_run_cancels_it(client, db):
+    """A deleted background suite run is cancelled, so its cases stop making model calls."""
+    running, finished = _store_suite_run(db, "RUNNING"), _store_suite_run(db, "PASS")
+    try:
+        resp = client.request(
+            "DELETE", "/eval-runs", json={"eval_run_ids": [running, finished]}, headers=_delete_header("alice")
+        )
+        assert resp.status_code == 204
+        assert asyncio.run(ais_cancelled(running))
+        assert not asyncio.run(ais_cancelled(finished))
+    finally:
+        asyncio.run(acleanup_run(running))
+
+
+def test_deleting_a_running_suite_run_that_fails_keeps_it_running(client, db):
+    """A failed delete withdraws the cancellation, so a run whose row is kept goes on."""
+    run_id = _store_suite_run(db, "RUNNING")
+    with patch.object(InMemoryDb, "delete_eval_runs", side_effect=RuntimeError("db down")):
+        resp = client.request("DELETE", "/eval-runs", json={"eval_run_ids": [run_id]}, headers=_delete_header("alice"))
+    assert resp.status_code == 500
+    assert not asyncio.run(ais_cancelled(run_id))
+
+
+def test_deleting_a_running_suite_run_whose_row_is_kept_keeps_it_running(client, db):
+    """A database that swallows a failed delete keeps the row, so the run goes on."""
+    run_id = _store_suite_run(db, "RUNNING")
+    with patch.object(InMemoryDb, "delete_eval_runs", return_value=None):
+        resp = client.request("DELETE", "/eval-runs", json={"eval_run_ids": [run_id]}, headers=_delete_header("alice"))
+    assert resp.status_code == 204
+    assert not asyncio.run(ais_cancelled(run_id))
+
+
+def test_run_eval_suite_in_background_deleted_while_its_cases_run_stops_them(client):
+    """A cancellation registered by a delete while the cases run stops them."""
+    stopped = []
+
+    async def slow_run(*args, **kwargs):
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            stopped.append(True)
+            raise
+        yield RunOutput(content="50", status=RunStatus.completed)
+
+    with (
+        patch.object(Agent, "arun", side_effect=slow_run),
+        patch("agno.os.routers.evals.utils.ais_cancelled", return_value=True),
+    ):
+        resp = client.post("/eval-suites/assistant-quality/runs?background=true", json={}, headers=auth_header("alice"))
+    assert resp.status_code == 202
+    assert stopped == [True]
+    # The run's cancellation is cleaned up when it ends.
+    assert not asyncio.run(ais_cancelled(resp.json()["id"]))

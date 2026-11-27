@@ -30,7 +30,9 @@ def _require_mutable_schedule(schedule_id: str) -> None:
 # newline can't slip past the run-endpoint check.
 RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
 # Matches a registered eval suite's run endpoint and captures the suite ID.
-EVAL_SUITE_RUN_ENDPOINT_RE = re.compile(r"^/eval-suites/([^/]+)/runs/?\Z")
+# Accepts a query string, such as the run route's db_id and table, which the executor
+# forwards to the poll so both read the same database.
+EVAL_SUITE_RUN_ENDPOINT_RE = re.compile(r"^/eval-suites/([^/?#]+)/runs/?(?:\?[^#\s]*)?\Z")
 
 
 def _schedule_endpoint_targets(managed_by: Optional[str], endpoint: str) -> Dict[str, Optional[str]]:

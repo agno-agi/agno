@@ -130,6 +130,21 @@ class TestExecutorEvalSuiteRun:
         assert poll.args[:2] == ("GET", "http://localhost:8000/eval-runs/eval-1")
 
     @pytest.mark.asyncio
+    async def test_suite_on_a_named_db_is_started_and_polled_on_that_db(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[self._resp(202, self._eval_run("RUNNING")), self._resp(200, self._eval_run("PASS", passed=2))]
+        )
+
+        result = await executor._eval_suite_run(
+            mock_client, "http://localhost:8000/eval-suites/s/runs?db_id=main-db", {}, None, 60
+        )
+        assert result["status"] == "success"
+        post, poll = mock_client.request.call_args_list[0], mock_client.request.call_args_list[1]
+        assert post.kwargs["params"] == {"db_id": "main-db", "background": "true"}
+        assert poll.kwargs["params"] == {"db_id": "main-db"}
+
+    @pytest.mark.asyncio
     async def test_passing_suite_is_a_successful_run(self, executor):
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(
@@ -180,6 +195,20 @@ class TestExecutorEvalSuiteRun:
 
         assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites/math/runs"
         assert suite_run.await_args.args[3] == {"tag": "smoke"}
+
+    @pytest.mark.asyncio
+    async def test_suite_endpoint_on_a_named_db_is_started_in_the_background(self, executor):
+        schedule = Schedule(
+            id="s1",
+            name="nightly-suite",
+            cron_expr="0 0 * * *",
+            endpoint="/eval-suites/math/runs?db_id=main-db",
+            method="POST",
+        )
+        with patch.object(executor, "_eval_suite_run", new=AsyncMock(return_value={})) as suite_run:
+            await executor._call_endpoint(schedule)
+
+        assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites/math/runs?db_id=main-db"
 
 
 class TestExecutorBackgroundRun:

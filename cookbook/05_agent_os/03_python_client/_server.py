@@ -1,7 +1,7 @@
 """Serve the AgentOS used by every Python client example in this folder.
 
-The server exposes one agent, one team, one workflow, and one knowledge base
-on port 7778. Set OS_SECURITY_KEY before starting it to enable Bearer auth.
+The server exposes one agent, one team, one workflow, one knowledge base, and
+one eval suite on port 7778. Set OS_SECURITY_KEY before starting it to enable Bearer auth.
 
 Prerequisites: OPENAI_API_KEY for model, embedding, and evaluation calls.
 Run: .venvs/demo/bin/python cookbook/05_agent_os/03_python_client/_server.py
@@ -12,6 +12,7 @@ import os
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.eval import Case, EvalSuite
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
@@ -67,6 +68,26 @@ qa_workflow = Workflow(
     steps=[Step(name="Answer", agent=assistant)],
 )
 
+assistant_quality = EvalSuite(
+    id="assistant-quality",
+    name="Assistant quality",
+    cases=(
+        Case(
+            name="multiplies",
+            agent=assistant,
+            input="Use the calculator to multiply 10 by 5.",
+            expected_tool_calls=("multiply",),
+            tags=("smoke",),
+        ),
+        Case(
+            name="adds",
+            agent=assistant,
+            input="Use the calculator to add 10 and 5.",
+            expected_tool_calls=("add",),
+        ),
+    ),
+)
+
 agent_os = AgentOS(
     id="python-client-demo",
     name="Python Client Demo",
@@ -76,6 +97,7 @@ agent_os = AgentOS(
     teams=[research_team],
     workflows=[qa_workflow],
     knowledge=[knowledge],
+    eval_suites=[assistant_quality],
     settings=AgnoAPISettings(os_security_key=os.getenv("OS_SECURITY_KEY")),
 )
 app = agent_os.get_app()

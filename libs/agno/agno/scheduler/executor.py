@@ -6,7 +6,7 @@ import time
 from contextvars import ContextVar
 from inspect import signature
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlsplit
 
 from agno.db.schemas.scheduler import (
     EVAL_SUITE_RUN_ENDPOINT_RE,
@@ -540,7 +540,9 @@ class ScheduleExecutor:
         timeout_seconds: int,
     ) -> Dict[str, Any]:
         """Start an eval suite run in the background and poll it until it finishes."""
-        kwargs: Dict[str, Any] = {"headers": headers, "params": {"background": "true"}}
+        # httpx replaces the URL's query with params, so the endpoint's own query is carried in them.
+        query = dict(parse_qsl(urlsplit(url).query))
+        kwargs: Dict[str, Any] = {"headers": headers, "params": {**query, "background": "true"}}
         if payload is not None:
             kwargs["json"] = payload
 
@@ -593,7 +595,9 @@ class ScheduleExecutor:
             else:
                 await asyncio.to_thread(db.update_schedule_run, record_id, run_id=run_id, session_id=None)
 
-        return await self._poll_eval_suite_run(client, headers, run_id, timeout_seconds)
+        # The run route's db_id and table, so the poll reads the database the run is stored in.
+        poll_params = {k: v for k, v in query.items() if k in ("db_id", "table")}
+        return await self._poll_eval_suite_run(client, headers, run_id, timeout_seconds, poll_params)
 
     async def _poll_eval_suite_run(
         self,
@@ -601,6 +605,7 @@ class ScheduleExecutor:
         headers: Dict[str, str],
         run_id: str,
         timeout_seconds: int,
+        params: Dict[str, str],
     ) -> Dict[str, Any]:
         """Poll an eval run until its suite is no longer RUNNING."""
         poll_url = f"{self.base_url}/eval-runs/{run_id}"
@@ -622,7 +627,7 @@ class ScheduleExecutor:
             # Unlike _poll_run, every retried poll waits poll_interval first, so a 404 or a dropped
             # request does not spin until the deadline.
             try:
-                resp = await client.request("GET", poll_url, headers=headers)
+                resp = await client.request("GET", poll_url, headers=headers, params=params)
             except Exception as exc:
                 log_warning(f"Poll request failed for eval run {run_id}: {exc}")
                 await asyncio.sleep(self.poll_interval)

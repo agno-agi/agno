@@ -2,7 +2,6 @@ import asyncio
 import logging
 from contextlib import suppress
 from copy import deepcopy
-from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
@@ -12,11 +11,9 @@ from starlette._utils import get_route_path
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
-from agno.db.schemas.scheduler import strip_reserved_run_metadata
-from agno.eval.suite import Case, EvalSuite, JudgeMode, arun_cases
+from agno.eval.suite import Case, EvalSuite, arun_cases
 from agno.eval.utils import async_log_eval
-from agno.exceptions import AgnoError
-from agno.models.base import Model
+from agno.exceptions import AgnoError, RunCancelledException
 from agno.models.utils import get_model
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
@@ -36,6 +33,14 @@ from agno.os.routers.evals.schemas import (
     UpdateEvalRunRequest,
 )
 from agno.os.routers.evals.utils import (
+    adelete_eval_suite_run,
+    apply_case_overrides,
+    aprepare_eval_suite_run,
+    aread_eval_suite_run,
+    arun_eval_suite_cases,
+    astore_eval_suite_run_data,
+    build_posted_suite,
+    build_registered_suite,
     run_accuracy_eval,
     run_agent_as_judge_eval,
     run_performance_eval,
@@ -54,6 +59,8 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_eval_suite_by_id, get_team_by_id
 from agno.remote.base import RemoteDb
+from agno.run.cancel import acancel_run, acleanup_run, araise_if_cancelled, aregister_run
+from agno.run.concurrency import background_run_slot
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_error, log_warning
 
@@ -345,11 +352,35 @@ def attach_routes(
                     eval_run_ids=request.eval_run_ids, db_id=db_id, table=table, headers=headers
                 )
 
-            if isinstance(db, AsyncBaseDb):
-                db = cast(AsyncBaseDb, db)
-                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
-            else:
-                db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+            # A deleted background suite run is cancelled, so its cases stop making model calls: each id is read
+            # with the caller's scope, and a RUNNING suite run gets its cancellation registered before the rows
+            # are deleted. The cancellation is withdrawn when the delete fails or keeps the row; a run that
+            # saw it before then has already stopped.
+            cancelled_run_ids: List[str] = []
+            for eval_run_id in request.eval_run_ids:
+                eval_run = await aread_eval_suite_run(db, eval_run_id, **scope)  # type: ignore
+                if eval_run is None or eval_run.get("eval_type") != EvalType.SUITE.value:
+                    continue
+                if ((eval_run.get("eval_data") or {}).get("summary") or {}).get("status") == "RUNNING":
+                    cancelled_run_ids.append(eval_run_id)
+            try:
+                for eval_run_id in cancelled_run_ids:
+                    await acancel_run(eval_run_id)
+                if isinstance(db, AsyncBaseDb):
+                    db = cast(AsyncBaseDb, db)
+                    await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+                else:
+                    db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+            except BaseException:
+                for eval_run_id in cancelled_run_ids:
+                    with suppress(Exception):
+                        await acleanup_run(eval_run_id)
+                raise
+            for eval_run_id in cancelled_run_ids:
+                # Some databases log and swallow a failed delete: a row that is still there keeps its run.
+                with suppress(Exception):
+                    if await aread_eval_suite_run(db, eval_run_id, **scope) is not None:  # type: ignore
+                        await acleanup_run(eval_run_id)
         except HTTPException:
             raise
         except AgnoError as e:
@@ -753,14 +784,7 @@ def attach_routes(
         }
         if creator_user_id is not None:
             overrides["user_id"] = creator_user_id
-        # Runtime-owned metadata keys (version stamp, dispatch lineage) are stripped as on the run routes,
-        # so a posted case cannot forge them.
-        selected = tuple(
-            replace(
-                case, **{**overrides, "metadata": strip_reserved_run_metadata(overrides.get("metadata", case.metadata))}
-            )
-            for case in selected
-        )
+        selected = apply_case_overrides(selected, overrides)
         # A case pinned to a session must not write into another user's session, as on the run routes.
         for case in selected:
             if case.session_id:
@@ -794,8 +818,6 @@ def attach_routes(
                 agent_id=agent_id,
                 team_id=team_id,
             )
-            # Written directly, not through async_log_eval: no model call has run yet, so a failed write is
-            # answered as an error instead of a 202 for a run nobody can poll.
             running_record = EvalRunRecord(
                 run_id=eval_run.id,
                 eval_type=EvalType.SUITE,
@@ -805,29 +827,21 @@ def attach_routes(
                 team_id=team_id,
                 name=eval_run.name,
             )
-            if isinstance(db, AsyncBaseDb):
-                created = await db.create_eval_run(running_record)
-            else:
-                created = db.create_eval_run(running_record)
-            if created is None:
-                raise HTTPException(status_code=500, detail="Could not store the eval suite run")
-            # The poll is scoped to the owner, so a run whose owner was not stored could never be read
-            # back: it is removed and refused, where the synchronous run keeps it.
-            if creator_user_id is not None:
-                try:
-                    if isinstance(db, AsyncBaseDb):
-                        await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
-                    else:
-                        db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
-                except Exception as e:
-                    log_error(f"Could not set owner on eval run {eval_run.id}: {e}")
-                    with suppress(Exception):
-                        if isinstance(db, AsyncBaseDb):
-                            await db.delete_eval_runs(eval_run_ids=[eval_run.id])
-                        else:
-                            db.delete_eval_runs(eval_run_ids=[eval_run.id])
-                    raise HTTPException(status_code=500, detail="Could not store the eval suite run")
-                eval_run.user_id = creator_user_id
+            # Register the run for cancellation tracking before its row is stored and its task spawned, as a
+            # background agent run is, so a delete that lands before the task starts is kept.
+            await aregister_run(eval_run.id)
+            try:
+                await aprepare_eval_suite_run(db, running_record, creator_user_id)
+            except HTTPException:
+                # The poll is scoped to the owner, so a run whose owner was not stored could never be read
+                # back: it is removed and refused, where the synchronous run keeps it.
+                await adelete_eval_suite_run(db, running_record.run_id)
+                await acleanup_run(eval_run.id)
+                raise
+            except Exception:
+                await acleanup_run(eval_run.id)
+                raise
+            eval_run.user_id = creator_user_id
             # Spawned like a background agent run, so shutdown drains it before the databases close.
             from agno.run.background import _spawn_background
 
@@ -876,35 +890,38 @@ def attach_routes(
         except Exception as e:
             log_warning(f"Could not set owner on eval run {eval_run.id}: {e}")
 
-    async def _store_eval_suite_run_data(
-        db: Union[BaseDb, AsyncBaseDb], eval_run_id: str, eval_data: Dict[str, Any]
-    ) -> None:
-        """Replace the eval data of a background suite run; a run deleted meanwhile stays deleted."""
-        if isinstance(db, AsyncBaseDb):
-            await db.update_eval_run_data(eval_run_id=eval_run_id, eval_data=eval_data)
-        else:
-            db.update_eval_run_data(eval_run_id=eval_run_id, eval_data=eval_data)
-
     async def _finish_eval_suite_run(
         db: Union[BaseDb, AsyncBaseDb], selected: Tuple[Case, ...], timeout: int, eval_run: EvalSchema
     ) -> None:
         """Run the cases of a background suite run and replace its running row with the result."""
         error_data = {**eval_run.eval_data, "summary": {**eval_run.eval_data["summary"], "status": "ERROR"}}
         try:
-            # No db= here, as in the synchronous run: the suite record carries every case's result.
-            suite_result = await arun_cases(selected, default_timeout=timeout)
+            # A delete stored before the task started stops it here, as _execute_background checks it.
+            await araise_if_cancelled(eval_run.id)
+            # Held like a background agent run's slot, so the background concurrency cap bounds suite runs too.
+            async with background_run_slot(run_id=eval_run.id):
+                suite_result = await arun_eval_suite_cases(selected, timeout, eval_run.id)
             eval_data = suite_result.to_dict()
+        except RunCancelledException:
+            # Deleted while waiting for a slot or while its cases ran: the cases stop, and the write below finds
+            # no row, so a deleted run stays deleted.
+            eval_data = {**error_data, "error": "cancelled"}
         except asyncio.CancelledError:
             # A shutdown cancels the run: the row is marked ERROR, best-effort, and the cancellation goes on,
-            # as a cancelled background agent run is marked cancelled.
-            with suppress(Exception):
-                await _store_eval_suite_run_data(db, eval_run.id, {**error_data, "error": "cancelled"})
+            # as a cancelled background agent run is marked cancelled. Shielded, so a second cancellation does
+            # not lose the write.
+            with suppress(Exception, asyncio.CancelledError):
+                await asyncio.shield(astore_eval_suite_run_data(db, eval_run.id, {**error_data, "error": "cancelled"}))
             raise
         except Exception as e:
             log_error(f"Eval suite run {eval_run.id} failed: {e}", exc_info=True)
             eval_data = {**error_data, "error": str(e)}
+        finally:
+            with suppress(Exception, asyncio.CancelledError):
+                await asyncio.shield(acleanup_run(eval_run.id))
         try:
-            await _store_eval_suite_run_data(db, eval_run.id, eval_data)
+            # Shielded: a shutdown landing now must not leave the row RUNNING.
+            await asyncio.shield(astore_eval_suite_run_data(db, eval_run.id, eval_data))
         except Exception as e:
             log_error(f"Could not store the result of eval suite run {eval_run.id}: {e}")
 
@@ -970,19 +987,7 @@ def attach_routes(
         eval_suite = get_eval_suite_by_id(suite_id, eval_suites)
         if eval_suite is None:
             raise HTTPException(status_code=404, detail=f"Eval suite with id '{suite_id}' not found")
-        # create_fresh, as the posted-body route below: the cases run on one copy for this request, never the
-        # instance shared with live traffic. A registered suite runs exactly one registered agent or team.
-        target = eval_suite.cases[0]
-        if target.agent is not None:
-            fresh_agent = cast(
-                Agent, get_agent_by_id(agent_id=cast(str, target.agent.id), agents=agents, create_fresh=True)
-            )
-            eval_suite = replace(eval_suite, cases=tuple(replace(case, agent=fresh_agent) for case in eval_suite.cases))
-        else:
-            fresh_team = cast(
-                Team, get_team_by_id(team_id=cast(str, cast(Team, target.team).id), teams=teams, create_fresh=True)
-            )
-            eval_suite = replace(eval_suite, cases=tuple(replace(case, team=fresh_team) for case in eval_suite.cases))
+        eval_suite = build_registered_suite(eval_suite, agents, teams)
         suite_run_input = suite_run_input or EvalSuiteRunInput()
         eval_run = await _run_eval_suite(
             request,
@@ -1080,62 +1085,7 @@ def attach_routes(
             resource_type="agents" if agent_id else "teams",
             resource_id=cast(str, agent_id or team_id),
         )
-        # create_fresh, as for a single eval: one copy for this request, never the shared instance.
-        agent: Optional[Agent] = None
-        team: Optional[Team] = None
-        if agent_id:
-            resolved_agent = get_agent_by_id(agent_id=agent_id, agents=agents, create_fresh=True)
-            if resolved_agent is None:
-                raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
-            if not isinstance(resolved_agent, Agent):
-                raise HTTPException(
-                    status_code=501, detail="Eval suites are not supported for remote or external agents"
-                )
-            agent = resolved_agent
-        else:
-            resolved_team = get_team_by_id(team_id=cast(str, team_id), teams=teams, create_fresh=True)
-            if resolved_team is None:
-                raise HTTPException(status_code=404, detail=f"Team with id '{team_id}' not found")
-            if not isinstance(resolved_team, Team):
-                raise HTTPException(status_code=501, detail="Eval suites are not supported for remote teams")
-            team = resolved_team
-        # A posted case names its judge as text; it is built here, as POST /eval-runs builds its model.
-        judge_models: List[Optional[Model]] = []
-        for case_input in eval_suite_input.cases:
-            judge_model = None
-            if case_input.judge_model_id and case_input.judge_model_provider:
-                model_string = f"{case_input.judge_model_provider}:{case_input.judge_model_id}"
-                try:
-                    judge_model = get_model(model_string)
-                except Exception as e:
-                    raise HTTPException(status_code=422, detail=f"Invalid judge model '{model_string}': {e}")
-            judge_models.append(judge_model)
-        cases = tuple(
-            Case(
-                name=case_input.name,
-                input=case_input.input,
-                agent=agent,
-                team=team,
-                judge_model=judge_model,
-                tags=tuple(case_input.tags),
-                timeout_seconds=case_input.timeout_seconds,
-                criteria=case_input.criteria,
-                judge_mode=JudgeMode(case_input.judge_mode),
-                judge_threshold=case_input.judge_threshold,
-                expected_tool_calls=tuple(case_input.expected_tool_calls)
-                if case_input.expected_tool_calls is not None
-                else None,
-                allow_additional_tool_calls=case_input.allow_additional_tool_calls,
-                session_id=case_input.session_id,
-                session_state=case_input.session_state,
-                dependencies=case_input.dependencies,
-                metadata=case_input.metadata,
-                knowledge_filters=case_input.knowledge_filters,
-            )
-            for case_input, judge_model in zip(eval_suite_input.cases, judge_models)
-        )
-        # The posted suite exists for this request only, so it gets a throwaway id.
-        eval_suite = EvalSuite(id=str(uuid4()), name=eval_suite_input.name, cases=cases)
+        eval_suite = build_posted_suite(eval_suite_input, agent_id, team_id, agents, teams)
         eval_run = await _run_eval_suite(
             request,
             db,

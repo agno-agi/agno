@@ -618,6 +618,10 @@ async def test_eval_suite_run_under_managed_roles_asks_the_provider(monkeypatch)
     assert (evals_ctx.resource_type, evals_ctx.action, required_scopes) == (None, "write", ["evals:write"])
     ctx = provider.acheck.call_args.args[0]
     assert (ctx.principal_id, ctx.resource_type, ctx.resource_id, ctx.action) == ("alice", "agents", "a1", "run")
+    # A query string on the endpoint, such as the run route's db_id, takes the same suite gate.
+    provider.acheck.reset_mock()
+    await _require_endpoint_permission(request, "/eval-suites/s1/runs?db_id=main-db", "POST")
+    assert provider.acheck.call_args.args[0].resource_id == "a1"
     # An unknown suite answers 404, as the suite's run route answers it.
     with pytest.raises(HTTPException) as exc:
         await _require_endpoint_permission(request, "/eval-suites/nope/runs", "POST")
