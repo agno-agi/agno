@@ -1832,8 +1832,7 @@ def test_get_pull_request_changes_lists_files_without_patches_and_reads_one_file
         ("docs/guide.md", 900, 0),
         ("logo.png", 0, 0),
     ]
-    assert all("patch" not in file for file in listing)
-    assert len(listing_text) < 1500
+    assert all(set(file) == {"filename", "status", "additions", "deletions", "changes"} for file in listing)
 
     [one] = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="app/main.py"))
     assert one["filename"] == "app/main.py" and one["patch"] == "@@ -1 +1 @@\n-old\n+new"

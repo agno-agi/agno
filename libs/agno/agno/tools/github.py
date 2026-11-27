@@ -341,8 +341,8 @@ class GithubTools(Toolkit):
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             pr_number (int): The number of the pull request.
             path (Optional[str]): Return only the file with this path, with its patch.
-            include_patches (bool): Include each file's patch. Pass False to list the changed
-                files with their line counts only. Ignored when path is given.
+            include_patches (bool): Include each file's patch and URLs. Pass False to list the
+                changed files with their line counts only. Ignored when path is given.
 
         Returns:
             A JSON-formatted string containing the list of changed files.
@@ -362,10 +362,10 @@ class GithubTools(Toolkit):
                     "additions": file.additions,
                     "deletions": file.deletions,
                     "changes": file.changes,
-                    "raw_url": file.raw_url,
-                    "blob_url": file.blob_url,
                 }
                 if include_patches or path is not None:
+                    file_info["raw_url"] = file.raw_url
+                    file_info["blob_url"] = file.blob_url
                     # GitHub returns no patch for a binary file or a very large one.
                     file_info["patch"] = file.patch
                 changes.append(file_info)
