@@ -26,14 +26,14 @@ def build_reasoning_step_panel(
     if step.title is not None:
         step_content.append(f"{step.title}\n", "bold")
     if step.action is not None:
-        step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
+        step_content.append(Text.assemble(("Action:", "bold"), f" {step.action}\n", style="dim"))
     if step.result is not None:
-        step_content.append(Text.from_markup(step.result, style="dim"))
+        step_content.append(Text(step.result, style="dim"))
 
     if show_full_reasoning:
         # Add detailed reasoning information if available
         if step.reasoning is not None:
-            step_content.append(Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim"))
+            step_content.append(Text.assemble(("\nReasoning:", "bold"), f" {step.reasoning}", style="dim"))
         if step.confidence is not None:
             step_content.append(Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim"))
     return create_panel(content=step_content, title=f"Reasoning step {step_idx}", border_style=color)
