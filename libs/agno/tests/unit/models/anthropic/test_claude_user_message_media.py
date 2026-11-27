@@ -196,3 +196,37 @@ def test_other_claude_providers_format_through_the_anthropic_class(module_path: 
 
     for method in ("invoke", "ainvoke", "invoke_stream", "ainvoke_stream", "count_tokens", "acount_tokens"):
         assert getattr(module.Claude, method) is getattr(AnthropicClaude, method)
+
+
+@pytest.mark.parametrize("content", [None, [], ""])
+def test_user_message_with_no_text_and_no_media_keeps_its_turn(content: Any):
+    """A turn replayed from history after its media was removed has no content left."""
+    chat_messages, _ = format_messages(
+        [
+            Message(role="user", content=content),
+            Message(role="assistant", content="It is a red square."),
+            Message(role="user", content="What colour was it?"),
+        ]
+    )
+
+    assert [m["role"] for m in chat_messages] == ["user", "assistant", "user"]
+    assert chat_messages[0]["content"] == [{"type": "text", "text": "(no text)"}]
+    assert chat_messages[2]["content"] == [{"type": "text", "text": "What colour was it?"}]
+
+
+def test_empty_user_message_next_to_a_user_message_adds_nothing():
+    chat_messages, _ = format_messages(
+        [Message(role="user", content="Note: the order shipped."), Message(role="user", content=None)]
+    )
+
+    assert chat_messages == [{"role": "user", "content": [{"type": "text", "text": "Note: the order shipped."}]}]
+
+
+def test_empty_user_message_is_not_mutated():
+    empty = Message(role="user", content=[])
+    original = empty.content
+
+    format_messages([empty])
+
+    assert empty.content is original
+    assert empty.content == []

@@ -494,6 +494,13 @@ class AwsBedrock(Model):
                 else:
                     formatted_messages.append(formatted_message)
 
+        # Converse refuses a user turn with no content. One is left when a message had neither text
+        # nor media, as a turn from history does once its media has been removed. It keeps its place
+        # in the conversation with a short text.
+        for formatted_message in formatted_messages:
+            if formatted_message["role"] == "user" and not formatted_message["content"]:
+                formatted_message["content"] = [{"text": "(no text)"}]
+
         # Claude 4.6+ models do not support assistant message prefill.
         # Append a trailing user turn so the request ends with a user message.
         if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":

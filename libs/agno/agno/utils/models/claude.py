@@ -820,6 +820,13 @@ def format_messages(
         else:
             merged_messages.append(msg)
 
+    # Anthropic refuses a user message with no content. One is left when a message had neither text
+    # nor media, as a turn from history does once its media has been removed. It keeps its place in
+    # the conversation with a short text.
+    for msg in merged_messages:
+        if msg["role"] == "user" and msg["content"] == []:
+            msg["content"] = [{"type": "text", "text": "(no text)"}]
+
     # Claude 4.6+ models do not support assistant message prefill.
     # Append a trailing user turn so the request ends with a user message.
     if append_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":

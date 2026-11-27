@@ -259,3 +259,37 @@ def test_trailing_user_rule_after_a_merge(image: Image):
     assert [turn["role"] for turn in ends_with_user] == ["user"]
     assert [turn["role"] for turn in ends_with_assistant] == ["user", "assistant", "user"]
     assert ends_with_assistant[2]["content"] == [{"text": model.trailing_user_message_content}]
+
+
+@pytest.mark.parametrize("content", [None, "", []])
+def test_user_message_with_no_text_and_no_media_keeps_its_turn(model: AwsBedrock, content: Any):
+    """A turn replayed from history after its media was removed has no content left."""
+    turns, _ = model._format_messages(
+        [
+            Message(role="user", content=content),
+            Message(role="assistant", content="It is a red square."),
+            Message(role="user", content="What colour was it?"),
+        ]
+    )
+
+    assert [turn["role"] for turn in turns] == ["user", "assistant", "user"]
+    assert turns[0]["content"] == [{"text": "(no text)"}]
+    assert turns[2]["content"] == [{"text": "What colour was it?"}]
+
+
+def test_empty_user_message_next_to_a_user_message_adds_nothing(model: AwsBedrock):
+    turns, _ = model._format_messages(
+        [Message(role="user", content="Note: the order shipped."), Message(role="user", content=None)]
+    )
+
+    assert turns == [{"role": "user", "content": [{"text": "Note: the order shipped."}]}]
+
+
+def test_empty_user_message_is_not_mutated(model: AwsBedrock):
+    empty = Message(role="user", content=[])
+    original = empty.content
+
+    model._format_messages([empty])
+
+    assert empty.content is original
+    assert empty.content == []
