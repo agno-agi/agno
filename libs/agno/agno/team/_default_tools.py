@@ -713,6 +713,12 @@ def _get_delegate_task_function(
 
         member_agent_run_response = None
         try:
+            # Do not start a new member run after the parent team run was
+            # cancelled (for example, cancelled during the leader's preflight,
+            # before any member run id was registered). Already-running
+            # members are untouched; this only gates starting new ones.
+            if run_response.run_id is not None:
+                raise_if_cancelled(run_response.run_id)
             if stream:
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
@@ -897,6 +903,12 @@ def _get_delegate_task_function(
 
         member_agent_run_response = None
         try:
+            # Do not start a new member run after the parent team run was
+            # cancelled (for example, cancelled during the leader's preflight,
+            # before any member run id was registered). Already-running
+            # members are untouched; this only gates starting new ones.
+            if run_response.run_id is not None:
+                await araise_if_cancelled(run_response.run_id)
             if stream:
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
@@ -1065,6 +1077,12 @@ def _get_delegate_task_function(
             member_session_state_copy = copy(run_context.session_state)
             member_agent_run_response = None
             try:
+                # Do not start a new member run after the parent team run was
+                # cancelled (for example, cancelled during the leader's preflight,
+                # before any member run id was registered). Already-running
+                # members are untouched; this only gates starting new ones.
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
                 if stream:
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
@@ -1324,6 +1342,13 @@ def _get_delegate_task_function(
                 finally:
                     await queue.put(done_marker)
 
+            # Do not start new member runs after the parent team run was
+            # cancelled (for example, cancelled during the leader's preflight,
+            # before any member run id was registered). Already-running
+            # members are untouched; this only gates starting new ones.
+            if run_response.run_id is not None:
+                await araise_if_cancelled(run_response.run_id)
+
             # Initialize and launch all members
             tasks: List[asyncio.Task[None]] = []
             for member_agent in resolved_members:
@@ -1370,8 +1395,16 @@ def _get_delegate_task_function(
                     member_agent_index=member_agent_index,
                 ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
+                    member_agent_run_response = None
 
                     try:
+                        # Do not start a new member run after the parent team
+                        # run was cancelled (for example, cancelled during the
+                        # leader's preflight, before any member run id was
+                        # registered). Already-running members are untouched;
+                        # this only gates starting new ones.
+                        if run_response.run_id is not None:
+                            await araise_if_cancelled(run_response.run_id)
                         member_run_id = str(uuid4())
                         if run_response.run_id is not None:
                             await aregister_member_run(run_response.run_id, member_run_id)
