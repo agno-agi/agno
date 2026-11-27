@@ -59,6 +59,12 @@ relative to its root. Environment and credential files are excluded and cannot b
 anywhere else, say you read only that directory.
 """
 
+SANDBOX_CHANGES_INSTRUCTIONS = """\
+Sandboxed agents: an agent that works in a sandbox changes its own checkout, which read_file does not
+read. To check or quote what one changed, call read_sandbox_changes, never read_file, and say so when
+the diff differs from the agent's report.
+"""
+
 COMPANY_INSTRUCTIONS = """\
 Company work:
 - A Goal is a standing aim of the company with no end date, such as Developer docs or Customer growth,
