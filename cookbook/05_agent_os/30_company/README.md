@@ -659,11 +659,13 @@ attached to the Task it also holds that, under `context`; see "What a Task run i
 given". No executor receives a wiki page or a Goal page that was not attached. Queue retries use the
 existing queue policy. A Task run whose worker was lost, by a crash or a shutdown, is executed once
 more from the Task's input, so a tool call the lost execution made is made again; a run lost a second
-time is failed. Two kinds of run are failed at the first loss and not executed again: a run that was
-continued after a pause, and a run of a Claude or Codex agent that asks a person for permission and
-runs outside a sandbox. The second execution is only for a lost worker: a run that fails by itself
-is failed on its first execution. With `QueueConfig(max_attempts=...)` of 2 or more, that setting
-governs every failure instead.
+time is failed. A run of a Claude or Codex agent that asks a person for permission and runs outside
+a sandbox is failed at the first loss and not executed again. A run that was continued after a pause
+gets one execution, whatever the queue's setting: when its worker is lost it goes back to waiting for
+the person while its saved run still says paused, and is failed once the run has saved progress past
+the pause, as an agent with `checkpoint="tool-batch"` does. The second execution is only for a lost
+worker: a run that fails by itself is failed on its first execution. With
+`QueueConfig(max_attempts=...)` of 2 or more, that setting governs instead, except for a continued run.
 Results are saved on the Task, and every ended run moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task

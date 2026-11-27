@@ -1289,7 +1289,7 @@ class QueueWorker:
         # "why did my durable run not re-execute?" - not just state facts
         allowed = job.get("max_attempts", 1)
         error = (
-            "Worker lost and attempt budget exhausted; the run will not be executed again. "
+            "Worker lost and attempt budget exhausted; the run will not be executed again automatically. "
             f"A crashed run fails visibly once the {allowed} execution(s) its ticket allows are spent"
         )
         if (job.get("payload") or {}).get("company_task_id"):
@@ -2029,7 +2029,7 @@ class QueueWorker:
         ):
             # A direct native process belonged to the lost worker. Re-entering
             # arun would repeat its tools, not reconnect to that process.
-            error = "The native execution waiting for confirmation was lost; the turn cannot be replayed"
+            error = "The native execution was lost with its worker; the turn cannot be replayed"
             if not await self._persist_run_error(job, error):
                 return True
             await self._asettle_ticket(job["id"], job["attempt"], "failed", error)
