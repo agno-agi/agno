@@ -684,6 +684,7 @@ module = [
   "sentence_transformers.*",
   "serpapi.*",
   "setuptools.*",
+  "simple_salesforce.*",
   "simplejson.*",
   "slack_bolt.*",
   "slack_sdk.*",
