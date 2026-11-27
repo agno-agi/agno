@@ -498,6 +498,43 @@ def test_sanitize_response_schema_inlines_a_root_ref_with_siblings(model, kept):
     assert {key: schema[key] for key in kept} == kept
 
 
+class _Role(BaseModel):
+    name: str
+    role: str
+
+
+class _PatternedCast(RootModel[_Role]):
+    model_config = ConfigDict(json_schema_extra={"properties": {"name": {"pattern": "^[A-Z]"}}, "required": ["name"]})
+
+
+def test_sanitize_response_schema_merges_root_properties_with_the_definition():
+    """Keywords beside a $ref apply on top of the definition, so overlapping properties merge instead of replacing it."""
+    schema = _PatternedCast.model_json_schema()
+    assert schema["properties"] == {"name": {"pattern": "^[A-Z]"}}
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {
+        "name": {"title": "Name", "type": "string", "pattern": "^[A-Z]"},
+        "role": {"title": "Role", "type": "string"},
+    }
+    assert schema["required"] == ["name", "role"]
+
+
+def test_sanitize_response_schema_unions_required_when_merging_a_root_definition():
+    schema = {
+        "$defs": {"A": {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}},
+        "$ref": "#/$defs/A",
+        "required": ["y"],
+        "properties": {"y": {"type": "integer"}},
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {"x": {"type": "string"}, "y": {"type": "integer"}}
+    assert schema["required"] == ["x", "y"]
+
+
 class _Movie(RootModel[_Cast]):
     pass
 

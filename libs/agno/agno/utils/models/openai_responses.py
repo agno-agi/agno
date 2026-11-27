@@ -124,6 +124,22 @@ def _local_definition(root: dict, ref: str) -> Optional[dict]:
     return None
 
 
+def _merge_definition(root: dict, definition: dict) -> None:
+    """Merge a definition into the root; keywords beside a $ref apply on top of it, so neither side's fields are lost."""
+    for key, value in definition.items():
+        current = root.get(key)
+        if key == "properties" and isinstance(current, dict) and isinstance(value, dict):
+            merged = dict(value)
+            for name, extra in current.items():
+                base = merged.get(name)
+                merged[name] = {**base, **extra} if isinstance(base, dict) and isinstance(extra, dict) else extra
+            root[key] = merged
+        elif key == "required" and isinstance(current, list) and isinstance(value, list):
+            root[key] = value + [name for name in current if name not in value]
+        else:
+            root.setdefault(key, value)
+
+
 def sanitize_response_schema(schema: dict):
     """
     Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
@@ -149,8 +165,7 @@ def sanitize_response_schema(schema: dict):
         if definition is None:
             break
         schema.pop("$ref")
-        for key, value in copy.deepcopy(definition).items():
-            schema.setdefault(key, value)
+        _merge_definition(schema, copy.deepcopy(definition))
     # An anyOf root is never valid, so an unresolved root $ref is left for OpenAI to report
     _sanitize_schema_node(schema, wrap_ref=False)
 
