@@ -96,7 +96,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
         return admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
-    def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
+    async def _validate_requested_scopes(request: Request, body: ServiceAccountCreate, scopes: List[str]) -> None:
         """Reject unknown scopes, gate privileged scopes behind the explicit flag, and
         enforce the subset rule: a caller with scopes can only grant scopes it holds."""
         admin_scope = _get_admin_scope(request)
@@ -141,60 +141,70 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=401,
                 detail=("JWT authentication is required to mint a service account."),
             )
-        from agno.os.auth import caller_scopes_are_authoritative
+        from agno.os.auth import (
+            caller_scopes_are_authoritative,
+            planes_beside_token_scopes,
+            scopes_left_for_the_provider,
+        )
 
-        if not caller_scopes_are_authoritative(request):
-            # Under a managed-roles / ReBAC / custom plane the token's `scopes` claim is
-            # NOT the caller's authority (the provider ignores it), yet a minted PAT is
-            # always enforced by scope-math and bypasses that plane. Measuring the subset
-            # rule against the claim would let a limited caller (e.g. one holding only a
-            # `service_accounts:write` role, with an ignored `agent_os:admin` in the token)
-            # mint a more powerful, durable credential. So measure the caller's REAL
-            # authority through the provider (their roles/relationships): each requested
-            # scope must be one the provider would grant this caller, decided exactly as
-            # the resource gate would. Minting a PAT for scopes the caller genuinely holds
-            # under the plane (the supported service-account flow) still works.
-            from agno.os.auth import resolve_authorization_provider
-            from agno.os.authz._scope_policy import scope_to_resource_action
-            from agno.os.authz.provider import AuthorizationContext
-
-            provider = resolve_authorization_provider(request)
-            principal_id = getattr(request.state, "user_id", None)
-            caller_claims = getattr(request.state, "claims", None) or {}
-
-            def _caller_holds_via_provider(scope: str) -> bool:
-                try:
-                    resource, action = scope_to_resource_action(scope)
-                except ValueError:
-                    return False  # unmappable scope -> not held (fail closed)
-                if resource == "*":
-                    resource_type, resource_id = "*", "*"  # agent_os:admin
-                else:
-                    resource_type, _, resource_id = resource.partition("/")
-                return provider.check(
-                    AuthorizationContext(
-                        principal_id=principal_id,
-                        scopes=list(caller_scopes or []),
-                        claims=caller_claims,
-                        resource_type=resource_type,
-                        resource_id=resource_id,
-                        action=action,
-                        admin_scope=admin_scope,
-                    )
-                )
-
-            scopes_not_held = [scope for scope in scopes if not _caller_holds_via_provider(scope)]
-            if scopes_not_held:
+        if caller_scopes_are_authoritative(request):
+            effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
+            if effective_admin_scope in caller_scopes:
+                return
+            scopes = [scope for scope in scopes if not _caller_holds_scope(caller_scopes, scope, admin_scope)]
+            if not scopes:
+                return
+            # With another plane beside the token's scopes, a scope the token does not carry may
+            # still be held through it (a stored role), so only those scopes go on to the
+            # provider below. A service account is measured by its own scopes alone.
+            if not planes_beside_token_scopes(request):
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Cannot grant scope(s) you do not hold: {', '.join(scopes_not_held)}",
+                    detail=f"Cannot grant scope(s) you do not hold: {', '.join(scopes)}",
                 )
-            return
 
-        effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
-        if effective_admin_scope in caller_scopes:
-            return
-        scopes_not_held = [scope for scope in scopes if not _caller_holds_scope(caller_scopes, scope, admin_scope)]
+        # What reaches here is measured through the provider. Where token scopes count, that is
+        # only the scopes the token does not carry.
+        # Under a managed-roles / ReBAC / custom plane the token's `scopes` claim is
+        # NOT the caller's authority (the provider ignores it), yet a minted PAT is
+        # always enforced by scope-math and bypasses that plane. Measuring the subset
+        # rule against the claim would let a limited caller (e.g. one holding only a
+        # `service_accounts:write` role, with an ignored `agent_os:admin` in the token)
+        # mint a more powerful, durable credential. So measure the caller's REAL
+        # authority through the provider (their roles/relationships): each requested
+        # scope must be one the provider would grant this caller, decided exactly as
+        # the resource gate would. Minting a PAT for scopes the caller genuinely holds
+        # under the plane (the supported service-account flow) still works.
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz._scope_policy import scope_to_resource_action
+        from agno.os.authz.provider import AuthorizationContext
+
+        provider = resolve_authorization_provider(request)
+        principal_id = getattr(request.state, "user_id", None)
+        caller_claims = getattr(request.state, "claims", None) or {}
+
+        async def _caller_holds_via_provider(scope: str) -> bool:
+            try:
+                resource, action = scope_to_resource_action(scope)
+            except ValueError:
+                return False  # unmappable scope -> not held (fail closed)
+            if resource == "*":
+                resource_type, resource_id = "*", "*"  # agent_os:admin
+            else:
+                resource_type, _, resource_id = resource.partition("/")
+            return await provider.acheck(
+                AuthorizationContext(
+                    principal_id=principal_id,
+                    scopes=scopes_left_for_the_provider(request, caller_scopes),
+                    claims=caller_claims,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    action=action,
+                    admin_scope=admin_scope,
+                )
+            )
+
+        scopes_not_held = [scope for scope in scopes if not await _caller_holds_via_provider(scope)]
         if scopes_not_held:
             raise HTTPException(
                 status_code=403,
@@ -210,7 +220,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         """Mint a service account token. The plaintext token is returned exactly once."""
         requested_scopes = body.scope_strings()
         scopes = requested_scopes if requested_scopes is not None else list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
-        _validate_requested_scopes(request, body, scopes)
+        await _validate_requested_scopes(request, body, scopes)
 
         existing = await _db_call("get_service_account_by_name", body.name)
         if existing is not None:

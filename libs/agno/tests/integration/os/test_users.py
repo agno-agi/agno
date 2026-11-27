@@ -332,7 +332,8 @@ def test_user_metrics_api_without_a_role_store(tmp_path):
     assert client.get("/users/metrics", headers=_auth("x", scopes=["metrics:read"])).status_code == 403
     body = client.get("/users/metrics", headers=_auth("x", scopes=["agent_os:admin"])).json()
     assert body["total"] == 1 and body["disabled"] == 0
-    assert body["without_role"] is None and body["by_role"] is None
+    # The role store is on with authorization, so the roster reports roles: one user, holding none
+    assert body["without_role"] == 1 and body["by_role"] == []
     assert [row["count"] for row in body["created_per_day"]] == [1]
 
 

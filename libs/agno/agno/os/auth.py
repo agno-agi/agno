@@ -145,12 +145,12 @@ def provision_user_with_default_role(
     Shared by the three provisioning choke points (HTTP middleware, WebSocket connect, MCP
     identity bridge) so the behaviour is identical wherever a token first arrives.
 
-    Single-role model (a subject holds one role). The default is the role flagged
-    ``define_role(..., default=True)`` in the role store. If none is flagged and a role store is present,
-    the new user is left inert -- denied until an admin assigns a role -- and a warning is
-    logged, never a silent grant. With no role store (the scope plane) roles do not apply, so
-    nothing is granted and nothing is warned. Granting happens only on first creation, so a
-    later login never re-grants and never fights an admin who removed the role.
+    Single-role model (a subject holds one role). The default is the role flagged default in the
+    role store, by ``UserDirectory(default_role=...)`` or ``define_role(..., default=True)``. With
+    none flagged the new user gets no role: their token scopes still count, and an admin can assign
+    a role later. With no role store roles do not apply, so nothing is granted. Granting happens
+    only on first creation, so a later login never re-grants and never fights an admin who removed
+    the role.
 
     Returns the provisioned user row (so the caller can read ``disabled`` off it without a
     second query).
@@ -180,12 +180,6 @@ def provision_user_with_default_role(
                 role_store.assign(subject, role, actor="system:jit")
             except Exception as e:
                 log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
-        else:
-            log_warning(
-                f"auto-provisioned user {subject!r} has no default role "
-                "(flag one with define_role(..., default=True)); "
-                "they are denied until a role is assigned"
-            )
     return user
 
 
@@ -244,12 +238,6 @@ async def aprovision_user_with_default_role(
                     await asyncio.to_thread(role_store.assign, subject, role, actor="system:jit")
             except Exception as e:
                 log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
-        else:
-            log_warning(
-                f"auto-provisioned user {subject!r} has no default role "
-                "(flag one with define_role(..., default=True)); "
-                "they are denied until a role is assigned"
-            )
     return user
 
 
@@ -289,7 +277,8 @@ def create_dev_token(
     Args:
         sub: the user id this token authenticates as (the JWT ``sub``).
         secret: the signing key -- must match a value in ``verification_keys``.
-        scopes: optional scope strings (only meaningful on the scope plane; managed roles ignore them).
+        scopes: optional scope strings. They count beside managed roles too, unless the OS sets
+            ``Authorization(trust_token_scopes=False)``.
         audience: the ``aud`` claim; set it to your ``os_id`` when ``verify_audience=True``.
         email / name: written as claims so ``auto_provision`` can populate the directory row.
         expires_in: token lifetime in seconds (default 1 hour).
@@ -366,6 +355,21 @@ def caller_scopes_are_authoritative(request: Any) -> bool:
     managed-roles/ReBAC plane, while a raw JWT admin scope stays inert there.
     """
     return _caller_is_service_account(request) or token_scopes_are_authoritative(request)
+
+
+def planes_beside_token_scopes(request: Any) -> bool:
+    """Whether another plane decides beside the token's scopes for this caller.
+
+    True where AgentOS runs several planes at once (managed roles with token scopes trusted, or a
+    list of providers): a request the token's scopes do not allow may still be allowed by a stored
+    role. A gate that measures the caller by token scopes asks the provider as well, then. False
+    for a service account, which is measured by its own scopes alone, and on any single plane,
+    where the token's scopes either are the whole answer or are not consulted at all."""
+    from agno.os.authz._composite import CompositeAuthorizationProvider
+
+    if _caller_is_service_account(request):
+        return False
+    return isinstance(resolve_authorization_provider(request), CompositeAuthorizationProvider)
 
 
 def _provider_for(request: Any) -> AuthorizationProvider:
@@ -1063,6 +1067,41 @@ def require_approval_resolved(db: Any) -> Any:
     return dependency
 
 
+def scopes_left_for_the_provider(request: Any, scopes: Optional[List[str]]) -> List[str]:
+    """The token scopes a gate hands the provider after its own token-scope rule has decided.
+
+    A gate that measures the caller by token scopes first has already given those scopes their
+    answer. When it then asks the provider, because another plane decides beside them, the scopes
+    are left out: the scope plane matches more loosely than a gate's own rule, and must not grant
+    what the gate has just refused. Where token scopes are not the caller's authority the gate
+    never measured them, and they are passed on as before for the provider to use or ignore."""
+    return [] if caller_scopes_are_authoritative(request) else list(scopes or [])
+
+
+def _approval_admin_question(request: Any, user_scopes: List[str]) -> Any:
+    """The answer the token's scopes give about approval-admin authority, or the context to ask
+    the provider with when they do not settle it."""
+    if request is None or caller_scopes_are_authoritative(request):
+        if has_required_scopes(list(user_scopes or []), ["approvals:write"]):
+            return True
+        # Another plane beside the token's scopes may hold the grant: an approver by stored role
+        # carries no scope on the token.
+        if request is None or not planes_beside_token_scopes(request):
+            return False
+    from agno.os.authz.provider import AuthorizationContext
+
+    admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)
+    return AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=scopes_left_for_the_provider(request, user_scopes),
+        claims=getattr(request.state, "claims", None) or {},
+        resource_type="approvals",
+        resource_id="*",
+        action="write",
+        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
+    )
+
+
 def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
     """Does the caller hold approval-admin authority (``approvals:write``)?
 
@@ -1072,22 +1111,18 @@ def _caller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
     the gate, AND a genuine admin-role holder (whose token carries no scopes claim) is not
     wrongly blocked from ever resolving an approval.
     """
-    if request is None or caller_scopes_are_authoritative(request):
-        return has_required_scopes(list(user_scopes or []), ["approvals:write"])
-    from agno.os.authz.provider import AuthorizationContext
+    question = _approval_admin_question(request, user_scopes)
+    if isinstance(question, bool):
+        return question
+    return resolve_authorization_provider(request).check(question)
 
-    admin_scope_raw = getattr(getattr(request, "state", None), "admin_scope", None)
-    provider = resolve_authorization_provider(request)
-    ctx = AuthorizationContext(
-        principal_id=getattr(request.state, "user_id", None),
-        scopes=list(user_scopes or []),
-        claims=getattr(request.state, "claims", None) or {},
-        resource_type="approvals",
-        resource_id="*",
-        action="write",
-        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
-    )
-    return provider.check(ctx)
+
+async def _acaller_is_approval_admin(request: Any, user_scopes: List[str]) -> bool:
+    """Async twin of :func:`_caller_is_approval_admin`, so a role store on an async database answers."""
+    question = _approval_admin_question(request, user_scopes)
+    if isinstance(question, bool):
+        return question
+    return await resolve_authorization_provider(request).acheck(question)
 
 
 async def run_continuation_blocked_reason(
@@ -1117,7 +1152,7 @@ async def run_continuation_blocked_reason(
     # Approval-admins (approvals:write) bypass this gate — they can force-continue a run
     # for operational or debugging purposes. Decided provider-aware (see helper) so the
     # bypass can't be spoofed by a raw token scope under a managed-roles plane.
-    if _caller_is_approval_admin(request, user_scopes):
+    if await _acaller_is_approval_admin(request, user_scopes):
         return None
 
     fn = getattr(db, "get_approvals", None)

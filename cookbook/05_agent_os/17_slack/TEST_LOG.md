@@ -290,6 +290,25 @@ killed mid-Task; a reply under another user's root message; two Tasks at once
 
 ---
 
+### authorize_senders.py
+
+**Status:** PASS (startup only; not run against a live Slack workspace)
+
+**Description:** Tested on 2026-11-25. Started with placeholder Slack credentials:
+the app builds, Super Agent is mounted on Slack, and the roles `member` and
+`platform` and the default role are stored. The message flow was not run against
+Slack. It is covered by `libs/agno/tests/unit/os/interfaces/test_slack_authorize_senders.py`,
+which handles real Slack message events against a real AgentOS with only Slack's
+Web API faked.
+
+**Result:** In those tests a first message creates the sender by their confirmed
+email as a `member`; Super Agent answers a member with the private reply to ask
+their admin for platform access; after an admin gives `platform` the next message
+runs; a disabled user's next message is refused; the same person signed in on the
+web is the same user. A live run against a Slack workspace is still to do.
+
+---
+
 ## Validation
 
 - `Slack(...)` raises `ValueError` when the token, the signing secret, or the

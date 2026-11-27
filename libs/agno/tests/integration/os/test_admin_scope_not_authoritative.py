@@ -31,8 +31,8 @@ def test_admin_scope_is_authority_only_under_a_scope_plane(tmp_path):
     # Scope plane: the token's scopes ARE the authority -> admin scope confers admin.
     assert caller_is_admin(_request(ScopeAuthorizationProvider())) is True
 
-    # Managed-roles plane: the token's scopes are inert -> a raw admin scope does NOT confer admin.
-    roles = Authorization(db_url=f"sqlite:///{tmp_path}/roles.db")
+    # Managed-roles plane deciding alone: the token's scopes are inert -> a raw admin scope does NOT confer admin.
+    roles = Authorization(db_url=f"sqlite:///{tmp_path}/roles.db", trust_token_scopes=False)
     roles.define_role("viewer", ["agents:*:read"])  # roles in play: the token's scopes are inert
     assert caller_is_admin(_request(roles.provider)) is False
 
@@ -42,7 +42,7 @@ async def test_cross_user_session_write_is_refused_when_admin_scope_is_inert(tmp
     """End-to-end of the guard: under managed roles, the admin-scope caller resolves to
     is_admin=False, so a run into a session owned by someone else is refused (404) instead of
     skipping the ownership check."""
-    roles = Authorization(db_url=f"sqlite:///{tmp_path}/roles.db")
+    roles = Authorization(db_url=f"sqlite:///{tmp_path}/roles.db", trust_token_scopes=False)
     roles.define_role("viewer", ["agents:*:read"])  # roles in play: the token's scopes are inert
     attacker_is_admin = caller_is_admin(_request(roles.provider))  # False, per the fix
     assert attacker_is_admin is False
