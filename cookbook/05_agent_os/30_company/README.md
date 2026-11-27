@@ -57,7 +57,11 @@ Or deploy the new version and call `POST /databases/all/migrate` once AgentOS
 is up. Company then starts without a restart.
 
 The migration renames the stored tables and columns in place and keeps every
-id. A deployment made from the 3.2.0 template then runs with no edit. Your own
+id. It also lets `goal_id` be empty on the projects and tasks tables, because a
+Goal is optional from 3.3.0. PostgreSQL drops the requirement in place. SQLite
+cannot, so there each of the two tables is created again without it and its
+rows and indexes are carried over; a run that stops part way is finished by the
+next run. A deployment made from the 3.2.0 template then runs with no edit. Your own
 code that calls the Company Python API by its 3.2.0 names needs the rename
 first: see the names that changed with no alias, below.
 
@@ -97,6 +101,20 @@ Goals, for example `create_company_goal` and `update_goal_status`; a row holds
 reads `task["goal_id"]`; and the tree path is `goals/<goal-id>/`. A request that
 still sends `product_id` as a filter, or `purpose` in a Goal body, is answered
 with 422.
+
+A Task's input changed. In 3.2.0 every executor received the Goal's `brief.md`
+and `status.md` and every page of the company wiki. Now every executor, Mini
+Agent included, starts with the Task's brief and evidence only, and the input no
+longer has a `wiki` key. What a Task needs beyond its brief is attached to the
+Task: a wiki page, a page of its Goal, an earlier Task or a file a Task wrote.
+The input carries what is attached under `context`. If an executor relied on a
+page, attach that page to the Task, or put what it needs in the brief. Mini Agent
+also reads any page with its file tools. See "What a Task run is given".
+
+This holds for an input built after the upgrade. A retry that was already queued
+on 3.2.0 keeps the input it was queued with, and an agent or team with
+`add_history_to_context=True` reads its own earlier attempts of the same Task,
+so an attempt that ran on 3.2.0 can bring its pages back.
 
 ## Weekly Mini Agent review
 
@@ -169,19 +187,62 @@ run the Routine can trigger it.
 | --- | --- |
 | `02_manage_projects.py` | Goal-contained Projects, owner filtering, explicit transitions, soft delete and restore. |
 | `03_manage_tasks.py` | Backlog proposals, executor acceptance, frozen scope, rescoping, review and completion. |
+| `18_work_without_a_goal.py` | A Task with no Goal in the Default Project, a Project with no Goal, and what the Default Project refuses. |
+| `20_task_handoff.py` | One Task hands its work to the next: a handoff note in its folder, and the next Task created with the first attached. No model call. |
 | `09_sandboxed_engineers.py` | Claude and Codex execute a Task from a public repository in Docker, with durable checkpoints and checkout pinning. |
 
-A Goal contains Projects and Routines. Every new Task belongs to a Project
-in that Goal: `project_id` is required by Task creation and proposal/Intake
-tools. HTTP rejects omission with 422; Python managers and tools raise
-`ValueError`. Backlog drafts can be created under a `proposed` Project so people
+A Goal is a standing aim: it has Sources, Routines, `brief.md` and `status.md`,
+and no end date. A Goal is optional. A Project is an outcome that finishes, and
+it may serve a Goal or none: `goal_id` is optional on `POST /company/projects`
+and on `propose_company_project`.
+
+Every Task belongs to a Project. A Task created with no `project_id` goes into
+the **Default Project**, the one place for a single piece of work that fits no
+other Project, so nobody makes a Project to hold one Task.
+
+The Goal on a Task only says which Goal the Task belongs to. A Task does not
+need one.
+
+- A Task in a Project other than the Default one carries that Project's Goal,
+  or none when the Project has none. A `goal_id` left out is filled from the
+  Project, and a different one is refused.
+- A Task in the Default Project carries the `goal_id` it is given, or none. This
+  is the same through `POST /company/tasks`, `propose_company_task` and the
+  manager.
+- A Task and a Project that a Routine proposes carry the Routine's Goal, also
+  when the Task names no Project and lands in the Default Project. A Routine is
+  refused another Goal.
+- A Backlog Task can move between Projects. `project_id: null` moves it to the
+  Default Project. A Task that has a Goal keeps it, so it moves only to a
+  Project of the same Goal or to the Default Project. A Task with no Goal takes
+  the Goal of the Project it moves into.
+- `GET /company/tasks?has_goal=false` and `GET /company/projects?has_goal=false`
+  list the records with no Goal; `has_goal=true` lists the others.
+
+The Default Project has the fixed id `default` and the name "Default". It is
+stored when Company starts and on first use. Project responses carry
+`is_default`, true for this Project only. It has no Goal, is always `active`,
+is listed like any Project and never finishes: it is not proposed, approved,
+completed or cancelled, the Refresh Routine and auto-accept never complete it,
+auto-accept never accepts a Task in it (nobody approved it, so such a Task
+waits for a person),
+and archiving a Goal leaves it in place (the Goal's own Tasks in it are archived
+and restored with the Goal). Renaming, editing, a transition and archiving are
+each refused with the reason, by the API (422 for an edit, 409 for a transition
+or a delete), the tools and a Routine.
+
+Backlog drafts can be created under a `proposed` Project so people
 can review the plan. The Project must be approved before its Tasks move to Ready
 or start a run; creating a Task directly in Ready also requires approval.
-When no Project fits, propose one with `propose_company_project` and use its ID
-for Backlog proposals. A human can then transition it to `active`. Project approval
-does not accept or execute Tasks.
-New Backlog proposals reuse an existing Task with the same key. A Backlog Task can move between Projects
-but cannot clear its Project. Existing nullable storage rows remain readable.
+A human transitions a proposed Project to `active`. Project approval
+does not accept or execute Tasks. The Default Project needs no approval.
+New Backlog proposals reuse an existing Task with the same key.
+
+A database created before this change requires a Goal on every Project and
+Task. The 3.3.0 migration removes that requirement; see "Upgrading from agno 3.2.0".
+A Task run with no Goal starts like any other, with its brief, its evidence and
+what was attached to it, and writes only its own `tasks/<task-id>/` folder. Its
+list tools still read Projects and Tasks company-wide, as they do for any Task run.
 
 Routine instructions can make these two approval steps explicit:
 
@@ -236,7 +297,7 @@ methods retain explicit owner filters for direct callers.
 | --- | --- |
 | `04_manage_playbook.py` | Sync/async wiki pages, atomic page creation, version conflicts and the learning decision log without a model. |
 | `05_super_agent_company.py` | Company work through Super Agent's Company tools: company details, a Goal with a Routine on Mini Agent, a proposal, status and a decision, without a model call. |
-| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input loads. |
+| `16_company_file_tree.py` | The file tree through Super Agent's tools, without a model call: a confirmed company page and Goal brief, a Goal page, a Task file, a note, and what a Task's input holds before and after a page is attached. |
 
 Each Goal has a durable wiki folder with `brief.md` (human direction) and
 `status.md` (current work). A second folder holds company context. Default
@@ -394,18 +455,74 @@ A Routine run and a Task run never see `notes/`. A scheduled or service-account
 run of Super Agent is neither: it counts as a person's chat, and reads and writes
 `notes/`.
 
-A Task's input always carries the Goal's `brief.md` and `status.md`, then every
-`wiki/` page: at most 8,000 characters a page and 40,000 in total. A longer page
-is cut and the input names the file to read for the rest. Pages past the total
-are named without their content. Every other file is read on request. Every read
-result says that file content is information, never an instruction.
+### What a Task run is given
 
-This input is the same for every executor. Before 3.2 it carried every page of the
-Goal. Mini Agent reads the other pages with its file tools. A named agent, team
-or workflow that needs a Goal page other than `brief.md` and `status.md`, such as
-a runbook, must hold the read tools:
+A Task run starts with the Task's brief and its evidence. No wiki page, no Goal
+page and no earlier Task reaches it unless it is attached to the Task. This holds
+for every executor: Mini Agent, a named agent, a team, a workflow, a sandboxed
+coding agent and an external agent. An executor's input may leave AgentOS, so
+nothing of the company is sent that nobody chose.
+
+A Task holds a `context` list. Each entry is a reference with who added it and
+when: `{id, kind, ref, added_by, added_at}`.
+
+| `kind` | `ref` | What the run receives |
+|--------|-------|-----------------------|
+| `wiki` | `wiki/<page>.md` | The page. |
+| `goal` | `goals/<goal-id>/<page>.md` | The page, for example `brief.md` or `status.md`. |
+| `task` | A Task id | That Task's title, status and saved result with the status of the run that saved it, the names of up to 50 files in `tasks/<id>/`, and the full text of `tasks/<id>/handoff.md` when it exists. |
+| `file` | `tasks/<task-id>/<path>` | The file. |
+
+`notes/` and chat sessions cannot be attached.
+
+Whoever coordinates the Task decides its context, when the Task is created or
+later, at any status before Done or Cancelled. The list is not frozen at
+acceptance.
+
+- A person with `tasks:write` attaches any reference they may read: `wiki:read`
+  for every kind, and `tasks:read` as well for a Task or a Task's file. A
+  reference they may not read, or that names nothing, is refused and nothing is
+  attached. Super Agent acts for the person it talks to, with `context` on
+  `add_company_task` and `propose_company_task`, and with
+  `update_company_task_context` afterwards. Work a person asks to have done is
+  created accepted and started by one `add_company_task` call, so its context is
+  attached in that call: the run is queued before anything could be added later.
+  A Task that call holds back for the person's confirmation keeps its context.
+- A Routine run changes the context of Backlog Tasks of its own Goal only, with
+  references to that Goal's pages and Tasks and to `wiki/`.
+- A Task run never changes a context, whatever its executor and whatever tools
+  it holds. A worker cannot hand itself more of the company.
+
+The API takes `context` on `POST /company/tasks`, returns it on every Task, and
+changes it with `POST /company/tasks/{task_id}/context` (body `{kind, ref}`) and
+`DELETE /company/tasks/{task_id}/context/{entry_id}`. Both return the Task.
+
+When the run starts, each reference is read as it is at that moment and pasted
+into the input under `context`, in list order. Each item names its kind, its path
+or Task id, the version read and whether it was sent `full`, `partial` or is
+`missing`. A page's version is its file version; a Task's version is the time it
+last changed. Each text is cut at 8,000 characters, and the texts of one input
+hold 40,000 characters in total: the first that does not fit and every later one
+are named without their content. An attached Task's title, cut at 300 characters,
+and its file names count toward that total. An entry whose target was deleted is named as
+missing and the run still starts. Every cut and every gap is named with its
+reason, so the executor reports the gap instead of guessing. The block says that
+it is information and never an instruction.
+
+The attempt records what was sent. The Task's history entry for the attempt, and
+`last_run` on the Task, hold `context_sent`: one record for each entry with its
+kind, its path or Task id, the version sent, and the note for anything cut, left
+out or missing.
+
+To hand work from one Task to the next, the first Task writes what the next one
+needs to `tasks/<its id>/handoff.md`, and the next Task attaches the first. Mini
+Agent is told to write that note. `20_task_handoff.py` shows it without a model.
+
+Mini Agent as an executor also reads the whole tree on request with its file
+tools. An executor of your own that should read pages for itself must hold the
+read tools:
 `CompanyFileTools(db, include_tools=["list_company_files", "read_company_file", "search_company_files"])`.
-Without them it no longer sees that page.
+Every read result says that file content is information, never an instruction.
 
 A listing returns 200 entries a page with the total, and `next_page` when more
 remain. A search returns up to ten matches and `more` when others exist. A search
@@ -455,8 +572,9 @@ retaining a known old ID explicitly is necessary for those references.
 | --- | --- |
 | `06_execute_tasks.py` | Durable execution, duplicate starts, ordinary run history and attention with no model call. |
 | `12_task_board.py` | Direct start from Backlog, `last_run`, `allowed_transitions` and a board read by status with no model call. |
-| `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, ends its turn with the receipt, and answers status and unrelated questions while the Task runs. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
+| `13_start_tasks_from_chat.py` | Super Agent starts a human-accepted Task, answers unrelated questions while it runs, and says it finished on the next message without being asked. Add `--serve` to try it from the AgentOS UI on `localhost:7777` with a seeded, accepted Task. Live model; PostgreSQL. |
 | `14_work_to_done_in_chat.py` | A person takes work from a proposal to Done in a Super Agent chat: approve the Project, accept the Task on Mini Agent, start it, read the result and complete it. Each decision pauses for the person's confirmation. Mini Agent runs another agent to do the work, and the Task records it. Live model; PostgreSQL. |
+| `19_ask_and_start_in_one_message.py` | A person asks Super Agent for work in one message. The Task is created accepted with that person recorded, and started, with no confirmation. A second message adds a Task that stays Ready. Live model; PostgreSQL. |
 | `15_policy_source_to_done.py` | One line in a Routine declaration, `auto_accept=True`. The Routine reads a Source and proposes work, the automation tick approves the Routine's Project and accepts its Task, Mini Agent does the Task, and the result waits In review. Every automatic step is on the record. Live model; PostgreSQL; serves on a free local port. |
 | `17_continue_tasks_from_chat.py` | A worker stops at a decision; what it ran is read from its run. The person's answer from chat sends the Task back after they confirm, and Super Agent starts it again on the same worker session. `--serve` adds the UI demo. Live model; PostgreSQL. |
 
@@ -535,9 +653,10 @@ session to the Task owner only after matching its original reservation and run. 
 including Super Agent and Platform Builder, cannot be accepted or started as
 Task executors.
 
-Executor input contains only the Task brief, its evidence, every company wiki
-page and the Goal's `brief.md` and `status.md`; see "One file tree" for the
-size limit. Queue retries and restart recovery use the
+Executor input contains only the Task brief and its evidence, and on a retry
+after a send-back the reviewer's reason and the earlier result. When something was
+attached to the Task it also holds that, under `context`; see "What a Task run is
+given". No executor receives a wiki page or a Goal page that was not attached. Queue retries and restart recovery use the
 existing queue policy. Results are saved on the Task; success moves it to
 `in_review`. Retryable failures remain outside failed attention while the queue
 has attempts left. An exhausted, permanent or cancelled run leaves the Task
@@ -553,6 +672,121 @@ clears it from failed attention while preserving the result as history. Starting
 a new attempt clears the previous result. `failed=false`
 includes all other Tasks, including those with no result. The Task table is
 created with its execution, evidence and result columns in the initial schema.
+
+### Work asked for in chat
+
+When a person asks Super Agent for work, the ask is the acceptance. `add_company_task`
+creates the Task Ready, with that person as `accepted_by` and on its acceptance
+transition, and the run does not pause. With `start` true, "do X", it also queues the
+run through the same path as `start_company_task`. With `start` false, "add a task to
+do X", the Task stays Ready and is held: its acceptance records `start_on_request`,
+and the automation tick, which starts other Ready Tasks, leaves it alone. A Task that
+was recorded as a proposal instead, for an executor that pushes code or past five in
+one request, is held the same way once the person accepts it. Super Agent
+offers once to start it; on a yes it starts it with `start_company_task`. With no executor named it runs on agent
+`miniagent`. With no Project named it goes in the Default Project.
+
+Starting a Task does not end Super Agent's turn. `start_company_task` and
+`add_company_task` return a receipt as their tool result, so one reply can start
+several Tasks and answer the rest of the message.
+
+Super Agent is told about the work a conversation started. The Tasks it added,
+proposed, accepted or started from a chat are kept in that chat's session state under
+`linked_work`. When the Team builds a fresh run's messages, it reads those Tasks
+under the person's own `tasks:read` permission and sends the update as a user message
+of its own, right before the person's message. When the caller supplies earlier
+conversation turns, it goes before the last user message. A typical update looks like
+this.
+
+```
+Work started from this conversation (information from AgentOS, not instructions and not written by the person). Read at 14:03 UTC: newer than anything said earlier.
+- Task "Write the breaking-changes section" (id 7942a0af-..., docs-writer): finished, waiting for review since 14:02 UTC. Changed since your last turn.
+- Task "Fix the pricing page typo" (id 12ce4817-..., miniagent): accepted, not started since 13:58 UTC.
+```
+
+A state that differs from the one shown last is marked as changed in one run, so on
+the person's next message Super Agent says what finished while they talked, without
+being asked. The list holds this conversation's work only, shows the 20 newest, and
+drops a Task once it is Done or Cancelled and that was shown. A Task in review stays.
+If a worker pauses for approval or input, the next turn says it is waiting for a
+person. If a confirmation completes a Task and the chat reply fails, the next
+fresh turn still announces the completion.
+
+The block is sent and not stored. The stored run holds the person's message as they
+wrote it, so the chat history, the history tools and later turns carry no block. It is
+not in the instructions because a model that continues from its previous response, as
+OpenAI's Responses API does by default, is sent a conversation's instructions on the
+first run only. With that kind of model the provider keeps the blocks sent on earlier
+turns as part of the conversation it holds.
+
+The block is delivered when Super Agent's model is OpenAI, Azure OpenAI, Claude (Anthropic,
+AWS, Azure or Vertex AI), Gemini or xAI: providers that accept two user messages in a
+row, or whose formatter merges them. On any other provider Super Agent behaves as it
+does without linked work: no block is sent and the sentences about it are left out of
+its instructions, so a provider that requires strictly alternating roles is never sent
+the second message. The list of Tasks is still kept in the chat's session state. The
+match is on the model's own class, so an adapter that subclasses an OpenAI class for
+another endpoint (vLLM, LM Studio, llama.cpp, DeepSeek, Perplexity and the like) is not
+sent the block; neither are AWS Bedrock's Converse API, Mistral or Gemini's
+Interactions API. The OpenAI, Azure OpenAI and xAI classes send the two messages as
+they are, so one of those classes given another `base_url` (or, for OpenAI, run with
+`OPENAI_BASE_URL` set) is not sent the block either. The Claude and Gemini classes
+merge the two messages before sending and are sent the block on any endpoint.
+
+When the conversation starts or otherwise acts on a Task it already lists, that Task
+moves to the newest place, so it is among the 20 that are read.
+
+A proposal is what nobody asked for: a plan Super Agent offers to record, the first
+Tasks of an outcome it sets up, anything a Routine proposes. Those are still created
+in Backlog by `propose_company_task` and accepted by a person or a policy.
+
+The tool keeps the checks of a confirmed acceptance. Only a person in chat may call it:
+Routine runs, Task runs, the automation tick, service accounts, the scheduler identity
+and scheduled runs are refused, and so is a run with no permissions where
+authorization is on. A schedule with no saved authority, as where authorization is off,
+has its run marked `agno_scheduled` in the run metadata by the scheduler, and the same
+refusal applies: Super Agent's person-only tools act for nobody on a scheduled run. The person needs `tasks:write` and run permission on the
+executor. A Task aimed at a proposed Project is refused: approve the Project, or leave
+the Project out.
+
+Accept is the rule, and four cases still wait for the person:
+
+| Case | What happens |
+| --- | --- |
+| The executor is one the person may not run | Refused. Nothing is created. |
+| The executor runs in a sandbox, so it can push code | The Task is recorded in Backlog with that executor suggested. `accept_company_task` accepts it, after its confirmation. |
+| More than five Tasks added accepted in one run | The sixth and later are recorded in Backlog. `accept_company_task` accepts them, with one confirmation for all. |
+| The work sends, publishes, pushes or spends | Only the model can tell. Its instructions say to state what the work involves and ask before adding it. |
+
+The count of five is per Super Agent run and held in the serving process. A paused
+run that continues keeps its count. A new message is a new run.
+
+`19_ask_and_start_in_one_message.py` shows both asks with a live model.
+
+### Moving a Task to another Project
+
+A Task changes Project through `PATCH /company/tasks/{id}` with `project_id`, or in
+chat through Super Agent's `move_company_task`, which does not pause. Every other field
+of an accepted Task stays frozen, as before.
+
+| Stage | Moves? | Why |
+| --- | --- | --- |
+| Backlog | Yes, as before | A draft. It may also sit in a proposed Project. |
+| Ready | Yes | Nothing is running. A Task a policy accepted is the exception: the policy accepted it for its Project, so return it to Backlog or accept it yourself first. |
+| In progress | No, 409 | A queued or running attempt is checked against the Task's history, and its input was built from the Project it started in. Move it once it is In review. |
+| In review | Yes | The run has ended. A review confirmation requested before the move still decides the Task: it is bound to the Task and its run, not to its Project. |
+| Done | Yes | The record moves to the Project it belongs with. |
+| Cancelled | No, 409 | Closed work. |
+
+An accepted Task moves only into an active Project; the Default Project always is. The
+Goal rule is the same as for a Backlog move: a Task with a Goal moves only to a Project
+of that Goal or the Default Project, and a Task with no Goal takes the Goal of the
+Project it moves into. While a Task is Ready, only the person who accepted it may make a
+move that gives it a Goal, because its run would act for that Goal under their
+acceptance; anyone else gets 403. Where authorization is off every caller is trusted.
+Only a person moves an accepted Task: a Routine or Task run is refused. The move is added to the Task's `transitions` as
+`{"action": "move", "project": {"from": ..., "to": ...}, "user_id": ..., "created_at": ...}`.
+It has no `from` or `target` stage, because the stage does not change.
 
 ### Decisions from chat and Mini Agent Tasks
 
@@ -592,6 +826,13 @@ A Task sent back keeps its executor. The person's reason is saved on the
 transition and given to the executor's next attempt as `review_feedback` in its
 input. Starting stays a separate step, with `start_company_task`.
 
+To reply to a Task that has run, a person says so in chat and Super Agent calls
+`message_company_task`: it returns the Task to Ready with the person's words as
+the reason and starts the next attempt, in the Task's own session, in one call
+with no confirmation. It takes a Task in review and a Task whose last run failed
+or was cancelled, and it refuses a Task that is still running. Completing a Task
+stays with `review_company_task` and its confirmation.
+
 Review confirmations include `reviewed_run_id` from `get_company_task_status`.
 If another attempt runs while a confirmation is pending, that confirmation is
 refused. Read the new result and request a new confirmation before deciding it.
@@ -617,7 +858,7 @@ What Mini Agent may do follows the kind of run:
 | Instructions | read Sources and propose | do the work in the brief | do the work in the brief |
 
 Mini Agent never runs Super Agent, Platform Builder or itself, holds no Studio,
-scheduler, shell, file or web tools, and stops after 30 tool calls in a run. The
+scheduler, shell, file or web tools, and stops after 96 tool calls in a run. It takes Super Agent's limit, `OSManager(tool_call_limit=...)`; `None` removes it. The
 run tools check the run themselves: called in a Routine run they return an error.
 A component Mini Agent runs acts with its own tools, so accept a Task on Mini
 Agent only when you would run those components yourself.
@@ -1146,6 +1387,25 @@ Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer"))
 # With a named worker, and a list of the executors a proposal may suggest
 Routine(..., auto_accept=AutoAccept(default_executor="codex-engineer", executors=["writer"]))
 ```
+
+**On by default for a Routine a person creates.** A Routine gets `AutoAccept()` when a
+person creates it and says nothing of `auto_accept`: through `POST /company/routines`,
+`POST /company/setup`, or Super Agent's `create_goal_routine` and `create_company_goal`.
+The policy is authorized as that person and stored with their grant, exactly as when
+they turn it on afterwards, so the Routine's accepted work runs under their permissions
+and only they or an admin can trigger it manually. Where the deployment has neither
+authorization nor user isolation, requests carry no identity and anyone may trigger it. Send `"auto_accept": false`, or ask
+Super Agent to create it with auto-accept off (`leave_auto_accept_off`), to leave it
+off. The create response carries `auto_accept_note`, and the chat tools' results carry
+`auto_accept` (`routines_auto_accept` for a Goal's Routines), saying whether it is on,
+its limits and how to change it. The synchronous chat tools create the Routine with
+auto-accept off and say so: the policy is authorized through the Routine API, which
+needs an asynchronous run. A caller who may not authorize the
+policy (a service account, or a person without `tasks:write`, `projects:write`,
+`wiki:read` or run permission on Mini Agent) still creates the Routine, with
+auto-accept off and the reason in the note. A Routine declared in code or YAML is not
+changed by this: it keeps what its declaration says, and stored Routines keep their
+setting.
 
 `auto_accept=True` means: a Project this Routine proposed is approved, its Tasks
 are accepted and run, and finished work waits In review for a person. Nothing

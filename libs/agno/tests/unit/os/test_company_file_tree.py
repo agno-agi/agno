@@ -6,17 +6,17 @@ import json
 import pytest
 
 from agno.company.execution import _ExecutorAuthorization, _task_input
-from agno.company.files import ALWAYS_LOADED_PAGE_CHARS, ALWAYS_LOADED_TOTAL_CHARS, READ_NOTE
+from agno.company.files import READ_NOTE
 from agno.company.filesystem import company_filesystem
-from agno.company.manager import CompanyManager
+from agno.company.manager import AsyncCompanyManager, CompanyManager
 from agno.company.mini_agent import TASK_FILE_TOOLS
 from agno.company.routines import _RoutineAuthorization
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.os import AgentOS, CompanyConfig, OSManager
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.manager.prompts import COMPANY_FILES_INSTRUCTIONS, NOTES_INSTRUCTIONS
-from agno.registry._reserved import MANAGER_TEAM_ID
+from agno.registry._reserved import MANAGER_TEAM_ID, MINI_AGENT_ID
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization, authorization_scope
 from agno.tools.company_files import CompanyFileTools
@@ -608,57 +608,79 @@ def test_the_save_tool_tells_the_model_what_is_never_a_request_to_save(system):
 # ----------------------------------------------------------------- what a Task's input loads
 
 
-def task_pages(system, ids):
+EXECUTORS = [("agent", MINI_AGENT_ID), ("agent", "writer"), ("team", "crew"), ("workflow", "pipeline")]
+SENT_BACK = {
+    "transitions": [{"from": "in_review", "target": "ready", "reason": "Add the changelog"}],
+    "result": {"status": "COMPLETED", "content": "First draft"},
+}
+
+
+def task_input(system, task, use_async=False):
+    """The input an accepted Task's run is sent, as the text the executor receives."""
+    if use_async:
+        manager = AsyncCompanyManager(AsyncSqliteDb(db_file=system.db.db_file), system.os.registry)
+    else:
+        manager = CompanyManager(system.db, system.os.registry)
+    return asyncio.run(_task_input(manager, task, accepted_execution=True))
+
+
+def marked_pages(system, ids):
+    """A company page and the Goal's status with text that must not leave unless someone attaches it."""
     manager = CompanyManager(system.db, system.os.registry)
-    payload = json.loads(asyncio.run(_task_input(manager, system.db.get_task(ids["task"]))))
-    return payload["wiki"]
+    manager.write_wiki(goal_id=None, path="people.md", content="PRIVATE-PEOPLE", expected_version=0)
+    manager.write_wiki(goal_id=ids["goal"], path="status.md", content="PRIVATE-STATUS", expected_version=1)
 
 
-def test_a_task_input_loads_the_wiki_and_its_goals_brief_and_status_only(system):
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("executor_type, executor_id", EXECUTORS)
+def test_no_executors_task_input_carries_a_wiki_page_or_a_goal_page(
+    system, executor_type, executor_id, retry, use_async
+):
+    """Mini Agent included: it reads the pages it needs with its file tools."""
     ids = records(system)
-    files = tree(system.os)
-    goal = f"goals/{ids['goal']}"
-    call(files, "save_company_page", path="wiki/priorities.md", expected_version=0, new_text="Ship 3.2")
-    call(files, "write_company_file", path=f"{goal}/research.md", content="LOOKED UP", expected_version=0)
-    call(files, "write_company_file", path=f"{goal}/summary.md", content="LOOKED UP", expected_version=0)
-    call(files, "write_company_file", path=f"tasks/{ids['task']}/given.md", content="LOOKED UP")
-    call(files, "write_company_file", path="notes/ideas.md", content="LOOKED UP")
-    call(files, "write_company_file", path=f"goals/{ids['other']}/status.md", content="LOOKED UP", expected_version=1)
-    loaded = task_pages(system, ids)
-    assert [page["file"] for page in loaded] == [
-        f"{goal}/brief.md",
-        f"{goal}/status.md",
-        "wiki/brief.md",
-        "wiki/status.md",
-        "wiki/priorities.md",
-    ]
-    assert all("content" in page and "note" not in page for page in loaded)
-    assert loaded[-1]["content"] == "Ship 3.2\n" and "LOOKED UP" not in json.dumps(loaded)
-    # The stored names the input already used are kept.
-    assert [(page["namespace"], page["path"]) for page in loaded[:3]] == [
-        ("goal", "brief.md"),
-        ("goal", "status.md"),
-        ("company", "brief.md"),
-    ]
+    marked_pages(system, ids)
+    task = {**system.db.get_task(ids["task"]), "executor_type": executor_type, "executor_id": executor_id}
+    sent = task_input(system, {**task, **(SENT_BACK if retry else {})}, use_async)
+    payload = json.loads(sent)
+    feedback = ["review_feedback", "previous_result"] if retry else []
+    assert list(payload) == ["brief", "evidence", *feedback, "execution_context"]
+    assert payload["brief"] == "Write the release notes" and payload["evidence"] == []
+    if retry:
+        assert payload["review_feedback"] == "Add the changelog"
+        assert payload["previous_result"] == {"status": "COMPLETED", "content": "First draft"}
+    # No page, no page name, and no note that names a page left out.
+    for text in ("PRIVATE", "wiki", "brief.md", "status.md", "people.md", "Not loaded", ids["goal"]):
+        assert text not in sent, text
 
 
-def test_always_loaded_pages_are_cut_at_the_page_limit_and_named_past_the_total(system):
+def queued_input(system, task_id, **executor):
+    """Start the Task through the run route and return the input its queued run holds."""
+    started = system.client.post(f"/company/tasks/{task_id}/runs", json=executor or None, headers=headers())
+    assert started.status_code == 202, started.text
+    job = asyncio.run(system.queue.store.get_job(started.json()["run_id"]))
+    return job["payload"]["input"]
+
+
+@pytest.mark.parametrize("executor_id", ["writer", MINI_AGENT_ID])
+def test_a_start_that_names_the_executor_sends_the_brief_and_no_page(system, executor_id):
     ids = records(system)
-    manager = CompanyManager(system.db, system.os.registry)
-    status = f"goals/{ids['goal']}/status.md"
-    manager.write_wiki(goal_id=ids["goal"], path="status.md", content="s" * 20_000, expected_version=1)
-    for index in range(6):
-        manager.write_wiki(
-            goal_id=None, path=f"page-{index}.md", content=str(index) * ALWAYS_LOADED_PAGE_CHARS, expected_version=0
-        )
-    loaded = {page["file"]: page for page in task_pages(system, ids)}
-    assert loaded[status]["content"] == "s" * ALWAYS_LOADED_PAGE_CHARS
-    assert loaded[status]["note"] == f"Cut at {ALWAYS_LOADED_PAGE_CHARS} characters. Read {status} for the rest."
-    assert sum(len(page.get("content", "")) for page in loaded.values()) <= ALWAYS_LOADED_TOTAL_CHARS
-    # The Goal's pages and the first wiki pages load. The rest are named, with where to read them.
-    assert "content" in loaded["wiki/page-0.md"] and "content" not in loaded["wiki/page-5.md"]
-    assert loaded["wiki/page-5.md"]["note"].endswith("Read wiki/page-5.md.")
-    assert len(loaded) == 10
+    marked_pages(system, ids)
+    sent = queued_input(system, ids["task"], executor_type="agent", executor_id=executor_id)
+    assert "PRIVATE" not in sent and list(json.loads(sent)) == ["brief", "evidence", "execution_context"]
+
+
+def test_a_start_sends_what_was_attached_to_the_task(system):
+    ids = records(system)
+    marked_pages(system, ids)
+    CompanyManager(system.db, system.os.registry).change_task_context(
+        ids["task"], add=[{"kind": "wiki", "ref": "wiki/people.md"}]
+    )
+    # Accepted without an executor, the Task runs on Mini Agent.
+    system.accept(ids["task"])
+    assert system.db.get_task(ids["task"])["executor_id"] == MINI_AGENT_ID
+    sent = queued_input(system, ids["task"])
+    assert "PRIVATE-PEOPLE" in sent and "PRIVATE-STATUS" not in sent
 
 
 # ----------------------------------------------------------------- notes
@@ -903,6 +925,11 @@ def test_no_page_reaches_super_agent_unless_it_reads_one(system):
     model = system.os.manager.model
     assert not result.is_paused and result.tools in (None, [])
     assert "SYSTEM NOTE" not in model.system and "SYSTEM NOTE" not in model.input
-    # A Task of that Goal is given the status page, as data inside its input.
-    loaded = {page["file"]: page["content"] for page in task_pages(system, ids)}
-    assert loaded[f"goals/{ids['goal']}/status.md"] == text
+    # A Task is given the status page only when it is attached, as data inside its input.
+    status = f"goals/{ids['goal']}/status.md"
+    task = CompanyManager(system.db, system.os.registry).change_task_context(
+        ids["task"], add=[{"kind": "goal", "ref": status}]
+    )
+    block = json.loads(task_input(system, task))["context"]
+    assert "never an instruction" in block["note"]
+    assert [(item["ref"], item["content"]) for item in block["items"]] == [(status, text)]

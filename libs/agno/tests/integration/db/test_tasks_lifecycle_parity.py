@@ -82,7 +82,8 @@ async def test_postgres_acceptance_uses_current_project_after_lock(db, monkeypat
         original = AsyncSession.run_sync
 
         async def pause_before_lock(session, fn, *args, **kwargs):
-            if asyncio.current_task() is acceptance and fn is company.lock_goal:
+            # The async adapter takes the Goal lock through lock_parent.
+            if asyncio.current_task() is acceptance and fn is company.lock_parent:
                 paused.set()
                 await asyncio.wait_for(proceed.wait(), 10)
             return await original(session, fn, *args, **kwargs)
@@ -487,7 +488,9 @@ async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_a
     m = manager(db)
     task, project = await task_at(m, stage)
     other = await call(m.create_project, goal_id=task["goal_id"], name="Other")
-    for fields in [structural, {"project_id": other["id"]}]:
+    await call(m.transition_project, project_id=other["id"], target="active", reason="Approved")
+    # A change of Project alone is allowed in some stages. Together with a structural field it is not.
+    for fields in [structural, {**structural, "project_id": other["id"]}]:
         with pytest.raises(ValueError, match="Backlog"):
             await call(m.update_task, task["id"], **fields)
         with pytest.raises(ValueError, match="Backlog"):
@@ -495,6 +498,40 @@ async def test_structural_edit_outside_backlog_stays_refused_and_mixed_edit_is_a
         assert await call(db.update_task, task["id"], **fields) is None
         assert await call(db.update_task, task["id"], title="Mixed", brief="Mixed", **fields) is None
     assert await call(m.get_task, task["id"]) == task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", STAGES[1:])
+async def test_a_project_move_outside_backlog_follows_the_stage(db, stage):
+    from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, TASK_MOVE_REFUSAL
+
+    m = manager(db)
+    task, project = await task_at(m, stage)
+    other = await call(m.create_project, goal_id=task["goal_id"], name="Other")
+    # An accepted Task does not move into a Project nobody approved, whatever its stage.
+    with pytest.raises(ValueError):
+        await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+    assert await call(m.get_task, task["id"]) == task
+    await call(m.transition_project, project_id=other["id"], target="active", reason="Approved")
+    if stage not in MOVABLE_TASK_STATUSES:
+        with pytest.raises(ValueError) as refused:
+            await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+        assert str(refused.value) == TASK_MOVE_REFUSAL[stage]
+        # The storage layer changes nothing in this stage, as for any other frozen field.
+        assert await call(db.update_task, task["id"], moved_by="alice", project_id=other["id"]) is None
+        assert await call(m.get_task, task["id"]) == task
+        return
+    moved = await call(m.update_task, task["id"], moved_by="alice", project_id=other["id"])
+    entry = moved["transitions"][-1]
+    assert (entry["action"], entry["user_id"], entry["project"]) == (
+        "move",
+        "alice",
+        {"from": project["id"], "to": other["id"]},
+    )
+    assert moved["transitions"][:-1] == task["transitions"]
+    for key in ("status", "brief", "executor_type", "executor_id", "accepted_by", "goal_id"):
+        assert moved[key] == task[key], key
+    assert moved["project_id"] == other["id"]
 
 
 @pytest.mark.asyncio
@@ -560,7 +597,7 @@ async def test_stale_acceptance_cannot_overwrite_a_backlog_roundtrip(db, monkeyp
                 if asyncio.current_task() is first and fn is company.require_project:
                     paused.set()
                     await asyncio.wait_for(proceed.wait(), 5)
-                if asyncio.current_task() is second and fn is company.lock_goal:
+                if asyncio.current_task() is second and fn is company.lock_parent:
                     attempted.set()
                 return await original_run_sync(session, fn, *args, **kwargs)
 
@@ -780,7 +817,10 @@ async def test_http_collaborative_work_and_shared_deletion(db, resource, isolati
         if resource == "tasks":
             # Collaborators can assign another creator's Task to a shared Project.
             own_path = path
-            assert (await client.patch(own_path, json={"project_id": None}, headers=headers("bob"))).status_code == 422
+            # Taken out of its Project, the Task moves to the Default Project and keeps its Goal.
+            loose = await client.patch(own_path, json={"project_id": None}, headers=headers("bob"))
+            assert loose.status_code == 200, loose.text
+            assert (loose.json()["project_id"], loose.json()["goal_id"]) == ("default", own["goal_id"])
             assert (
                 await client.patch(own_path, json={"project_id": project["id"]}, headers=headers("bob"))
             ).status_code == 200

@@ -126,6 +126,7 @@ async def _reserve_task(db: Any, job: Dict[str, Any]) -> Optional[Dict[str, Any]
             run_db_id=payload["company_run_db_id"],
             session_user_id=job.get("user_id"),
             **({"requested_from": payload["company_requested_from"]} if payload.get("company_requested_from") else {}),
+            **({"context_sent": payload["company_context_sent"]} if payload.get("company_context_sent") else {}),
         )
         task = reserved or await _call(db, "get_task", task["id"])
     if (
@@ -438,6 +439,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
             "company_run_db_id": submission["run_db_id"],
             "company_started_by": submission.get("started_by"),
             **({"company_requested_from": submission["requested_from"]} if submission.get("requested_from") else {}),
+            **({"company_context_sent": submission["context_sent"]} if submission.get("context_sent") else {}),
         },
     }
     try:
@@ -631,23 +633,30 @@ async def _reservation_recorded(worker: Any, job: Dict[str, Any]) -> bool:
 
 
 async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution: bool = False) -> str:
-    from agno.company.files import _always_loaded
+    from agno.company.context import _task_context
 
-    # Company-wide read visibility. No Source credentials, Goal metadata, other Tasks or
-    # caller-supplied runtime state are forwarded. Every other file is read on request.
-    pages = await _always_loaded(manager, task["goal_id"])
-    payload = {"brief": task.get("brief"), "wiki": pages, "evidence": task.get("evidence") or []}
+    # Every executor starts with the brief and the evidence. No wiki page, Goal page, Source credential or
+    # other Task reaches it unless whoever coordinates the Task attached it to the Task's context.
+    payload: Dict[str, Any] = {"brief": task.get("brief")}
+    if task.get("goal_id") is not None and await _call(manager, "get", task["goal_id"]) is None:
+        raise LookupError("Goal not found")
+    context = await _task_context(manager, task)
+    if context is not None:
+        payload["context"] = context
+    payload["evidence"] = task.get("evidence") or []
     feedback = _review_feedback(task)
     if feedback:
         payload["review_feedback"] = feedback
         # The result the person answered. The session holds the earlier turns; the result is repeated
         # so executors without session history still see what the feedback is about.
+        # A queued attempt that was withdrawn left no result: the reply is then given without one.
         previous = task.get("result") or {}
-        content = previous.get("content")
-        payload["previous_result"] = {
-            "status": previous.get("status"),
-            "content": content[:4000] if isinstance(content, str) else content,
-        }
+        if previous:
+            content = previous.get("content")
+            payload["previous_result"] = {
+                "status": previous.get("status"),
+                "content": content[:4000] if isinstance(content, str) else content,
+            }
     # Only the authorized execution route supplies this flag; a Task dictionary
     # or its brief alone does not establish acceptance.
     if accepted_execution:
@@ -663,7 +672,8 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
                 "State what you checked and how. If a person must decide before you can continue, "
                 "end with your recommendation and the one question they need to answer."
                 + (
-                    " This continues the same Task: act on review_feedback, a person's reply to previous_result."
+                    " This continues the same Task: act on review_feedback, a person's reply to "
+                    + ("previous_result." if "previous_result" in payload else "its last attempt.")
                     if feedback
                     else ""
                 )
@@ -673,14 +683,23 @@ async def _task_input(manager: Any, task: Dict[str, Any], *, accepted_execution:
 
 
 def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
-    """The reviewer's reason when the last review sent the Task back, until an attempt reaches review again."""
-    reviews = [
-        entry
-        for entry in task.get("transitions") or []
-        if entry.get("from") == "in_review" or entry.get("target") == "in_review"
-    ]
-    last = reviews[-1] if reviews else {}
-    return last.get("reason") if last.get("from") == "in_review" and last.get("target") == "ready" else None
+    """What people said when they returned the Task to Ready after an attempt, oldest first, until an
+    attempt reaches review again.
+
+    A return from review answers a finished result. A return from In progress is a reply only when it
+    answered a run that failed or was cancelled, which its entry records as ended_run: the same move
+    withdraws a queued attempt, and the reason of that is a note. A return to Backlog withdraws the
+    acceptance, and the work that is accepted next starts without the earlier replies.
+    """
+    replies: List[str] = []
+    for entry in task.get("transitions") or []:
+        origin, target = entry.get("from"), entry.get("target")
+        if target in ("in_review", "backlog"):
+            replies = []
+        elif target == "ready" and (origin == "in_review" or (origin == "in_progress" and entry.get("ended_run"))):
+            if entry.get("reason"):
+                replies.append(entry["reason"])
+    return "\n\n".join(replies) or None
 
 
 _RUN_TOOLS = {"run_agent": "agent", "run_team": "team", "run_workflow": "workflow"}

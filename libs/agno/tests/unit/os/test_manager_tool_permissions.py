@@ -53,6 +53,8 @@ MOVED_TOOLS = {
     "list_company_tasks": ({}, "tasks:read"),
     "propose_company_task": ({"goal_id": "{goal}", "title": "Second", "project_id": "{project}"}, "tasks:write"),
     "edit_company_task": ({"task_id": "{task}", "title": "Renamed", "brief": "New brief"}, "tasks:write"),
+    # Removing asks for tasks:write alone; attaching also asks for the permission that reads the reference.
+    "update_company_task_context": ({"task_id": "{task}", "remove": []}, "tasks:write"),
     "list_goal_sources": ({"goal_id": "{goal}"}, "sources:read"),
     "add_goal_source": ({"goal_id": "{goal}", "reference": "https://example.com/docs"}, "sources:write"),
     "read_goal_source": ({"source_id": "{source}"}, "sources:read"),
@@ -80,10 +82,14 @@ MOVED_TOOLS = {
 CONFIRMED_TOOL = "confirm_company_details"
 # test_company_file_tree.py checks the confirmed page save, and notes/, which asks for no Company permission.
 FILE_TREE_TOOLS = {"save_company_page", "delete_company_file"}
-# Async only. test_company_task_tools.py checks the two run tools with the Task start route's grants, and
-# test_company_decision_tools.py checks the three decision tools.
+# Async only. test_company_task_tools.py checks the two run tools with the Task start route's grants,
+# test_company_decision_tools.py checks the three decision tools, and test_company_chat_acceptance.py
+# checks adding work a person asked for.
 TASK_RUN_TOOLS = {
+    "add_company_task",
+    "move_company_task",
     "start_company_task",
+    "message_company_task",
     "get_company_task_status",
     "approve_company_project",
     "accept_company_task",

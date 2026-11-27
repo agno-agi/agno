@@ -26,7 +26,8 @@ from sqlalchemy import text
 
 def draft(step_input: StepInput) -> StepOutput:
     context = json.loads(step_input.input)
-    assert set(context) == {"brief", "wiki", "evidence", "execution_context"}
+    # Every executor receives the brief and the evidence, and a page only when it was attached to the Task.
+    assert set(context) == {"brief", "evidence", "execution_context"}
     return StepOutput(content="Draft ready for review: " + context["brief"])
 
 

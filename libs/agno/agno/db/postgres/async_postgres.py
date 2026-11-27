@@ -7896,14 +7896,14 @@ class AsyncPostgresDb(AsyncBaseDb):
     # --- Projects ---
 
     async def create_project(self, project_data: Dict[str, Any], reuse: bool = False) -> Dict[str, Any]:
-        from agno.db.sql.company import lock_goal
+        from agno.db.sql.company import lock_parent
 
         table = await self._get_table(table_type="projects", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create projects table")
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_goal, goals, project_data["goal_id"])
+            await sess.run_sync(lock_parent, goals, table, project_data["goal_id"])
             if reuse:
                 existing = (await sess.execute(select(table).where(table.c.id == project_data["id"]))).first()
                 if existing is not None:
@@ -7938,6 +7938,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         status: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -7952,6 +7953,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         stmt = active_parents(select(table), table, goals)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if user_id is not None:
@@ -8129,7 +8132,7 @@ class AsyncPostgresDb(AsyncBaseDb):
     # --- Tasks ---
 
     async def create_task(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agno.db.sql.company import existing_task_proposal, lock_goal, require_project
+        from agno.db.sql.company import existing_task_proposal, lock_parent, require_project
 
         table = await self._get_table(table_type="tasks", create_table_if_not_found=True)
         if table is None:
@@ -8137,7 +8140,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_goal, goals, task_data["goal_id"])
+            await sess.run_sync(lock_parent, goals, projects, task_data["goal_id"], task_data.get("project_id"))
             await sess.run_sync(require_project, projects, task_data.get("project_id"), task_data["goal_id"])
             proposal = await sess.run_sync(existing_task_proposal, table, task_data)
             if proposal is not None:
@@ -8198,6 +8201,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_id: Optional[str] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        has_goal: Optional[bool] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         from agno.db.schemas.goals import company_sort
         from agno.db.sql.company import active_parents
@@ -8226,6 +8230,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             stmt = stmt.where(table.c.session_id == session_id)
         if goal_id is not None:
             stmt = stmt.where(table.c.goal_id == goal_id)
+        if has_goal is not None:
+            stmt = stmt.where(table.c.goal_id.is_not(None) if has_goal else table.c.goal_id.is_(None))
         if status is not None:
             stmt = stmt.where(table.c.status == status)
         if project_id is not None:
@@ -8246,18 +8252,26 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [dict(row._mapping) for row in rows], total
 
     async def update_task(
-        self, task_id: str, user_id: Optional[str] = None, expected_status: Optional[str] = None, **fields: Any
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        moved_by: Optional[str] = None,
+        **fields: Any,
     ) -> Optional[Dict[str, Any]]:
-        from agno.db.schemas.tasks import validate_task_fields
-        from agno.db.sql.company import lock_child, require_project
+        from agno.db.schemas.tasks import MOVABLE_TASK_STATUSES, validate_task_fields
+        from agno.db.sql.company import lock_child, require_move
 
         validate_task_fields(fields)
         table = await self._get_table(table_type="tasks")
         if table is None:
             return None
         stmt = table.update().where(table.c.id == task_id, table.c.deleted_at.is_(None))
-        if set(fields) - {"title", "brief"}:
+        # A change of Project is allowed in more stages than the rest of a Task's scope.
+        if set(fields) - {"title", "brief", "project_id"}:
             stmt = stmt.where(table.c.status == "backlog")
+        elif "project_id" in fields:
+            stmt = stmt.where(table.c.status.in_(MOVABLE_TASK_STATUSES))
         if expected_status is not None:
             stmt = stmt.where(table.c.status == expected_status)
         if user_id is not None:
@@ -8265,10 +8279,22 @@ class AsyncPostgresDb(AsyncBaseDb):
         goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
         projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
         async with self.async_session_factory() as sess, sess.begin():
-            await sess.run_sync(lock_child, goals, projects, table, task_id)
-            goal_id = (await sess.execute(select(table.c.goal_id).where(table.c.id == task_id))).scalar()
-            if goal_id is not None and fields.get("project_id") is not None:
-                await sess.run_sync(require_project, projects, fields["project_id"], goal_id, "backlog")
+            await sess.run_sync(lock_child, goals, projects, table, task_id, moving_to=fields.get("project_id"))
+            current = (
+                (
+                    await sess.execute(
+                        select(table.c.goal_id, table.c.status, table.c.project_id, table.c.transitions).where(
+                            table.c.id == task_id
+                        )
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if current is not None and fields.get("project_id") is not None:
+                fields.update(
+                    await sess.run_sync(require_move, goals, projects, current, fields["project_id"], moved_by)
+                )
             result = (
                 await sess.execute(stmt.values(**fields, updated_at=int(time.time())).returning(table))
             ).fetchone()
@@ -8319,6 +8345,25 @@ class AsyncPostgresDb(AsyncBaseDb):
             ).fetchone()
             return dict(result._mapping) if result else None
 
+    async def change_task_context(
+        self,
+        task_id: str,
+        add: Optional[List[Dict[str, Any]]] = None,
+        remove: Optional[List[str]] = None,
+        expected_status: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.sql.company import change_task_context
+
+        table = await self._get_table(table_type="tasks")
+        if table is None:
+            return None
+        goals = await self._get_table(table_type="goals", create_table_if_not_found=True)
+        projects = await self._get_table(table_type="projects", create_table_if_not_found=True)
+        async with self.async_session_factory() as sess, sess.begin():
+            return await sess.run_sync(
+                change_task_context, goals, projects, table, task_id, add, remove, expected_status
+            )
+
     async def start_task_run(
         self,
         task_id: str,
@@ -8328,6 +8373,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         run_db_id: Optional[str] = None,
         session_user_id: Optional[str] = None,
         requested_from: Optional[Dict[str, Any]] = None,
+        context_sent: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         from agno.db.schemas.tasks import task_run_fields
         from agno.db.sql.company import lock_child
@@ -8350,7 +8396,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             existing = dict(row._mapping)
             if existing["transitions"] != expected_transitions:
                 return None
-            fields = task_run_fields(existing, attempt, user_id, run_db_id, session_user_id, requested_from)
+            fields = task_run_fields(
+                existing, attempt, user_id, run_db_id, session_user_id, requested_from, context_sent
+            )
             stmt = (
                 table.update()
                 .where(
@@ -8458,7 +8506,13 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Optional[Dict[str, Any]]:
         """Apply a lifecycle transition only if the observed state still matches."""
         from agno.db.schemas.tasks import _acceptance_count, task_transition_fields
-        from agno.db.sql.company import lock_child, lock_goal, require_open_room, require_project
+        from agno.db.sql.company import (
+            lock_adopted_goal,
+            lock_child,
+            lock_parent,
+            require_open_room,
+            require_project,
+        )
 
         table = await self._get_table(table_type="tasks")
         if table is None:
@@ -8499,11 +8553,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 visible = (await sess.execute(stmt)).fetchone()
                 if visible is None:
                     return None
-                await sess.run_sync(lock_goal, goals, visible._mapping["goal_id"])
+                locked_goal_id = visible._mapping["goal_id"]
+                await sess.run_sync(lock_parent, goals, projects, locked_goal_id, visible._mapping["project_id"])
             row = (await sess.execute(stmt)).fetchone()
             if row is None:
                 return None
             existing = dict(row._mapping)
+            if auto_accept is None:
+                await sess.run_sync(lock_adopted_goal, goals, locked_goal_id, existing["goal_id"])
             if expected_status is not None and existing["status"] != expected_status:
                 return None
             if expected_job_id is not None and existing["job_id"] != expected_job_id:

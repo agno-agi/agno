@@ -806,7 +806,9 @@ class AgentOS:
                 company_model = manager.model
             if company_model is None and self.registry is not None and self.registry.models:
                 company_model = self.registry.models[0]
-            self._mini_agent = _build_mini_agent(self, company_model)
+            # Mini Agent runs under Super Agent's tool call limit: OSManager(tool_call_limit=...), or its default.
+            limits = manager if isinstance(manager, OSManager) else OSManager()
+            self._mini_agent = _build_mini_agent(self, company_model, tool_call_limit=limits.tool_call_limit)
             if self._mini_agent is None:
                 self._mini_agent_unavailable_reason = (
                     "Mini Agent unavailable: configure CompanyConfig(model=...), OSManager(model=...) "

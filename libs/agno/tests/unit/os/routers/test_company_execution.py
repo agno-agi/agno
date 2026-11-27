@@ -373,9 +373,12 @@ async def test_automatic_pickup_keeps_accepting_identity_and_run_scope(system):
     job = await queue.store.get_job(result["run_id"])
     assert job["user_id"] == "alice", job
     assert "schedules:write" not in str(job["payload"].get(AUTHORIZATION_KEY))
-    context = json.loads(job["payload"]["input"])["execution_context"]
+    sent = json.loads(job["payload"]["input"])
+    context = sent["execution_context"]
     assert context["stage"] == "accepted_task_execution"
     assert context["task_id"] == task["id"]
+    # The automatic start sends the same input a person's start does: no pages for this executor.
+    assert set(sent) == {"brief", "evidence", "execution_context"}
     # A different executor cannot reuse the caller's accepted run grant.
     with pytest.raises(PermissionError):
         from agno.os.authz.run_context import restore_authorization
@@ -953,7 +956,8 @@ def test_accepted_execution_preserves_scope_and_excludes_private_state(system):
     payload = json.loads(message)
     assert payload["brief"] == brief
     assert payload["evidence"] == (task.get("evidence") or [])
-    assert set(payload) == {"brief", "wiki", "evidence", "execution_context"}
+    # No executor receives a wiki page or a Goal page that was not attached to the Task.
+    assert set(payload) == {"brief", "evidence", "execution_context"}
     assert payload["execution_context"]["stage"] == "accepted_task_execution"
     assert payload["execution_context"]["task_id"] == task["id"]
     assert set(payload["execution_context"]) == {"stage", "task_id", "instructions"}
@@ -973,7 +977,7 @@ async def test_input_builder_does_not_imply_acceptance(system):
     payload = json.loads(
         await _task_input(manager, {**db.get_task(task["id"]), "metadata": {"private_marker": "not-for-executor"}})
     )
-    assert set(payload) == {"brief", "wiki", "evidence"}
+    assert set(payload) == {"brief", "evidence"}
 
 
 def test_execution_context_does_not_bypass_input_schema(system):

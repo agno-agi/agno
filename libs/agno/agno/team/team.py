@@ -465,6 +465,10 @@ class Team:
     # Keep this team out of the registry while allowing it to run.
     _registry_excluded: bool = field(default=False, init=False, repr=False, compare=False)
 
+    # Internal: an object with read(run_context, session) and aread(...) that returns text for a
+    # fresh run, or None. The Team sends it as an unstored user message right before the run's input.
+    _message_context: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
+
     def __init__(
         self,
         members: Union[List[Union[Agent, "Team"]], Callable[..., List]],

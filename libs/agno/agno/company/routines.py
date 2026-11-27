@@ -486,6 +486,74 @@ async def _stamp_auto_accept(request, payload, agent_os=None, stored=None):
     return payload
 
 
+def _person_routine_request(agent_os: Any, authority: Any, user_id: Any, method: str, routine_id: str) -> Any:
+    """A Routine API request from a person in chat, as the API's middleware would describe it."""
+    from starlette.requests import Request
+
+    app = getattr(agent_os, "_company_app", None)
+    if app is None or getattr(agent_os, "_routine_api_update", None) is None:
+        raise LookupError("The Routine API is not running here. Change the Routine from AgentOS.")
+    context = authority.context if authority is not None else None
+    state = {
+        "user_id": user_id,
+        "authenticated": authority is not None,
+        "authorization_enabled": authority is not None,
+        "scopes": list(context.scopes or []) if context is not None else [],
+        "claims": dict(context.claims or {}) if context is not None else {},
+        "admin_scope": context.admin_scope if context is not None else None,
+        "user_isolation_enabled": bool(getattr(app.state, "user_isolation_enabled", False)),
+        "is_internal_service": False,
+    }
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "path": f"/company/routines/{routine_id}",
+            "headers": [],
+            "query_string": b"",
+            "app": app,
+            "state": state,
+        }
+    )
+
+
+async def _set_auto_accept_as(agent_os: Any, authority: Any, user_id: Any, routine_id: str, auto_accept: Any) -> Any:
+    """Change a Routine's auto_accept through the Routine API's own PATCH handler, as a person in chat.
+
+    The caller has already established that a person is asking. The handler authorizes the policy
+    under that person's permissions and stamps their grant, as it does for an HTTP request.
+    """
+    from dataclasses import replace
+
+    from agno.os.routers.company.heartbeat import RoutineUpdate
+    from agno.run.authorization import authorization_scope
+
+    request = _person_routine_request(agent_os, authority, user_id, "PATCH", routine_id)
+    if authority is not None:
+        # The route's own scope, checked by the API before its handler runs.
+        await authority.arequire("routines", "write")
+    saved = replace(authority, enforce_tools=False) if authority is not None else None
+    with authorization_scope(lambda: saved):
+        return await agent_os._routine_api_update(routine_id, RoutineUpdate(auto_accept=auto_accept), request)
+
+
+def _auto_accept_note(policy: Any, reason: Optional[str], turn_off: str, turn_on: str) -> str:
+    """What a person is told about a new Routine's auto-accept: on with its limits, or off and why."""
+    if policy:
+        bound = (
+            f"at most {policy.max_open} open at once"
+            if policy.limits is None
+            else f"at most {policy.limits.max_acceptances} in all"
+        )
+        return (
+            f"Auto-accept is on: this Routine's proposals are accepted and run with no person, on "
+            f"{policy.default_executor} unless a proposal names another executor, {bound}, and finished "
+            f"work waits In review. Proposals with no Project wait for a person. {turn_off}"
+        )
+    why = f": {reason.rstrip('.')}" if reason else ""
+    return f"Auto-accept is off{why}. This Routine's proposals wait for a person. {turn_on}"
+
+
 def _stored_policy(raw):
     """A stored policy, and whether it was saved before this form (it names executor_type and executor_id).
 
@@ -874,6 +942,14 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
                     outcomes.append({"task_id": task["id"], "status": "accepted"})
                 if task["status"] != "ready":
                     continue
+                # A Task a person added to be started later is held until someone starts it.
+                acceptances = [
+                    entry
+                    for entry in task.get("transitions") or []
+                    if entry.get("target") == "ready" and not entry.get("action")
+                ]
+                if acceptances and acceptances[-1].get("start_on_request"):
+                    continue
                 result = await self._dispatch(task)
                 outcomes.append({"task_id": task["id"], **result})
             except Exception as exc:
@@ -984,6 +1060,7 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         from agno.company.manager import AsyncCompanyManager, CompanyManager, _routine_project_id
         from agno.company.refresh import _records
         from agno.db.base import AsyncBaseDb
+        from agno.db.schemas.projects import is_default_project
         from agno.os.authz.run_context import restore_authorization
         from agno.run.authorization import AUTHORIZATION_KEY, authorization_scope
 
@@ -1081,6 +1158,9 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
         approving = None
         if not completing:
             project = await _manager_call(manager, "get_project", task["project_id"])
+            if project and is_default_project(project["id"]):
+                # Nobody approved the Default Project, so a policy does not accept work in it.
+                raise _AutomationSkip("A Task in the Default Project waits for a person to accept it")
             if project and project["status"] == "cancelled":
                 raise _AutomationSkip("Cannot accept Task work in a cancelled Project")
             if project and project["status"] == "proposed":
@@ -1319,11 +1399,22 @@ class _CompanyScheduleExecutor(CompanyScheduleExecutor):
             _automatic_task.reset(token)
 
 
-def _require_routine_goal(goal_id: Optional[str], authority: Any = None) -> None:
+def _require_routine_goal(goal_id: Optional[str], authority: Any = None, *, company_wide: bool = False) -> None:
+    """Refuse a Routine or Task run that acts outside its own Goal.
+
+    goal_id is the Goal of the record acted on, or None for a record with no Goal. A Routine acts only
+    on its Goal's records. A Task run acts only on records of its Task's Goal: a Task with no Goal
+    acts only on records with no Goal. company_wide marks a record of the whole company, such as a
+    wiki page, which no such run may change.
+    """
     from agno.run.authorization import current_authorization
 
     authority = authority or current_authorization()
-    if isinstance(authority, _ExecutorAuthorization) and authority.goal_id is not None and authority.goal_id != goal_id:
+    if not isinstance(authority, _ExecutorAuthorization):
+        return
+    # A Task run is bound by its Task even when that Task has no Goal.
+    bound = authority.goal_id is not None or authority.task_id is not None
+    if bound and (company_wide or authority.goal_id != goal_id):
         if isinstance(authority, _RoutineAuthorization):
             raise PermissionError("Routine authority is restricted to its configured Goal")
         raise PermissionError("A Task run is restricted to its Task's Goal")

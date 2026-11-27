@@ -372,3 +372,31 @@ def test_images_to_message_mixed(tmp_path):
     assert result[0]["image_url"].startswith("data:image/png;base64,")
     assert result[1]["image_url"].startswith("data:image/webp;base64,")
     assert result[2]["image_url"] == "https://example.com/photo.jpg"
+
+
+def test_sanitize_response_schema_drops_title_beside_ref():
+    """OpenAI rejects a $ref with a title beside it; the definition keeps its title."""
+    schema = {
+        "type": "object",
+        "$defs": {"Actor": {"type": "object", "title": "Actor", "properties": {"name": {"type": "string"}}}},
+        "properties": {
+            "actors": {"type": "array", "title": "Actors", "items": {"$ref": "#/$defs/Actor", "title": "Actor"}},
+            "lead": {"$ref": "#/$defs/Actor", "title": "Lead", "description": "The lead actor."},
+        },
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"]["actors"]["items"] == {"$ref": "#/$defs/Actor"}
+    assert schema["properties"]["lead"] == {"$ref": "#/$defs/Actor", "description": "The lead actor."}
+    assert schema["properties"]["actors"]["title"] == "Actors"
+    assert schema["$defs"]["Actor"]["title"] == "Actor"
+
+
+def test_sanitize_response_schema_keeps_a_property_named_title():
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"] == {"title": {"type": "string"}}
+    assert schema["required"] == ["title"]
