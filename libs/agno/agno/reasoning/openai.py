@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
+from agno.models.azure.openai_responses import AzureOpenAIResponses
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
@@ -12,6 +13,9 @@ if TYPE_CHECKING:
 
 
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
+    # Azure deployment names are arbitrary; an explicit override takes precedence.
+    if isinstance(reasoning_model, AzureOpenAIResponses) and reasoning_model.is_reasoning_model is not None:
+        return reasoning_model.is_reasoning_model
     return (
         (
             reasoning_model.__class__.__name__ == "OpenAIChat"
