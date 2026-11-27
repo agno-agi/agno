@@ -8,8 +8,8 @@ Knowledge cookbooks preserved for reference and quick testing.
 |--------|---------------|-------|
 | [readers](./readers/) | Per-format readers, loading from path/URL/topic/YouTube, batching | 30 |
 | [chunking](./chunking/) | Every chunking strategy: fixed, recursive, semantic, document, code, CSV, markdown | 12 |
-| [embedders](./embedders/) | Per-provider embedders: OpenAI, Cohere, Gemini, Mistral, Ollama, HuggingFace, etc. | 18 |
-| [vector_dbs](./vector_dbs/) | Per-database examples: PgVector, Qdrant, Chroma, Lance, Milvus, Pinecone, Redis, etc. | 28 |
+| [embedders](./embedders/) | Per-provider embedders: OpenAI, Cohere, Gemini, Mistral, Ollama, HuggingFace, LiteLLM, etc. | 20 |
+| [vector_dbs](./vector_dbs/) | Per-database examples: PgVector, Qdrant, Chroma, Lance, Milvus, Pinecone, Redis, etc. | 44 |
 | [filters](./filters/) | Filtering, agentic filtering, per-DB filters, include/exclude, knowledge instructions | 18 |
 | [search_type](./search_type/) | Vector, keyword, and hybrid search | 3 |
 | [cloud](./cloud/) | S3, GCS, Azure Blob, SharePoint, GitHub, AgentOS cloud | 6 |
