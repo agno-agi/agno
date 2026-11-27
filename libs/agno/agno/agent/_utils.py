@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.agent.followup import drop_derived_followup_fields
-from agno.filters import FilterExpr
+from agno.filters import EQ, FilterExpr
 from agno.utils.log import log_debug, log_error, log_warning
 
 
@@ -46,9 +46,12 @@ def get_effective_filters(
                 if isinstance(effective_filters, dict):
                     effective_filters.update(knowledge_filters)
                 else:
-                    effective_filters = knowledge_filters
+                    effective_filters = [*effective_filters, *(EQ(k, v) for k, v in knowledge_filters.items())]
             elif isinstance(knowledge_filters, list):
-                effective_filters = [*effective_filters, *knowledge_filters]
+                if isinstance(effective_filters, dict):
+                    effective_filters = [*(EQ(k, v) for k, v in effective_filters.items()), *knowledge_filters]
+                else:
+                    effective_filters = [*effective_filters, *knowledge_filters]
         else:
             effective_filters = knowledge_filters
 
