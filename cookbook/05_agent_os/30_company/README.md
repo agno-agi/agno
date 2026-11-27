@@ -728,7 +728,10 @@ the second message. The list of Tasks is still kept in the chat's session state.
 match is on the model's own class, so an adapter that subclasses an OpenAI class for
 another endpoint (vLLM, LM Studio, llama.cpp, DeepSeek, Perplexity and the like) is not
 sent the block; neither are AWS Bedrock's Converse API, Mistral or Gemini's
-Interactions API.
+Interactions API. The OpenAI, Azure OpenAI and xAI classes send the two messages as
+they are, so one of those classes given another `base_url` (or, for OpenAI, run with
+`OPENAI_BASE_URL` set) is not sent the block either. The Claude and Gemini classes
+merge the two messages before sending and are sent the block on any endpoint.
 
 When the conversation starts or otherwise acts on a Task it already lists, that Task
 moves to the newest place, so it is among the 20 that are read.
