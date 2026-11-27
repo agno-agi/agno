@@ -2439,6 +2439,9 @@ def test_super_agent_is_told_to_read_the_company_rules_before_it_records_or_appr
     rule = " ".join(next(part for part in COMPANY_INSTRUCTIONS.split("\n- ") if "company's rules" in part).split())
     # Read once, before work is recorded or changed and before a "may I" is answered.
     assert "Once in a conversation, before you first record or change work" in rule
+    # The rules are read before a build too: Platform Builder cannot read the wiki, so a rule about
+    # what may be built holds only when Super Agent read it before handing the build over.
+    assert "hand Platform Builder an agent, team, workflow or schedule to create or change, start a run" in rule
     assert "or answer whether something may be done, is ready or is allowed, read them" in rule
     # The usual page is named, and a company that keeps its rules elsewhere is still read.
     assert "wiki/how-we-work.md, or list wiki/ when there is no such page" in rule
