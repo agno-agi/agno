@@ -19,6 +19,7 @@ from agno.db.schemas.scheduler import (
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
 from agno.job_queue.store import InMemoryQueueStore
+from agno.offload.store import DEFAULT_THRESHOLD_CHARS
 from agno.os import AgentOS, OSManager
 from agno.os.authz import Authorization
 from agno.os.authz.provider import AuthorizationContext
@@ -1291,14 +1292,20 @@ def test_check_refuses_a_run_this_conversation_did_not_start(plain):
     assert forged == {"error": f"Run {run_id} is not a run you started in this conversation."}
 
 
-def checked(run_context, stored, mode="async", **row):
-    """check_background_run over a stand-in database, sync or async."""
+def checked_text(run_context, stored, mode="async", offset=None, **row):
+    """check_background_run over a stand-in database, sync or async: the text the model is given."""
     tools = BackgroundRunTools(type("OS", (), {"dbs": {}, "db": Runs({**stored, **row})})())
     tools._os = tools._agent_os()  # keep the stand-in alive
+    arguments = {"_agno_run_context": run_context, **({} if offset is None else {"offset": offset})}
     with authorization_scope(lambda: run_context.authorization):
         if mode == "sync":
-            return json.loads(tools.check_background_run(stored["run_id"], _agno_run_context=run_context))
-        return json.loads(asyncio.run(tools.acheck_background_run(stored["run_id"], _agno_run_context=run_context)))
+            return tools.check_background_run(stored["run_id"], **arguments)
+        return asyncio.run(tools.acheck_background_run(stored["run_id"], **arguments))
+
+
+def checked(run_context, stored, mode="async", offset=None, **row):
+    """check_background_run over a stand-in database, sync or async."""
+    return json.loads(checked_text(run_context, stored, mode, offset, **row))
 
 
 def run_data(status, content="Found it.", **fields):
@@ -1329,9 +1336,72 @@ def test_a_long_result_is_cut_and_says_so(mode, keep_standins):
     long = "x" * (RESULT_LENGTH + 500)
     result = checked(run_context, stored, mode, **run_data("COMPLETED", long))
     assert result["content"] == "x" * RESULT_LENGTH
-    assert result["note"] == f"The result is cut to its first {RESULT_LENGTH} of {RESULT_LENGTH + 500} characters."
+    assert result["note"] == (
+        f"The result is long: this is the first {RESULT_LENGTH} of {RESULT_LENGTH + 500} characters. "
+        f"Read on with offset={RESULT_LENGTH}."
+    )
     short = checked(run_context, stored, mode, **run_data("COMPLETED"))
     assert short["content"] == "Found it." and "note" not in short
+
+
+@modes
+def test_the_rest_of_a_long_result_is_read_from_the_offset(mode, keep_standins):
+    """A report that ends with its verdict: the verdict is past the first part, and offset reaches it."""
+    run_context = person()
+    stored = listed_run(run_context, "COMPLETED")
+    report = "a" * RESULT_LENGTH + "b" * RESULT_LENGTH + "Verdict: merge-ready."
+    total = len(report)
+    row = run_data("COMPLETED", report)
+
+    first = checked(run_context, stored, mode, **row)
+    assert first["content"] == "a" * RESULT_LENGTH
+    assert f"Read on with offset={RESULT_LENGTH}." in first["note"]
+
+    second = checked(run_context, stored, mode, offset=RESULT_LENGTH, **row)
+    assert second["content"] == "b" * RESULT_LENGTH
+    assert second["note"] == (
+        f"The result is long: this is characters {RESULT_LENGTH} to {2 * RESULT_LENGTH} of {total} characters. "
+        f"Read on with offset={2 * RESULT_LENGTH}."
+    )
+
+    last = checked(run_context, stored, mode, offset=2 * RESULT_LENGTH, **row)
+    assert last["content"] == "Verdict: merge-ready."
+    assert last["note"] == (
+        f"The result is long: this is characters {2 * RESULT_LENGTH} to {total} of {total} characters. "
+        "This is the end of the result."
+    )
+    # The parts are the whole result, with nothing lost or repeated at a cut.
+    assert first["content"] + second["content"] + last["content"] == report
+
+    past = checked(run_context, stored, mode, offset=total + 50, **row)
+    assert past["content"] == "" and "This is the end of the result." in past["note"]
+    negative = checked(run_context, stored, mode, offset=-5, **row)
+    assert negative["content"] == "a" * RESULT_LENGTH
+
+
+@modes
+@pytest.mark.parametrize(
+    "sentence",
+    ["Рецензент нашёл две проблемы, обе исправлены. ", "审查者在合并请求中发现了两个问题，两个问题都已修复。"],
+    ids=["russian", "chinese"],
+)
+def test_a_part_of_a_result_in_another_script_is_no_longer_than_it_is_written(mode, sentence, keep_standins):
+    """A part in Russian or Chinese is given as written. Escaped it is five or six times as long, which is
+    over the size at which Super Agent's tool results are stored away and shown as a preview."""
+    run_context = person()
+    stored = listed_run(run_context, "COMPLETED")
+    report = sentence * (3 * RESULT_LENGTH // len(sentence))
+    row = run_data("COMPLETED", report)
+
+    text = checked_text(run_context, stored, mode, **row)
+    assert report[:RESULT_LENGTH] in text
+    assert len(text) < RESULT_LENGTH + 500 < DEFAULT_THRESHOLD_CHARS
+    assert json.loads(text)["content"] == report[:RESULT_LENGTH]
+
+    # The parts after the first are given the same way.
+    text = checked_text(run_context, stored, mode, offset=RESULT_LENGTH, **row)
+    assert report[RESULT_LENGTH : 2 * RESULT_LENGTH] in text
+    assert len(text) < RESULT_LENGTH + 500
 
 
 @modes
