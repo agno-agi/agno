@@ -426,6 +426,80 @@ async def test_first_turn_override_and_marker_wins(tmp_path, monkeypatch, local_
         )
 
 
+@pytest.mark.asyncio
+async def test_first_turn_checks_out_a_pull_request_by_its_number(tmp_path, monkeypatch, local_repository):
+    """metadata.repository.pull_request checks out that pull request's head, read from the repository it targets."""
+    from agno.sandbox import runtime
+
+    source, sha, calls, git = local_repository
+    git("checkout", "-b", "contributor")
+    (source / "app.py").write_text("version = 2\n")
+    git("commit", "-am", "the pull request")
+    pull_request_head = git("rev-parse", "HEAD")
+    git("update-ref", "refs/pull/7/head", pull_request_head)
+    git("checkout", "main")
+    git("branch", "-D", "contributor")
+    root = tmp_path / "computer"
+    directory = root / "jobs/first"
+    directory.mkdir(parents=True)
+    workspace, native = root / "workspace", root / "native"
+    monkeypatch.setenv("AGNO_SANDBOX_WORKSPACE", str(workspace))
+    request = {
+        "sdk": "fixture",
+        "input": "review",
+        "agent_id": "agent",
+        "session_id": "session",
+        "run_id": "first",
+        "config": {"repository": SPEC},
+        "metadata": {"repository": {"pull_request": 7}},
+    }
+
+    first = await runtime._execute(directory, request)
+
+    # The pin keeps the agent's configured branch and records the pull request's head commit.
+    assert first["repository"] == repository._read_pin(native, SPEC) == {**SPEC, "commit": pull_request_head}
+    assert pull_request_head != sha
+    assert (workspace / "repository/app.py").read_text() == "version = 2\n"
+    assert any("refs/pull/7/head" in args for args, _ in calls)
+
+    # A pull request that does not exist fails before the model starts.
+    missing = root / "jobs/missing"
+    missing.mkdir(parents=True)
+    monkeypatch.setenv("AGNO_SANDBOX_WORKSPACE", str(root / "other-workspace"))
+    monkeypatch.setattr(runtime, "_execute_harness", lambda *args: pytest.fail("model started"))
+    with pytest.raises(repository.RepositoryPreparationError, match="branch or pull request"):
+        await repository._aprepare(
+            SPEC, root / "other-workspace", root / "other-native", resume=False, override={"pull_request": 8}
+        )
+
+
+@pytest.mark.parametrize(
+    "metadata, expected",
+    [
+        ({"repository": {"pull_request": 7}}, "pr-7"),
+        ({"repository": {"branch": "release-3.3"}}, "branch-release-3.3"),
+        ({"repository": {"commit": "ABCDEF0123456789" + "0" * 24}}, "commit-abcdef012345"),
+        (None, None),
+        ({}, None),
+        ({"other": 1}, None),
+        ({"repository": {"branch": "a", "commit": "b"}}, None),
+        ({"repository": {"url": "https://github.com/x/y"}}, None),
+        ({"repository": {"pull_request": True}}, None),
+        ({"repository": "main"}, None),
+    ],
+)
+def test_checkout_key_names_what_a_call_asks_to_check_out(metadata, expected):
+    assert repository.checkout_key(metadata) == expected
+
+
+def test_checkout_keys_of_two_branches_never_collide():
+    """A branch name is made safe for a session id; two names that become the same text stay apart."""
+    slash = repository.checkout_key({"repository": {"branch": "fix/login"}})
+    dash = repository.checkout_key({"repository": {"branch": "fix-login"}})
+    assert dash == "branch-fix-login"
+    assert slash is not None and slash.startswith("branch-fix-login-") and slash != dash
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -436,6 +510,10 @@ async def test_first_turn_override_and_marker_wins(tmp_path, monkeypatch, local_
         {"branch": "../invalid"},
         {"branch": "-invalid"},
         {"branch": "main", "commit": "a" * 40},
+        {"pull_request": "7"},
+        {"pull_request": 0},
+        {"pull_request": True},
+        {"pull_request": 7, "branch": "main"},
         {},
         None,
     ],

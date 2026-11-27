@@ -1,6 +1,7 @@
 """Prepare a session's pinned repository inside its sandbox before starting the model."""
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -51,7 +52,29 @@ def validate_repository(value: Any) -> Dict[str, str]:
     return dict(value)
 
 
-def validate_repository_override(metadata: Any, repository: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+def checkout_key(metadata: Any) -> Optional[str]:
+    """A short name for the checkout a run's metadata.repository asks for, or None when it asks for none.
+
+    A sandbox session holds one checkout, pinned on its first turn. A team member or workflow step
+    that asks for a checkout therefore works in a session of its own per checkout: this is the
+    part of that session's id that tells the checkouts apart. It reads the value as given and
+    never raises; the request is validated where it is prepared.
+    """
+    value = metadata.get("repository") if isinstance(metadata, dict) else None
+    if not isinstance(value, dict) or len(value) != 1:
+        return None
+    kind, ref = next(iter(value.items()))
+    if kind not in ("commit", "branch", "pull_request") or not isinstance(ref, (str, int)) or isinstance(ref, bool):
+        return None
+    text = str(ref).lower()[:12] if kind == "commit" else str(ref)
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", text)[:48]
+    if name != text:
+        # Two refs that differ only in a replaced character must not share a session.
+        name += "-" + hashlib.sha256(text.encode()).hexdigest()[:8]
+    return {"commit": "commit-", "branch": "branch-", "pull_request": "pr-"}[kind] + name
+
+
+def validate_repository_override(metadata: Any, repository: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Validate an optional first-turn pin, including on turns where the marker wins."""
     if metadata is None:
         return None
@@ -60,10 +83,17 @@ def validate_repository_override(metadata: Any, repository: Optional[Dict[str, s
     if "repository" not in metadata:
         return None
     value = metadata["repository"]
-    if not isinstance(value, dict) or set(value) not in ({"commit"}, {"branch"}):
-        raise ValueError("metadata.repository requires exactly commit or branch; url cannot be overridden")
+    if not isinstance(value, dict) or set(value) not in ({"commit"}, {"branch"}, {"pull_request"}):
+        raise ValueError(
+            "metadata.repository requires exactly one of commit, branch or pull_request; url cannot be overridden"
+        )
     if repository is None:
         raise ValueError("metadata.repository requires agent.repository=Repository(...)")
+    if "pull_request" in value:
+        number = value["pull_request"]
+        if type(number) is not int or not 0 < number < 2**31:
+            raise ValueError("metadata.repository.pull_request must be the pull request's number")
+        return {"pull_request": number}
     if "branch" in value:
         validate_repository({**repository, "branch": value["branch"]})
         return dict(value)
@@ -164,18 +194,22 @@ def _prepare(
                 return result.stdout.strip()
             except (OSError, ValueError, subprocess.SubprocessError):
                 raise RepositoryPreparationError(
-                    "Repository preparation failed; check repository access and branch"
+                    "Repository preparation failed; check repository access and the branch or pull request"
                 ) from None
 
         git("init", "--quiet")
         git("remote", "add", "origin", repository["url"])
         branch = (override or {}).get("branch", repository["branch"])
         commit = (override or {}).get("commit")
+        pull_request = (override or {}).get("pull_request")
         if commit is None:
-            ref = "refs/heads/" + branch
+            # A pull request is read from the repository it was opened against, so one from a fork resolves too.
+            ref = f"refs/pull/{pull_request}/head" if pull_request is not None else "refs/heads/" + branch
             resolved = git("ls-remote", "--exit-code", "--refs", "origin", ref).split()
             if len(resolved) != 2 or resolved[1] != ref or not re.fullmatch(r"[0-9a-f]{40}", resolved[0]):
-                raise RepositoryPreparationError("Repository preparation failed; check repository access and branch")
+                raise RepositoryPreparationError(
+                    "Repository preparation failed; check repository access and the branch or pull request"
+                )
             commit = resolved[0]
         git("fetch", "--depth=1", "origin", commit)
         git("checkout", "--detach", commit)

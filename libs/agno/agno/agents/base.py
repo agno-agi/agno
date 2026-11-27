@@ -1026,6 +1026,14 @@ class BaseExternalAgent:
             # elsewhere; a value JSON cannot hold fails the member's run instead of the team's tool call.
             forwarded["metadata"] = to_json_types(forwarded["metadata"])
         forwarded["session_id"] = self._state_session_id(team_session_id, self._parent_id(team_id, workflow_id))
+        from agno.sandbox.repository import checkout_key
+
+        checkout = checkout_key(forwarded.get("metadata"))
+        if checkout is not None:
+            # The call names what to check out, and a sandbox session holds one checkout, pinned on its
+            # first turn. So each checkout gets a session of its own: two calls for one pull request share
+            # a checkout and a conversation, and a call for another works in another.
+            forwarded["session_id"] += "@" + checkout
         # The sandbox creates this session; this links it back to its team or workflow, as for other agents.
         forwarded["_session_metadata"] = self._parent_metadata(team_id, workflow_id)
         forwarded["run_id"] = f"{member_run_id}.sandbox"

@@ -337,6 +337,12 @@ class Step:
 
     human_review: HumanReview = field(default_factory=HumanReview)
 
+    # Metadata for the run of this step's agent or team: a dict, or a function that is given the step
+    # input (and the run context, when it names a run_context parameter) and returns a dict or None.
+    # A coding engineer in a sandbox reads its checkout from it, for example
+    # {"repository": {"pull_request": 123}} or {"repository": {"branch": "release"}}.
+    run_metadata: Optional[Union[Dict[str, Any], Callable[..., Optional[Dict[str, Any]]]]] = None
+
     _retry_count: int = 0
 
     def __init__(
@@ -354,6 +360,7 @@ class Step:
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
         human_review: Optional[HumanReview] = None,
+        run_metadata: Optional[Union[Dict[str, Any], Callable[..., Optional[Dict[str, Any]]]]] = None,
     ):
         # Auto-detect HITL metadata from @pause decorator on executor function.
         # An explicit human_review= kwarg always wins over decorator metadata.
@@ -397,6 +404,7 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self.run_metadata = run_metadata
 
         self.human_review = human_review or decorator_review or HumanReview()
 
@@ -438,6 +446,11 @@ class Step:
                 result.update(unresolved)
             else:
                 result["executor_ref"] = self.executor.__name__
+        if callable(self.run_metadata):
+            # A function is stored by name and resolved from the registry on load, like an executor.
+            result["run_metadata_ref"] = getattr(self.run_metadata, "__name__", None)
+        elif self.run_metadata is not None:
+            result["run_metadata"] = self.run_metadata
 
         return result
 
@@ -896,6 +909,20 @@ class Step:
             drop_legacy_hitl_keys(config, StepType.STEP)
             human_review = HumanReview()
 
+        run_metadata: Any = config.get("run_metadata")
+        run_metadata_ref = config.get("run_metadata_ref")
+        if run_metadata_ref:
+            run_metadata = registry.get_function(run_metadata_ref) if registry else None
+            if run_metadata is None:
+                message = (
+                    f"Step '{config.get('name')}' references run metadata function '{run_metadata_ref}', which was "
+                    "not found in the registry. Register the function and reload."
+                )
+                if strict:
+                    raise ComponentRehydrationError(message)
+                log_warning(message)
+                run_metadata = _unresolvable_callable_placeholder("Run metadata function", run_metadata_ref)
+
         return cls(
             name=config.get("name"),
             step_id=config.get("step_id"),
@@ -906,6 +933,7 @@ class Step:
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
             human_review=human_review,
+            run_metadata=run_metadata,
             agent=agent,
             team=team,
             executor=executor,
@@ -1363,6 +1391,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
                         kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs.update(self._run_metadata_kwargs(step_input, run_context))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -1492,6 +1521,25 @@ class Step:
                         raise e
 
         return StepOutput(content=f"Step {self.name} failed but skipped", success=False)
+
+    def _run_metadata_kwargs(self, step_input: StepInput, run_context: Optional[RunContext]) -> Dict[str, Any]:
+        """The ``metadata`` run option for this step's agent or team, or nothing when the step sets none.
+
+        A function is called once per run of the step, so it can read the workflow input, earlier
+        steps' outputs or the session state.
+        """
+        value: Any = self.run_metadata
+        if callable(value):
+            try:
+                wants_run_context = "run_context" in inspect.signature(value).parameters
+            except (TypeError, ValueError):
+                wants_run_context = False
+            value = value(step_input, run_context=run_context) if wants_run_context else value(step_input)
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError(f"Step '{self.name}' run_metadata must be a dict, or a function that returns one")
+        return {"metadata": value}
 
     def _function_has_run_context_param(self) -> bool:
         """Check if the custom function has a run_context parameter"""
@@ -1721,6 +1769,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
                         kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs.update(self._run_metadata_kwargs(step_input, run_context))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2098,6 +2147,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
                         kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs.update(self._run_metadata_kwargs(step_input, run_context))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
@@ -2462,6 +2512,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
                         kwargs.update(_harness_step_kwargs(self.active_executor, workflow_run_response))
+                        kwargs.update(self._run_metadata_kwargs(step_input, run_context))
 
                         # Forward background_tasks if provided
                         if background_tasks is not None:
