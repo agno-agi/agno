@@ -1748,3 +1748,260 @@ def test_get_pull_requests_limit_respected(mock_github):
     assert len(result_data) == 3
     assert result_data[0]["number"] == 1
     assert result_data[2]["number"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Reading one pull request: details, changes file by file, checks
+# ---------------------------------------------------------------------------
+
+
+def _pull_request_file(filename: str, patch, additions: int = 1, deletions: int = 0) -> MagicMock:
+    file = MagicMock()
+    file.filename = filename
+    file.status = "modified"
+    file.additions = additions
+    file.deletions = deletions
+    file.changes = additions + deletions
+    file.raw_url = f"https://github.com/raw/{filename}"
+    file.blob_url = f"https://github.com/blob/{filename}"
+    file.patch = patch
+    return file
+
+
+def test_get_pull_request_names_its_head_and_its_size(mock_github):
+    """What a reader needs before the diff: which commit, against which branch, how large, mergeable or not."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.number = 7
+    mock_pr.title = "Fix the thing"
+    mock_pr.user.login = "octocat"
+    mock_pr.body = "Why"
+    mock_pr.created_at = datetime(2024, 2, 4, 12, 0, 0)
+    mock_pr.updated_at = datetime(2024, 2, 4, 13, 0, 0)
+    mock_pr.state = "open"
+    mock_pr.draft = True
+    mock_pr.is_merged.return_value = False
+    mock_pr.mergeable = False
+    mock_pr.mergeable_state = "dirty"
+    mock_pr.base.ref = "main"
+    mock_pr.head.ref = "fix/thing"
+    mock_pr.head.sha = "a" * 40
+    mock_pr.commits = 3
+    mock_pr.changed_files = 143
+    mock_pr.additions = 22313
+    mock_pr.deletions = 1190
+    mock_pr.html_url = "https://github.com/test-org/test-repo/pull/7"
+    mock_repo.get_pull.return_value = mock_pr
+
+    result = json.loads(github_tools.get_pull_request("test-org/test-repo", 7))
+
+    assert result["draft"] is True
+    assert result["mergeable"] is False and result["mergeable_state"] == "dirty"
+    assert (result["base"], result["head"], result["head_sha"]) == ("main", "fix/thing", "a" * 40)
+    assert (result["commits"], result["changed_files"], result["additions"], result["deletions"]) == (
+        3,
+        143,
+        22313,
+        1190,
+    )
+    # What it returned before is still there.
+    assert result["number"] == 7 and result["state"] == "open" and result["merged"] is False
+
+
+def test_get_pull_request_changes_lists_files_without_patches_and_reads_one_file(mock_github):
+    """A large pull request is read in two steps: the file list, then the patch of one file."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.get_files.return_value = [
+        _pull_request_file("app/main.py", "@@ -1 +1 @@\n-old\n+new", additions=1, deletions=1),
+        _pull_request_file("docs/guide.md", "@@ -0,0 +1 @@\n+" + "x" * 50000, additions=900),
+        _pull_request_file("logo.png", None, additions=0),
+    ]
+    mock_repo.get_pull.return_value = mock_pr
+
+    everything = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7))
+    assert [file["filename"] for file in everything] == ["app/main.py", "docs/guide.md", "logo.png"]
+    assert everything[0]["patch"] == "@@ -1 +1 @@\n-old\n+new" and everything[2]["patch"] is None
+
+    listing_text = github_tools.get_pull_request_changes("test-org/test-repo", 7, include_patches=False)
+    listing = json.loads(listing_text)
+    assert [(file["filename"], file["additions"], file["deletions"]) for file in listing] == [
+        ("app/main.py", 1, 1),
+        ("docs/guide.md", 900, 0),
+        ("logo.png", 0, 0),
+    ]
+    assert all(set(file) == {"filename", "status", "additions", "deletions", "changes"} for file in listing)
+
+    [one] = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="app/main.py"))
+    assert one["filename"] == "app/main.py" and one["patch"] == "@@ -1 +1 @@\n-old\n+new"
+    # path wins over include_patches=False: asking for a file is asking for its patch.
+    [same] = json.loads(
+        github_tools.get_pull_request_changes("test-org/test-repo", 7, path="app/main.py", include_patches=False)
+    )
+    assert same["patch"] == one["patch"]
+
+    # An empty path is no path: the listing, not an error.
+    for empty in ("", "  "):
+        blank = json.loads(
+            github_tools.get_pull_request_changes("test-org/test-repo", 7, path=empty, include_patches=False)
+        )
+        assert [file["filename"] for file in blank] == ["app/main.py", "docs/guide.md", "logo.png"]
+
+    missing = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="app/other.py"))
+    assert missing == {"error": "app/other.py is not among the files pull request #7 changes."}
+
+
+def test_get_pull_request_changes_stops_reading_at_the_file_it_was_asked_for(mock_github):
+    """GitHub serves the files in pages: one file's read asks for no page after the one that holds it."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    read = []
+
+    def pages():
+        for number in range(1, 6):
+            read.append(number)
+            yield _pull_request_file(f"src/file_{number}.py", f"@@ -1 +1 @@\n+{number}")
+
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.get_files.side_effect = pages
+    mock_repo.get_pull.return_value = mock_pr
+
+    [one] = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="src/file_2.py"))
+    assert one["filename"] == "src/file_2.py" and one["patch"] == "@@ -1 +1 @@\n+2"
+    assert read == [1, 2]
+
+    # Without a path, and for a path that is not there, every file is still read.
+    read.clear()
+    assert len(json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7))) == 5
+    assert read == [1, 2, 3, 4, 5]
+    read.clear()
+    assert "error" in json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="src/nope.py"))
+    assert read == [1, 2, 3, 4, 5]
+
+
+def test_get_pull_request_checks_reports_check_runs_and_statuses(mock_github):
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.head.sha = "b" * 40
+    mock_repo.get_pull.return_value = mock_pr
+
+    def check_run(name, status, conclusion):
+        run = MagicMock()
+        run.name, run.status, run.conclusion, run.html_url = name, status, conclusion, f"https://ci/{name}"
+        return run
+
+    def commit_status(context, state):
+        status = MagicMock()
+        status.context, status.state, status.target_url = context, state, f"https://status/{context}"
+        return status
+
+    mock_commit = MagicMock()
+    mock_commit.get_check_runs.return_value = [
+        check_run("tests", "completed", "success"),
+        check_run("lint", "completed", "failure"),
+        check_run("build", "in_progress", None),
+    ]
+    mock_commit.get_combined_status.return_value.statuses = [
+        commit_status("deploy/preview", "success"),
+        commit_status("license", "pending"),
+    ]
+    mock_commit.get_combined_status.return_value.total_count = 2
+    mock_repo.get_commit.return_value = mock_commit
+
+    result = json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7))
+
+    mock_repo.get_commit.assert_called_once_with("b" * 40)
+    # Every status came with the combined status, so the status history is not read.
+    mock_commit.get_statuses.assert_not_called()
+    assert result["head_sha"] == "b" * 40 and result["total"] == 5
+    assert result["summary"] == {"success": 2, "failure": 1, "in_progress": 2}
+    assert [(check["name"], check["type"], check["status"], check["conclusion"]) for check in result["checks"]] == [
+        ("tests", "check_run", "completed", "success"),
+        ("lint", "check_run", "completed", "failure"),
+        ("build", "check_run", "in_progress", None),
+        ("deploy/preview", "status", "completed", "success"),
+        ("license", "status", "in_progress", None),
+    ]
+
+
+def test_get_pull_request_checks_reports_every_status_of_a_commit_with_more_than_one_page(mock_github):
+    """GitHub's combined status holds 30 contexts. A failure past the 30th is still reported."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.head.sha = "d" * 40
+    mock_repo.get_pull.return_value = mock_pr
+
+    def commit_status(context, state):
+        status = MagicMock()
+        status.context, status.state, status.target_url = context, state, f"https://status/{context}"
+        return status
+
+    first_page = [commit_status(f"job-{number}", "success") for number in range(30)]
+    past_the_page = [commit_status("release-notes", "failure")] + [
+        commit_status(f"job-{number}", "pending") for number in range(30, 36)
+    ]
+    # The history is newest first and keeps each context's earlier results.
+    history = (
+        past_the_page
+        + first_page
+        + [commit_status("release-notes", "pending")]
+        + [commit_status(f"job-{number}", "pending") for number in range(30)]
+    )
+    mock_commit = MagicMock()
+    mock_commit.get_check_runs.return_value = []
+    mock_commit.get_combined_status.return_value.statuses = first_page
+    mock_commit.get_combined_status.return_value.total_count = 37
+    mock_commit.get_statuses.return_value = history
+    mock_repo.get_commit.return_value = mock_commit
+
+    result = json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7))
+
+    assert result["total"] == 37
+    assert result["summary"] == {"success": 30, "failure": 1, "in_progress": 6}
+    assert len({check["name"] for check in result["checks"]}) == 37
+    [release_notes] = [check for check in result["checks"] if check["name"] == "release-notes"]
+    assert (release_notes["status"], release_notes["conclusion"]) == ("completed", "failure")
+
+
+def test_get_pull_request_checks_with_no_checks_and_on_an_error(mock_github):
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.head.sha = "c" * 40
+    mock_repo.get_pull.return_value = mock_pr
+    mock_commit = MagicMock()
+    mock_commit.get_check_runs.return_value = []
+    mock_commit.get_combined_status.return_value.statuses = []
+    mock_commit.get_combined_status.return_value.total_count = 0
+    mock_repo.get_commit.return_value = mock_commit
+
+    assert json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7)) == {
+        "head_sha": "c" * 40,
+        "total": 0,
+        "summary": {},
+        "checks": [],
+    }
+
+    mock_repo.get_pull.side_effect = GithubException(status=404, data={"message": "Not Found"})
+    assert "error" in json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 8))
+
+
+def test_the_read_only_functions_can_be_selected_alone():
+    """include_tools gives an agent the functions that read and none that write."""
+    read_only = [
+        "get_pull_request",
+        "get_pull_request_changes",
+        "get_pull_request_checks",
+        "get_pull_request_comments",
+        "get_file_content",
+        "get_directory_content",
+        "search_code",
+    ]
+    with patch("agno.tools.github.Github"), patch.dict("os.environ", {"GITHUB_ACCESS_TOKEN": "dummy_token"}):
+        github_tools = GithubTools(include_tools=read_only)
+
+    assert sorted(github_tools.functions) == sorted(read_only)
