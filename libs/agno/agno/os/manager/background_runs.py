@@ -702,7 +702,9 @@ class BackgroundRunTools(StudioRunnerTools):
                 shown = f"characters {start} to {end}" if start else f"the first {end}"
                 more = f" Read on with offset={end}." if end < len(content) else " This is the end of the result."
                 payload["note"] = f"The result is long: this is {shown} of {len(content)} characters.{more}"
-        return json.dumps(payload, default=str)
+        # Written as it is. Escaped, a part in Russian or Chinese is five or six times as long, which is
+        # over the size at which Super Agent's tool results are stored away and shown as a preview.
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
     def _check_refusal(self, run_context: Any, run_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         entry = run_entry(run_context, run_id)
