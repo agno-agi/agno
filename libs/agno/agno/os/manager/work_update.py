@@ -169,7 +169,14 @@ class WorkUpdateBoundary(BaseGuardrail):
         for tool in getattr(team, "tools", None) or []:
             if isinstance(tool, own):
                 functions = tool.get_async_functions() if async_mode else tool.get_functions()
-                reads.extend(function for name, function in functions.items() if name in READ_TOOLS)
+                for name, function in functions.items():
+                    # Nobody is there to confirm, answer or run anything: a tool set up to wait for
+                    # a person is left out, or the work update would pause on it.
+                    waits = (
+                        function.requires_confirmation or function.requires_user_input or function.external_execution
+                    )
+                    if name in READ_TOOLS and not waits:
+                        reads.append(function)
         return reads
 
     def _enter(self, run_context: Any, team: Any, async_mode: bool) -> None:
@@ -195,17 +202,27 @@ def _keep_stored_state(session: Any, stored: Any, run_id: Any) -> None:
     update is going, so they may send a message while it runs, and that turn may store work it
     started. Saved as loaded, the work update would undo that. Only what this run showed is carried
     over: an entry it did not mark keeps what the conversation stored, so a finish a turn of the
-    person already reported is not put back to unreported.
+    person already reported is not put back to unreported. And only once the run has replied: a work
+    update that failed or was cancelled told the person nothing, so what it would have shown stays
+    unreported. Whatever else the conversation stored meanwhile, such as a new name, is kept too.
     """
     data = getattr(session, "session_data", None)
-    state = (stored.get("session_data") or {}).get("session_state") if isinstance(stored, dict) else None
+    stored_data = stored.get("session_data") if isinstance(stored, dict) else None
+    if isinstance(data, dict) and isinstance(stored_data, dict):
+        for key, value in stored_data.items():
+            # The state is merged below, and the totals are this run's own to add to.
+            if key not in ("session_state", "session_metrics"):
+                data[key] = value
+    state = stored_data.get("session_state") if isinstance(stored_data, dict) else None
     loaded = data.get("session_state") if isinstance(data, dict) else None
     if not isinstance(state, dict) or not isinstance(loaded, dict):
         return
+    run = session.get_run(run_id) if run_id is not None and callable(getattr(session, "get_run", None)) else None
+    replied = str(getattr(getattr(run, "status", None), "value", getattr(run, "status", None))) == "COMPLETED"
     mine = {
         (entry.get("kind"), entry.get("id")): entry
         for entry in loaded.get(LINKED_WORK_KEY) or []
-        if isinstance(entry, dict) and run_id is not None and entry.get("changed_in") == run_id
+        if replied and isinstance(entry, dict) and entry.get("changed_in") == run_id
     }
     listed = []
     for entry in state.get(LINKED_WORK_KEY) or []:
@@ -225,6 +242,9 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
     Done at the save, not before: a run saves when it ends, when it fails and when it is cancelled,
     and it can wait on other work between its last step and the save. What is stored between the
     read here and the write right after it can still be lost.
+
+    A conversation that is no longer stored was deleted while the work update ran. It is not saved:
+    saving it would bring it back.
     """
     session_id, run_id = getattr(run_context, "session_id", None), getattr(run_context, "run_id", None)
     if not isinstance(session_id, str):
@@ -237,7 +257,10 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
     def save_session(session: Any) -> Any:
         try:
             if not isinstance(team.db, AsyncBaseDb):
-                _keep_stored_state(session, read(), run_id)
+                stored = read()
+                if stored is None:
+                    return None
+                _keep_stored_state(session, stored, run_id)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
         return save(session=session)
@@ -248,6 +271,8 @@ def _save_over_stored_state(team: Any, run_context: Any) -> None:
                 stored = await team.db.get_session(session_id, session_type=SessionType.TEAM, deserialize=False)
             else:
                 stored = await asyncio.to_thread(read)
+            if stored is None:
+                return None
             _keep_stored_state(session, stored, run_id)
         except Exception as exc:
             log_warning(f"Work update could not read the conversation's stored state before saving: {exc}")
