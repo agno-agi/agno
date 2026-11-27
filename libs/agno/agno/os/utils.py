@@ -935,6 +935,9 @@ async def afinalize_continue_stream(
             from agno.os.job_queue import asettle_paused_ticket
 
             await asettle_paused_ticket(queue_worker, run_id, final)
+        from agno.run.background import anotify_continued_run_requester
+
+        await anotify_continued_run_requester(component, run_id, session_id)
         return final
 
     task = asyncio.ensure_future(_obligation())
