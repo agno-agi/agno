@@ -12,7 +12,7 @@ def test_defaults():
     assert model.id == "anthropic/claude-sonnet-5"
     assert model.name == "Hubris"
     assert model.provider == "Hubris"
-    assert model.base_url == "https://api.hubris.pw/v1"
+    assert model.base_url == "https://api.hubris.pro/v1"
 
 
 def test_get_model_from_string():
@@ -20,7 +20,7 @@ def test_get_model_from_string():
     model = get_model("hubris:openai/gpt-5.6-luna")
     assert isinstance(model, Hubris)
     assert model.id == "openai/gpt-5.6-luna"
-    assert model.base_url == "https://api.hubris.pw/v1"
+    assert model.base_url == "https://api.hubris.pro/v1"
 
 
 def test_missing_api_key_raises(monkeypatch):
@@ -37,4 +37,4 @@ def test_api_key_from_env(monkeypatch):
     model = Hubris()
     params = model._get_client_params()
     assert params["api_key"] == "sk-gw-test"
-    assert params["base_url"] == "https://api.hubris.pw/v1"
+    assert params["base_url"] == "https://api.hubris.pro/v1"

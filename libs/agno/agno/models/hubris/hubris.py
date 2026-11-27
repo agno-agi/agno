@@ -9,18 +9,18 @@ from agno.models.openai.like import OpenAILike
 @dataclass
 class Hubris(OpenAILike):
     """
-    A class for interacting with models served by Hubris (https://hubris.pw), an
+    A class for interacting with models served by Hubris (https://hubris.pro), an
     OpenAI-compatible LLM gateway billed in Russian rubles.
 
     Model ids use the full ``vendor/model`` form shown in the catalog at
-    https://hubris.pw/models, e.g. ``anthropic/claude-sonnet-5`` or ``openai/gpt-5.6-luna``.
+    https://hubris.pro/models, e.g. ``anthropic/claude-sonnet-5`` or ``openai/gpt-5.6-luna``.
 
     Attributes:
         id (str): The model id. Defaults to "anthropic/claude-sonnet-5".
         name (str): The model name. Defaults to "Hubris".
         provider (str): The provider name. Defaults to "Hubris".
         api_key (Optional[str]): The API key. Falls back to the HUBRIS_API_KEY environment variable.
-        base_url (str): The base URL. Defaults to "https://api.hubris.pw/v1".
+        base_url (str): The base URL. Defaults to "https://api.hubris.pro/v1".
     """
 
     id: str = "anthropic/claude-sonnet-5"
@@ -28,7 +28,7 @@ class Hubris(OpenAILike):
     provider: str = "Hubris"
 
     api_key: Optional[str] = None
-    base_url: str = "https://api.hubris.pw/v1"
+    base_url: str = "https://api.hubris.pro/v1"
 
     def _get_client_params(self) -> Dict[str, Any]:
         """

@@ -11,7 +11,7 @@ def test_hubris_initialization_with_api_key():
     model = Hubris(id="anthropic/claude-sonnet-5", api_key="test-api-key")
     assert model.id == "anthropic/claude-sonnet-5"
     assert model.api_key == "test-api-key"
-    assert model.base_url == "https://api.hubris.pw/v1"
+    assert model.base_url == "https://api.hubris.pro/v1"
 
 
 def test_hubris_initialization_without_api_key():
@@ -42,7 +42,7 @@ def test_hubris_client_params():
     model = Hubris(id="anthropic/claude-sonnet-5", api_key="test-api-key")
     client_params = model._get_client_params()
     assert client_params["api_key"] == "test-api-key"
-    assert client_params["base_url"] == "https://api.hubris.pw/v1"
+    assert client_params["base_url"] == "https://api.hubris.pro/v1"
 
 
 def test_hubris_default_id():
