@@ -1,5 +1,22 @@
 # Test log
 
+## Background runs from chat, 2026-11-26
+
+### manager_background_runs.py
+
+**Status:** PASS
+
+**Description:** Ran `cookbook/05_agent_os/29_manager/manager_background_runs.py` with
+`.venv/bin/python`, `gpt-5.6-luna`, a new SQLite database, no Company and no durable queue. Super
+Agent is asked to run a 20-second workflow in the background, then an unrelated question, then
+"Thanks. Anything else?" after the workflow has finished.
+
+**Result:** The first turn took 4.1 seconds and called `start_background_run`; the reply said the
+run was pending. "What is 17 times 23?" was answered in 1.9 seconds with no tool call. The third
+turn called `check_background_run` once and said the Investigator finished, with its finding.
+
+---
+
 ## Token scopes count beside roles by default, 2026-11-24
 
 ### check_manager_permissions.py

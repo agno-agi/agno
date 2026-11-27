@@ -472,6 +472,8 @@ def test_builder_and_lead_carry_the_framework_toolkits(db, workspace, company_en
         "run_team",
         "list_workflows",
         "run_workflow",
+        "start_background_run",
+        "check_background_run",
     }
     assert isinstance(agentos, AgentOSTools) and set(agentos.functions) == {"get_run_activity", "list_schedules"}
     assert diagnostics.name == "manager_diagnostics" and set(diagnostics.functions) == {"run_diagnostics"}
