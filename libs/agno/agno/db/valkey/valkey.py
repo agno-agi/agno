@@ -353,12 +353,13 @@ class ValkeyDb(BaseDb):
             log_error(f"Error storing Valkey record: {str(e)}")
             return False
 
-    def _get_record(self, table_type: str, record_id: str) -> Optional[Dict[str, Any]]:
+    def _get_record(self, table_type: str, record_id: str, raise_on_error: bool = False) -> Optional[Dict[str, Any]]:
         """Generic method to get a record from Valkey.
 
         Args:
             table_type (str): The type of table to get the record from.
             record_id (str): The ID of the record to get.
+            raise_on_error (bool): Raise a failed read instead of returning None.
 
         Returns:
             Optional[Dict[str, Any]]: The record data if found, None otherwise.
@@ -377,6 +378,8 @@ class ValkeyDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting record {record_id}: {str(e)}")
+            if raise_on_error:
+                raise
             return None
 
     def _delete_record(self, table_type: str, record_id: str, index_fields: Optional[List[str]] = None) -> bool:
@@ -418,17 +421,18 @@ class ValkeyDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
-    def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
+    def _get_all_records(self, table_type: str, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type using pipeline batching.
 
         Args:
             table_type (str): The type of table to get the records from.
+            raise_on_error (bool): Raise a failed read, including a failed batched GET, instead of skipping it.
 
         Returns:
             List[Dict[str, Any]]: The records data if found, empty list otherwise.
 
         Raises:
-            Exception: If any error occurs while getting the records.
+            Exception: If any error occurs while getting the records and raise_on_error is set.
         """
         try:
             keys = get_all_keys_for_table(
@@ -443,7 +447,7 @@ class ValkeyDb(BaseDb):
             for key in keys:
                 pipeline.get(key)
 
-            results = self._exec_pipeline(pipeline)
+            results = self._exec_pipeline(pipeline, raise_on_error=raise_on_error)
             if not results:
                 return []
 
@@ -459,6 +463,8 @@ class ValkeyDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
+            if raise_on_error:
+                raise
             return []
 
     def _schema_version_key(self, table_name: str) -> str:
@@ -559,8 +565,11 @@ class ValkeyDb(BaseDb):
             log_error(f"Exception upserting run into Valkey: {str(e)}")
             raise e
 
-    def _get_session_run_rows(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get the run rows for a session, ordered by run_index, in a single batched read."""
+    def _get_session_run_rows(self, session_id: str, raise_on_error: bool = False) -> List[Dict[str, Any]]:
+        """Get the run rows for a session, ordered by run_index, in a single batched read.
+
+        With raise_on_error, a failed index read or batched GET raises instead of reading as no runs.
+        """
         index_key = self._runs_by_session_index_key(session_id)
         try:
             run_ids: List[str] = [
@@ -568,6 +577,8 @@ class ValkeyDb(BaseDb):
                 for m in self.valkey_client.zrange(index_key, RangeByIndex(0, -1))
             ]
         except Exception:
+            if raise_on_error:
+                raise
             run_ids = []
 
         if not run_ids:
@@ -576,7 +587,7 @@ class ValkeyDb(BaseDb):
         pipeline = self._create_pipeline()
         for run_id in run_ids:
             pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
-        results = self._exec_pipeline(pipeline)
+        results = self._exec_pipeline(pipeline, raise_on_error=raise_on_error)
         if not results:
             return []
 
@@ -710,7 +721,7 @@ class ValkeyDb(BaseDb):
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
         """Read a single run from Valkey."""
         try:
-            row = self._get_record("runs", run_id)
+            row = self._get_record("runs", run_id, raise_on_error=True)
             if row is None:
                 return None
             if not deserialize:
@@ -742,9 +753,9 @@ class ValkeyDb(BaseDb):
         try:
             # Fast path: filter by session_id uses the index
             if session_id is not None:
-                rows: List[Dict[str, Any]] = self._get_session_run_rows(session_id)
+                rows: List[Dict[str, Any]] = self._get_session_run_rows(session_id, raise_on_error=True)
             else:
-                rows = self._get_all_records("runs")
+                rows = self._get_all_records("runs", raise_on_error=True)
 
             conditions: Dict[str, Any] = {}
             if user_id is not None:

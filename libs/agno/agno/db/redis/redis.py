@@ -280,12 +280,13 @@ class RedisDb(BaseDb):
             log_error(f"Error storing Redis record: {str(e)}")
             return False
 
-    def _get_record(self, table_type: str, record_id: str) -> Optional[Dict[str, Any]]:
+    def _get_record(self, table_type: str, record_id: str, raise_on_error: bool = False) -> Optional[Dict[str, Any]]:
         """Generic method to get a record from Redis.
 
         Args:
             table_type (str): The type of table to get the record from.
             record_id (str): The ID of the record to get.
+            raise_on_error (bool): Raise a failed read instead of returning None.
 
         Returns:
             Optional[Dict[str, Any]]: The record data if found, None otherwise.
@@ -301,6 +302,8 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting record {record_id}: {str(e)}")
+            if raise_on_error:
+                raise
             return None
 
     def _delete_record(self, table_type: str, record_id: str, index_fields: Optional[List[str]] = None) -> bool:
@@ -342,17 +345,18 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
-    def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
+    def _get_all_records(self, table_type: str, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         """Generic method to get all records for a table type.
 
         Args:
             table_type (str): The type of table to get the records from.
+            raise_on_error (bool): Raise a failed read instead of returning an empty list.
 
         Returns:
             List[Dict[str, Any]]: The records data if found, None otherwise.
 
         Raises:
-            Exception: If any error occurs while getting the records.
+            Exception: If any error occurs while getting the records and raise_on_error is set.
         """
         try:
             keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
@@ -367,6 +371,8 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting all records for {table_type}: {str(e)}")
+            if raise_on_error:
+                raise
             return []
 
     def _schema_version_key(self, table_name: str) -> str:
@@ -595,7 +601,7 @@ class RedisDb(BaseDb):
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
         """Read a single run from Redis."""
         try:
-            row = self._get_record("runs", run_id)
+            row = self._get_record("runs", run_id, raise_on_error=True)
             if row is None:
                 return None
             if not deserialize:
@@ -628,18 +634,15 @@ class RedisDb(BaseDb):
             # Fast path: filter by session_id uses the index
             if session_id is not None:
                 index_key = self._runs_by_session_index_key(session_id)
-                try:
-                    run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
-                except Exception:
-                    run_ids = []
+                run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
                 rows: List[Dict[str, Any]] = []
                 for rid in run_ids or []:
                     run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
-                    row = self._get_record("runs", run_id)
+                    row = self._get_record("runs", run_id, raise_on_error=True)
                     if row is not None:
                         rows.append(row)
             else:
-                rows = self._get_all_records("runs")
+                rows = self._get_all_records("runs", raise_on_error=True)
 
             conditions: Dict[str, Any] = {}
             if user_id is not None:
