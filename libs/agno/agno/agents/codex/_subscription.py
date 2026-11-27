@@ -390,17 +390,20 @@ async def one_at_a_time(agent: Any, wait: bool = False, run_id: Optional[str] = 
     With ``wait``, the run waits its turn: it asks again every few seconds until the slot is free,
     for up to WAIT_SECONDS, and then raises AgentBusyError saying it waited that long. Turns are
     not taken in order: whichever waiting run asks first after a release gets the slot. A run
-    cancelled while it waits (``run_id``) stops waiting and never takes the slot.
+    cancelled while it waits (``run_id``) raises RunCancelledException and never runs on the slot:
+    it stops waiting, or gives the slot straight back when it came free after the cancel.
     """
     from agno.exceptions import RunCancelledException
     from agno.run.cancel import ais_cancelled
 
     agent_id = agent.get_id()
     deadline = time.monotonic() + WAIT_SECONDS
+    waited = False
     while True:
         release = await _finish(asyncio.ensure_future(_take(agent)))
         if release is not None:
             break
+        waited = True
         if not wait:
             raise AgentBusyError(
                 f"{agent_id} is busy. It runs on a ChatGPT subscription, one piece of work at a time. "
@@ -419,6 +422,9 @@ async def one_at_a_time(agent: Any, wait: bool = False, run_id: Optional[str] = 
         # A little apart, so runs waiting on one agent do not all ask at the same moment.
         await asyncio.sleep(_ASK_AGAIN_SECONDS + random.uniform(0, _ASK_AGAIN_SECONDS / 4))
     try:
+        # The slot may have come free after the waiting run was cancelled: that run gives it back.
+        if waited and run_id is not None and await ais_cancelled(run_id):
+            raise RunCancelledException(run_id)
         yield
     finally:
         await _finish(asyncio.ensure_future(release()))

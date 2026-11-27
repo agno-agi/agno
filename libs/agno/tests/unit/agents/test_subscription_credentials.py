@@ -676,6 +676,38 @@ async def test_a_waiting_step_that_is_cancelled_never_takes_the_slot(monkeypatch
                 pass
 
 
+async def test_a_waiting_step_cancelled_just_before_the_slot_comes_free_gives_it_back(monkeypatch):
+    """One cancel often stops both runs: the first lets go before the waiting one asks again."""
+    from agno.exceptions import RunCancelledException
+    from agno.run import cancel
+
+    monkeypatch.setattr(_subscription, "_ASK_AGAIN_SECONDS", 0.05)
+    agent = CodexAgent(id="codex-1", auth_json=login())
+    cancelled = False
+
+    async def is_cancelled(run_id: str) -> bool:
+        return cancelled and run_id == "r2"
+
+    monkeypatch.setattr(cancel, "ais_cancelled", is_cancelled)
+
+    async def waiting_step() -> str:
+        async with _subscription.one_at_a_time(agent, wait=True, run_id="r2"):
+            return "ran"
+
+    async with _subscription.one_at_a_time(agent):
+        step = asyncio.create_task(waiting_step())
+        # The step has asked once, found the agent busy and not been cancelled; it asks again later.
+        await asyncio.sleep(0.01)
+        cancelled = True
+    with pytest.raises(RunCancelledException):
+        await step
+    assert "codex-1" not in _subscription._busy
+    # A run that never waited is not asked about a cancel here; its own run handles that.
+    cancelled = True
+    async with _subscription.one_at_a_time(agent, wait=True, run_id="r2"):
+        pass
+
+
 def test_a_codex_agent_on_a_sign_in_may_sit_in_two_parallel_branches():
     from agno.workflow import Parallel, Step
 
