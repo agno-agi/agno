@@ -53,6 +53,15 @@ JSON object, either at the top level or under `backendResponse`. It decodes
 the base64 once and removes a WAV header when present before producing an
 Agno WAV audio artifact. Incompatible audio formats fail explicitly.
 
+## Dealport company and property intelligence
+
+`dealport_tools.py` connects an Agno agent to Dealport (`DealportTools`) to size
+US private company markets for free (`preview_companies`, `$0.00`), search
+cited company and NYC commercial building Records (`$0.01` per new Record),
+match CSV or JSON company lists (`$0.00`), and resolve verified human owner
+contacts (`$0.09` per verified hit, `$0.00` miss). Set `DEALPORT_API_KEY` and
+`OPENAI_API_KEY`, then run `python cookbook/91_tools/dealport_tools.py`.
+
 ## Folders
 
 - `finance/` - FinanceTools: one finance toolkit, swappable data providers (yfinance, financialdatasets.ai)

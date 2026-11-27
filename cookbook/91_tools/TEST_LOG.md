@@ -154,3 +154,13 @@ those require service and model credentials.
 **Result:** All three agents called `generate_image`. The script saved `tmp/nature_0.png`, `tmp/apple_0.png` and `tmp/apple_1.png` from the returned image bytes.
 
 ---
+
+### dealport_tools.py
+
+**Status:** PENDING
+
+**Description:** Configures an `OpenAIResponses(id="gpt-5.6-luna")` agent with `DealportTools` to size independent Ohio HVAC companies (`NAICS 238220`) via `preview_companies` (`$0.00`) and summarize the 5 sample companies.
+
+**Result:** Local HTTP fixture unit tests pass across all 8 sync and 8 async `DealportTools` methods (`pytest libs/agno/tests/unit/tools/test_dealport.py`), including URL/input validation and credential redaction.
+
+---
