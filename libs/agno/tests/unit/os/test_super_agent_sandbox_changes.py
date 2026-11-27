@@ -457,7 +457,11 @@ def test_task_refusals(task_reader, saved):
     assert task_reader.read(run_context, task_id="t-1") == {
         "error": "Writer does not work in a sandbox, so it has no checkout of its own to read."
     }
-    task_reader.task.update(executor_id="engineer")
+    task_reader.task.update(executor_type="team", executor_id="crew")
+    assert task_reader.read(run_context, task_id="t-1") == {
+        "error": "This Task's executor is not an agent that works in a sandbox: no checkout to read."
+    }
+    task_reader.task.update(executor_type="agent", executor_id="engineer")
     assert task_reader.read(run_context, task_id="t-1") == {
         "error": "Engineer has not run for this Task, so there are no changes to read."
     }

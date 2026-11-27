@@ -791,7 +791,7 @@ class BackgroundRunTools(StudioRunnerTools):
         try:
             value = await starter.task(task_id)
             if value.get("executor_type") != "agent" or not value.get("executor_id"):
-                raise _Unreadable("This Task's executor does not work in a sandbox, so it has no checkout to read.")
+                raise _Unreadable("This Task's executor is not an agent that works in a sandbox: no checkout to read.")
             agent = starter.executor(value)
             self._sandboxed(agent)
             if not value.get("job_id") or not value.get("session_id"):
