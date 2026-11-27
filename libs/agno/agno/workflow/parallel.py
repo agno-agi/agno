@@ -1037,7 +1037,9 @@ def _harness_agent_ids(item: Any) -> set:
     from agno.team.team import Team
 
     if isinstance(item, BaseExternalAgent):
-        return {item.get_id()}
+        # An agent that runs one piece of work at a time makes a second branch wait its turn, so it
+        # may be used in more than one.
+        return set() if item._runs_one_at_a_time else {item.get_id()}
     if isinstance(item, Team):
         found: set = set()
         for member in item.members if isinstance(item.members, list) else []:
@@ -1064,7 +1066,9 @@ def _refuse_shared_harness_agents(branches: List[Any]) -> None:
 
     A harness agent keeps one conversation per workflow session, and a conversation takes one turn at
     a time, so two branches running it at once would leave one waiting on the other until its retries
-    ran out. Different harness agents, and Agno agents, can run side by side.
+    ran out. Different harness agents, and Agno agents, can run side by side. So can two branches of
+    an agent that runs one piece of work at a time, such as a Codex agent on a ChatGPT sign-in: the
+    second branch waits for the first and then continues the same conversation.
     """
     seen: Dict[str, int] = {}
     for index, branch in enumerate(branches):

@@ -417,10 +417,12 @@ def _output_schema(agent: "BaseExternalAgent", kwargs: Dict[str, Any]) -> Any:
 async def arun(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> RunOutput:
     from agno.run.cancel import acleanup_run, aregister_run
 
+    # A workflow step or a team member waits its turn for a busy agent; any other run is refused.
+    wait_for_turn = bool(kwargs.pop("_wait_for_turn", False))
     execution = _execution(agent, input, kwargs)
     await aregister_run(execution["run_id"])
     try:
-        async with agent._asubscription_slot():
+        async with agent._asubscription_slot(wait=wait_for_turn, run_id=execution["run_id"]):
             run = await coordinator(agent).arun(kwargs.get("session_id") or str(uuid4()), **execution)
     finally:
         await acleanup_run(execution["run_id"])
@@ -432,6 +434,7 @@ async def arun(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> RunOutp
 async def astream(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> AsyncGenerator[Any, None]:
     from agno.run.cancel import acleanup_run, aregister_run
 
+    wait_for_turn = bool(kwargs.pop("_wait_for_turn", False))
     execution = _execution(agent, input, kwargs)
     await aregister_run(execution["run_id"])
     runner = coordinator(agent)
@@ -439,7 +442,7 @@ async def astream(agent: "BaseExternalAgent", input: Any, **kwargs: Any) -> Asyn
     events: List[Dict[str, Any]] = []
     skipped = {event.value for event in agent.events_to_skip or []}
     try:
-        async with agent._asubscription_slot():
+        async with agent._asubscription_slot(wait=wait_for_turn, run_id=execution["run_id"]):
             async for value in iterator:
                 if isinstance(value, RunOutput):
                     if agent.store_events:
