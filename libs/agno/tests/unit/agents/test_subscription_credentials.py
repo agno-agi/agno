@@ -489,13 +489,15 @@ async def test_a_second_request_to_a_codex_agent_on_the_host_is_told_it_is_busy(
     assert session is None or not session.runs
 
 
+@pytest.mark.parametrize("own_app", [False, True], ids=["AgentOS's app", "the caller's FastAPI app"])
 @pytest.mark.parametrize("approval_policy", [None, "never"], ids=["asks for approval", "never asks"])
-def test_agentos_refuses_a_run_for_a_busy_codex_agent_on_the_host(codex_sdk, tmp_path, approval_policy):
+def test_agentos_refuses_a_run_for_a_busy_codex_agent_on_the_host(codex_sdk, tmp_path, approval_policy, own_app):
     """Over HTTP, as a busy session is refused: 409, or a typed RunError event on a stream, and no run stored.
 
     An agent that asks for approval is always run in the background by AgentOS, so the default
     configuration takes the background path for both requests.
     """
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from agno.db.sqlite import SqliteDb
@@ -510,7 +512,8 @@ def test_agentos_refuses_a_run_for_a_busy_codex_agent_on_the_host(codex_sdk, tmp
         **({"approval_policy": approval_policy} if approval_policy else {}),
     )
     assert agent._uses_native_hitl is (approval_policy is None)
-    client = TestClient(AgentOS(agents=[agent], db=db).get_app(), raise_server_exceptions=False)
+    agent_os = AgentOS(agents=[agent], db=db, base_app=FastAPI() if own_app else None)
+    client = TestClient(agent_os.get_app(), raise_server_exceptions=False)
     _subscription._busy.add("codex-1")  # another run of this agent is in flight
 
     resp = client.post("/agents/codex-1/runs", data={"message": "go", "session_id": "s", "stream": "false"})
