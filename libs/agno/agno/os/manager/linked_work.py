@@ -11,6 +11,7 @@ model's provider has to accept two user messages in a row, or merge them in its 
 
 import asyncio
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -60,10 +61,38 @@ _DELIVERED_TO = frozenset(
 )
 
 
-def _delivers(model: Any) -> bool:
-    """Whether the block is sent to this model: its exact class is one of the listed providers."""
+# These classes send both user messages as they are, and are listed because the provider's own endpoint
+# accepts them. The same class pointed at another endpoint may reach a server that refuses the second
+# message, so for these the block is sent only on the class's default endpoint. The Claude and Gemini
+# formatters merge the two messages before sending, so they are safe on any endpoint.
+_SENT_AS_TWO_MESSAGES = frozenset(
+    {
+        ("agno.models.openai.chat", "OpenAIChat"),
+        ("agno.models.openai.responses", "OpenAIResponses"),
+        ("agno.models.azure.openai_chat", "AzureOpenAI"),
+        ("agno.models.azure.openai_responses", "AzureOpenAIResponses"),
+        ("agno.models.xai.xai", "xAI"),
+        ("agno.models.xai.responses", "xAIResponses"),
+    }
+)
+
+
+def _default_endpoint(model: Any) -> bool:
     kind = type(model)
-    return (kind.__module__, kind.__qualname__) in _DELIVERED_TO
+    if getattr(model, "base_url", None) != getattr(kind, "base_url", None):
+        return False
+    # The OpenAI client reads this variable when the model names no base URL.
+    return not (kind.__module__.startswith("agno.models.openai.") and os.getenv("OPENAI_BASE_URL"))
+
+
+def _delivers(model: Any) -> bool:
+    """Whether the block is sent to this model: its exact class is one of the listed providers, and a
+    class that sends two user messages as they are is on its default endpoint."""
+    kind = type(model)
+    name = (kind.__module__, kind.__qualname__)
+    if name not in _DELIVERED_TO:
+        return False
+    return _default_endpoint(model) if name in _SENT_AS_TWO_MESSAGES else True
 
 
 def _result_status(value: Dict[str, Any]) -> Optional[str]:
