@@ -640,6 +640,44 @@ def test_a_run_in_the_turn_and_a_start_in_one_step_do_not_share_a_session(plain)
     assert [entry["component_id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["investigator", "writer"]
 
 
+@pytest.mark.parametrize("failure", [ConnectionError("database unavailable"), asyncio.CancelledError()])
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_a_failed_or_cancelled_status_read_gives_the_session_back(plain, failure, mode):
+    async def steps():
+        run_context = plain.context()
+        receipt = await plain.start(run_context)
+        read = plain.db.get_run
+
+        def broken(run_id, deserialize=True):
+            raise failure
+
+        async def in_the_turn():
+            with authorization_scope(lambda: run_context.authorization):
+                if mode == "sync":
+                    return json.loads(await asyncio.to_thread(plain.tools.run_agent, "writer", "Now", run_context))
+                return json.loads(await plain.tools.arun_agent("writer", "Now", _agno_run_context=run_context))
+
+        plain.db.get_run = broken
+        try:
+            if isinstance(failure, Exception):
+                assert await in_the_turn() == {
+                    "error": "Not started: could not check whether Writer has a run going: database unavailable"
+                }
+            else:
+                with pytest.raises(asyncio.CancelledError):
+                    await in_the_turn()
+        finally:
+            plain.db.get_run = read
+        # The session is not left reserved: the guard answers again, and the run goes once it is free.
+        held = await in_the_turn()
+        await finish(plain)
+        return receipt, held, await in_the_turn(), set(plain.tools._entering)
+
+    receipt, held, after, reserved = scenario(steps)
+    assert held == {"error": going(receipt["run_id"])}
+    assert after["status"] == "COMPLETED" and reserved == set()
+
+
 def test_the_guard_names_the_component_the_run_tool_would_run(plain):
     # An identifier that resolves to nothing, or to another component, is not held by the writer's run.
     async def steps():

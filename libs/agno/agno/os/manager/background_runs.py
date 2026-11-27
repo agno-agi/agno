@@ -166,31 +166,52 @@ class BackgroundRunTools(StudioRunnerTools):
         component_id = getattr(component, "id", None) or identifier
         return self._sub_session_id(run_context, kind, component_id), getattr(component, "name", None) or component_id
 
+    def _entered(self, session_id: str, name: str, refusal: Optional[str], error: Optional[BaseException]) -> Any:
+        """Keep the reservation only for a run that goes ahead. A read of the store that failed or was
+        cancelled must give the session back, or the component stays closed to the conversation."""
+        if refusal is None and error is None:
+            return session_id, None
+        self._release(session_id)
+        if error is not None and not isinstance(error, Exception):
+            raise error
+        if error is not None:
+            refusal = (
+                f"Not started: could not check whether {name} has a run going: {str(error) or type(error).__name__}"
+            )
+        return None, json.dumps({"error": refusal})
+
     def _enter(self, kind: str, identifier: str, run_context: Any) -> Tuple[Optional[str], Optional[str]]:
         """Reserve the session of a run in the turn. Returns the session to release, or a refusal."""
         session_id, name = self._session_of(kind, identifier, run_context)
         if session_id is None:
             return None, None
         refusal = self._reserve(session_id, name)
-        if refusal is None:
+        if refusal is not None:
+            return None, json.dumps({"error": refusal})
+        error: Optional[BaseException] = None
+        try:
             for entry in self._going(run_context, session_id):
                 row = get_stored_run(self._run_stores(entry.get("db_id")), entry["id"])
                 refusal = self._held_by(run_context, entry, row)
                 if refusal is not None:
-                    self._release(session_id)
                     break
-        return (None, json.dumps({"error": refusal})) if refusal is not None else (session_id, None)
+        except BaseException as exc:
+            error = exc
+        return self._entered(session_id, name, refusal, error)
 
     async def _aenter(self, kind: str, identifier: str, run_context: Any) -> Tuple[Optional[str], Optional[str]]:
         session_id, name = await asyncio.to_thread(self._session_of, kind, identifier, run_context)
         if session_id is None:
             return None, None
         refusal = self._reserve(session_id, name)
-        if refusal is None:
+        if refusal is not None:
+            return None, json.dumps({"error": refusal})
+        error: Optional[BaseException] = None
+        try:
             refusal = await self._aheld(run_context, session_id)
-            if refusal is not None:
-                self._release(session_id)
-        return (None, json.dumps({"error": refusal})) if refusal is not None else (session_id, None)
+        except BaseException as exc:
+            error = exc
+        return self._entered(session_id, name, refusal, error)
 
     async def _aheld(self, run_context: Any, session_id: str) -> Optional[str]:
         for entry in self._going(run_context, session_id):
