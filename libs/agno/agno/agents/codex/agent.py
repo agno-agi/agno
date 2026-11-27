@@ -279,6 +279,8 @@ class CodexAgent(BaseExternalAgent):
     auth_json: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
     # A ChatGPT Enterprise Codex access token, the other way to run on a subscription; handled like auth_json.
     access_token: Optional[str] = field(default=None, repr=False)
+    # Whether a ChatGPT sign-in made from AgentOS is stored for this agent; read at the start of each run.
+    _signed_in: bool = field(default=False, init=False, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -394,10 +396,21 @@ class CodexAgent(BaseExternalAgent):
         continuation = self.acontinue_run(run_response, **kwargs)
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
+    @property
+    def _on_chatgpt_sign_in(self) -> bool:
+        """Whether this agent signs in with a ChatGPT sign-in: one set in code, or one stored from AgentOS."""
+        return self.auth_json is not None or self._signed_in
+
+    async def _aresolve_subscription(self) -> None:
+        if self.auth_json is None and self.access_token is None:
+            from agno.agents.codex._subscription import asigned_in
+
+            self._signed_in = await asigned_in(self)
+
     def _subscription_env(self) -> Optional[Dict[str, str]]:
         if self.access_token is not None:
             return {"CODEX_ACCESS_TOKEN": self.access_token.strip()}
-        return {} if self.auth_json is not None else None
+        return {} if self._on_chatgpt_sign_in else None
 
     def _check_subscription(self) -> None:
         if self.auth_json is not None:
@@ -424,7 +437,7 @@ class CodexAgent(BaseExternalAgent):
         return text
 
     def _sandbox_login(self) -> Any:
-        if self.auth_json is None:
+        if not self._on_chatgpt_sign_in:
             return None
         from agno.agents.codex._subscription import SandboxLogin
 
@@ -432,13 +445,59 @@ class CodexAgent(BaseExternalAgent):
 
     @asynccontextmanager
     async def _asubscription_slot(self) -> AsyncIterator[None]:
-        if self.auth_json is None:
+        if not self._on_chatgpt_sign_in:
             yield
             return
         from agno.agents.codex._subscription import one_at_a_time
 
         async with one_at_a_time(self):
             yield
+
+    # ---------------------------------------------------------------------------
+    # Sign in to a ChatGPT subscription with a device code
+    # ---------------------------------------------------------------------------
+
+    async def asign_in(self) -> Dict[str, Any]:
+        """Start a ChatGPT sign-in for this agent with a device code.
+
+        Returns ``verification_url`` and ``user_code``: a person opens the link in their own
+        browser and enters the code. Codex does the sign-in; when it finishes, the sign-in is
+        stored encrypted in the agent's database, as auth_json's refreshed copy is, and the
+        agent runs on it from its next run. Needs a database on the agent and
+        AGNO_ENCRYPTION_KEY. Refused for an agent that has auth_json or access_token set.
+        The sign-in itself is never returned.
+        """
+        from agno.agents.codex._sign_in import astart
+
+        return await astart(self)
+
+    def sign_in(self) -> Dict[str, Any]:
+        """Sync version of asign_in."""
+        return run_coroutine_sync(self.asign_in())
+
+    async def asign_in_status(self) -> Dict[str, Any]:
+        """Where this agent's ChatGPT sign-in stands.
+
+        ``status`` is "waiting" (with the link and code again), "signed_in", "failed" (with
+        ``error``) or "not_signed_in".
+        """
+        from agno.agents.codex._sign_in import astatus
+
+        return await astatus(self)
+
+    def sign_in_status(self) -> Dict[str, Any]:
+        """Sync version of asign_in_status."""
+        return run_coroutine_sync(self.asign_in_status())
+
+    async def acancel_sign_in(self) -> Dict[str, Any]:
+        """Give up a sign-in that is waiting for its code. A stored sign-in is left as it is."""
+        from agno.agents.codex._sign_in import acancel
+
+        return await acancel(self)
+
+    def cancel_sign_in(self) -> Dict[str, Any]:
+        """Sync version of acancel_sign_in."""
+        return run_coroutine_sync(self.acancel_sign_in())
 
     def _refuse_host_operation(self, operation: str) -> None:
         if self.sandbox is not None:
@@ -612,7 +671,7 @@ class CodexAgent(BaseExternalAgent):
         }
         # A sign-in is kept in a file there, never in the operating system's keyring.
         config.config_overrides = (*config.config_overrides, 'cli_auth_credentials_store="file"')
-        if self.auth_json is None:
+        if self.access_token is not None:
             # The access token is the whole credential: nothing to write before or save after.
             codex_home.mkdir(parents=True, exist_ok=True)
             async with self._open_client(sdk, config, api_key=None) as codex:

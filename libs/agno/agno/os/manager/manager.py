@@ -301,6 +301,11 @@ def _diagnostics_tool(agent_os: "AgentOS", required_env: Sequence[str]) -> Any:
     )
 
 
+def _serves_codex(agent_os: "AgentOS") -> bool:
+    """Whether a served agent is a Codex agent, without importing the Codex adapter for an OS that has none."""
+    return any(getattr(agent, "_sandbox_runtime", None) == "codex" for agent in agent_os.agents or [])
+
+
 def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     """Create the manager using the OS registry and database.
 
@@ -407,6 +412,11 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     instructions.extend([BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS])
     if has_sandbox:
         instructions.append(SANDBOX_CHANGES_INSTRUCTIONS)
+    if _serves_codex(agent_os):
+        from agno.os.manager.sign_in import SIGN_IN_INSTRUCTIONS, SignInTools
+
+        tools.append(SignInTools(agent_os))
+        instructions.append(SIGN_IN_INSTRUCTIONS)
     if config.access_docs:
         try:
             from agno.tools.mcp import MCPTools

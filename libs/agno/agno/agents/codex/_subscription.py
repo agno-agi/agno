@@ -68,7 +68,7 @@ def parse_login(value: Any, agent_id: str) -> Dict[str, Any]:
 
 def check(agent: Any) -> None:
     """Raise when the agent's login cannot be used, or cannot be kept safely after a run."""
-    parse_login(agent.auth_json, agent.get_id())
+    _seed(agent)
     if _stores_logins(agent.db):
         try:
             import cryptography.fernet  # noqa: F401
@@ -113,55 +113,110 @@ def _key(seed: Dict[str, Any]) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest()).decode()
 
 
+def _seed(agent: Any) -> Optional[Dict[str, Any]]:
+    """The login the agent was given in code; None for an agent that is signed in from AgentOS."""
+    return parse_login(agent.auth_json, agent.get_id()) if agent.auth_json is not None else None
+
+
+def _encryption_key(agent: Any) -> str:
+    """The key the agent's stored copy is encrypted with.
+
+    An agent given a login in code uses a key made from that login. An agent signed in from
+    AgentOS has none, so its copy is encrypted with AGNO_ENCRYPTION_KEY.
+    """
+    from agno.utils.encryption import get_encryption_key
+
+    seed = _seed(agent)
+    if seed is not None:
+        return _key(seed)
+    key = get_encryption_key()
+    if not key:
+        raise ValueError(
+            f"The ChatGPT sign-in of {agent.get_id()} is kept encrypted in its database with AGNO_ENCRYPTION_KEY, "
+            "which is not set."
+        )
+    return key
+
+
+async def _astored(agent: Any) -> Optional[Dict[str, Any]]:
+    """The stored copy this agent can read; None when there is none, or it was saved with another key."""
+    from agno.agents._hitl import db_call
+    from agno.utils.encryption import decrypt_dict, is_encrypted
+
+    if not _stores_logins(agent.db):
+        return None
+    try:
+        row = await db_call(agent.db, "get_auth_token", _PROVIDER, None, agent.get_id())
+    except NotImplementedError:
+        return None
+    data = (row or {}).get("token_data")
+    if not isinstance(data, dict) or not is_encrypted(data):
+        return None
+    try:
+        stored = decrypt_dict(data, key=_encryption_key(agent))
+    except ValueError:
+        return None
+    return stored if _is_chatgpt_sign_in(stored) else None
+
+
+async def asigned_in(agent: Any) -> bool:
+    """Whether an agent with no login in code has one that was stored for it by a sign-in from AgentOS."""
+    return agent.auth_json is None and await _astored(agent) is not None
+
+
 def _stores_logins(db: Any) -> bool:
     return db is not None and hasattr(db, "get_auth_token") and hasattr(db, "upsert_auth_token")
 
 
 async def aload(agent: Any) -> Dict[str, Any]:
-    """The login the next run starts from: the stored copy when this agent's login can read it, else that login."""
-    from agno.agents._hitl import db_call
-    from agno.utils.encryption import decrypt_dict, is_encrypted
-
-    seed = parse_login(agent.auth_json, agent.get_id())
-    if not _stores_logins(agent.db):
-        return seed
-    try:
-        row = await db_call(agent.db, "get_auth_token", _PROVIDER, None, agent.get_id())
-    except NotImplementedError:
-        return seed
-    data = (row or {}).get("token_data")
-    if not isinstance(data, dict) or not is_encrypted(data):
-        return seed
-    try:
-        stored = decrypt_dict(data, key=_key(seed))
-    except ValueError:
-        # Saved from another login: the one this agent has now replaces it.
-        return seed
-    return stored if _newer(stored, seed) else seed
+    """The login the next run starts from: the stored copy when this agent can read it, else the login it was given."""
+    seed = _seed(agent)
+    stored = await _astored(agent)
+    if seed is None:
+        if stored is None:
+            raise ValueError(
+                f"{agent.get_id()} has no ChatGPT sign-in. Sign it in from AgentOS, or set auth_json. "
+                "OPENAI_API_KEY was not used."
+            )
+        return stored
+    # A copy saved from another login is unreadable, and the one this agent has now replaces it.
+    return stored if stored is not None and _newer(stored, seed) else seed
 
 
-async def asave(agent: Any, login: Any) -> None:
-    """Keep ``login`` as the copy the next run starts from, unless the kept one is as new."""
+async def asave(agent: Any, login: Any, replace: bool = False) -> None:
+    """Keep ``login`` as the copy the next run starts from, unless the kept one is as new.
+
+    ``replace`` keeps it whatever is there: a new sign-in takes the place of the old one.
+    """
     from agno.agents._hitl import db_call
     from agno.utils.encryption import encrypt_dict
 
-    if not _stores_logins(agent.db) or not _newer(login, await aload(agent)):
+    if not _stores_logins(agent.db) or not _is_chatgpt_sign_in(login):
         return
-    seed = parse_login(agent.auth_json, agent.get_id())
+    if not replace:
+        try:
+            current: Any = await aload(agent)
+        except ValueError:
+            # No login in code and none stored: this agent is not on a ChatGPT sign-in any more.
+            return
+        if not _newer(login, current):
+            return
     row = {
         "provider": _PROVIDER,
         "user_id": None,
         "service": agent.get_id(),
-        "token_data": encrypt_dict(login, key=_key(seed)),
+        "token_data": encrypt_dict(login, key=_encryption_key(agent)),
         "granted_scopes": [],
     }
     saved = None
     with suppress(NotImplementedError):
         saved = await db_call(agent.db, "upsert_auth_token", row)
     if saved is None:
+        if replace:
+            raise RuntimeError(f"Could not save the ChatGPT sign-in of {agent.get_id()} in its database")
         log_error(
-            f"Could not save the ChatGPT sign-in (auth.json) {agent.get_id()} refreshed during its run. Its next run starts "
-            "from the previous copy, which may no longer work; if it fails to sign in, give it a new login."
+            f"Could not save the ChatGPT sign-in (auth.json) {agent.get_id()} refreshed during its run. Its next run "
+            "starts from the previous copy, which may no longer work; if it fails to sign in, give it a new login."
         )
 
 

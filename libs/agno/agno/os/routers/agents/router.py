@@ -2697,4 +2697,7 @@ def get_agent_router(
 
         return result
 
+    from agno.os.routers.agents.sign_in import add_sign_in_routes
+
+    add_sign_in_routes(router, os)
     return router

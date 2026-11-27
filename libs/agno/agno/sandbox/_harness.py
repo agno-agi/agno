@@ -218,9 +218,9 @@ def coordinator(agent: "BaseExternalAgent") -> "SandboxCoordinator":
     result.agent_ids.add(agent.get_id())
     login = agent._sandbox_login()
     if login is not None:
+        # Never removed here: a cancel or a delete builds the coordinator without reading what is
+        # stored for the agent, and must not stop a running turn's login from being saved.
         result.logins[agent.get_id()] = login
-    else:
-        result.logins.pop(agent.get_id(), None)
     _register_on_db(agent.db, result)
     return result
 
