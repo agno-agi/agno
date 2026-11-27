@@ -202,12 +202,12 @@ class CodexAgent(BaseExternalAgent):
         codex_bin: Path to a specific Codex executable. Defaults to the bundled one.
         env: Environment variables for the Codex process. OPENAI_API_KEY automatically
             authenticates API-key sessions; existing non-API-key logins are preserved.
-        plan_login: Run on a ChatGPT plan instead of an API key: the contents of the auth.json
-            that `codex login` writes, as text or a mapping. Give each agent a login of its own and
-            use that login nowhere else, because Codex replaces its tokens as it works. The agent
+        auth_json: Run on a ChatGPT plan instead of an API key, signed in with the ChatGPT
+            sign-in (`auth.json`): the contents of the auth.json that `codex login` writes, as
+            text or a mapping. Give each agent a sign-in of its own and use it nowhere else, because Codex replaces its tokens as it works. The agent
             then never uses OPENAI_API_KEY and runs one piece of work at a time: a run the durable
             queue owns waits its turn, any other is refused with AgentBusyError. The refreshed
-            login is saved, encrypted, in the agent's database after every run.
+            sign-in is saved, encrypted, in the agent's database after every run.
         thread_kwargs: Deprecated alias for thread_options.
         turn_kwargs: Deprecated alias for turn_options.
         retries: Number of times to retry a failed run. Cancelled runs, budget and usage limits and errors
@@ -264,8 +264,8 @@ class CodexAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = None
     codex_bin: Optional[str] = None
     env: Optional[Dict[str, str]] = None
-    # A ChatGPT plan login; never shown, stored as a component config or sent to a sandbox as configuration.
-    plan_login: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
+    # The ChatGPT sign-in (auth.json), one way to run on a plan; never shown, stored as a component config or sent to a sandbox as configuration.
+    auth_json: Optional[Union[str, Dict[str, Any]]] = field(default=None, repr=False)
     thread_kwargs: Dict[str, Any] = field(default_factory=dict)
     turn_kwargs: Dict[str, Any] = field(default_factory=dict)
 
@@ -277,7 +277,7 @@ class CodexAgent(BaseExternalAgent):
         "client_options": "native CodexConfig describes the host process; configure it on the serving AgentOS",
         "codex_bin": "a host path; configure it on the serving AgentOS",
         "env": "process credentials; set them in the serving environment",
-        "plan_login": "a credential; set it on the agent in the serving AgentOS's code",
+        "auth_json": "a credential; set it on the agent in the serving AgentOS's code",
     }
     _plan_blocked_env: ClassVar[Tuple[str, ...]] = ("OPENAI_API_KEY", "CODEX_API_KEY")
     _stored_as: ClassVar[Dict[str, str]] = {"thread_kwargs": "thread_options", "turn_kwargs": "turn_options"}
@@ -376,16 +376,16 @@ class CodexAgent(BaseExternalAgent):
         return sync_events(continuation) if kwargs.get("stream") else run_coroutine_sync(continuation)
 
     def _plan_env(self) -> Optional[Dict[str, str]]:
-        return {} if self.plan_login is not None else None
+        return {} if self.auth_json is not None else None
 
     def _check_plan(self) -> None:
-        if self.plan_login is not None:
+        if self.auth_json is not None:
             from agno.agents.codex._plan import check
 
             check(self)
 
     def _sandbox_login(self) -> Any:
-        if self.plan_login is None:
+        if self.auth_json is None:
             return None
         from agno.agents.codex._plan import SandboxLogin
 
@@ -393,7 +393,7 @@ class CodexAgent(BaseExternalAgent):
 
     @asynccontextmanager
     async def _aplan_slot(self) -> AsyncIterator[None]:
-        if self.plan_login is None:
+        if self.auth_json is None:
             yield
             return
         from agno.agents.codex._plan import one_at_a_time
@@ -552,7 +552,7 @@ class CodexAgent(BaseExternalAgent):
 
         An agent on a ChatGPT plan must hold its slot (_aplan_slot) around this: a run takes it
         before it starts, so only one client uses the login at a time."""
-        if self.plan_login is None:
+        if self.auth_json is None:
             async with self._open_client(_sdk(), self._codex_config(_sdk())) as codex:
                 yield codex
             return

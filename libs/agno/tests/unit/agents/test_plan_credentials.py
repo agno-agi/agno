@@ -215,18 +215,18 @@ def test_plan_credentials_are_not_stored_as_component_configs(monkeypatch):
     monkeypatch.setattr(claude_module, "_sdk", lambda: SimpleNamespace(ClaudeAgentOptions=ClaudeOptions))
     with pytest.raises(ValueError, match="oauth_token cannot be stored"):
         ClaudeAgent(id="claude-1", oauth_token="oauth-token-1").to_dict()
-    with pytest.raises(ValueError, match="plan_login cannot be stored"):
-        CodexAgent(id="codex-1", plan_login=login()).to_dict()
+    with pytest.raises(ValueError, match="auth_json cannot be stored"):
+        CodexAgent(id="codex-1", auth_json=login()).to_dict()
 
 
 # ---------------------------------------------------------------------------
-# Codex on a ChatGPT login
+# Codex on a ChatGPT sign-in (auth.json)
 # ---------------------------------------------------------------------------
 
 
-async def test_codex_plan_login_keeps_the_api_key_out_of_the_sandbox(coordinator):
+async def test_codex_auth_json_keeps_the_api_key_out_of_the_sandbox(coordinator):
     sandbox = FakeSandbox(env={"OPENAI_API_KEY": "scoped-key", "CODEX_API_KEY": "scoped", "GH_TOKEN": "gh"})
-    agent = CodexAgent(id="codex-1", plan_login=json.dumps(login()), sandbox=sandbox)
+    agent = CodexAgent(id="codex-1", auth_json=json.dumps(login()), sandbox=sandbox)
     await agent.arun("hello", session_id="s1")
     _, execution = coordinator.calls[0]
     # With no key in its environment the sandbox runtime has nothing to log Codex in with but the login file.
@@ -237,7 +237,7 @@ async def test_codex_plan_login_keeps_the_api_key_out_of_the_sandbox(coordinator
 
 async def test_codex_login_is_written_before_the_turn_and_the_refreshed_copy_survives_a_restart():
     db, sandbox = FakeDb(), FakeSandbox()
-    agent = CodexAgent(id="codex-1", plan_login=json.dumps(login()), db=db)
+    agent = CodexAgent(id="codex-1", auth_json=json.dumps(login()), db=db)
     hook = agent._sandbox_login()
 
     await hook.ainstall(sandbox, HANDLE)
@@ -252,7 +252,7 @@ async def test_codex_login_is_written_before_the_turn_and_the_refreshed_copy_sur
     assert "refresh-rotated" not in stored and "access-" not in stored
 
     # After a restart the agent is built again from the same environment value.
-    restarted = CodexAgent(id="codex-1", plan_login=json.dumps(login()), db=db)
+    restarted = CodexAgent(id="codex-1", auth_json=json.dumps(login()), db=db)
     fresh = FakeSandbox()
     await restarted._sandbox_login().ainstall(fresh, HANDLE)
     assert json.loads(fresh.auth_json)["tokens"]["refresh_token"] == "refresh-rotated"
@@ -260,7 +260,7 @@ async def test_codex_login_is_written_before_the_turn_and_the_refreshed_copy_sur
 
 async def test_a_new_codex_login_replaces_the_stored_one_and_an_older_copy_never_replaces_a_newer():
     db, sandbox = FakeDb(), FakeSandbox()
-    agent = CodexAgent(id="codex-1", plan_login=login(), db=db)
+    agent = CodexAgent(id="codex-1", auth_json=login(), db=db)
     newer = login("refresh-rotated", datetime(2026, 11, 9, tzinfo=timezone.utc))
     sandbox.auth_json = json.dumps(newer)
     await agent._sandbox_login().acollect(sandbox, HANDLE)
@@ -278,7 +278,7 @@ async def test_a_new_codex_login_replaces_the_stored_one_and_an_older_copy_never
 
     # The stored copy can only be read with the login it came from: a new one takes its place.
     reseeded = CodexAgent(
-        id="codex-1", plan_login=login("refresh-new-sign-in", datetime(2026, 11, 2, tzinfo=timezone.utc)), db=db
+        id="codex-1", auth_json=login("refresh-new-sign-in", datetime(2026, 11, 2, tzinfo=timezone.utc)), db=db
     )
     assert (await _plan.aload(reseeded))["tokens"]["refresh_token"] == "refresh-new-sign-in"
 
@@ -290,7 +290,7 @@ async def test_the_login_is_saved_when_a_sandboxed_turn_fails():
     from agno.sandbox.postgres import SandboxLease, SandboxState
 
     db, sandbox = FakeDb(), FakeSandbox()
-    agent = CodexAgent(id="codex-1", plan_login=login(), db=db)
+    agent = CodexAgent(id="codex-1", auth_json=login(), db=db)
     runner = SandboxCoordinator(PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:1/ai"), sandbox, object())
     runner.logins["codex-1"] = agent._sandbox_login()
     lease = SandboxLease("codex-1", "s1", None, "r1", 1, "owner")
@@ -316,7 +316,7 @@ async def test_the_login_is_saved_when_a_sandboxed_turn_fails():
     "value", ["", "not json", "[]", json.dumps({"OPENAI_API_KEY": "sk-secret-key", "tokens": None})]
 )
 async def test_an_unusable_codex_login_fails_the_run_without_repeating_it(coordinator, value):
-    agent = CodexAgent(id="codex-1", plan_login=value, sandbox=FakeSandbox())
+    agent = CodexAgent(id="codex-1", auth_json=value, sandbox=FakeSandbox())
     with pytest.raises(ValueError, match="codex-1 is set to run on a ChatGPT plan") as error:
         await agent.arun("hello", session_id="s1")
     assert "OPENAI_API_KEY was not used" in str(error.value)
@@ -367,9 +367,9 @@ def codex_sdk(monkeypatch):
     return FakeAsyncCodex.calls
 
 
-async def test_codex_on_the_host_signs_in_with_the_plan_login_and_never_the_api_key(codex_sdk, tmp_path):
+async def test_codex_on_the_host_signs_in_with_the_auth_json_and_never_the_api_key(codex_sdk, tmp_path):
     db = FakeDb()
-    agent = CodexAgent(id="codex-1", plan_login=login(), db=db, env={"CODEX_HOME": str(tmp_path), "KEEP": "1"})
+    agent = CodexAgent(id="codex-1", auth_json=login(), db=db, env={"CODEX_HOME": str(tmp_path), "KEEP": "1"})
     auth_json = tmp_path / "auth.json"
     async with agent._new_client():
         assert json.loads(auth_json.read_text()) == login()
@@ -384,7 +384,7 @@ async def test_codex_on_the_host_signs_in_with_the_plan_login_and_never_the_api_
 async def test_codex_on_the_host_gets_a_home_of_its_own_by_default(codex_sdk, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "the-developers-own-codex-home"))
-    async with CodexAgent(id="codex-1", plan_login=login())._new_client():
+    async with CodexAgent(id="codex-1", auth_json=login())._new_client():
         pass
     assert codex_sdk[0]["env"]["CODEX_HOME"] == str(tmp_path / ".agno" / "codex" / "codex-1")
     assert not (tmp_path / "the-developers-own-codex-home").exists()
@@ -397,7 +397,7 @@ async def test_codex_on_the_host_gets_a_home_of_its_own_by_default(codex_sdk, tm
 
 async def test_a_second_request_to_a_codex_agent_on_a_plan_is_told_it_is_busy(coordinator):
     coordinator.hold = 0.05
-    agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
+    agent = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
     first = asyncio.create_task(agent.arun("one", session_id="s1", run_id="r1"))
     await asyncio.sleep(0.01)
     with pytest.raises(AgentBusyError, match="^codex-1 is busy") as error:
@@ -413,9 +413,9 @@ async def test_a_busy_codex_agent_refuses_a_queued_run_too_so_the_queue_keeps_it
     from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
 
     coordinator.hold = 0.05
-    agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
+    agent = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
     # A second instance of the same agent, as a stored or rebuilt agent would be.
-    twin = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
+    twin = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
     mark_worker_managed("r2", "worker", 1)
     try:
         first = asyncio.create_task(agent.arun("one", session_id="s1", run_id="r1"))
@@ -437,7 +437,7 @@ async def test_queued_runs_for_one_codex_agent_on_a_plan_run_one_after_another(c
 
     monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 0)
     coordinator.hold = 0.05
-    agent = CodexAgent(id="codex-1", plan_login=login(), sandbox=FakeSandbox())
+    agent = CodexAgent(id="codex-1", auth_json=login(), sandbox=FakeSandbox())
     store = InMemoryQueueStore()
     worker = QueueWorker(
         store=store,
@@ -473,7 +473,7 @@ async def test_queued_runs_for_one_codex_agent_on_a_plan_run_one_after_another(c
 async def test_a_second_request_to_a_codex_agent_on_the_host_is_told_it_is_busy(codex_sdk, tmp_path, stream):
     from agno.db.in_memory import InMemoryDb
 
-    agent = CodexAgent(id="codex-1", plan_login=login(), db=InMemoryDb(), env={"CODEX_HOME": str(tmp_path)}, retries=2)
+    agent = CodexAgent(id="codex-1", auth_json=login(), db=InMemoryDb(), env={"CODEX_HOME": str(tmp_path)}, retries=2)
     async with agent._aplan_slot():
         with pytest.raises(AgentBusyError, match="^codex-1 is busy") as error:
             if stream:
@@ -514,7 +514,7 @@ async def test_agents_with_only_api_keys_are_given_them_as_before(coordinator, m
     await CodexAgent(id="codex-key", sandbox=FakeSandbox()).arun("hello", session_id="s2")
     assert coordinator.calls[0][1]["env"] == {"ANTHROPIC_API_KEY": API_KEY, "CLAUDE_CODE_OAUTH_TOKEN": "host-token"}
     assert coordinator.calls[1][1]["env"] == {"OPENAI_API_KEY": OPENAI_KEY}
-    # On the host a Codex agent with no plan login still logs in with the key.
+    # On the host a Codex agent with no auth_json still logs in with the key.
     async with CodexAgent(id="codex-key")._new_client():
         pass
     assert [call for call in codex_sdk if call["op"] == "login"] == [{"op": "login", "api_key": OPENAI_KEY}]

@@ -44,7 +44,7 @@ _RUNTIME_OWNED = frozenset(
         "role",
         # Plan credentials reach the sandbox as its environment or its login file, never in a request.
         "oauth_token",
-        "plan_login",
+        "auth_json",
     }
 )
 # Host paths, process settings and native option objects have no meaning inside the sandbox.

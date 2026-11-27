@@ -59,22 +59,22 @@ def parse_login(value: Any, agent_id: str) -> Dict[str, Any]:
         tokens = value.get("tokens")
         if isinstance(tokens, dict) and isinstance(tokens.get("refresh_token"), str) and tokens["refresh_token"]:
             return value
-        reason = "has no ChatGPT sign-in in it (an API-key auth.json cannot be used as a plan login)"
+        reason = "has no ChatGPT sign-in in it (an auth.json made with an API key cannot be used)"
     raise ValueError(
-        f"{agent_id} is set to run on a ChatGPT plan, but its plan login {reason}. Run `codex login` and pass "
+        f"{agent_id} is set to run on a ChatGPT plan, but its auth_json {reason}. Run `codex login` and pass "
         "the contents of the auth.json it writes. OPENAI_API_KEY was not used."
     )
 
 
 def check(agent: Any) -> None:
     """Raise when the agent's login cannot be used, or cannot be kept safely after a run."""
-    parse_login(agent.plan_login, agent.get_id())
+    parse_login(agent.auth_json, agent.get_id())
     if _stores_logins(agent.db):
         try:
             import cryptography.fernet  # noqa: F401
         except ImportError:
             raise ImportError(
-                f"{agent.get_id()} keeps its ChatGPT login encrypted in its database and needs `cryptography`. "
+                f"{agent.get_id()} keeps its ChatGPT sign-in (auth.json) encrypted in its database and needs `cryptography`. "
                 "Install it with `pip install cryptography`."
             ) from None
 
@@ -91,13 +91,13 @@ def _refreshed_at(login: Optional[Dict[str, Any]]) -> datetime:
     return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def _is_plan_login(login: Any) -> bool:
+def _is_chatgpt_sign_in(login: Any) -> bool:
     return isinstance(login, dict) and isinstance(login.get("tokens"), dict) and bool(login["tokens"])
 
 
 def _newer(login: Any, than: Any) -> bool:
     """Whether ``login`` is a ChatGPT sign-in refreshed after ``than``."""
-    return _is_plan_login(login) and (not _is_plan_login(than) or _refreshed_at(login) > _refreshed_at(than))
+    return _is_chatgpt_sign_in(login) and (not _is_chatgpt_sign_in(than) or _refreshed_at(login) > _refreshed_at(than))
 
 
 def _loads(text: Optional[str]) -> Any:
@@ -122,7 +122,7 @@ async def aload(agent: Any) -> Dict[str, Any]:
     from agno.agents._hitl import db_call
     from agno.utils.encryption import decrypt_dict, is_encrypted
 
-    seed = parse_login(agent.plan_login, agent.get_id())
+    seed = parse_login(agent.auth_json, agent.get_id())
     if not _stores_logins(agent.db):
         return seed
     try:
@@ -147,7 +147,7 @@ async def asave(agent: Any, login: Any) -> None:
 
     if not _stores_logins(agent.db) or not _newer(login, await aload(agent)):
         return
-    seed = parse_login(agent.plan_login, agent.get_id())
+    seed = parse_login(agent.auth_json, agent.get_id())
     row = {
         "provider": _PROVIDER,
         "user_id": None,
@@ -160,7 +160,7 @@ async def asave(agent: Any, login: Any) -> None:
         saved = await db_call(agent.db, "upsert_auth_token", row)
     if saved is None:
         log_error(
-            f"Could not save the ChatGPT login {agent.get_id()} refreshed during its run. Its next run starts "
+            f"Could not save the ChatGPT sign-in (auth.json) {agent.get_id()} refreshed during its run. Its next run starts "
             "from the previous copy, which may no longer work; if it fails to sign in, give it a new login."
         )
 
@@ -170,7 +170,9 @@ async def _settle(agent: Any, login: Any) -> None:
     try:
         await asave(agent, login)
     except Exception as error:
-        log_error(f"Could not save the ChatGPT login of {agent.get_id()} after its run: {type(error).__name__}")
+        log_error(
+            f"Could not save the ChatGPT sign-in (auth.json) of {agent.get_id()} after its run: {type(error).__name__}"
+        )
 
 
 class SandboxLogin:
@@ -186,7 +188,9 @@ class SandboxLogin:
             handle, ["python", "-I", "-c", _READ], timeout=_EXEC_SECONDS, max_output_bytes=_MAX_LOGIN_BYTES
         )
         if result.exit_code or result.timed_out or result.output_limited:
-            raise SandboxError(f"Could not read the ChatGPT login of {self.agent.get_id()} from its sandbox")
+            raise SandboxError(
+                f"Could not read the ChatGPT sign-in (auth.json) of {self.agent.get_id()} from its sandbox"
+            )
         return _loads(result.stdout)
 
     async def ainstall(self, provider: Any, handle: Any) -> None:
@@ -201,7 +205,9 @@ class SandboxLogin:
             handle, ["python", "-I", "-c", _WRITE], stdin=json.dumps(login).encode(), timeout=_EXEC_SECONDS
         )
         if result.exit_code or result.timed_out:
-            raise SandboxError(f"Could not write the ChatGPT login of {self.agent.get_id()} into its sandbox")
+            raise SandboxError(
+                f"Could not write the ChatGPT sign-in (auth.json) of {self.agent.get_id()} into its sandbox"
+            )
 
     async def acollect(self, provider: Any, handle: Any) -> None:
         """Best effort: the sandbox may already be gone, and the turn's outcome must stand either way."""
@@ -209,7 +215,7 @@ class SandboxLogin:
             login = await self._read(provider, handle)
         except Exception as error:
             log_warning(
-                f"Could not read the ChatGPT login of {self.agent.get_id()} back from its sandbox: "
+                f"Could not read the ChatGPT sign-in (auth.json) of {self.agent.get_id()} back from its sandbox: "
                 f"{type(error).__name__}"
             )
             return
