@@ -18,6 +18,7 @@ from typing import (
     Type,
     TypeVar,
     get_args,
+    get_origin,
     get_type_hints,
 )
 
@@ -29,6 +30,7 @@ from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.tools.annotations import validate_tool_annotations
+from agno.utils.json_schema import is_origin_union_type
 from agno.utils.log import log_debug, log_exception, log_warning
 from agno.utils.schema import (
     AGNO_INJECTED_PARAMS,
@@ -1108,6 +1110,21 @@ class UserFeedbackQuestion:
         )
 
 
+def _admits_none(hint: Any) -> bool:
+    return hint is type(None) or (is_origin_union_type(get_origin(hint)) and type(None) in get_args(hint))
+
+
+def _schema_accepts_null(schema: Dict[str, Any]) -> bool:
+    schema_type = schema.get("type")
+    if schema_type == "null" or (isinstance(schema_type, list) and "null" in schema_type):
+        return True
+    return any(
+        isinstance(branch, dict) and _schema_accepts_null(branch)
+        for key in ("anyOf", "oneOf")
+        for branch in schema.get(key) or []
+    )
+
+
 # What Function.to_dict() writes and from_dict() reads back: the choices that
 # belong to the saved component, so a later registry edit must not rewrite them.
 SERIALIZED_FIELDS = (
@@ -1860,6 +1877,8 @@ class Function(BaseModel):
                 elif key == "items" and isinstance(value, dict):
                     # This handles array items like List[KnowledgeFilter]
                     result[key] = make_nested_strict(value)
+                elif key in ("anyOf", "oneOf", "allOf") and isinstance(value, list):
+                    result[key] = [make_nested_strict(v) for v in value]
                 elif isinstance(value, dict):
                     result[key] = make_nested_strict(value)
 
@@ -1884,6 +1903,30 @@ class Function(BaseModel):
             if name not in ("return", "self")
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS
+        ]
+
+        # Every parameter is now required, so one whose type admits None must accept null.
+        for name in self._parameters_admitting_none(properties):
+            schema = properties[name]
+            nullable: Dict[str, Any] = {
+                "anyOf": [{k: v for k, v in schema.items() if k != "description"}, {"type": "null"}]
+            }
+            if "description" in schema:
+                nullable["description"] = schema["description"]
+            properties[name] = nullable
+
+    def _parameters_admitting_none(self, properties: Dict[str, Any]) -> List[str]:
+        """Names of the properties whose Python annotation admits None but whose schema rejects null."""
+        if self.entrypoint is None:
+            return []
+        try:
+            hints = get_type_hints(self.entrypoint)
+        except Exception:
+            return []
+        return [
+            name
+            for name, schema in properties.items()
+            if isinstance(schema, dict) and _admits_none(hints.get(name)) and not _schema_accepts_null(schema)
         ]
 
     @staticmethod

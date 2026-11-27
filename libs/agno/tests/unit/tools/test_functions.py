@@ -349,6 +349,120 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+@pytest.mark.parametrize("from_callable", [False, True])
+def test_strict_optional_parameter_is_required_but_nullable(from_callable):
+    """Strict mode requires every parameter, so an Optional one must accept null to be left out."""
+
+    def get_component(component_id: str, version: Optional[int] = None) -> str:
+        """Read one component.
+
+        Args:
+            component_id: The component id.
+            version: Stored version. Leave out for the latest.
+        """
+        return component_id
+
+    if from_callable:
+        function = Function.from_callable(get_component, strict=True)
+    else:
+        function = Function(name="get_component", entrypoint=get_component)
+        function.process_entrypoint(strict=True)
+
+    assert function.parameters["required"] == ["component_id", "version"]
+    assert function.parameters["properties"]["version"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+
+
+class _VersionedKit(Toolkit):
+    def __init__(self):
+        super().__init__(name="versioned_kit", tools=[self.read])
+
+    @tool
+    def read(self, item_id: str, version: Optional[int] = None) -> str:
+        """Read one item.
+
+        Args:
+            item_id: The item id.
+            version: Stored version. Leave out for the latest.
+        """
+        return item_id
+
+
+@tool
+def _decorated_read(item_id: str, version: Optional[int] = None) -> str:
+    """Read one item.
+
+    Args:
+        item_id: The item id.
+        version: Stored version. Leave out for the latest.
+    """
+    return item_id
+
+
+@pytest.mark.parametrize("source", ["decorated", "toolkit"])
+def test_strict_keeps_a_decorated_optional_parameter_nullable(source):
+    """@tool builds its schema before strict mode is known; strict processing must add the null branch."""
+    if source == "decorated":
+        function = _decorated_read._per_run_copy()
+    else:
+        function = _VersionedKit().get_functions()["read"]._per_run_copy()
+
+    function.process_entrypoint(strict=True)
+
+    assert function.parameters["required"] == ["item_id", "version"]
+    assert function.parameters["properties"]["version"] == {
+        "anyOf": [{"type": "integer"}, {"type": "null"}],
+        "description": "Stored version. Leave out for the latest.",
+    }
+    assert function.parameters["properties"]["item_id"] == {"type": "string", "description": "The item id."}
+
+
+def test_strict_does_not_make_a_parameter_with_a_non_none_default_nullable():
+    """A null for `limit: int = 10` would reach the function as None, which its type rejects."""
+
+    def search(query: str, limit: int = 10) -> str:
+        return query
+
+    function = Function(name="search", entrypoint=search)
+    function.process_entrypoint(strict=True)
+
+    assert function.parameters["properties"]["limit"] == {"type": "integer"}
+
+
+def test_strict_leaves_a_schema_without_python_types_unchanged():
+    """An MCP tool's entrypoint takes **kwargs, so there is no annotation to say a parameter admits None."""
+
+    def call_tool(**kwargs: Any) -> str:
+        return ""
+
+    function = Function(
+        name="remote",
+        entrypoint=call_tool,
+        skip_entrypoint_processing=True,
+        parameters={"type": "object", "properties": {"version": {"type": "integer"}}, "required": []},
+    )
+    function.process_entrypoint(strict=True)
+
+    assert function.parameters["properties"]["version"] == {"type": "integer"}
+    assert function.parameters["required"] == ["version"]
+
+
+def test_process_schema_for_strict_reaches_objects_inside_any_of():
+    """An Optional object parameter is an anyOf; strict mode must still close the object inside it."""
+
+    class Filter(BaseModel):
+        field: str
+
+    def search(query: str, filter: Optional[Filter] = None) -> str:
+        return query
+
+    function = Function(name="search", entrypoint=search)
+    function.process_entrypoint(strict=True)
+
+    object_schema, null_schema = function.parameters["properties"]["filter"]["anyOf"]
+    assert object_schema["additionalProperties"] is False
+    assert null_schema == {"type": "null"}
+
+
 def test_process_schema_for_strict_tolerates_a_schema_without_properties():
     """A tool schema can reach strict processing without a `properties` key.
 

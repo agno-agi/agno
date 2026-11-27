@@ -220,8 +220,8 @@ def get_json_schema(
             type_args = get_args(type_hint)
             is_optional = type_origin is Union and len(type_args) == 2 and any(arg is type(None) for arg in type_args)
 
-            # Get the actual type if it's Optional
-            if is_optional:
+            # Strict mode requires every parameter, so an Optional one keeps its null branch.
+            if is_optional and not strict:
                 type_hint = next(arg for arg in type_args if arg is not type(None))
 
             if type_hint:

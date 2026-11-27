@@ -286,6 +286,21 @@ def test_get_json_schema_strict():
     assert schema["additionalProperties"] is False
 
 
+def test_get_json_schema_strict_keeps_an_optional_parameter_nullable():
+    """Strict mode makes every parameter required, so an Optional one must still accept null."""
+    schema = get_json_schema(
+        {"version": Optional[int], "op": Optional[Literal["a", "b"]]},
+        param_descriptions={"version": "Stored version."},
+        strict=True,
+    )
+
+    assert schema["properties"]["version"] == {
+        "anyOf": [{"type": "integer"}, {"type": "null"}],
+        "description": "Stored version.",
+    }
+    assert schema["properties"]["op"] == {"anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}]}
+
+
 def test_get_json_schema_with_complex_types():
     type_hints = {
         "names": List[str],

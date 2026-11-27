@@ -7,7 +7,11 @@ ask to be strict.
 """
 
 from typing import Optional
+from unittest.mock import MagicMock
 
+from pydantic import BaseModel
+
+from agno.agent import Agent
 from agno.models.azure.openai_responses import AzureOpenAIResponses
 from agno.models.openai.responses import OpenAIResponses
 from agno.tools.function import Function
@@ -78,3 +82,33 @@ def test_azure_sends_the_same_flag():
     (tool,) = model._format_tool_params(messages=[], tools=[_function()])
 
     assert tool["strict"] is False
+
+
+class _Answer(BaseModel):
+    answer: str
+
+
+def test_a_structured_output_run_sends_optional_parameters_as_nullable():
+    """A run with an output schema makes every tool strict; an optional parameter must stay nullable.
+
+    Strict mode requires every parameter. Sent as a plain integer, ``version`` forces the model to
+    invent a value it was told to leave out.
+    """
+    sent = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        raise RuntimeError("stop after the request is built")
+
+    client = MagicMock()
+    client.responses.create.side_effect = create
+    model = OpenAIResponses(id="gpt-5-mini", api_key="test")
+    model.get_client = lambda: client  # type: ignore[method-assign]
+    agent = Agent(model=model, tools=[get_component], output_schema=_Answer, telemetry=False)
+
+    agent.run("read component c1")
+
+    (tool,) = sent[0]["tools"]
+    assert tool["strict"] is True
+    assert tool["parameters"]["required"] == ["component_id", "version"]
+    assert tool["parameters"]["properties"]["version"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
