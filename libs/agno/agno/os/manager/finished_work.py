@@ -90,6 +90,7 @@ READ_TOOLS = frozenset(
         "search_content",
         # The conversation's own history and results
         "get_chat_history",
+        "search_chat_history",
         "search_past_sessions",
         "read_past_session",
         "read_result",
