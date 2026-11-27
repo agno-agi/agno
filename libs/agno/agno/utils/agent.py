@@ -1244,6 +1244,40 @@ def get_chat_history_json(
     return json.dumps(history, ensure_ascii=False)
 
 
+def search_chat_history_text(
+    session: Union[AgentSession, TeamSession], pattern: str, context_lines: int = 2, team_id: Optional[str] = None
+) -> str:
+    """Search the user messages and assistant replies stored in one session for a pattern.
+
+    Every line is labelled with its turn, counted from 1 at the first user message, so a match says
+    where in the conversation it was said. The pattern is literal text with "|" between alternatives.
+    Matching and the limits on the output are those of the compacted history search.
+    """
+    import re
+
+    from agno.compaction.compaction import _grep
+
+    messages = session.get_messages(team_id=team_id, skip_roles=["system", "tool"])
+    lines: List[str] = []
+    turn = 0
+    for message in messages:
+        if message.role == "user":
+            turn += 1
+        content = message.get_content_string()
+        if not content:
+            continue
+        label = f"[turn {max(turn, 1)} {'user' if message.role == 'user' else 'assistant'}] "
+        lines.extend(label + line for line in content.split("\n") if line.strip())
+    if not lines:
+        return "This conversation has no earlier turns stored."
+    found = _grep("\n".join(lines), pattern, context_lines)
+    if not found:
+        return f"No earlier turn matches {pattern[:200]!r}. {turn} turns are stored."
+    # Line numbers of the search text mean nothing to the reader: the turn label is the position.
+    found = re.sub(r"(?m)^\d+: ", "", found)
+    return f"{turn} turns are stored, numbered from 1 at the start of the conversation.\n{found}"
+
+
 def execute_instructions(
     instructions: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
