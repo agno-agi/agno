@@ -5029,6 +5029,8 @@ class Workflow:
             the run stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
 
+            # The run a WorkflowAgent stored, which is not the placeholder above.
+            ended_run: Any = None
             try:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
                     if self.agent is not None:
@@ -5036,7 +5038,7 @@ class Workflow:
                         # run rows and reuses this run id - its persist replaces
                         # the PENDING placeholder pre-persisted above (upsert by
                         # run_id), yielding a single run per turn.
-                        await self._aexecute_workflow_agent(
+                        ended_run = await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,
                             run_context=run_context,
@@ -5110,6 +5112,14 @@ class Workflow:
                     error_run,
                     user_id=user_id,
                     full_run=True,
+                )
+            finally:
+                from agno.run.background import _notify_run_requester
+
+                _notify_run_requester(
+                    ended_run if isinstance(ended_run, WorkflowRunOutput) else workflow_run_response,
+                    # A WorkflowAgent that runs its workflow stores a run without the starting metadata.
+                    started_with=workflow_run_response.metadata,
                 )
 
         # Create and start asyncio task
