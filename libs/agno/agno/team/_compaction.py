@@ -95,15 +95,17 @@ def replayed_history(team: "Team", history: List[Message], record: Any, replay_i
 
 
 def search_tools(team: "Team", session: TeamSession) -> List[Any]:
-    """The tool that searches what this conversation compacted away, once it has a fold.
+    """The tool that searches what this conversation compacted away.
 
-    Bound to this session and to the leader's own folds: a member that compacts in the same
-    session keeps its folds to itself.
+    Offered before the first fold too: the tools of a run are built before the run folds, and the
+    summary it is then sent says to search. Bound to this session and to the leader's own folds:
+    a member that compacts in the same session keeps its folds to itself.
     """
     compaction = agent_compaction(team)
     if compaction is None or not compaction.search_compacted_messages:
         return []
-    return compaction.tools_for(session.session_id, team.db, message_ids=_own_message_ids(team, session)) or []
+    ids = _own_message_ids(team, session)
+    return compaction.tools_for(session.session_id, team.db, message_ids=ids, before_first_fold=True) or []
 
 
 def _is_unstored_input(message: Message) -> bool:
@@ -242,6 +244,8 @@ def compact_session(
     """Compact the team leader's history in one session now, without waiting for the size trigger."""
     from agno.team import _session
 
+    # compaction=True becomes a Compaction when the team is initialized, which a run does and this must too
+    team.initialize_team()
     if agent_compaction(team) is None:
         return _not_enabled()
     session = _session.get_session(team, session_id=session_id, user_id=user_id)
@@ -273,6 +277,8 @@ async def acompact_session(
     """Async variant of :func:`compact_session`."""
     from agno.team import _session
 
+    # compaction=True becomes a Compaction when the team is initialized, which a run does and this must too
+    team.initialize_team()
     if agent_compaction(team) is None:
         return _not_enabled()
     session = await _session.aget_session(team, session_id=session_id, user_id=user_id)

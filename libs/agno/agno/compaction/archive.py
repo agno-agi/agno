@@ -150,12 +150,21 @@ class CompactionArchive:
             log_warning(f"Could not store compaction record: {e}")
         return False
 
-    def latest(self, up_to_run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def latest(
+        self,
+        up_to_run_id: Optional[str] = None,
+        earlier_run_ids: Optional[Collection[str]] = None,
+        started_at: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
         """The record in force, as of ``up_to_run_id`` when one is given.
 
         Resuming or forking an earlier run must use the fold *that run saw*. A later record
         summarizes turns the earlier run never had, and its anchor sits ahead of where that run
         was, so applying it would show the resumed run a summary of its own future.
+
+        Most runs make no fold and inherit one from a run before them. ``earlier_run_ids`` names
+        the runs before the target, so their folds count. ``started_at`` is when the target began,
+        which places a manual fold: it has no run, only a time.
         """
         try:
             rows = self._method("get_compactions_for_session")(self.session_id)
@@ -169,12 +178,13 @@ class CompactionArchive:
             return None
         if up_to_run_id is None:
             return rows[0]
-        # Rows are newest first, so the first at or before the target run is the one it saw.
-        seen_target = False
+        # Rows are newest first, so the first made at or before the target run is the one it saw.
+        at_or_before = {up_to_run_id, *(earlier_run_ids or ())}
         for row in rows:
-            if row.get("run_id") == up_to_run_id:
-                seen_target = True
-            if seen_target:
+            run_id = row.get("run_id")
+            if run_id in at_or_before:
+                return row
+            if run_id is None and started_at is not None and (row.get("created_at") or 0) < started_at:
                 return row
         return None
 

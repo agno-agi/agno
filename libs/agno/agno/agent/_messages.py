@@ -103,6 +103,19 @@ def _own_message_ids(
     return {m.id for m in [*stored, *(messages or [])] if m.id is not None}
 
 
+def _runs_before(session: "CompactionSession", run_id: Optional[str]) -> Tuple[List[str], Optional[int]]:
+    """The ids of the session's runs before ``run_id``, and when that run began.
+
+    A run that made no fold inherited one from a run before it, so resolving the fold a run saw
+    needs the runs that came first. Both are empty when the run is not in the session.
+    """
+    runs = getattr(session, "runs", None) or []
+    index = next((i for i, run in enumerate(runs) if run_id is not None and run.run_id == run_id), None)
+    if index is None:
+        return [], None
+    return [run.run_id for run in runs[:index] if run.run_id], getattr(runs[index], "created_at", None)
+
+
 def _stored_compaction(
     agent: "CompactionOwner",
     session: "CompactionSession",
@@ -125,7 +138,7 @@ def _stored_compaction(
     )
     if archive is None:
         return None
-    row = archive.latest(up_to_run_id)
+    row = archive.latest(up_to_run_id, *_runs_before(session, up_to_run_id))
     if not row:
         return None
     try:

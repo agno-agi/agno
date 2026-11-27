@@ -1051,7 +1051,11 @@ class Compaction:
     # -- tools ----------------------------------------------------------
 
     def tools_for(
-        self, session_id: str, db: Optional[Any] = None, message_ids: Optional[Collection[str]] = None
+        self,
+        session_id: str,
+        db: Optional[Any] = None,
+        message_ids: Optional[Collection[str]] = None,
+        before_first_fold: bool = False,
     ) -> Optional[List[Any]]:
         """A tool letting the agent read back what this session compacted away.
 
@@ -1059,7 +1063,9 @@ class Compaction:
         model argument - so an agent can never search another conversation's history.
 
         Returns None until something has actually been archived: offering the tool over an empty
-        archive only invites a pointless lookup on the first turn.
+        archive only invites a pointless lookup on the first turn. ``before_first_fold`` offers it
+        anyway. A run's tools are built before the run folds, so without it the run that makes the
+        first fold is sent a summary that says to search and has nothing to search with.
 
         ``message_ids`` limits the search to the folds anchored on those messages, so a Team and a
         member sharing a session each search their own conversation.
@@ -1067,7 +1073,7 @@ class Compaction:
         if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
         archive = self.archive_for(session_id, db, message_ids=message_ids)
-        if archive is None or archive.latest() is None:
+        if archive is None or not (before_first_fold or archive.latest() is not None):
             return None
 
         def search_compacted_history(pattern: str, context_lines: int = 2) -> str:
