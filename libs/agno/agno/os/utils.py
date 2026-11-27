@@ -2818,9 +2818,6 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
             collect_components_from_workflow(nested_workflow, registry, visited)
         if callable(getattr(step, "executor", None)):
             registry.add_function(step.executor)
-        if callable(getattr(step, "run_metadata", None)):
-            # Stored by name, like the executor, so a reload has to find it here.
-            registry.add_function(step.run_metadata)
 
     elif isinstance(step, Agent):
         collect_components_from_agent(step, registry, visited)
