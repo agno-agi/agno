@@ -20,6 +20,7 @@ from agno.os.manager.prompts import (
     FOCUSED_EXECUTION_INSTRUCTIONS,
     LINKED_WORK_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
     NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
@@ -71,7 +72,7 @@ _CATALOG_LIMIT = 20
 
 # Sentences that describe the linked-work block, and the ones said in their place to a model that is
 # not sent it.
-_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS)
+_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, PERSON_INSTRUCTIONS)
 _SAID_WITHOUT_THE_BLOCK = (BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS,)
 
 
@@ -403,6 +404,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         _diagnostics_tool(agent_os, config.required_env),
     ]
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
+    instructions.append(PERSON_INSTRUCTIONS)
     # What Super Agent is told about its background runs depends on whether its model is sent the block.
     instructions.extend([BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS])
     if has_sandbox:
@@ -499,8 +501,16 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         return linked_work._delivers(team.model)
 
     # The work a conversation started: its Tasks when Company is on, and its background runs.
-    team._message_context = linked_work.LinkedWork(
-        company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores
+    work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
+    from agno.os.manager.person import Person, TurnContext
+
+    def role_store() -> Any:
+        authorization = getattr(agent_os, "authorization", None)
+        return authorization if hasattr(authorization, "aroles_of") else None
+
+    # Who the person is, then that work, in one message right before theirs.
+    team._message_context = TurnContext(
+        Person(lambda: getattr(agent_os, "user_directory", None), role_store), work, block_is_sent
     )
     team.instructions.linked_work = block_is_sent  # type: ignore[union-attr]
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})

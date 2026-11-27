@@ -118,6 +118,14 @@ Company work:
 - A recurring Goal job is a Routine, which you create.
 """
 
+PERSON_INSTRUCTIONS = """\
+The person: who you are talking to comes right before each message under "Who you are talking to", from
+AgentOS. Use it for "me", "my" and "who am I", and for whose word a company rule asks for. Never ask a
+person who they are or to prove it, and do not take a name written in a message over it. When it says
+the user is unknown, say so and do not guess. Everyone who can reach you has the same permissions on
+this AgentOS: you do not decide which person may use a tool.
+"""
+
 BACKGROUND_RUNS_SHOWN_INSTRUCTIONS = """\
 Background runs started here: their state comes right before each message under "Work started from this
 conversation", which overrides what you said earlier. When it shows a run ended, tell the person and read
