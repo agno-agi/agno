@@ -2521,11 +2521,14 @@ class BaseExternalAgent:
                     stored_events.append(event)
                 return event
 
-            yield keep(
-                RunStartedEvent(
-                    run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id
+            # A member cancelled while it waited its turn says only that it was cancelled. A team that
+            # was cancelled with it stops reading at the member's next event, and must read that one.
+            if not isinstance(refusal, RunCancelledException):
+                yield keep(
+                    RunStartedEvent(
+                        run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id
+                    )
                 )
-            )
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
