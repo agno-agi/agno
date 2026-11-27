@@ -183,6 +183,18 @@ def _link_steps_to_db(steps: Any, db: Any) -> None:
                 _link_steps_to_db(getattr(item, attr, None), db)
 
 
+def _prepare_nested_steps(steps: Any) -> None:
+    """Wrap the agents, teams, functions and workflows inside container steps in Steps, at any depth.
+
+    A container wraps its own entries when it executes. A workflow that continues a paused run without
+    having executed the container first needs them wrapped to find the step that owns a paused executor."""
+    for item in steps if isinstance(steps, list) else []:
+        if isinstance(item, (Steps, Loop, Parallel, Condition, Router)):
+            item._prepare_steps()
+            for attr in ("steps", "else_steps"):
+                _prepare_nested_steps(getattr(item, attr, None))
+
+
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
     Steps: StepType.STEPS,
@@ -6559,6 +6571,16 @@ class Workflow:
             await team_acancel_run(executor_run_id)
         return result
 
+    def _prepare_steps_for_continue(self) -> None:
+        """Prepare the steps of a workflow that may not have run yet, including those inside containers.
+
+        A run prepares the top-level steps and each container prepares its own as it executes. A continued
+        run goes straight to the paused step, which may sit inside a container that has not executed here."""
+        self._prepare_steps()
+        if isinstance(self.steps, list):
+            _prepare_nested_steps(self.steps)
+            _link_steps_to_db(self.steps, self.db)
+
     def _restore_paused_step_ids(self, run_response: WorkflowRunOutput) -> None:
         """Re-apply the original run's step_ids onto this freshly copied workflow.
 
@@ -6837,7 +6859,7 @@ class Workflow:
             raise ValueError("Cannot continue run - no paused step index found")
 
         # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
-        self._prepare_steps()
+        self._prepare_steps_for_continue()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
@@ -8887,7 +8909,7 @@ class Workflow:
             raise ValueError("Cannot continue run - no paused step index found")
 
         # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
-        self._prepare_steps()
+        self._prepare_steps_for_continue()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.

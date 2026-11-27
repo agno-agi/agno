@@ -495,3 +495,48 @@ def test_tool_approval_on_a_fresh_workflow_keeps_workflow_and_step_ids(kind, mod
     assert new_instance.id == paused.workflow_id == "approval-workflow"
     # The agent's or team's run is stored with the workflow's run, not a second time on its own.
     assert _stored(db, "workflow-session") == ("workflow", ["approval-workflow"])
+
+
+_CONTAINERS = {
+    "steps": lambda inner: Steps(name="container", steps=[inner]),
+    "loop": lambda inner: Loop(name="container", max_iterations=1, steps=[inner]),
+    "condition": lambda inner: Condition(name="container", evaluator=True, steps=[inner]),
+}
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("mode", ["run", "arun"])
+@pytest.mark.parametrize("container", list(_CONTAINERS))
+@pytest.mark.parametrize("bare_executor", [False, True], ids=["explicit-step", "bare-executor"])
+def test_tool_approval_inside_a_container_continues_on_a_fresh_workflow(kind, mode, container, bare_executor):
+    """A container wraps a bare agent or team when it executes, which a fresh workflow has not done yet."""
+    db = InMemoryDb()
+    sent: List[str] = []
+
+    @tool(requires_confirmation=True)
+    def send_report(title: str) -> str:
+        """Send the report."""
+        sent.append(title)
+        return f"sent {title}"
+
+    def build() -> Workflow:
+        executor = _step_executor(kind, db, model=_AsksForApproval(), tools=[send_report])
+        inner = executor[kind] if bare_executor else Step(name="step", **executor)
+        return Workflow(name="Approval workflow", db=db, steps=[_CONTAINERS[container](inner)])
+
+    paused = _run(build(), mode, input="hello", session_id="workflow-session")
+    assert paused.is_paused
+    for step_requirement in paused.active_step_requirements:
+        for requirement in step_requirement.executor_requirements or []:
+            requirement["confirmation"] = True
+            requirement["tool_execution"]["confirmed"] = True
+
+    new_instance = build()
+    if mode == "run":
+        continued = new_instance.continue_run(paused)
+    else:
+        continued = asyncio.run(new_instance.acontinue_run(paused))
+
+    assert continued.status == RunStatus.completed
+    assert sent == ["q3"]
+    assert _stored(db, "workflow-session") == ("workflow", ["approval-workflow"])
