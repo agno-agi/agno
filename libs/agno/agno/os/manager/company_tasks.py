@@ -490,14 +490,20 @@ class CompanyTaskTools(Toolkit):
                 await authority.arequire("wiki", "read")
             caller = _StartCaller.for_authority(app, authority, user_id, _requested_from(run_context))
             response = await starter.submit(task_id, caller, None, value, None)
-            if response.status_code == 202:
-                link_task(run_context, await starter.task(task_id))
         except PermissionError as exc:
             return f"Not started: {exc}"
         except HTTPException as exc:
             return f"Not started: {exc.detail}"
         except (_TaskRunConflict, _TaskRunUnavailable) as exc:
             return f"Not started: {exc}"
+        if response.status_code == 202:
+            # A repeated start can return an already-paused attempt. Record what the receipt told the chat.
+            started = json.loads(bytes(response.body)) if response.body else {}
+            link_task(
+                run_context,
+                {"id": task_id, "status": "in_progress", "job_id": started.get("run_id")},
+                paused=started.get("status") == "PAUSED",
+            )
         return _receipt("Queued", title, task_id, response)
 
     def get_company_task_status(self, task_id: str, _agno_run_context: Optional[Any] = None) -> str:

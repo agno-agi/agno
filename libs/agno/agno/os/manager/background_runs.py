@@ -19,15 +19,16 @@ from weakref import ReferenceType, ref
 
 from agno.db.base import AsyncBaseDb
 from agno.db.schemas.scheduler import REQUESTED_FROM_METADATA_KEY
+from agno.os.manager import linked_work
 from agno.os.manager.linked_work import (
     _RUN_LIVE,
     _UNREAD,
     RUN_STATUS_MEANING,
     _entries,
-    _run_phase,
     aget_stored_run,
     get_stored_run,
     link_run,
+    read_run,
     run_entry,
     run_holds_session,
     run_state,
@@ -349,8 +350,7 @@ class BackgroundRunTools(StudioRunnerTools):
         Use it when the person says not to wait, or the work is long. The run goes on in its own
         session while this conversation continues: the turn does not end, so start each run the
         person asked for, then answer. The result is a receipt, not the work: the run is not
-        finished. Its state is shown to you on every turn, and check_background_run reads its
-        result once it has one. A later run of the same component from this conversation continues
+        finished. check_background_run reads its state, and its result once it has one. A later run of the same component from this conversation continues
         the same session, so a follow-up is another run of it. A component with a run still going
         here is refused until that run ends, in the turn and in the background.
 
@@ -412,7 +412,8 @@ class BackgroundRunTools(StudioRunnerTools):
             metadata = self._outgoing_metadata(run_context, running, depth, target)
             metadata[REQUESTED_FROM_METADATA_KEY] = _requested_from(run_context, _agno_team)
             run = {"component_type": kind, "component_id": resolved_id, "name": name, "session_id": session_id}
-            return await self._start(app, authority, run_context, component, run, message, user_id, metadata)
+            shown = linked_work._delivers(getattr(_agno_team, "model", None))
+            return await self._start(app, authority, run_context, component, run, message, user_id, metadata, shown)
         except Exception as exc:
             logger.exception(f"Failed to start {kind} in the background")
             return json.dumps({"error": f"Not started: {str(exc) or type(exc).__name__}"})
@@ -429,8 +430,13 @@ class BackgroundRunTools(StudioRunnerTools):
         message: str,
         user_id: Optional[str],
         metadata: Dict[str, Any],
+        shown: bool,
     ) -> str:
-        """Enter the component's run route with background on, and record the run it accepted."""
+        """Enter the component's run route with background on, and record the run it accepted.
+
+        shown says whether Super Agent's model is sent the linked-work block: the receipt must not
+        promise a state it will not be shown.
+        """
         from agno.os.utils import enter_run_route
 
         response = await enter_run_route(
@@ -477,7 +483,9 @@ class BackgroundRunTools(StudioRunnerTools):
         entry = run_entry(run_context, run["id"])
         if durable and entry is not None:
             entry["durable"] = True
-        note = "Started, not finished. Its state is shown to you each turn; check_background_run reads its result."
+        note = "Started, not finished. check_background_run reads its state and, once it has ended, its result."
+        if shown:
+            note = "Started, not finished. Its state is shown to you each turn; check_background_run reads its result."
         if not durable:
             note += " It runs in the server's memory: if the server restarts before it ends, the run is lost."
         return json.dumps(
@@ -510,7 +518,7 @@ class BackgroundRunTools(StudioRunnerTools):
         kind, component_id = entry["component_type"], entry["component_id"]
         if status not in _RUN_LIVE:
             # Its end is read here, so the next turn does not report it as a change.
-            entry["shown"] = _run_phase(status)
+            read_run(run_context, entry, status)
         if status in _RUN_LIVE or status == "LOST":
             # Nothing a run wrote before it ended is its result.
             payload: Dict[str, Any] = {

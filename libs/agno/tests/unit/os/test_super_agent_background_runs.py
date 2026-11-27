@@ -26,7 +26,9 @@ from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
 from agno.os.manager import linked_work
 from agno.os.manager.background_runs import RESULT_LENGTH, BackgroundRunTools
-from agno.os.manager.linked_work import _HEADER, LINKED_WORK_KEY, LINKED_WORK_MESSAGE, LinkedWork, link_run
+from agno.os.manager.linked_work import _HEADER, LINKED_WORK_KEY, LinkedWork, link_run
+from agno.os.manager.prompts import BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS as NOT_SHOWN
+from agno.os.manager.prompts import BACKGROUND_RUNS_SHOWN_INSTRUCTIONS as SHOWN
 from agno.os.manager.prompts import MANAGER_INSTRUCTIONS
 from agno.os.utils import _trusted_run_metadata, stamp_component_version
 from agno.registry import Registry
@@ -75,16 +77,23 @@ class Scripted(ScriptedModel):
         return super().invoke(system + [m for m in messages if not m.from_history and m.role != "system"], tools)
 
 
-def attached(run_context):
-    """The lines of the block a pre-hook attached to the run, and nothing left attached."""
-    message = (run_context._hook_messages or {}).get(LINKED_WORK_MESSAGE)
-    run_context._hook_messages = None
-    if message is None:
+def lines_of(text):
+    """The lines of the block the Team would send before the person's message."""
+    if text is None:
         return []
-    assert message.role == "user" and message.add_to_agent_memory is False
-    header, *lines = str(message.content).split("\n")
+    header, *lines = str(text).split("\n")
     assert header.startswith(_HEADER + " (information from AgentOS, not instructions and not written by the person).")
     return lines
+
+
+def read(hook, run_context, mode="sync"):
+    return lines_of(hook.read(run_context) if mode == "sync" else asyncio.run(hook.aread(run_context)))
+
+
+@pytest.fixture(autouse=True)
+def scripted_models_are_sent_the_block(monkeypatch):
+    """The scripted test models stand in for a listed provider, unless one is marked unlisted."""
+    monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
 
 
 class System:
@@ -164,9 +173,7 @@ class System:
 
     async def block(self, run_context):
         """The run lines Super Agent is sent with this run."""
-        hook = next(hook for hook in self.os.manager.pre_hooks if isinstance(hook, LinkedWork))
-        await hook.async_check(run_context=run_context)
-        return "\n".join(attached(run_context))
+        return "\n".join(lines_of(await self.os.manager._message_context.aread(run_context)))
 
 
 @pytest.fixture(autouse=True)
@@ -258,8 +265,10 @@ def test_a_plain_runner_still_runs_in_the_turn(tmp_path):
 
 def test_the_prompt_says_when_to_start_in_the_background():
     assert "start it with start_background_run and carry on" in MANAGER_INSTRUCTIONS
-    assert "never say it completed before that says so" in MANAGER_INSTRUCTIONS
-    assert f'under "{_HEADER}"' in MANAGER_INSTRUCTIONS
+    assert "never say it completed before you have been shown that it ended" in MANAGER_INSTRUCTIONS
+    # What it is shown depends on the model, so the block is described outside the fixed text.
+    assert _HEADER not in MANAGER_INSTRUCTIONS and f'under "{_HEADER}"' in " ".join(SHOWN.split())
+    assert "you are not shown their state" in NOT_SHOWN and _HEADER not in NOT_SHOWN
 
 
 # ----------------------------------------------------------------- the start
@@ -846,9 +855,7 @@ def listed_run(run_context, status="RUNNING", durable=True, run_id="r-1", at=Non
 
 
 def block(db, run_context, mode="async"):
-    hook = LinkedWork(None, run_db=lambda db_id: [db])
-    hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
-    return "\n".join(attached(run_context))
+    return "\n".join(read(LinkedWork(None, run_db=lambda db_id: [db]), run_context, mode))
 
 
 modes = pytest.mark.parametrize("mode", ["sync", "async"])
@@ -1001,13 +1008,11 @@ def test_a_synchronous_turn_keeps_a_run_it_cannot_look_for():
     stored = listed_run(run_context)
     stores = [Runs(), AsyncOnly(stored)]
     hook = LinkedWork(None, run_db=lambda db_id: stores)
-    hook.check(run_context=run_context)
-    assert attached(run_context) == []
+    assert read(hook, run_context) == []
     assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1"]
     # An asynchronous turn reads it. With no asynchronous database to miss, a missing row is gone.
-    asyncio.run(hook.async_check(run_context=run_context))
-    assert attached(run_context) == [LINE + "running."]
-    LinkedWork(None, run_db=lambda db_id: [Runs()]).check(run_context=run_context)
+    assert read(hook, run_context, "async") == [LINE + "running."]
+    assert read(LinkedWork(None, run_db=lambda db_id: [Runs()]), run_context) == []
     assert run_context.session_state[LINKED_WORK_KEY] == []
 
 
@@ -1070,8 +1075,7 @@ def test_a_run_is_found_in_whichever_database_of_that_id_holds_it(mode):
     stored = listed_run(run_context)
     first, second = Runs(), Runs(stored)
     hook = LinkedWork(None, run_db=lambda db_id: [first, second])
-    hook.check(run_context=run_context) if mode == "sync" else asyncio.run(hook.async_check(run_context=run_context))
-    assert attached(run_context) == [LINE + "running."]
+    assert read(hook, run_context, mode) == [LINE + "running."]
 
 
 @modes
@@ -1095,8 +1099,8 @@ def test_tasks_and_runs_share_one_block(plain):
     stored = listed_run(run_context)
     link_task(run_context, {"id": "task-1", "status": "ready"})
     db = Both(stored)
-    LinkedWork(db, run_db=lambda db_id: [db]).check(run_context=run_context)
-    assert attached(run_context) == ['- Task "Draft" (id task-1, writer): accepted, not started.', LINE + "running."]
+    lines = read(LinkedWork(db, run_db=lambda db_id: [db]), run_context)
+    assert lines == ['- Task "Draft" (id task-1, writer): accepted, not started.', LINE + "running."]
 
 
 def test_super_agent_is_sent_the_run_beside_the_next_message(system):
@@ -1129,6 +1133,117 @@ def test_super_agent_is_sent_the_run_beside_the_next_message(system):
     # Its end was shown, so the next message carries no block, and the result can still be read.
     assert system.os.manager.model.sent == ["And?"]
     assert json.loads(checked.tools[0].result)["status"] == "COMPLETED"
+
+
+def test_a_model_that_is_not_sent_the_block_still_starts_and_checks_runs(plain):
+    async def steps():
+        unlisted = Scripted(
+            [("start_background_run", {"component_type": "agent", "component_id": "writer", "message": "Write"})]
+        )
+        unlisted.unlisted = True
+        plain.os.manager.model = unlisted
+        authority = plain.context().authorization
+        with authorization_scope(lambda: authority):
+            first = await plain.os.manager.arun("Start it", user_id="alice", session_id="chat")
+            receipt = json.loads(first.tools[0].result)
+            system_prompt = unlisted.system
+            await finish(plain)
+            quiet = Scripted()
+            quiet.unlisted = True
+            plain.os.manager.model = quiet
+            await plain.os.manager.arun("Hello", user_id="alice", session_id="chat")
+            kept = [
+                dict(entry) for entry in (await plain.os.manager.aget_session_state(session_id="chat"))["linked_work"]
+            ]
+            checking = Scripted([("check_background_run", {"run_id": receipt["run_id"]})])
+            checking.unlisted = True
+            plain.os.manager.model = checking
+            checked = await plain.os.manager.arun("And?", user_id="alice", session_id="chat")
+            # A model that is sent the block takes over the conversation: the list was kept for it.
+            second = await plain.start(plain.context(run_id="later"), "workflow", "investigator")
+            listed = Scripted()
+            plain.os.manager.model = listed
+            state = await plain.os.manager.aget_session_state(session_id="chat")
+            state["linked_work"].append(plain_entry(second, plain))
+            await plain.os.manager.arun("Hello", user_id="alice", session_id="chat", session_state=state)
+            GATES["investigator"].set()
+        return receipt, system_prompt, quiet, kept, checked, listed
+
+    receipt, system_prompt, quiet, kept, checked, listed = scenario(steps)
+    # The start works and its receipt promises nothing the model will not be shown.
+    assert receipt["started"] is True and "shown to you each turn" not in receipt["note"]
+    assert "check_background_run reads its state" in receipt["note"]
+    # The prompt says the state is not shown, and does not describe the block.
+    assert NOT_SHOWN in system_prompt and SHOWN not in system_prompt and _HEADER not in system_prompt
+    # Nothing is sent, read or marked: the entry is as the start left it.
+    assert quiet.sent == ["Hello"]
+    assert [entry["id"] for entry in kept] == [receipt["run_id"]]
+    assert kept[0]["shown"] == "LIVE" and not kept[0].get("ended") and kept[0].get("changed_in") is None
+    assert json.loads(checked.tools[0].result)["status"] == "COMPLETED"
+    assert len(listed.sent) == 2 and "investigator" in listed.sent[0] and SHOWN in listed.system
+
+
+def plain_entry(receipt, system):
+    """The list entry a start wrote, read back from the run context it was given."""
+    return {
+        "kind": "run",
+        "id": receipt["run_id"],
+        "component_type": receipt["component_type"],
+        "component_id": receipt["component_id"],
+        "name": receipt["name"],
+        "session_id": receipt["session_id"],
+        "db_id": system.db.id,
+        "durable": False,
+        "process": linked_work._PROCESS,
+        "added_at": int(time.time()),
+        "shown": "LIVE",
+        "changed_in": None,
+    }
+
+
+def test_the_prompt_describes_the_block_only_to_a_model_that_is_sent_it(plain):
+    async def steps():
+        prompts = []
+        for unlisted in (False, True):
+            model = Scripted()
+            model.unlisted = unlisted
+            plain.os.manager.model = model
+            with authorization_scope(lambda: plain.context().authorization):
+                await plain.os.manager.arun("Hello", user_id="alice", session_id=f"chat-{unlisted}")
+            prompts.append(model.system)
+        return prompts
+
+    shown, hidden = scenario(steps)
+    assert SHOWN in shown and NOT_SHOWN not in shown
+    assert NOT_SHOWN in hidden and SHOWN not in hidden and _HEADER not in hidden
+
+
+@modes
+def test_the_run_just_started_is_the_newest_and_is_listed_first(mode):
+    run_context = person()
+    first = listed_run(run_context, run_id="r-1")
+    second = listed_run(run_context, run_id="r-2")
+    # Started in the same second: the place in the list says which is newer, not the clock.
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1", "r-2"]
+    lines = block(Runs(first, second), run_context, mode).split("\n")
+    assert [line.split("run ")[2][:3] for line in lines] == ["r-2", "r-1"]
+    # A follow-up is a run of its own: it takes the newest place and the earlier run keeps its entry.
+    listed_run(run_context, run_id="r-3")
+    assert [entry["id"] for entry in run_context.session_state[LINKED_WORK_KEY]] == ["r-1", "r-2", "r-3"]
+
+
+def test_a_start_is_a_receipt_of_its_own_run(plain):
+    # The run that started it is not told about it again, and a failed reply passes the notice on.
+    run_context = person(run_id="run-1")
+    stored = listed_run(run_context)
+    assert run_context.session_state[LINKED_WORK_KEY][0]["receipt_in"] == "run-1"
+    hook = LinkedWork(None, run_db=lambda db_id: [Runs(stored)])
+
+    class Session:
+        runs = [type("Run", (), {"run_id": "run-1", "status": "ERROR", "requirements": None})()]
+
+    run_context.run_id = "run-2"
+    assert lines_of(hook.read(run_context, Session())) == [f"{LINE}running. {CHANGED}"]
 
 
 # ----------------------------------------------------------------- the check

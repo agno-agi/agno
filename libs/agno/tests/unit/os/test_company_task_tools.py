@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
+from fastapi.testclient import TestClient
+
 from agno.agent import Agent
 from agno.db.schemas.tasks import task_run_id
 from agno.db.sqlite import SqliteDb
@@ -20,7 +22,6 @@ from agno.os.manager.company_tasks import CompanyTaskTools
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization
-from fastapi.testclient import TestClient
 
 SECRET = "company-task-tools-tests-secret-at-least-32-bytes"
 SCOPES = ["goals:read", "goals:write", "projects:write", "tasks:read", "tasks:write", "wiki:read"]
