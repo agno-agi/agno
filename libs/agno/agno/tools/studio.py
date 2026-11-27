@@ -2800,11 +2800,72 @@ class StudioTools(Toolkit):
                 user_id=_actor_id(_agno_run_context),
             )
             log_debug(f"StudioTools created workflow id={workflow_id} version={version} stage={stage}")
-            result = json.loads(self._created_payload(workflow, "workflow", version, stage))
+            result = json.loads(
+                self._created_payload(
+                    workflow, "workflow", version, stage, warnings=self._skip_message_warnings(built_steps)
+                )
+            )
             result["data"]["steps"] = [getattr(s, "name", None) for s in built_steps]
             return json.dumps(result, default=str)
         except Exception as e:
             return self._error_from_exception(e, "Failed to create workflow")
+
+    @staticmethod
+    def _skip_message_warnings(built_steps: List[Any]) -> List[str]:
+        """Warnings for steps whose run can end on, or hand on, a condition's skip message.
+
+        A workflow returns its last step's output, and a condition that is not met
+        and has no else branch outputs "Condition <name> not met - skipped N steps".
+        A workflow that can end on one returns that message in place of a result,
+        and an agent or team step that follows one is sent it as its input."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        def takes_previous_output(step: Any) -> bool:
+            # An agent or team step is sent the previous step's output as its whole input.
+            return isinstance(step, Step) and (step.agent is not None or step.team is not None)
+
+        def handed_on(steps: Any) -> List[tuple]:
+            # (condition, next step) for each skip message that becomes an agent or team step's input.
+            if not isinstance(steps, list):
+                return []
+            found: List[tuple] = []
+            for index, step in enumerate(steps):
+                following = steps[index + 1] if index + 1 < len(steps) else None
+                if takes_previous_output(following):
+                    found.extend((condition, following) for condition in ending(step))
+                if isinstance(step, Condition):
+                    found.extend(handed_on(step.steps) + handed_on(step.else_steps))
+                elif isinstance(step, (Loop, Steps)):
+                    found.extend(handed_on(step.steps))
+            return found
+
+        def ending(step: Any) -> List[Any]:
+            # The conditions with no else branch that can produce this step's last output.
+            if isinstance(step, Condition):
+                if not step._has_else_steps():
+                    return [step]
+                branches = [step.steps, step.else_steps]
+                return [
+                    found for branch in branches if isinstance(branch, list) and branch for found in ending(branch[-1])
+                ]
+            if isinstance(step, (Loop, Steps)) and isinstance(step.steps, list) and step.steps:
+                return ending(step.steps[-1])
+            return []
+
+        return [
+            f"A run can end on condition '{condition.name}', which has no else_steps: when it is not met the "
+            f"workflow returns 'Condition {condition.name} not met - skipped ...' and not a result. Give it "
+            "else_steps, or end with the step that produces the result."
+            for condition in (ending(built_steps[-1]) if built_steps else [])
+        ] + [
+            f"Step '{following.name}' comes after condition '{condition.name}', which has no else_steps: when it "
+            f"is not met the step is sent 'Condition {condition.name} not met - skipped ...' as its input and not "
+            "the output of the step before the condition. Give the condition else_steps."
+            for condition, following in handed_on(built_steps)
+        ]
 
     @staticmethod
     def _coerce_step_specs(steps: Any) -> tuple:
@@ -3330,6 +3391,7 @@ class StudioTools(Toolkit):
         """
 
         workflow_id = _clean_id(workflow_id)
+        warnings: List[str] = []
 
         def mutate(workflow, replaced_keys):
             if name is not None:
@@ -3368,6 +3430,7 @@ class StudioTools(Toolkit):
                     )
                 workflow.steps = built
                 replaced_keys.add("steps")
+                warnings.extend(self._skip_message_warnings(built))
             if metadata is not None:
                 existing = getattr(workflow, "metadata", None) or {}
                 studio_meta = existing.get("studio")
@@ -3378,7 +3441,9 @@ class StudioTools(Toolkit):
                 replaced_keys.add("metadata")
             return None, pinned
 
-        return self._edit_component("workflow", workflow_id, expected_version, publish, _agno_run_context, mutate)
+        return self._edit_component(
+            "workflow", workflow_id, expected_version, publish, _agno_run_context, mutate, warnings=warnings
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -3809,8 +3874,8 @@ class StudioTools(Toolkit):
     ) -> str:
         """Dry-run a stored component without dispatching it: resolve every
         reference against the live registry and rebuild it exactly as a run
-        would. Cheaper and more precise than a live trial run; use it before
-        publish_component.
+        would. It shows that the component can be built, not what a run of it
+        returns; use it before publish_component.
 
         Args:
             component_id (str): Exact component id.

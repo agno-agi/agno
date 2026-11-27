@@ -247,3 +247,54 @@ def test_start_refuses_a_task_whose_project_was_cancelled(system):
     # The same refusal as the start route, before any ticket exists.
     assert start(agent_os, accepted["id"], context()) == "Not started: Cannot start Task work in a cancelled Project"
     assert asyncio.run(queue.store.get_job(task_run_id(accepted["id"], 1))) is None
+
+
+def test_two_people_start_sandboxed_tasks_at_once(system, monkeypatch):
+    from starlette.responses import JSONResponse
+
+    from agno.os.routers.company.runs import _TaskStarter
+    from agno.sandbox import Repository
+    from agno.sandbox.docker import DockerSandbox
+    from agno.sandbox.fixture import FixtureAgent
+
+    client, db, agent_os, queue = system
+    url = "https://github.com/a/b"
+    engineer = FixtureAgent(
+        id="engineer",
+        sandbox=DockerSandbox("unused", env={"AGNO_SANDBOX_TEST_RUNTIME": "1"}),
+        repository=Repository(url),
+    )
+    agent_os.registry.agents.append(engineer)
+    scopes = [*SCOPES, "agents:engineer:run"]
+    tasks = []
+    for user in ("alice", "bob"):
+        created = task(client, accept=False)
+        source = client.post(
+            "/company/sources",
+            json={"goal_id": created["goal_id"], "type": "git", "reference": url},
+            headers=headers([*scopes, "sources:write"]),
+        )
+        assert source.status_code == 201, source.text
+        ready = client.post(
+            f"/company/tasks/{created['id']}/transitions",
+            json={"target": "ready", "reason": "Approved", "executor_type": "agent", "executor_id": "engineer"},
+            headers=headers(scopes, user),
+        )
+        assert ready.status_code == 200 and ready.json()["sandboxed"] is True, ready.text
+        tasks.append((user, ready.json()))
+
+    live = []
+
+    async def dispatch(self, task_id, caller, attempt, value, message):
+        # The sandbox itself is not under test: record the start and leave its run live, as a worker would.
+        run_id = task_run_id(task_id, 1)
+        live.append(run_id)
+        return JSONResponse({"run_id": run_id, "session_id": value["session_id"], "status": "PENDING"}, 202)
+
+    monkeypatch.setattr(_TaskStarter, "dispatch", dispatch)
+    for user, accepted in tasks:
+        reply = start(agent_os, accepted["id"], context(scopes, user))
+        # Neither start is refused because the other sandboxed Task has a live run.
+        assert reply.startswith("Queued 'Draft'") and task_run_id(accepted["id"], 1) in reply, reply
+    assert live == [task_run_id(accepted["id"], 1) for _, accepted in tasks]
+    assert tasks[0][1]["session_id"] != tasks[1][1]["session_id"]

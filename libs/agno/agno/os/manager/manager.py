@@ -23,6 +23,7 @@ from agno.os.manager.prompts import (
     NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
+    SANDBOX_CHANGES_INSTRUCTIONS,
     SOURCE_INSTRUCTIONS,
 )
 from agno.registry._reserved import BUILDER_ID, RESERVED_MANAGER_IDS, RESERVED_MEMBER_IDS, _listed
@@ -306,6 +307,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     Called internally by AgentOS after its registry and database are set.
     """
     from agno.company.routines import _RoutineBoundary
+    from agno.company.sandbox import _is_sandboxed
     from agno.db.base import AsyncBaseDb, BaseDb
     from agno.os.manager.background_runs import BackgroundRunTools
     from agno.os.manager.finished_work import FinishedWorkBoundary
@@ -376,9 +378,13 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         entry = manifest.get(component_id) if manifest else None
         return entry.description if entry is not None else None
 
+    # A sandbox on a served agent, or one the registry holds for stored agents: only then is there a
+    # sandbox checkout for Super Agent to read.
+    has_sandbox = bool(registry.sandboxes) or any(_is_sandboxed(agent) for agent in agent_os.agents or [])
     # The manager can run served components, including itself once, and start one in the background.
     runner = BackgroundRunTools(
         agent_os,
+        sandbox_changes=has_sandbox,
         registry=registry,
         db=db,
         include_agents=LiveSequence(
@@ -399,6 +405,8 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
     # What Super Agent is told about its background runs depends on whether its model is sent the block.
     instructions.extend([BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS])
+    if has_sandbox:
+        instructions.append(SANDBOX_CHANGES_INSTRUCTIONS)
     if config.access_docs:
         try:
             from agno.tools.mcp import MCPTools

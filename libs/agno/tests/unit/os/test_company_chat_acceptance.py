@@ -249,18 +249,19 @@ def test_a_task_that_was_not_created_does_not_use_one_of_the_runs_places(system)
 
 
 def test_work_for_an_executor_that_pushes_code_is_a_proposal_the_person_confirms(system, monkeypatch):  # noqa: F811
+    from tests.unit.os.test_company_sandboxed_task_goal import writer_pushes_code
+
     client, db, agent_os, queue = system
-    monkeypatch.setattr(
-        "agno.company.sandbox._is_sandboxed", lambda component: getattr(component, "id", "") == "writer"
-    )
+    goal_id = writer_pushes_code(monkeypatch, client, agent_os)
     reply = add(agent_os, context(), start=True, executor_type="agent", executor_id="writer")
     task = only_task(db)
     assert reply.startswith("Recorded") and "runs in a sandbox and can push code" in reply, reply
-    assert (task["status"], task["accepted_by"], task["executor_id"], task["job_id"]) == (
+    assert (task["status"], task["accepted_by"], task["executor_id"], task["job_id"], task["goal_id"]) == (
         "backlog",
         None,
         "writer",
         None,
+        goal_id,
     )
     # It took none of the run's places for accepted work.
     for number in range(ACCEPTED_TASKS_PER_RUN):

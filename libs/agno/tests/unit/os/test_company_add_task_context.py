@@ -160,10 +160,10 @@ def test_a_task_held_back_past_five_in_one_run_keeps_its_context(system):  # noq
 
 def test_a_task_held_back_for_an_executor_that_pushes_code_keeps_its_context(system, monkeypatch):  # noqa: F811
     client, db, agent_os, queue = system
+    from tests.unit.os.test_company_sandboxed_task_goal import writer_pushes_code
+
     project, earlier, attached = earlier_work(client, db)
-    monkeypatch.setattr(
-        "agno.company.sandbox._is_sandboxed", lambda component: getattr(component, "id", "") == "writer"
-    )
+    writer_pushes_code(monkeypatch, client, agent_os, goal_id=project["goal_id"])
 
     reply = add(
         agent_os,

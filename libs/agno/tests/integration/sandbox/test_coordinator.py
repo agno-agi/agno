@@ -884,6 +884,25 @@ async def test_completion_by_another_writer_releases_the_session(system, monkeyp
     assert (await run(coordinator, spec, "second")).status == RunStatus.completed
 
 
+@pytest.mark.parametrize("note", ["The sandbox reached its 512 MB memory limit during this turn.", None])
+async def test_errored_run_carries_the_runtimes_memory_note(system, monkeypatch, note):
+    coordinator, spec, _ = system
+    poll = coordinator.client.apoll
+
+    async def killed(*args, **kwargs):
+        page = await poll(*args, **kwargs)
+        if page.result is not None and page.result["type"] == "execution_finished":
+            page.result["run"].update(status="ERROR", content="Command failed with exit code -9")
+            if note:
+                page.result["memory_note"] = note
+        return page
+
+    monkeypatch.setattr(coordinator.client, "apoll", killed)
+    output = await run(coordinator, spec)
+    assert output.status == RunStatus.error
+    assert output.content == "Command failed with exit code -9" + (". " + note if note else "")
+
+
 async def test_runtime_failure_is_not_retried(system, monkeypatch):
     coordinator, spec, _ = system
     poll = coordinator.client.apoll

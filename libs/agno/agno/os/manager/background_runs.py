@@ -8,10 +8,18 @@ task in the server's memory when it is not. The tool returns a receipt and the t
 The run is recorded in the conversation's linked work, and stores which conversation asked for it.
 While it is going, no other run of that component may start from the conversation, in the turn or in
 the background: nothing else stops two runs from writing one session at once.
+
+An agent that works in a sandbox changes a checkout the AgentOS host does not hold. read_sandbox_changes
+reads what such an agent changed, from the checkout its sandbox saved when its last run completed.
 """
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote
@@ -45,6 +53,150 @@ RESULT_LENGTH = 6000
 _KINDS = ("agent", "team", "workflow")
 _ASYNC_ONLY = "Starting a background run needs an asynchronous run. Run the component in the turn instead."
 
+# The most of a sandbox checkout's diff the read tool returns in one call, and the most changed files it
+# lists. More is cut, the result says so, and offset reads on from the cut. Together they keep a result
+# under the 16,000 characters past which Super Agent is shown only the start of a tool result.
+DIFF_LENGTH = 8000
+_FILES_LISTED = 50
+# The newest runs of a session that are looked through for a saved checkout.
+_NEWEST_RUNS: Dict[str, Any] = {"limit": 30, "sort_by": "run_index", "sort_order": "desc", "deserialize": False}
+# The longest one git command may take on a restored checkout.
+_GIT_SECONDS = 60
+_CHANGE = {"A": "added", "M": "modified", "D": "deleted", "T": "type changed"}
+
+
+class _Unreadable(Exception):
+    """Why a sandbox's changes cannot be read: the one sentence the tool returns."""
+
+
+def _run_data(row: Dict[str, Any]) -> Dict[str, Any]:
+    data = row.get("run_data") or {}
+    if isinstance(data, str):
+        data = json.loads(data)
+    return data if isinstance(data, dict) else {}
+
+
+def _saved_checkout(
+    rows: List[Any], agent_id: Any
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """The newest run of a session that saved its checkout, the agent's runs after it, and those before it.
+
+    A sandbox saves its files only when a run completes, so a run that failed, was cancelled or is still
+    going has no checkout of its own: the files are as the last completed run left them.
+    """
+    runs = [row for row in rows if isinstance(row, dict) and row.get("agent_id") == agent_id]
+    # Newest first whatever the store returned: a run's place in its session, then its time.
+    runs.sort(key=lambda row: (row.get("run_index") or 0, row.get("created_at") or 0), reverse=True)
+    for index, row in enumerate(runs):
+        sandbox = (_run_data(row).get("metadata") or {}).get("sandbox") or {}
+        if str(row.get("status") or "").upper() == "COMPLETED" and isinstance(sandbox.get("checkpoint"), dict):
+            return row, runs[:index], runs[index + 1 :]
+    return None, runs, []
+
+
+def _checkout_changes(archive: Path, commit: str, path: Optional[str] = None, offset: int = 0) -> Dict[str, Any]:
+    """What a saved sandbox checkout changed since a commit: every changed file, and the diff from offset on.
+
+    The archive is restored into a temporary directory on this host and compared there with git, which
+    must be installed. Everything the agent did since the commit counts, committed or not; new files its
+    .gitignore excludes do not. git tracks what it tracked in the sandbox: a file the agent removed from
+    git is deleted although it is still on disk. git runs on a new repository directory that borrows only
+    the objects and the index of the saved checkout, so no configuration, hook, filter or diff driver
+    written inside the sandbox is read or run. Nothing is written outside the temporary directory, which
+    is removed.
+    """
+    if shutil.which("git") is None:
+        raise _Unreadable("Reading a sandbox checkout needs git on the AgentOS host, and it is not installed.")
+    from agno.sandbox.checkpoint import CheckpointArchive
+
+    with tempfile.TemporaryDirectory(prefix="agno-sandbox-changes-") as scratch:
+        root = Path(scratch)
+        CheckpointArchive().restore(archive, root / "restored")
+        checkout = root / "restored" / "workspace" / "repository"
+        objects = checkout / ".git" / "objects"
+        if not objects.is_dir():
+            raise _Unreadable("The saved sandbox holds no repository checkout.")
+        # The saved object store must not lead git to objects anywhere else on this host.
+        (objects / "info" / "alternates").unlink(missing_ok=True)
+        gitdir = root / "git"
+        env = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "HOME": scratch,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "LC_ALL": "C",
+        }
+
+        def run(command: List[str], output: Optional[Path] = None) -> str:
+            try:
+                if output is None:
+                    done = subprocess.run(command, cwd=scratch, env=env, capture_output=True, timeout=_GIT_SECONDS)
+                else:
+                    with output.open("wb") as sink:
+                        done = subprocess.run(
+                            command, cwd=scratch, env=env, stdout=sink, stderr=subprocess.PIPE, timeout=_GIT_SECONDS
+                        )
+            except subprocess.TimeoutExpired:
+                raise _Unreadable(f"Comparing the saved checkout took over {_GIT_SECONDS} seconds and was stopped.")
+            if done.returncode:
+                detail = done.stderr.decode("utf-8", errors="replace").strip()[:300]
+                raise _Unreadable(f"git could not compare the saved checkout: {detail or 'no reason given'}")
+            return (done.stdout or b"").decode("utf-8", errors="replace") if output is None else ""
+
+        def git(*args: str, output: Optional[Path] = None) -> str:
+            prefix = ["git", "--git-dir", str(gitdir), "--work-tree", str(checkout), "--literal-pathspecs"]
+            return run([*prefix, *args], output)
+
+        run(["git", "init", "--quiet", "--bare", "--template=", str(gitdir)])
+        (gitdir / "objects" / "info").mkdir(parents=True, exist_ok=True)
+        (gitdir / "objects" / "info" / "alternates").write_text(str(objects) + "\n")
+        # Attachments are staged under the checkout's .agno/, which the sandbox keeps out of git too.
+        (gitdir / "info").mkdir(exist_ok=True)
+        (gitdir / "info" / "exclude").write_text("/.agno/\n")
+        try:
+            git("cat-file", "-e", commit + "^{commit}")
+        except _Unreadable:
+            raise _Unreadable(
+                f"The saved checkout does not hold commit {commit[:12]}, the one its sandbox started from, "
+                "so there is nothing to compare it with."
+            )
+        # The new repository's index starts as a copy of the saved checkout's, so git tracks here what it
+        # tracked in the sandbox. A tracked file that .gitignore also matches, or a submodule the sandbox
+        # never fetched, is not taken for a deleted one; a file the agent removed from git is deleted
+        # although it is still on disk; a file it added past .gitignore is added. The index then takes the
+        # checkout as it is; the saved checkout is not written.
+        index = checkout / ".git" / "index"
+        if index.is_file() and not index.is_symlink():
+            shutil.copyfile(index, gitdir / "index")
+        else:
+            git("read-tree", commit)
+        git("add", "--all")
+        compare = ["diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color"]
+        files: Dict[str, Dict[str, Any]] = {}
+        for line in git(*compare, "--raw", "--numstat", commit).splitlines():
+            if line.startswith(":"):
+                meta, _, name = line.partition("\t")
+                files[name] = {"path": name, "change": _CHANGE.get(meta.split()[-1][:1], "changed")}
+            elif line.count("\t") >= 2:
+                added, removed, name = line.split("\t", 2)
+                entry = files.setdefault(name, {"path": name, "change": "changed"})
+                if added.isdigit() and removed.isdigit():
+                    entry.update(lines_added=int(added), lines_removed=int(removed))
+                else:
+                    entry["binary"] = True
+        patch = root / "patch"
+        git(*compare, commit, *(["--", path] if path else []), output=patch)
+        with patch.open(encoding="utf-8", errors="replace") as stream:
+            # Where the returned part starts: offset, or the end of a diff that is shorter than it.
+            start = 0
+            while start < offset and (chunk := stream.read(min(offset - start, 1 << 20))):
+                start += len(chunk)
+            diff = stream.read(DIFF_LENGTH)
+            length = start + len(diff) + sum(len(chunk) for chunk in iter(lambda: stream.read(1 << 20), ""))
+        return {"files": list(files.values()), "diff": diff, "diff_offset": start, "diff_length": length}
+
 
 def _requested_from(run_context: Any, team: Any) -> Dict[str, str]:
     """The conversation a background run reports to: the chat's session, run, team and user ids."""
@@ -58,9 +210,13 @@ def _requested_from(run_context: Any, team: Any) -> Dict[str, str]:
 
 
 class BackgroundRunTools(StudioRunnerTools):
-    """StudioRunnerTools for Super Agent, with start_background_run and check_background_run."""
+    """StudioRunnerTools for Super Agent, with start_background_run and check_background_run.
 
-    def __init__(self, agent_os: Any, **kwargs: Any):
+    With sandbox_changes on, read_sandbox_changes is added: only an AgentOS with a sandbox has a
+    checkout to read.
+    """
+
+    def __init__(self, agent_os: Any, sandbox_changes: bool = False, **kwargs: Any):
         super().__init__(**kwargs)
         self._agent_os: ReferenceType[Any] = ref(agent_os)
         # Sessions a run tool of this toolkit is entering or running in, in the turn or as a start. Two
@@ -71,6 +227,9 @@ class BackgroundRunTools(StudioRunnerTools):
         self.register(self.astart_background_run, name="start_background_run")
         self.register(self.check_background_run)
         self.register(self.acheck_background_run, name="check_background_run")
+        if sandbox_changes:
+            self.register(self.read_sandbox_changes)
+            self.register(self.aread_sandbox_changes, name="read_sandbox_changes")
 
     # ------------------------------------------------------------------
     # Start
@@ -612,7 +771,311 @@ class BackgroundRunTools(StudioRunnerTools):
             logger.exception("Failed to read a background run")
             return json.dumps({"error": f"Cannot read the run: {str(exc) or type(exc).__name__}"})
 
+    # ------------------------------------------------------------------
+    # Sandbox changes
+    # ------------------------------------------------------------------
+
+    def _conversation_agent(self, agent_id: str, run_context: Any) -> Tuple[Any, str, str]:
+        """The agent named, its id, and the session this conversation's runs of it enter."""
+        actor = getattr(run_context, "user_id", None)
+        try:
+            agent = self._find_agent(agent_id, for_dispatch=True, actor=actor)
+        except StudioRunnerError as exc:
+            raise _Unreadable(str(exc))
+        if agent is None:
+            raise _Unreadable(self._not_found_message("agent", agent_id, actor=actor))
+        resolved_id = getattr(agent, "id", None) or agent_id
+        session_id = self._sub_session_id(run_context, "agent", resolved_id)
+        if session_id is None:
+            raise _Unreadable("Only a conversation reads what an agent it ran changed, and this run has none.")
+        return agent, resolved_id, session_id
+
+    async def _atask_agent(self, task_id: str, run_context: Any) -> Tuple[Any, Any, str]:
+        """A Task's executor, the database its runs are stored in, and the Task's session.
+
+        The Task is read under the same permission as its status.
+        """
+        from fastapi import HTTPException
+
+        from agno.os.routers.company.runs import _TaskStarter
+        from agno.tools.company import _authority
+
+        agent_os = self._agent_os()
+        if agent_os is None or getattr(agent_os, "_company_db", None) is None:
+            raise _Unreadable("Company is not running here, so there is no Task to read.")
+        authority = _authority(run_context)
+        if authority is not None:
+            await authority.arequire("tasks", "read")
+        starter = _TaskStarter(agent_os)
+        try:
+            value = await starter.task(task_id)
+            if value.get("executor_type") != "agent" or not value.get("executor_id"):
+                raise _Unreadable("This Task's executor is not an agent that works in a sandbox: no checkout to read.")
+            agent = starter.executor(value)
+            self._sandboxed(agent)
+            if not value.get("job_id") or not value.get("session_id"):
+                raise _Unreadable("This Task has not run yet, so its sandbox has saved no checkout.")
+            return agent, starter.run_database(value), value["session_id"]
+        except HTTPException as exc:
+            raise _Unreadable(f"Cannot read the Task: {exc.detail}")
+        except ValueError as exc:
+            raise _Unreadable(f"Cannot read the Task's run: {exc}")
+
+    @staticmethod
+    def _sandboxed(agent: Any) -> str:
+        """The agent's name. Raises when it has no sandbox checkout of a repository."""
+        from agno.company.sandbox import _is_sandboxed
+
+        name = getattr(agent, "name", None) or getattr(agent, "id", None) or "The agent"
+        if not _is_sandboxed(agent):
+            raise _Unreadable(f"{name} does not work in a sandbox, so it has no checkout of its own to read.")
+        if getattr(agent, "repository", None) is None:
+            raise _Unreadable(f"{name}'s sandbox has no repository, so there is no checkout to compare.")
+        return name
+
+    @staticmethod
+    def _saved_run(
+        rows: Any, agent: Any, user_id: Optional[str], where: str
+    ) -> Tuple[Dict[str, Any], str, List[Any], List[Any]]:
+        """The run whose saved checkout is read, the commit it is compared with, and the runs after and before it."""
+        name = getattr(agent, "name", None) or agent.get_id()
+        found = rows[0] if isinstance(rows, tuple) else rows
+        # A conversation reads its own person's runs only.
+        mine = [
+            row for row in found or [] if user_id is None or (isinstance(row, dict) and row.get("user_id") == user_id)
+        ]
+        row, later, earlier = _saved_checkout(mine, agent.get_id())
+        if row is None and later:
+            status = str(later[0].get("status") or "unknown").lower()
+            raise _Unreadable(
+                f"{name} has no completed run {where}: its latest run is {status}. A sandbox saves its "
+                "checkout only when a run completes, so there are no changes to read yet."
+            )
+        if row is None:
+            raise _Unreadable(f"{name} has not run {where}, so there are no changes to read.")
+        repository = ((_run_data(row).get("metadata") or {}).get("sandbox") or {}).get("repository") or {}
+        commit = repository.get("commit")
+        # The commit is passed to git, and the run recorded it from inside the sandbox.
+        if not isinstance(commit, str) or len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
+            raise _Unreadable(
+                f"Run {row.get('run_id')} recorded no commit its sandbox started from, so there is nothing "
+                "to compare its checkout with."
+            )
+        return row, commit, later, earlier
+
+    @staticmethod
+    def _changes(
+        agent: Any,
+        row: Dict[str, Any],
+        later: List[Any],
+        earlier: List[Any],
+        changes: Dict[str, Any],
+        path: Optional[str],
+        task_id: Any,
+    ) -> str:
+        """What read_sandbox_changes returns. Everything left out is said in the note, before the diff."""
+        repository = (_run_data(row)["metadata"]["sandbox"]).get("repository") or {}
+        run_id = row.get("run_id")
+        payload: Dict[str, Any] = {
+            **({"task_id": task_id} if task_id else {}),
+            "agent_id": agent.get_id(),
+            "run_id": run_id,
+            "session_id": row.get("session_id"),
+            "repository": repository.get("url"),
+            "branch": repository.get("branch"),
+            "base_commit": repository.get("commit"),
+            "read_from": (
+                "The checkout the sandbox saved when this run completed, compared with base_commit, the commit "
+                "the sandbox started from. Committed and uncommitted changes both count."
+            ),
+        }
+        files, diff, length = changes["files"], changes["diff"], changes["diff_length"]
+        # The part of the whole diff this result holds.
+        start = changes["diff_offset"]
+        end = start + len(diff)
+        notes: List[str] = []
+        if later:
+            status = str(later[0].get("status") or "unknown").lower()
+            notes.append(
+                f"A later run ({later[0].get('run_id')}) is {status} and saved no checkout: these are the files "
+                f"as run {run_id} left them."
+            )
+        # The sandbox keeps one checkout for the whole session, and base_commit never moves. So after an
+        # earlier run the diff is the session's, and says nothing of which run changed what.
+        if not files and earlier:
+            notes.append(
+                "No file differs from base_commit: the checkout now matches the commit this session's sandbox "
+                "started from, so anything an earlier run changed has been put back."
+            )
+        elif not files:
+            notes.append("No file differs from base_commit: this agent changed nothing in its checkout.")
+        elif earlier:
+            notes.append(
+                f"Run {run_id} is not the first run of this session: the diff is everything changed in the "
+                f"session since base_commit, not only what run {run_id} changed."
+            )
+        if files and path and not length:
+            notes.append(f"{path} is not among the changed files.")
+        if len(files) > _FILES_LISTED:
+            notes.append(
+                f"changed_files shows the first {_FILES_LISTED} of {len(files)} changed files: "
+                f"{len(files) - _FILES_LISTED} more are not listed."
+            )
+        if length > end:
+            shown = f"characters {start} to {end}" if start else f"the first {end}"
+            if path:
+                again = f"Call again with the same path and offset={end} to read on from there."
+            else:
+                again = f"Call again with offset={end} to read on from there, or with path to read one file's diff."
+            # Said only when it is so: a long list of files is cut too, and says that itself.
+            listed = " changed_files lists every changed file." if len(files) <= _FILES_LISTED else ""
+            notes.append(
+                f"The diff is cut. It shows {shown} of {length} characters: {length - end} more are not shown, "
+                f"so this is not the whole change. {again}{listed}"
+            )
+            diff += (
+                f"\n[The diff is cut here: {length - end} more characters are not shown. Read on with offset={end}.]"
+            )
+        elif start and diff:
+            notes.append(f"This is the rest of the diff, from character {start} of {length}.")
+        elif start and length:
+            notes.append(f"Nothing is left to read at offset {start}: the diff is {length} characters long.")
+        payload["changed_files"] = files[:_FILES_LISTED]
+        if notes:
+            payload["note"] = " ".join(notes)
+        payload["diff"] = diff
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def _changes_error(exc: BaseException, run_id: Any = None) -> str:
+        from agno.sandbox.checkpoint import CheckpointObjectNotFound
+
+        if isinstance(exc, _Unreadable):
+            return json.dumps({"error": str(exc)})
+        if isinstance(exc, CheckpointObjectNotFound):
+            return json.dumps(
+                {
+                    "error": f"The checkout saved by run {run_id} is no longer in checkpoint storage, so its "
+                    "changes cannot be read. A sandbox keeps the checkouts of its last few runs only."
+                }
+            )
+        if not isinstance(exc, PermissionError):
+            logger.exception("Failed to read sandbox changes")
+        return json.dumps({"error": f"Cannot read the changes: {str(exc) or type(exc).__name__}"})
+
+    @requires_permission()
+    def read_sandbox_changes(
+        self,
+        task_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        path: Optional[str] = None,
+        offset: Optional[int] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Read what an agent that works in a sandbox changed in its checkout: the changed files and the diff.
+
+        Args:
+            task_id (Optional[str]): A Company Task a sandboxed agent executed.
+            agent_id (Optional[str]): A sandboxed agent this conversation ran (a display name also resolves).
+            path (Optional[str]): One changed file, to read only its diff.
+            offset (Optional[int]): Characters of the diff to skip, to read on from where a cut diff stopped.
+        """
+        from agno.tools.company import _authority
+
+        run_id = None
+        try:
+            if bool(task_id) == bool(agent_id):
+                return json.dumps({"error": "Give a task_id or an agent_id, one of the two."})
+            if task_id:
+                return json.dumps({"error": "Reading a Task's sandbox needs an asynchronous run."})
+            agent, resolved_id, session_id = self._conversation_agent(str(agent_id), _agno_run_context)
+            authority = _authority(_agno_run_context)
+            if authority is not None:
+                authority.require("agents", "run", resolved_id)
+            self._sandboxed(agent)
+            db = getattr(agent, "db", None)
+            if db is None or isinstance(db, AsyncBaseDb):
+                return json.dumps({"error": "Reading this agent's sandbox needs an asynchronous run."})
+            rows = db.get_runs(session_id=session_id, **_NEWEST_RUNS)
+            user_id = getattr(_agno_run_context, "user_id", None)
+            row, commit, later, earlier = self._saved_run(rows, agent, user_id, "in this conversation")
+            run_id = row["run_id"]
+            with agent.open_run_checkpoint(run_id) as archive:
+                changes = _checkout_changes(archive, commit, path or None, max(0, int(offset or 0)))
+            return self._changes(agent, row, later, earlier, changes, path or None, None)
+        except Exception as exc:
+            return self._changes_error(exc, run_id)
+
+    @requires_permission()
+    async def aread_sandbox_changes(
+        self,
+        task_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        path: Optional[str] = None,
+        offset: Optional[int] = None,
+        _agno_run_context: Optional[Any] = None,
+    ) -> str:
+        """Read what an agent that works in a sandbox changed in its checkout: the changed files and the diff.
+
+        A sandboxed agent edits its own checkout of the repository, which read_file does not read. Use
+        this to check or quote what it changed. It reads the checkout the sandbox saved when the
+        agent's last completed run ended, compared with the commit the sandbox started from, so it still
+        works after the sandbox is gone, and it shows nothing of a run that failed or is still going.
+        When the agent ran more than once in the session, the diff holds every run's changes, not only
+        the last run's. It only reads. Give exactly one of task_id and agent_id.
+
+        Args:
+            task_id (Optional[str]): A Company Task a sandboxed agent executed.
+            agent_id (Optional[str]): A sandboxed agent this conversation ran, in the turn or in the
+                background (a display name also resolves).
+            path (Optional[str]): One changed file, to read only its diff. Leave it out for every change.
+            offset (Optional[int]): Characters of the diff to skip, to read on from where a cut diff
+                stopped: the result of a cut diff names the offset to give. Leave it out to read from the start.
+
+        Returns:
+            str: JSON object with 'changed_files' (every changed file), 'diff', the 'run_id' that was
+                read and 'base_commit'; a 'note' when the diff is cut, holds earlier runs' changes or
+                is empty; or an 'error' saying why the changes cannot be read.
+        """
+        from agno.tools.company import _authority
+
+        run_id = None
+        try:
+            if bool(task_id) == bool(agent_id):
+                return json.dumps({"error": "Give a task_id or an agent_id, one of the two."})
+            user_id = None
+            if task_id:
+                agent, db, session_id = await self._atask_agent(str(task_id), _agno_run_context)
+                where = "for this Task"
+            else:
+                agent, resolved_id, session_id = await asyncio.to_thread(
+                    self._conversation_agent, str(agent_id), _agno_run_context
+                )
+                authority = _authority(_agno_run_context)
+                if authority is not None:
+                    await authority.arequire("agents", "run", resolved_id)
+                self._sandboxed(agent)
+                db, where = getattr(agent, "db", None), "in this conversation"
+                user_id = getattr(_agno_run_context, "user_id", None)
+            if db is None:
+                raise _Unreadable("This agent stores no runs, so there is no saved checkout to read.")
+            if isinstance(db, AsyncBaseDb):
+                rows = await db.get_runs(session_id=session_id, **_NEWEST_RUNS)
+            else:
+                rows = await asyncio.to_thread(lambda: db.get_runs(session_id=session_id, **_NEWEST_RUNS))
+            row, commit, later, earlier = self._saved_run(rows, agent, user_id, where)
+            run_id = row["run_id"]
+            async with agent.aopen_run_checkpoint(run_id) as archive:
+                changes = await asyncio.to_thread(
+                    _checkout_changes, archive, commit, path or None, max(0, int(offset or 0))
+                )
+            return self._changes(agent, row, later, earlier, changes, path or None, task_id or None)
+        except Exception as exc:
+            return self._changes_error(exc, run_id)
+
 
 # The model is shown the base tools' descriptions: the guard adds nothing to what they say.
 for _name in ("run_agent", "run_team", "run_workflow", "arun_agent", "arun_team", "arun_workflow"):
     getattr(BackgroundRunTools, _name).__doc__ = getattr(StudioRunnerTools, _name).__doc__
+# A synchronous run is told the same about the tool as an asynchronous one.
+BackgroundRunTools.read_sandbox_changes.__doc__ = BackgroundRunTools.aread_sandbox_changes.__doc__
