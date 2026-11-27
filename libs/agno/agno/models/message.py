@@ -104,6 +104,11 @@ class Message(BaseModel):
     tool_args: Optional[Any] = None
     # The error of the tool call
     tool_call_error: Optional[bool] = None
+    # True only when this result is the synthetic refusal produced because the
+    # tool call limit was exhausted. tool_call_error alone cannot be used to
+    # detect that case: it is also set for ordinary runtime tool failures,
+    # which the model should still be allowed to see and recover from.
+    tool_call_limit_reached: Optional[bool] = None
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
     # When True, the message will be added to the agent's memory.
@@ -321,6 +326,7 @@ class Message(BaseModel):
             "tool_name": self.tool_name,
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
+            "tool_call_limit_reached": self.tool_call_limit_reached,
             "tool_calls": self.tool_calls,
             "redacted_reasoning_content": self.redacted_reasoning_content,
             "provider_data": self.provider_data,
