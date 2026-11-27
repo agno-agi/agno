@@ -36,7 +36,7 @@ from agno.os.interfaces.slack.interactions import (
     parse_submit_payload,
     synthetic_submit_payload,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped, can_act
+from agno.os.interfaces.slack.security import authorize_run, authorize_sender_again, authorize_unmapped, can_act
 from agno.os.interfaces.slack.types import ParsedDecision, RowActionContext, SubmitContext
 from agno.run.approval import aresolve_approval
 from agno.run.base import RunStatus
@@ -144,6 +144,10 @@ async def _decider_context(
     # The owner's authority is checked again on every decision: a disabled or revoked owner's run does not resume
     if ctx.users is not None and ctx.users.get(event_context.owner) is not None:
         if not await authorize_run(ctx, event_context, event_context.user_id, client, user, thread_ts):
+            return None
+    elif ctx.authorize_senders:
+        # The run's user is asked again as they are now: disabled, or moved to a role that no longer covers it
+        if not await authorize_sender_again(ctx, event_context, client, user, thread_ts):
             return None
     elif not await authorize_unmapped(ctx, event_context, client, user, thread_ts):
         return None

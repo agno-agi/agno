@@ -95,6 +95,7 @@ def make_async_client_mock():
             "user": {
                 "id": "U123",
                 "name": "testuser",
+                "is_email_confirmed": True,
                 "profile": {
                     "email": "test@example.com",
                     "display_name": "Test User",

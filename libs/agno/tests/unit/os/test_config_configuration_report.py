@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.job_queue.config import QueueConfig
@@ -148,7 +149,7 @@ class TestSecurityKey:
 
 
 class TestScopeAuthorization:
-    """authorization=True: token scopes decide, no managed roles."""
+    """authorization=True: token scopes decide, and the role store is on beside them."""
 
     def _scope_os(self, db, verify_audience=None):
         config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256", verify_audience=verify_audience)
@@ -160,11 +161,32 @@ class TestScopeAuthorization:
             "enabled": True,
             "mode": "jwt",
             "user_isolation": False,
-            "managed_roles": False,
+            # A SQLite or Postgres database can hold roles, so the role store and /authz are on
+            "managed_roles": True,
             "roles_from_token": False,
             "token_scopes_trusted": True,
             "audience_verified": False,
         }
+
+    def test_roles_are_not_managed_on_a_database_that_cannot_hold_them(self):
+        memory_db = InMemoryDb()
+        agent_os = self._scope_os(memory_db)
+        client = TestClient(agent_os.get_app())
+        headers = _bearer("alice", ["agent_os:admin"])
+        block = client.get("/config", headers=headers).json()["authorization"]
+        assert block["managed_roles"] is False
+        assert block["token_scopes_trusted"] is True
+        assert client.get("/authz/roles", headers=headers).status_code == 404
+
+    def test_a_role_made_at_runtime_decides_requests(self, db):
+        client = TestClient(self._scope_os(db).get_app())
+        admin = _bearer("alice", ["agent_os:admin"])
+        assert client.get("/config", headers=_bearer("bob")).status_code == 403
+        assert client.post("/authz/roles", headers=admin, json={"slug": "viewer"}).status_code == 201
+        scopes = {"scopes": MEMBER_SCOPES}
+        assert client.put("/authz/roles/viewer/scopes", headers=admin, json=scopes).status_code == 200
+        assert client.post("/authz/subjects/bob/roles", headers=admin, json={"role": "viewer"}).status_code == 200
+        assert client.get("/config", headers=_bearer("bob")).status_code == 200
 
     def test_non_admin_sees_the_mode_and_no_detail(self, db):
         body = _config(self._scope_os(db), _bearer("bob", MEMBER_SCOPES)).json()
@@ -205,7 +227,8 @@ class TestManagedRoles:
             "managed_roles": True,
             "roles_from_token": False,
             "default_role": "member",
-            "token_scopes_trusted": False,
+            # Token scopes count beside roles unless trust_token_scopes=False is passed
+            "token_scopes_trusted": True,
             "audience_verified": False,
         }
 
@@ -249,13 +272,30 @@ class TestManagedRoles:
         assert block["managed_roles"] is True
         assert "default_role" not in block
 
-    def test_authorization_object_without_roles_is_scope_authorization(self, db):
+    def test_authorization_object_without_roles_has_the_role_store_beside_token_scopes(self, db):
         authorization = Authorization(verification_keys=[SECRET], algorithm="HS256", audience=OS_ID)
-        block = _config(_os(db, authorization=authorization), _bearer("alice", ["agent_os:admin"])).json()[
-            "authorization"
-        ]
-        assert block["managed_roles"] is False
+        client = TestClient(_os(db, authorization=authorization).get_app())
+        headers = _bearer("alice", ["agent_os:admin"])
+        block = client.get("/config", headers=headers).json()["authorization"]
+        # No role in code still gets the role store, since the database can hold roles
+        assert block["managed_roles"] is True
+        assert "default_role" not in block
         assert block["token_scopes_trusted"] is True
+        assert client.get("/authz/roles", headers=headers).status_code == 200
+
+    def test_no_roles_and_untrusted_token_scopes_builds_no_role_store(self, db):
+        # A store deciding alone would start empty and refuse everyone, so none is built
+        authorization = Authorization(
+            verification_keys=[SECRET], algorithm="HS256", audience=OS_ID, audit=True, trust_token_scopes=False
+        )
+        client = TestClient(_os(db, authorization=authorization).get_app())
+        headers = _bearer("alice", ["agent_os:admin"])
+        body = client.get("/config", headers=headers).json()
+        assert body["authorization"]["managed_roles"] is False
+        assert body["authorization"]["token_scopes_trusted"] is True
+        assert body["audit"] == {"enabled": True, "changes_readable": False, "decisions_readable": False}
+        assert client.get("/authz/roles", headers=headers).status_code == 404
+        assert client.get("/authz/audit", headers=headers).status_code == 404
 
 
 class TestFeatureBlocks:
@@ -310,14 +350,16 @@ class TestFeatureBlocks:
         assert client.get("/authz/audit", headers=_bearer("alice")).status_code == 404
         assert client.get("/authz/decisions", headers=_bearer("alice")).status_code == 404
 
-    def test_audit_without_roles_has_no_route_to_read_it(self, db):
+    def test_audit_without_roles_in_code_is_readable(self, db):
         authorization = Authorization(verification_keys=[SECRET], algorithm="HS256", audience=OS_ID, audit=True)
         app = _os(db, authorization=authorization).get_app()
         client = TestClient(app)
         headers = _bearer("alice", ["agent_os:admin"])
         audit = client.get("/config", headers=headers).json()["audit"]
-        assert audit == {"enabled": True, "changes_readable": False, "decisions_readable": False}
-        assert client.get("/authz/audit", headers=headers).status_code == 404
+        # /authz is mounted without a role in code, so both trails have a route
+        assert audit == {"enabled": True, "changes_readable": True, "decisions_readable": True}
+        assert client.get("/authz/audit", headers=headers).status_code == 200
+        assert client.get("/authz/decisions", headers=headers).status_code == 200
 
     @patch("agno.os.app.setup_tracing_for_os")
     def test_tracing_is_on_only_while_the_agno_tracer_is_active(self, _setup, db):
@@ -356,6 +398,16 @@ class TestFeatureBlocks:
         assert "public" not in _config(agent_os, _bearer("bob", MEMBER_SCOPES)).json()
         public = _config(agent_os, _bearer("alice", ["agent_os:admin"])).json()["public"]
         assert public == {"enabled": True, "agents": ["cfg-agent"], "teams": [], "workflows": [], "mcp": False}
+
+    def test_report_is_served_while_the_role_store_cannot_be_read(self):
+        config = AuthorizationConfig(verification_keys=[SECRET], algorithm="HS256")
+        agent_os = self._public_os(authorization=True, authorization_config=config)
+        # No admin role can be confirmed for a caller whose token does not carry the admin scope
+        member = _config(agent_os, _bearer("bob", MEMBER_SCOPES)).json()
+        assert member["authorization"] == {"enabled": True, "mode": "jwt", "user_isolation": False}
+        block = _config(agent_os, _bearer("alice", ["agent_os:admin"])).json()["authorization"]
+        assert block["managed_roles"] is True
+        assert "default_role" not in block
 
     def test_manager(self, db):
         body = _config(_os(db, manager=OSManager(model=OpenAIResponses(id="offline", api_key="test")))).json()

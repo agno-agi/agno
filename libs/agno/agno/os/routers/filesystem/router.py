@@ -1,5 +1,6 @@
 import asyncio
 from collections import Counter
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, NamedTuple, Optional, TypeVar, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -623,8 +624,14 @@ async def _get_global_filesystem_agent_ids(
                 if isinstance((agent_id := getattr(agent, "id", None)), str) and agent_id
             )
 
-    if "*" not in accessible_ids:
-        agent_ids.intersection_update(accessible_ids)
+    if scopes_are_authoritative:
+        # The provider filters, as it does for GET /agents: what "*" covers is its own to say. From
+        # token scopes or a managed role it leaves the built-in components out; from a custom
+        # provider it means every agent.
+        readable = await afilter_resources_by_access(
+            request, [SimpleNamespace(id=agent_id) for agent_id in agent_ids], "agents"
+        )
+        agent_ids = {agent.id for agent in readable}
 
     return sorted(agent_ids)
 

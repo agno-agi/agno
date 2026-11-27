@@ -591,7 +591,9 @@ def test_members_trigger_routines_as_themselves(tmp_path, monkeypatch, isolation
     secret = "company-routine-member-trigger-secret"
     scopes = ["routines:write", "schedules:write", "agents:reader:run"]
     db = SqliteDb(db_file=str(tmp_path / "member-trigger.db"))
-    authorization = Authorization(db=db, verification_keys=[secret], algorithm="HS256", audience="members")
+    authorization = Authorization(
+        db=db, verification_keys=[secret], algorithm="HS256", audience="members", trust_token_scopes=False
+    )
     if managed_roles:
         authorization.define_role("runner", scopes).assign("bob", "runner")
 
