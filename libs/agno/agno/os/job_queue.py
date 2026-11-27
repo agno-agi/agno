@@ -2409,18 +2409,28 @@ class QueueWorker:
         job_id, attempt = job["id"], job["attempt"]
         if not (job.get("payload") or {}).get("continue"):
             from agno.run.base import RunStatus
-            from agno.run.status_persist import apersist_run_status
+            from agno.run.status_persist import RunPersistOutcome, apersist_run_status, component_hook
 
+            # The run row goes back to what it read before this claim, attempt stamp included:
+            # the ticket's attempt is about to drop by one, and a cancel of the waiting ticket
+            # is fenced on the two matching. Unfenced, because the fenced write stamps the
+            # attempt it is given; the claim this worker still holds is the fence.
             try:
-                await apersist_run_status(
+                outcome = await apersist_run_status(
                     component,
                     job.get("component_type", ""),
                     session_id=job["session_id"],
                     run_id=job_id,
-                    fields={"status": RunStatus.pending.value},
+                    fields={"status": RunStatus.pending.value, "queue_attempt": attempt - 1},
                     user_id=job.get("user_id"),
-                    expected_attempt=attempt,
                 )
+                persist_fallback = component_hook(component, "_apersist_run_fallback")
+                if outcome in (RunPersistOutcome.MISSING, RunPersistOutcome.UNAVAILABLE) and persist_fallback:
+                    # A database without the atomic update, where the claim wrote RUNNING the same way.
+                    run = await component.aget_run_output(job_id, job["session_id"], user_id=job.get("user_id"))
+                    if run is not None and run.status == RunStatus.running:
+                        run.status = RunStatus.pending
+                        await persist_fallback(job["session_id"], run, job.get("user_id"))
             except Exception as e:
                 log_warning(f"Job queue: PENDING stamp failed for handed-back job {job_id}: {e}")
         try:
