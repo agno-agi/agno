@@ -719,10 +719,19 @@ OpenAI's Responses API does by default, is sent a conversation's instructions on
 first run only. With that kind of model the provider keeps the blocks sent on earlier
 turns as part of the conversation it holds.
 
-Linked work needs a model provider that accepts two user messages in a row, or whose
-formatter merges them. OpenAI does; the Claude and Gemini formatters merge them. A
-provider that requires strictly alternating roles and does not merge, such as AWS
-Bedrock's Converse API, refuses a turn that carries the block.
+The block is delivered when Super Agent's model is OpenAI, Azure OpenAI, Claude (Anthropic,
+AWS, Azure or Vertex AI), Gemini or xAI: providers that accept two user messages in a
+row, or whose formatter merges them. On any other provider Super Agent behaves as it
+does without linked work: no block is sent and the sentences about it are left out of
+its instructions, so a provider that requires strictly alternating roles is never sent
+the second message. The list of Tasks is still kept in the chat's session state. The
+match is on the model's own class, so an adapter that subclasses an OpenAI class for
+another endpoint (vLLM, LM Studio, llama.cpp, DeepSeek, Perplexity and the like) is not
+sent the block; neither are AWS Bedrock's Converse API, Mistral or Gemini's
+Interactions API.
+
+When the conversation starts or otherwise acts on a Task it already lists, that Task
+moves to the newest place, so it is among the 20 that are read.
 
 A proposal is what nobody asked for: a plan Super Agent offers to record, the first
 Tasks of an outcome it sets up, anything a Routine proposes. Those are still created

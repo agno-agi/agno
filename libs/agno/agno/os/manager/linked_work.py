@@ -31,6 +31,40 @@ _TITLE_LENGTH = 80
 
 _HEADER = "Work started from this conversation"
 
+# The block is a second user message right before the person's. It is sent only to a model whose
+# provider is known to take two user messages in a row; for every other model nothing is sent, so
+# the request is what it would be without linked work. Matched by the model's own class, never a
+# base class: many adapters for other endpoints subclass the OpenAI classes, and some of those
+# endpoints refuse the second message.
+_DELIVERED_TO = frozenset(
+    {
+        # OpenAI accepts consecutive user messages.
+        ("agno.models.openai.chat", "OpenAIChat"),
+        ("agno.models.openai.responses", "OpenAIResponses"),
+        # Azure OpenAI serves the same API and models. Expected to behave the same; not run live.
+        ("agno.models.azure.openai_chat", "AzureOpenAI"),
+        ("agno.models.azure.openai_responses", "AzureOpenAIResponses"),
+        # The Claude formatter, shared by these four, merges consecutive user messages.
+        ("agno.models.anthropic.claude", "Claude"),
+        ("agno.models.aws.claude", "Claude"),
+        ("agno.models.azure.claude", "Claude"),
+        ("agno.models.vertexai.claude", "Claude"),
+        # Gemini's generateContent formatter merges them. The Interactions API class is not listed.
+        ("agno.models.google.gemini", "Gemini"),
+        # xAI documents that messages may come in any role order.
+        ("agno.models.xai.xai", "xAI"),
+        ("agno.models.xai.responses", "xAIResponses"),
+        # AwsBedrock (the Converse API) refuses two user messages in a row and its formatter does not
+        # merge them, so it is not listed.
+    }
+)
+
+
+def _delivers(model: Any) -> bool:
+    """Whether the block is sent to this model: its exact class is one of the listed providers."""
+    kind = type(model)
+    return (kind.__module__, kind.__qualname__) in _DELIVERED_TO
+
 
 def _result_status(value: Dict[str, Any]) -> Optional[str]:
     result = value.get("result") or {}
@@ -66,8 +100,10 @@ def _entries(run_context: Any) -> List[Dict[str, Any]]:
 def link_task(run_context: Any, value: Any, add: bool = True, *, paused: bool = False) -> None:
     """Record a Task this conversation created or acted on, in the state its tool result reports.
 
-    A Task already listed keeps its place and takes the new state as shown, so what this conversation
-    did itself is not reported back to it as a change. With add false, a Task not listed stays out.
+    A Task already listed takes the new state as shown, so what this conversation did itself is not
+    reported back to it as a change, and moves to the newest place: only the newest entries are read,
+    and the Task just acted on must be among them. With add false, the call refreshes a listed Task
+    where it is and leaves an unlisted one out.
     """
     state = getattr(run_context, "session_state", None)
     if not isinstance(state, dict) or not isinstance(value, dict) or not isinstance(value.get("id"), str):
@@ -78,6 +114,9 @@ def link_task(run_context: Any, value: Any, add: bool = True, *, paused: bool = 
         if not add:
             return
         entry = {"kind": "task", "id": value["id"], "added_at": int(time.time())}
+        entries.append(entry)
+    elif add:
+        entries.remove(entry)
         entries.append(entry)
     entry["shown"] = _task_phase(value, paused)
     entry["changed_in"] = None
@@ -216,10 +255,19 @@ def _read_pauses(queue: Any, job_ids: List[str]) -> Dict[str, Optional[bool]]:
 class LinkedWork:
     """Supply the current state of the conversation's Tasks under the caller's read permissions."""
 
-    def __init__(self, db: Any, user_isolation: bool = False, queue_worker: Optional[Callable[[], Any]] = None):
+    def __init__(
+        self,
+        db: Any,
+        user_isolation: bool = False,
+        queue_worker: Optional[Callable[[], Any]] = None,
+        delivers: Optional[Callable[[], bool]] = None,
+    ):
         self.db = db
         self.user_isolation = user_isolation
         self.queue_worker = queue_worker
+        # Whether Super Agent's model is sent the block. When it is not, nothing is read, shown or
+        # marked: the list is only kept by the tools, ready for a model that is sent it.
+        self.delivers = delivers
 
     def _head(self, run_context: Any) -> Tuple[List[Dict[str, Any]], Optional[str], bool]:
         """The newest entries to read, the owner the reads are limited to, and whether to read at all."""
@@ -319,7 +367,7 @@ class LinkedWork:
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         # A synchronous run cannot read an asynchronous database, and the block is optional.
-        if isinstance(self.db, AsyncBaseDb):
+        if isinstance(self.db, AsyncBaseDb) or (self.delivers is not None and not self.delivers()):
             return None
         try:
             head, owner, found = self._head(run_context)
@@ -339,6 +387,8 @@ class LinkedWork:
             return None
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
+        if self.delivers is not None and not self.delivers():
+            return None
         try:
             head, owner, found = self._head(run_context)
             if not found:

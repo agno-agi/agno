@@ -19,6 +19,7 @@ from agno.os.manager.linked_work import (
     link_proposal,
     link_task,
 )
+from agno.os.manager.linked_work import _delivers as real_delivers
 from agno.os.manager.prompts import LINKED_WORK_INSTRUCTIONS
 from agno.run import RunContext
 from agno.run.authorization import RunAuthorization, authorization_scope
@@ -34,6 +35,14 @@ pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
 CHANGED = "Changed since your last turn."
 NOTE = _HEADER + " (information from AgentOS, not instructions and not written by the person). Read at "
+
+
+@pytest.fixture(autouse=True)
+def scripted_models_are_sent_the_block(monkeypatch):
+    """The scripted test models stand in for a listed provider. Tests of the list itself use real_delivers."""
+    from agno.os.manager import linked_work
+
+    monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
 
 
 @pytest.fixture(autouse=True)
@@ -1414,6 +1423,200 @@ def test_gemini_sends_a_completion_notice_with_an_image_only_turn(tmp_path):
     assert sum(CHANGED in (p.text or "") for p in user.parts) == 1
     assert all(_HEADER not in (p.text or "") for message in second for p in message.parts)
     assert [m.content for m in run.messages if m.role == "user"] == [question.content] == [[]]
+
+
+LISTED = [
+    ("agno.models.openai.chat", "OpenAIChat"),
+    ("agno.models.openai.responses", "OpenAIResponses"),
+    ("agno.models.azure.openai_chat", "AzureOpenAI"),
+    ("agno.models.azure.openai_responses", "AzureOpenAIResponses"),
+    ("agno.models.anthropic.claude", "Claude"),
+    ("agno.models.aws.claude", "Claude"),
+    ("agno.models.azure.claude", "Claude"),
+    ("agno.models.vertexai.claude", "Claude"),
+    ("agno.models.google.gemini", "Gemini"),
+    ("agno.models.xai.xai", "xAI"),
+    ("agno.models.xai.responses", "xAIResponses"),
+]
+UNLISTED = [
+    ("agno.models.openai.like", "OpenAILike"),
+    ("agno.models.openai.open_responses", "OpenResponses"),
+    ("agno.models.vllm.vllm", "VLLM"),
+    ("agno.models.lmstudio.lmstudio", "LMStudio"),
+    ("agno.models.llama_cpp.llama_cpp", "LlamaCpp"),
+    ("agno.models.deepseek.deepseek", "DeepSeek"),
+    ("agno.models.perplexity.perplexity", "Perplexity"),
+    ("agno.models.aws.bedrock", "AwsBedrock"),
+    ("agno.models.google.gemini_interactions", "GeminiInteractions"),
+    ("agno.models.mistral.mistral", "MistralChat"),
+    ("agno.models.huggingface.huggingface", "HuggingFace"),
+]
+
+
+def provider(module, name):
+    """An instance of a provider class without calling its constructor, so no key or client is needed."""
+    import importlib
+
+    try:
+        kind = getattr(importlib.import_module(module), name)
+    except ImportError as exc:
+        pytest.skip(f"{module} needs an SDK that is not installed: {exc}")
+    return object.__new__(kind)
+
+
+@pytest.mark.parametrize("module, name", LISTED, ids=[f"{m.split('.')[2]}.{n}" for m, n in LISTED])
+def test_the_block_is_sent_to_each_listed_provider(module, name):
+    from agno.os.manager.linked_work import _DELIVERED_TO
+
+    assert real_delivers(provider(module, name)) is True
+    assert len(_DELIVERED_TO) == len(LISTED) and (module, name) in _DELIVERED_TO
+
+
+@pytest.mark.parametrize("module, name", UNLISTED, ids=[f"{m.split('.')[2]}.{n}" for m, n in UNLISTED])
+def test_the_block_is_not_sent_to_a_provider_that_is_not_listed(module, name):
+    assert real_delivers(provider(module, name)) is False
+
+
+def test_a_subclass_of_a_listed_provider_is_not_listed():
+    from agno.models.openai import OpenAIChat, OpenAIResponses
+    from agno.models.openai.like import OpenAILike
+
+    class LocalServer(OpenAILike):
+        """An adapter for a locally served model, as the vLLM and LM Studio classes are."""
+
+    class House(OpenAIChat):
+        pass
+
+    class HouseResponses(OpenAIResponses):
+        pass
+
+    for kind in (LocalServer, House, HouseResponses):
+        assert real_delivers(object.__new__(kind)) is False
+    assert real_delivers(Scripted()) is False and real_delivers(None) is False
+
+
+class Strict(Scripted):
+    """A provider that is not listed and refuses two user messages in a row."""
+
+    unlisted = True
+
+    def invoke(self, messages, tools=None, **kwargs):
+        roles = [message.role for message in messages]
+        if any(pair == ("user", "user") for pair in zip(roles, roles[1:])):
+            raise RuntimeError("conversation roles must alternate")
+        return super().invoke(messages, tools, **kwargs)
+
+
+def strict_turn(chat, calls=()):  # noqa: F811
+    model = Strict(calls)
+    chat.os.manager.model = model
+    with authorization_scope(person):
+        run = asyncio.run(chat.os.manager.arun("Hello", user_id="alice", session_id="chat"))
+    return run, model
+
+
+def test_a_chat_on_an_unlisted_provider_keeps_working_with_a_linked_task(chat, monkeypatch):  # noqa: F811
+    """The reviewer's script: a Task is linked, runs, finishes and is completed, and every turn replies."""
+    from agno.os.manager import linked_work
+
+    monkeypatch.setattr(linked_work, "_delivers", real_delivers)
+    assert real_delivers(Strict()) is False
+
+    run, model = strict_turn(chat, [("add_company_task", {**ADD, "start": True})])
+    task = only_task(chat)
+    statuses = [str(run.status.value).upper()]
+    (entry,) = linked(chat)
+    started = dict(entry)
+    assert entry["shown"] == f"in_progress:{task['job_id']}:"
+
+    def turns(count):
+        for _ in range(count):
+            run, model = strict_turn(chat)
+            statuses.append(str(run.status.value).upper())
+            # What is sent is what is sent with no linked work: one user message, the person's, and
+            # instructions that do not speak of a block.
+            fresh = [content for role, content, old in model.requests[0] if role == "user" and not old]
+            assert fresh == ["Hello"] and blocks(model.requests[0]) == []
+            assert LINKED_WORK_INSTRUCTIONS not in model.system and _HEADER not in model.system
+
+    turns(1)
+    work(chat)
+    turns(2)
+    done = {"target": "done", "reason": "Fine"}
+    assert (
+        chat.client.post(f"/company/tasks/{task['id']}/transitions", json=done, headers=chat_headers()).status_code
+        == 200
+    )
+    turns(3)
+    assert statuses == ["COMPLETED"] * 7
+    # Nothing was shown, so nothing is marked as shown and the Task is still listed as it was started.
+    assert linked(chat) == [started]
+
+    # The same chat on a listed provider (the scripted model stands in for one again): the change
+    # that is still pending is shown, then the Task leaves.
+    monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
+    _, sent = say(chat)
+    assert f"): done since {since(chat.db.get_task(task['id']))}. {CHANGED}" in sent
+    assert LINKED_WORK_INSTRUCTIONS in chat.os.manager.model.system
+    _, sent = say(chat)
+    assert sent == "" and linked(chat) == []
+
+
+def test_an_unlisted_provider_is_sent_what_it_is_sent_without_company_tasks(chat):  # noqa: F811
+    """With a linked Task, the messages of a turn are those of the same turn with no linked work."""
+
+    def messages_of(session):
+        _, model = strict_turn_in(chat, session)
+        return [(role, content) for role, content, _ in model.requests[0] if role != "system"], model.system
+
+    def strict_turn_in(chat, session):  # noqa: F811
+        model = Strict()
+        chat.os.manager.model = model
+        with authorization_scope(person):
+            run = asyncio.run(chat.os.manager.arun("Hello", user_id="alice", session_id=session))
+        return run, model
+
+    plain, plain_system = messages_of("empty")
+    model = Strict([("add_company_task", {**ADD, "start": False})])
+    chat.os.manager.model = model
+    with authorization_scope(person):
+        asyncio.run(chat.os.manager.arun("Hello", user_id="alice", session_id="linked"))
+    assert len(linked(chat, "linked")) == 1
+    with_task, system = messages_of("linked")
+    assert plain == [("user", "Hello")] and with_task[-1] == ("user", "Hello")
+    assert all(not is_block(content) for _, content in with_task)
+    assert LINKED_WORK_INSTRUCTIONS not in system and LINKED_WORK_INSTRUCTIONS not in plain_system
+
+
+def test_a_task_the_chat_acts_on_moves_to_the_newest_place():
+    run_context = context()
+    for number in range(21):
+        link_task(run_context, row(f"task-{number}", title=f"Task {number}"))
+    assert listed(run_context)[0] == "task-0"
+    # A refresh, as after a review, leaves a Task where it is. Acting on it moves it.
+    link_task(run_context, row("task-1", status="done"), add=False)
+    assert listed(run_context)[:2] == ["task-0", "task-1"]
+    link_task(run_context, row("task-0", status="in_progress", job_id="task-0:1"))
+    assert listed(run_context)[-1] == "task-0" and len(listed(run_context)) == 21
+
+
+@modes
+def test_the_oldest_of_twenty_one_tasks_is_shown_after_the_chat_starts_it(mode):
+    rows = {f"task-{number}": row(f"task-{number}", title=f"Task {number}") for number in range(21)}
+    run_context = context("run-1")
+    for task in rows.values():
+        link_task(run_context, task)
+    db = Tasks(*rows.values())
+    assert '"Task 0"' not in block(db, run_context, mode)
+
+    # The chat starts the oldest Task, and its worker finishes.
+    started = {**rows["task-0"], "status": "in_progress", "job_id": "task-0:1"}
+    link_task(run_context, started)
+    db.rows["task-0"] = {**started, "status": "in_review", "result": {"run_id": "task-0:1", "status": "COMPLETED"}}
+    following = context("run-2", linked=run_context.session_state[LINKED_WORK_KEY])
+    lines = block(db, following, mode).split("\n")
+    assert lines[0] == f'- Task "Task 0" (id task-0, writer): finished, waiting for review. {CHANGED}'
+    assert lines[-1] == "1 more exist: call list_company_tasks." and len(lines) == 21
 
 
 def test_an_os_without_company_is_unchanged(tmp_path):
