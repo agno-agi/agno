@@ -168,6 +168,7 @@ async def test_arerank_matches_sync():
         NOW,
         NOW.replace(tzinfo=None),
     ],
+    ids=["iso_offset", "iso_z", "epoch_seconds", "epoch_millis", "datetime_aware", "datetime_naive"],
 )
 def test_supported_timestamp_formats_parse(value: Any):
     parsed = _as_timestamp(value)

@@ -12,7 +12,8 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 TEST_COLLECTION = "test_collection"
-TEST_PATH = "tmp/test_chromadb"
+# One folder per xdist worker, so parallel workers never delete each other's database.
+TEST_PATH = f"tmp/test_chromadb_{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 
 
 @pytest.fixture
