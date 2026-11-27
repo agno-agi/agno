@@ -44,7 +44,8 @@ Semantics:
       continuity across sessionless calls.
     * External agents run on their registered adapter: run state is per call,
       and sharing the adapter preserves its concurrent-session guard. They are
-      available for dispatch, not for Studio edits or persisted composition.
+      available for dispatch and as a member or a step of a stored team or
+      workflow, not for Studio edits.
     * Native code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already. Two things sit

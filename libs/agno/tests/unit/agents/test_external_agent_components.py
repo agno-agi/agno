@@ -779,6 +779,57 @@ class TestComposition:
 
         assert workflow.steps[0].agent.sandbox is sandbox  # type: ignore[index, union-attr]
 
+    def test_a_team_written_in_code_is_saved_and_loaded_with_its_external_member(self, db, registry):
+        team = Team(
+            id="crew",
+            name="Crew",
+            members=[ClaudeAgent(id="coder", permission_mode="plan"), Agent(id="writer", name="Writer")],
+        )
+
+        assert team.save(db=db) == 1
+        links = db.get_links(component_id="crew", version=1)
+        assert [(link["child_component_id"], link["meta"]["type"]) for link in links] == [
+            ("coder", "agent"),
+            ("writer", "agent"),
+        ]
+
+        loaded = Team.load(id="crew", db=db, registry=registry, strict=True)
+
+        assert loaded is not None
+        assert [type(member) for member in loaded.members] == [ClaudeAgent, Agent]  # type: ignore[union-attr]
+        assert loaded.members[0].permission_mode == "plan"  # type: ignore[index, union-attr]
+
+    def test_a_loaded_team_leaves_out_an_external_member_this_host_does_not_run(self, db, agno_logs):
+        Team(id="crew", name="Crew", members=[ClaudeAgent(id="coder"), Agent(id="writer", name="Writer")]).save(db=db)
+        registry = Registry(dbs=[db])
+
+        with pytest.raises(ComponentRehydrationError, match="allow_host_execution"):
+            Team.load(id="crew", db=db, registry=registry, strict=True)
+
+        loaded = Team.load(id="crew", db=db, registry=registry, strict=False)
+        assert loaded is not None
+        assert [member.id for member in loaded.members] == ["writer"]  # type: ignore[union-attr]
+        assert "allow_host_execution" in agno_logs.text
+
+    def test_a_workflow_written_in_code_is_saved_and_loaded_with_its_external_agent_step(self, db, registry):
+        from agno.workflow.step import Step
+
+        workflow = Workflow(
+            id="wf", name="WF", steps=[Step(name="code", agent=ClaudeAgent(id="coder", permission_mode="plan"))]
+        )
+
+        assert workflow.save(db=db) == 1
+        links = db.get_links(component_id="wf", version=1)
+        assert [(link["link_kind"], link["child_component_id"], link["child_version"]) for link in links] == [
+            ("step_agent", "coder", 1)
+        ]
+
+        loaded = Workflow.load(id="wf", db=db, registry=registry, strict=True)
+
+        assert loaded is not None
+        step_agent = loaded.steps[0].agent  # type: ignore[index, union-attr]
+        assert isinstance(step_agent, ClaudeAgent) and step_agent.permission_mode == "plan"
+
     @pytest.fixture
     def components_client(self, db, registry) -> TestClient:
         app = FastAPI()

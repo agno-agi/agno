@@ -1558,6 +1558,12 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
+            from agno.agents._storage import is_external_agent_config
+
+            if is_external_agent_config(child_config):
+                # from_dict above already resolved a stored external agent at its pinned version,
+                # and applied the host opt-in. It is not an Agent, so it is not rebuilt as one here.
+                continue
             agent = Agent.from_dict(child_config, registry=registry, strict=strict)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
