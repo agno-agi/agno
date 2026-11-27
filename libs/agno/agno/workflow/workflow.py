@@ -134,7 +134,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.step import Step, UnresolvableCallableError, _aclose_stream, running_as_workflow_step
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     OnError,
@@ -5022,8 +5022,6 @@ class Workflow:
             files=files,  # type: ignore
         )
 
-        self.update_agents_and_teams_session_info()
-
         async def execute_workflow_background():
             """Background execution: waits for a concurrency slot (background_run_slot);
             the run stays PENDING while waiting in line and can be cancelled without
@@ -5220,8 +5218,6 @@ class Workflow:
             videos=videos,  # type: ignore
             files=files,  # type: ignore
         )
-
-        self.update_agents_and_teams_session_info()
 
         # Persist the PENDING run so it is visible (e.g. to polling) while it
         # waits for a concurrency slot.
@@ -5451,6 +5447,8 @@ class Workflow:
             session_id=session_id,
             user_id=user_id,
             session_state=session_state,
+            workflow_id=self.id,
+            workflow_name=self.name,
             dependencies=dependencies,
         )
 
@@ -5499,8 +5497,6 @@ class Workflow:
             videos=videos,  # type: ignore
             files=files,  # type: ignore
         )
-
-        self.update_agents_and_teams_session_info()
 
         # Create queue for forwarding SSE strings to the caller
         sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -6677,6 +6673,12 @@ class Workflow:
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
 
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
+
         # Update step requirements if provided
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
@@ -6897,6 +6899,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 
@@ -7577,9 +7581,10 @@ class Workflow:
         self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response
-        continued_response = executor.continue_run(
-            run_response=paused_run_response,
-        )
+        with running_as_workflow_step(executor, self.id):
+            continued_response = executor.continue_run(
+                run_response=paused_run_response,
+            )
 
         # Store executor response for potential chained HITL
         inner_step._store_executor_response(workflow_run_response, continued_response)
@@ -7637,22 +7642,23 @@ class Workflow:
         self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response (streaming).
-        response_stream = executor.continue_run(
-            run_response=paused_run_response,
-            stream=True,
-            stream_events=True,
-            yield_run_output=True,
-        )
+        with running_as_workflow_step(executor, self.id):
+            response_stream = executor.continue_run(
+                run_response=paused_run_response,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
 
-        # Iterate over stream events, yielding them for the user to see
-        active_executor_run_response = None
-        for event in response_stream:
-            if isinstance(event, (RunOutput, TeamRunOutput)):
-                active_executor_run_response = event
-                continue
-            if stream_executor_events:
-                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
-                yield enriched_event
+            # Iterate over stream events, yielding them for the user to see
+            active_executor_run_response = None
+            for event in response_stream:
+                if isinstance(event, (RunOutput, TeamRunOutput)):
+                    active_executor_run_response = event
+                    continue
+                if stream_executor_events:
+                    enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                    yield enriched_event
 
         # Process the final response into a StepOutput
         if active_executor_run_response is None:
@@ -7727,21 +7733,26 @@ class Workflow:
 
         # Call executor's acontinue_run with the stored run_response (streaming).
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
-        response_stream = executor.acontinue_run(
-            run_response=paused_run_response,
-            stream=True,
-            stream_events=True,
-            yield_run_output=True,
-        )
+        with running_as_workflow_step(executor, self.id):
+            response_stream = executor.acontinue_run(
+                run_response=paused_run_response,
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
 
-        active_executor_run_response = None
-        async for event in response_stream:
-            if isinstance(event, (RunOutput, TeamRunOutput)):
-                active_executor_run_response = event
-                continue
-            if stream_executor_events:
-                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
-                yield enriched_event
+            active_executor_run_response = None
+            try:
+                async for event in response_stream:
+                    if isinstance(event, (RunOutput, TeamRunOutput)):
+                        active_executor_run_response = event
+                        continue
+                    if stream_executor_events:
+                        enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                        yield enriched_event
+            finally:
+                # End the executor's stream while it is still marked, as Step.aexecute_stream does.
+                await _aclose_stream(response_stream)
 
         if active_executor_run_response is None:
             step_output = StepOutput(content="")
@@ -7811,9 +7822,10 @@ class Workflow:
         await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response
-        continued_response = await executor.acontinue_run(
-            run_response=paused_run_response,
-        )
+        with running_as_workflow_step(executor, self.id):
+            continued_response = await executor.acontinue_run(
+                run_response=paused_run_response,
+            )
 
         # Store executor response for potential chained HITL
         inner_step._store_executor_response(workflow_run_response, continued_response)
@@ -8713,6 +8725,12 @@ class Workflow:
         if run_response.status != RunStatus.paused:
             raise ValueError(f"Cannot continue a run that is not paused. Current status: {run_response.status}")
 
+        # A workflow given only a name gets its id on its first run, so a new instance has none yet.
+        # It takes the paused run's: the agents and teams it continues are marked with it.
+        if self.id is None:
+            self.id = run_response.workflow_id
+        self.initialize_workflow()
+
         # Update step requirements if provided
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
@@ -8935,6 +8953,8 @@ class Workflow:
             session_id=session_id,
             user_id=run_response.user_id,
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
+            workflow_id=self.id,
+            workflow_name=self.name,
             metadata=run_response.metadata,
         )
 
@@ -10705,8 +10725,6 @@ class Workflow:
             log_level=2,
         )
 
-        self.update_agents_and_teams_session_info()
-
         # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
         resolved = self._resolve_run_params(
             dependencies=dependencies,
@@ -11009,8 +11027,6 @@ class Workflow:
             f"Created async pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}",
             log_level=2,
         )
-
-        self.update_agents_and_teams_session_info()
 
         if self.agent is not None:
             return self._aexecute_workflow_agent(  # type: ignore
@@ -11459,26 +11475,6 @@ class Workflow:
             raise Exception("Session not found")
 
         return self._get_session_metrics(session=session)
-
-    def update_agents_and_teams_session_info(self):
-        """Update agents and teams with workflow session information"""
-        log_debug("Updating agents and teams with session information", log_level=2)
-        # Initialize steps - only if steps is iterable (not callable)
-        if self.steps and not callable(self.steps):
-            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
-            for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
-
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.id
-
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:  # type: ignore
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.id
 
     def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
         """
