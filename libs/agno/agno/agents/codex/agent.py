@@ -425,11 +425,21 @@ class CodexAgent(BaseExternalAgent):
             return f"{text.rstrip('. ')}. {_ACCESS_TOKEN_REFUSED}"
         return text
 
-    def _on_subscription(self) -> bool:
-        """Whether Codex is signed in with a ChatGPT subscription and no API key, here or inside a sandbox."""
-        if self._subscription_env() is not None:
+    async def _aon_subscription(self, codex: Any) -> bool:
+        """Whether Codex is signed in with a ChatGPT subscription and no API key, here or inside a sandbox.
+
+        An agent set to run on a subscription is on one. For any other, the app-server says which
+        account it signed in with: an API key in the environment is not used when a ChatGPT
+        sign-in is stored, and a stored API key is used when the environment has none.
+        """
+        if self._subscription_env() is not None or self._signed_in_with_access_token():
             return True
-        return not ((self.env or {}).get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"))
+        try:
+            account = _item_root((await asyncio.wait_for(codex.account(), 10)).account)
+            return getattr(account, "type", None) == "chatgpt"
+        except Exception as error:
+            log_debug(f"Could not read the account of {self.get_id()}: {type(error).__name__}")
+            return False
 
     async def _ausage_limit(self, codex: Any) -> Tuple[Optional[str], Optional[int]]:
         """Which usage limit is reached and when it resets, asked of the app-server; (None, None) when it cannot say.
@@ -452,12 +462,11 @@ class CodexAgent(BaseExternalAgent):
             if not windows:
                 return None, None
             reached = [w for w in windows if (w.used_percent or 0) >= 100]
-            # With none marked full, the fullest window is the one that was reached.
-            window = (
-                min(reached, key=lambda w: w.resets_at or 0)
-                if reached
-                else max(windows, key=lambda w: w.used_percent or 0)
-            )
+            if not reached:
+                # No window is full, so the limit reached is another one, and these are not its name or time.
+                return None, None
+            # With both full, the agent can work again when the later one resets.
+            window = max(reached, key=lambda w: w.resets_at or 0)
             return _CODEX_LIMITS.get(window.window_duration_mins), window.resets_at
         except Exception as error:
             log_debug(f"Could not read the usage limits of {self.get_id()}: {type(error).__name__}")
@@ -465,14 +474,16 @@ class CodexAgent(BaseExternalAgent):
 
     async def _aturn_failure(self, codex: Any, error: Any, info: Optional[str]) -> str:
         """The message of a failed turn, saying so plainly when the ChatGPT subscription limit is reached."""
-        from agno.agents._limits import limit_message, note_possible_limit
+        from agno.agents._limits import limit_message, note_possible_limit, reads_like_a_limit
 
-        if not self._on_subscription():
-            return self._turn_failure(error)
-        if info == "usageLimitExceeded":
+        text = self._turn_failure(error)
+        limited = info == "usageLimitExceeded"
+        # The app-server is asked about the account only for a failure that may be a limit.
+        if not (limited or reads_like_a_limit(text)) or not await self._aon_subscription(codex):
+            return text
+        if limited:
             window, resets_at = await self._ausage_limit(codex)
             return limit_message(self.get_id(), "ChatGPT", window, resets_at, str(error), "Codex")
-        text = self._turn_failure(error)
         note_possible_limit(self.get_id(), text)
         return text
 

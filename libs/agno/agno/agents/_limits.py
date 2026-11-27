@@ -40,6 +40,11 @@ def limit_message(
     return f"{message} {harness} said: {detail}" if detail else message
 
 
+def reads_like_a_limit(text: Any) -> bool:
+    """Whether a failure's text carries a word a usage limit is reported with."""
+    return _LIMIT_LIKE.search(str(text)) is not None
+
+
 def note_possible_limit(agent_id: str, text: Any) -> None:
     """Log a failure of an agent on a subscription that reads like a limit and was not recognised as one.
 
@@ -47,7 +52,7 @@ def note_possible_limit(agent_id: str, text: Any) -> None:
     and their documentation. This line shows the real text when a harness reports one differently.
     """
     shown = str(text)
-    if _LIMIT_LIKE.search(shown):
+    if reads_like_a_limit(shown):
         log_warning(
             f"{agent_id} runs on a subscription and failed with what may be a usage limit that was not "
             f"recognised as one: {shown[:500]}"

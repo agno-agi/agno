@@ -347,21 +347,25 @@ class ClaudeAgent(BaseExternalAgent):
     def _subscription_limit(self, error: ClaudeResultError, limit_reached: Any) -> ClaudeResultError:
         """The error to raise for a failed run: one that says the subscription limit is reached, when it is.
 
-        Claude Code reports the limit in two ways. An assistant message carries ``error ==
-        "rate_limit"``, and a rate limit event with ``status == "rejected"`` says which limit and
-        when it resets. An agent on an API key is left as it is: its rate limits are the API's.
+        Claude Code reports the limit with a rate limit event whose ``status`` is "rejected" and
+        that names the limit and when it resets. A temporary 429, which a retry can pass, carries
+        the same ``error == "rate_limit"`` on its assistant message and a rejected event too, but
+        its event names no limit; it is left as it is. So is an agent on an API key: its rate
+        limits are the API's.
         """
         from agno.agents._limits import limit_message, note_possible_limit
 
         if not self._signed_in_with_oauth_token():
             return error
-        rejected = (
+        reached = (
             limit_reached is not None
+            # Only a subscription limit is named. Claude Code says of the unnamed one: "not your usage limit".
+            and getattr(limit_reached, "rate_limit_type", None) is not None
             # With extra usage allowed the run carried on, so a later failure is about something else.
-            and getattr(limit_reached, "overage_status", None) != "allowed"
+            and getattr(limit_reached, "overage_status", None) not in ("allowed", "allowed_warning")
             and error.subtype not in _LIMIT_SUBTYPES
         )
-        if error.assistant_error != "rate_limit" and not rejected:
+        if not reached:
             note_possible_limit(self.get_id(), error)
             return error
         window = _CLAUDE_LIMITS.get(str(getattr(limit_reached, "rate_limit_type", None)))
