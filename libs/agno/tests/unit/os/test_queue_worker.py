@@ -1872,6 +1872,10 @@ class TestForegroundCancelPersistGuard:
         from agno.team._run import _persist_cancelled_team_run_in_background
         from agno.workflow.workflow import Workflow
 
+        # The helpers read the workflow the agent or team is running under, which every real one has.
+        def not_in_a_workflow() -> SimpleNamespace:
+            return SimpleNamespace(workflow_id=None)
+
         # Agent
         agent_persists: list = []
 
@@ -1886,14 +1890,14 @@ class TestForegroundCancelPersistGuard:
         mark_worker_managed("wm-a")
         try:
             _persist_cancelled_run_in_background(
-                SimpleNamespace(), run_response=RunOutput(run_id="wm-a"), session=session
+                not_in_a_workflow(), run_response=RunOutput(run_id="wm-a"), session=session
             )  # type: ignore[arg-type]
             await asyncio.sleep(0.02)
             assert agent_persists == []
         finally:
             unmark_worker_managed("wm-a")
         _persist_cancelled_run_in_background(
-            SimpleNamespace(), run_response=RunOutput(run_id="free-a"), session=session
+            not_in_a_workflow(), run_response=RunOutput(run_id="free-a"), session=session
         )  # type: ignore[arg-type]
         await asyncio.sleep(0.02)
         assert agent_persists == ["free-a"]
@@ -1908,13 +1912,15 @@ class TestForegroundCancelPersistGuard:
         mark_worker_managed("wm-t")
         try:
             _persist_cancelled_team_run_in_background(
-                SimpleNamespace(), TeamRunOutput(run_id="wm-t"), SimpleNamespace()
+                not_in_a_workflow(), TeamRunOutput(run_id="wm-t"), SimpleNamespace()
             )  # type: ignore[arg-type]
             await asyncio.sleep(0.02)
             assert team_persists == []
         finally:
             unmark_worker_managed("wm-t")
-        _persist_cancelled_team_run_in_background(SimpleNamespace(), TeamRunOutput(run_id="free-t"), SimpleNamespace())  # type: ignore[arg-type]
+        _persist_cancelled_team_run_in_background(
+            not_in_a_workflow(), TeamRunOutput(run_id="free-t"), SimpleNamespace()
+        )  # type: ignore[arg-type]
         await asyncio.sleep(0.02)
         assert team_persists == ["free-t"]
 
