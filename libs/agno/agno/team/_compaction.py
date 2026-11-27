@@ -247,9 +247,7 @@ def compact_session(
     session = _session.get_session(team, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, TeamSession):
         return _no_session()
-    result = compact_now(
-        team, session, _history_for_compaction(team, session), sent_messages=_last_sent(team, session)
-    )
+    result = compact_now(team, session, _history_for_compaction(team, session), sent_messages=_last_sent(team, session))
     if result.metrics is not None:
         # Read the session again: a run may have finished while the summarizer ran
         session = _session.get_session(team, session_id=session.session_id, user_id=user_id) or session
