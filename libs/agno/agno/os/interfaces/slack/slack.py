@@ -66,6 +66,7 @@ class Slack(BaseInterface):
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
         default_role: Optional[str] = None,
+        authorize_senders: bool = False,
     ):
         """
         Initialize the Slack interface.
@@ -95,6 +96,7 @@ class Slack(BaseInterface):
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
             default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
+            authorize_senders: Run each sender as their AgentOS directory user, created on first message
         """
         self.agent = agent
         self.team = team
@@ -120,6 +122,7 @@ class Slack(BaseInterface):
         self.approvers = approvers
         self.users = users
         self.default_role = default_role
+        self.authorize_senders = authorize_senders
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -159,6 +162,7 @@ class Slack(BaseInterface):
             approvers=self.approvers,
             users=self.users,
             default_role=self.default_role,
+            authorize_senders=self.authorize_senders,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

@@ -214,6 +214,24 @@ unmapped Slack user.
 
 ---
 
+### authorize_senders.py
+
+**Status:** PASS
+
+**Description:** A question from a Slack member, then GET /users and
+PATCH /users/{id} with alice's token, then the same question again.
+
+**Result:**
+- The first message created `slack:{workspace}:{member}` with the
+  `slack-member` default role and ran as it.
+- GET /users listed the new user; after PATCH disabled, the next message got
+  "Sorry, your account on this AgentOS is disabled." and nothing ran.
+- The example keeps `respond_to_other_apps=False`, and the test users post
+  through a driver app, so the message was sent as a signed, human-typed
+  Slack event to the running example.
+
+---
+
 ### claude_harness.py
 
 **Status:** PASS

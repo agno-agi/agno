@@ -8,7 +8,11 @@ import pytest
 
 pytest.importorskip("slack_sdk", reason="slack_sdk not installed")
 
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.response import ToolExecution
+from agno.os import AgentOS
+from agno.os.authz import Authorization
 from agno.os.interfaces.slack import hitl, security
 from agno.os.interfaces.slack.context import EventContext
 from agno.os.interfaces.slack.executor import DecisionRefused
@@ -37,6 +41,22 @@ from .conftest import make_async_client_mock, make_ctx, make_event_context
 
 OWNER = "U123"
 SESSION_ID = "agent-1:C123:111.222"
+SECRET = "slack-hitl-secret-at-least-32-bytes-long"
+
+
+def _directory_app(tmp_path: Any, roles: Optional[Dict[str, List[str]]] = None) -> Any:
+    """An AgentOS app with a user directory, under Authorization with these roles when given."""
+    authorization: Dict[str, Any] = {}
+    if roles is not None:
+        authz = Authorization(verification_keys=[SECRET], algorithm="HS256")
+        for role, scopes in roles.items():
+            authz.define_role(role, scopes)
+        authorization["authorization"] = authz
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    agent_os = AgentOS(
+        id="hitl-directory", db=db, agents=[Agent(id="agent-1")], user_directory=True, telemetry=False, **authorization
+    )
+    return agent_os.get_app()
 
 
 def _make_requirement(req_id: str = "r1", **tool_overrides: Any) -> RunRequirement:
@@ -556,6 +576,45 @@ class TestWhoMayDecide:
 
         assert len(fake.calls) == 1
 
+    @pytest.mark.asyncio
+    async def test_outsider_with_the_owners_email_cannot_decide_an_authorize_senders_run(self):
+        entity = _make_entity(_paused_run([_make_requirement()], user_id="owner@example.com"))
+        ctx = make_ctx(agent=entity, authorize_senders=True, resolve_user_identity=True)
+        client = make_async_client_mock()
+        outsider = {"id": "U_OUT", "team_id": "T_OTHER", "profile": {"email": "owner@example.com"}}
+        client.users_info = AsyncMock(return_value={"ok": True, "user": outsider})
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), user="U_OUT", owner=OWNER), client, ctx)
+
+        assert fake.calls == []
+        assert _ephemerals(client) == [hitl._NOT_OWNER_MESSAGE]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["approver", "member"])
+    async def test_another_member_cannot_decide_an_authorize_senders_run(self, tmp_path, role):
+        app = _directory_app(
+            tmp_path,
+            {"member": ["agents:agent-1:run"], "approver": ["approvals:write", "agents:agent-1:run"]},
+        )
+        owner = f"slack:T123:{OWNER}"
+        await app.state.role_store.aassign(owner, "member")
+        await app.state.role_store.aassign("slack:T123:U_OTHER", role)
+        entity = _make_entity(_paused_run([_make_requirement()], user_id=owner))
+        ctx = make_ctx(agent=entity, authorize_senders=True, approvers=["U_OTHER"]).bind(app)
+        client = make_async_client_mock()
+        other = {"id": "U_OTHER", "team_id": "T123", "profile": {"display_name": "Other"}}
+        client.users_info = AsyncMock(return_value={"ok": True, "user": other})
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), user="U_OTHER", owner=OWNER), client, ctx)
+
+        # Only the run's own user continues it, as over HTTP: not approvers=, not approvals:write
+        assert fake.calls == []
+        assert _ephemerals(client) == [hitl._NOT_OWNER_MESSAGE]
+
 
 class TestRestoredAuthority:
     @pytest.mark.asyncio
@@ -572,7 +631,7 @@ class TestRestoredAuthority:
         ):
             await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), make_async_client_mock(), ctx)
 
-        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1", None)
+        authorize.assert_awaited_once_with(ctx.app, "principal-1", "agents", "agent-1", None, disabled=None)
         assert len(fake.calls) == 1
         assert fake.calls[0]["event_context"].authority is authority
         assert fake.calls[0]["clicker"] == OWNER
@@ -657,6 +716,24 @@ class TestRestoredAuthorityWithoutUsers:
             # An agent other than Super Agent resumes unchecked
             no_roles.assert_not_called()
             assert fake.calls[0]["event_context"].authority is None
+
+    @pytest.mark.asyncio
+    async def test_disabled_owner_of_an_authorize_senders_run_does_not_resume(self, tmp_path):
+        app = _directory_app(tmp_path)
+        principal = f"slack:T123:{OWNER}"
+        await app.state.user_store.aset_disabled(principal, True)
+        entity = _make_entity(_paused_run([_make_requirement()], user_id=principal))
+        ctx = make_ctx(agent=entity, authorize_senders=True).bind(app)
+        client = make_async_client_mock()
+        fake = FakeContinue()
+
+        with patch.object(hitl, "continue_run", new=fake):
+            await hitl.handle_submit(_submit_payload(_approved_blocks(), owner=OWNER), client, ctx)
+
+        assert fake.calls == []
+        assert _ephemerals(client) == [security._DISABLED_MESSAGE]
+        # A resumed run reads the directory and never creates a user
+        assert await app.state.user_store.acount() == 1
 
     @pytest.mark.asyncio
     async def test_click_after_registry_clear_restores_default_role_authority(self):
