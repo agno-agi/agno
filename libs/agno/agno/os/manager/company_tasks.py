@@ -1285,7 +1285,7 @@ def _receipt(verb: str, title: str, task_id: str, response: Any) -> str:
     status = body.get("status")
     run = f"(Task {task_id}, run {body.get('run_id')})"
     if status in ("PENDING", "QUEUED", None):
-        return f"{verb} '{title}' {run}. It runs in its own session and is not done; its state is shown to you on the next turn."
+        return f"{verb} '{title}' {run}. It runs in its own session and is not done."
     if status == "RUNNING":
         return f"'{title}' is already running {run}."
     return f"'{title}' already has this attempt, now {status} {run}."
