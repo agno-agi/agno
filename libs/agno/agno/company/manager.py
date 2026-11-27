@@ -790,6 +790,46 @@ class CompanyManager:
             _accept_sandbox(component, sources)
         _accept_checkout(component, task)
 
+    def sandbox_goals(self, executor_type: Optional[str], executor_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """The Goals that have a sandboxed executor's repository as a git Source, or None for an
+        executor with no sandbox.
+
+        Each Goal carries sandbox_refusal: None when the acceptance check takes one of its Sources, so
+        a Task under it can be accepted, and otherwise the reason the check gives. Goals are
+        company-wide, so every Goal is read whoever created it.
+        """
+        from agno.company.execution import _executor
+        from agno.company.sandbox import _accept_sandbox, _is_sandboxed, _repository_sources
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        if not _is_sandboxed(component):
+            return None
+        if component.repository is None:
+            raise ValueError("Sandboxed executor requires repository=Repository(url, branch)")
+        sources: Dict[str, List[Dict[str, Any]]] = {}
+        page = 1
+        while True:
+            rows, total = self.db.get_sources(limit=100, page=page)
+            for row in rows:
+                sources.setdefault(row["goal_id"], []).append(row)
+            if page * 100 >= total:
+                break
+            page += 1
+        goals = []
+        for goal_id in sorted(sources):
+            if not _repository_sources(component, sources[goal_id]):
+                continue
+            goal = self.db.get_goal(goal_id)
+            if goal is None:
+                continue
+            refusal = None
+            try:
+                _accept_sandbox(component, sources[goal_id])
+            except ValueError as exc:
+                refusal = str(exc)
+            goals.append({**goal, "sandbox_refusal": refusal})
+        return goals
+
     def transition_task(
         self,
         *,
@@ -1880,6 +1920,48 @@ class AsyncCompanyManager:
                 page += 1
             _accept_sandbox(component, sources)
         _accept_checkout(component, task)
+
+    async def sandbox_goals(
+        self, executor_type: Optional[str], executor_id: Optional[str]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """The Goals that have a sandboxed executor's repository as a git Source, or None for an
+        executor with no sandbox.
+
+        Each Goal carries sandbox_refusal: None when the acceptance check takes one of its Sources, so
+        a Task under it can be accepted, and otherwise the reason the check gives. Goals are
+        company-wide, so every Goal is read whoever created it.
+        """
+        from agno.company.execution import _executor
+        from agno.company.sandbox import _accept_sandbox, _is_sandboxed, _repository_sources
+
+        component = _executor(self.registry, executor_type, executor_id, accepting=True)
+        if not _is_sandboxed(component):
+            return None
+        if component.repository is None:
+            raise ValueError("Sandboxed executor requires repository=Repository(url, branch)")
+        sources: Dict[str, List[Dict[str, Any]]] = {}
+        page = 1
+        while True:
+            rows, total = await self.db.get_sources(limit=100, page=page)
+            for row in rows:
+                sources.setdefault(row["goal_id"], []).append(row)
+            if page * 100 >= total:
+                break
+            page += 1
+        goals = []
+        for goal_id in sorted(sources):
+            if not _repository_sources(component, sources[goal_id]):
+                continue
+            goal = await self.db.get_goal(goal_id)
+            if goal is None:
+                continue
+            refusal = None
+            try:
+                _accept_sandbox(component, sources[goal_id])
+            except ValueError as exc:
+                refusal = str(exc)
+            goals.append({**goal, "sandbox_refusal": refusal})
+        return goals
 
     async def transition_task(
         self,
