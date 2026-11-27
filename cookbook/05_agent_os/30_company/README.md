@@ -1718,8 +1718,9 @@ A checkout validation error can be retried after repairing its cause. Reacceptan
 requires a sandboxed executor with the same repository and branch once a checkout
 is pinned. Use a new Task for a non-sandboxed executor or a different repository.
 Sandboxed Tasks run side by side: each Task has its own session, so its own
-sandbox, checkout and checkpoints, and `QueueConfig.max_concurrency` bounds how
-many runs execute at once. Ordinary agents remain eligible
+sandbox, checkout and checkpoints. `QueueConfig.max_concurrency` bounds how many
+background runs of any kind execute at once on each replica: it is not a limit on
+sandboxes alone, and two replicas at 4 can run eight. Ordinary agents remain eligible
 and report `sandboxed: false`. This marker is derived from the component and
 cannot be set on a Task.
 
