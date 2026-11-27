@@ -2680,7 +2680,9 @@ class Step:
 
         if self.agent:
             # A step's runs are stored by the workflow, in the workflow session.
-            session = _read_workflow_session(self._workflow_db or self.agent.db, session_id)
+            session = _read_workflow_session(
+                self._workflow_db or self.agent.db, session_id or getattr(self.agent, "session_id", None)
+            )
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2692,7 +2694,7 @@ class Step:
             return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         elif self.team:
-            session = _read_workflow_session(self._workflow_db or self.team.db, session_id)
+            session = _read_workflow_session(self._workflow_db or self.team.db, session_id or self.team.session_id)
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2721,7 +2723,9 @@ class Step:
 
         if self.agent:
             # A step's runs are stored by the workflow, in the workflow session.
-            session = await _aread_workflow_session(self._workflow_db or self.agent.db, session_id)
+            session = await _aread_workflow_session(
+                self._workflow_db or self.agent.db, session_id or getattr(self.agent, "session_id", None)
+            )
             if not session:
                 log_warning("Session not found")
                 return []
@@ -2733,7 +2737,9 @@ class Step:
             return session.get_messages(last_n_runs=last_n_runs, agent_id=self.agent.id)
 
         elif self.team:
-            session = await _aread_workflow_session(self._workflow_db or self.team.db, session_id)
+            session = await _aread_workflow_session(
+                self._workflow_db or self.team.db, session_id or self.team.session_id
+            )
             if not session:
                 log_warning("Session not found")
                 return []

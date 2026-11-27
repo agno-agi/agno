@@ -21,6 +21,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.team import Team
+from agno.team.mode import TeamMode
 from agno.workflow import Condition, Loop, Parallel, Router, Step, Steps, Workflow
 from agno.workflow import step as step_module
 from agno.workflow.step import running_as_workflow_step
@@ -311,11 +312,13 @@ def _stored(db: InMemoryDb, session_id: str) -> Tuple[Optional[str], List[Option
     return row.get("session_type"), owners
 
 
-def _step_executor(kind: str, db: InMemoryDb) -> Dict[str, Any]:
-    agent = Agent(id="agent", name="agent", db=db, model=_Model())
+def _step_executor(kind: str, db: InMemoryDb, **kwargs) -> Dict[str, Any]:
     if kind == "agent":
-        return {"agent": agent}
-    return {"team": Team(id="team", name="team", db=db, model=_Model(), members=[agent])}
+        return {"agent": Agent(id="agent", name="agent", db=db, model=_Model(), **kwargs)}
+    member = Agent(id="member", name="member", db=db, model=_Model())
+    # A team in tasks mode streams through a second generator, which ends after the step does.
+    mode = TeamMode.tasks if kind == "tasks team" else TeamMode.coordinate
+    return {"team": Team(id="team", name="team", db=db, model=_Model(), members=[member], mode=mode, **kwargs)}
 
 
 def _one_step_workflow(kind: str, db: InMemoryDb) -> Workflow:
@@ -340,7 +343,7 @@ def test_an_agent_run_on_its_own_after_the_workflow_is_stored(mode):
     assert _stored(db, "chat") == ("agent", ["agent", "agent"])
 
 
-@pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("kind", ["agent", "team", "tasks team"])
 @pytest.mark.parametrize("stopped_by", ["closing the stream", "cancelling the task"])
 def test_a_step_stopped_in_the_middle_of_its_stream_saves_no_run_of_its_own(kind, stopped_by):
     """The agent or team saves a cancelled run on a task that outlives the step."""
@@ -383,3 +386,16 @@ def test_a_streamed_step_run_is_stored_as_completed():
     session = db.get_session(session_id="workflow-session", session_type=SessionType.WORKFLOW)
     statuses = [run.status for run in session.runs[0].step_executor_runs]  # type: ignore[union-attr, index]
     assert statuses == [RunStatus.completed]
+
+
+@pytest.mark.parametrize("kind", ["agent", "team"])
+def test_step_history_reads_the_executors_session_when_none_is_given(kind):
+    db = InMemoryDb()
+    step = Step(name="step", **_step_executor(kind, db, session_id="workflow-session"))
+    workflow = Workflow(id="workflow", db=db, steps=[step])
+
+    workflow.run(input="hello", session_id="workflow-session")
+
+    given = step.get_chat_history(session_id="workflow-session")
+    assert len(given) > 0
+    assert len(asyncio.run(step.aget_chat_history())) == len(given)

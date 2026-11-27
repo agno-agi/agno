@@ -6281,7 +6281,9 @@ def _persist_cancelled_run_in_background(
 
     # A workflow marks its step's agent only while the step runs it, and this task outlives the step.
     # It carries the mark with it, so the run is not saved as the agent's own in the workflow's session.
-    workflow_id = agent.workflow_id
+    # The run's own context names the workflow too: a stream the step did not get to close reaches
+    # here after the step has taken the mark off.
+    workflow_id = agent.workflow_id or (run_context.workflow_id if run_context is not None else None)
 
     async def _persist() -> None:
         from agno.workflow.step import running_as_workflow_step
