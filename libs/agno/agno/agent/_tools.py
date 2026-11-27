@@ -265,7 +265,6 @@ def get_tools(
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
-        agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_past_sessions:
@@ -418,7 +417,6 @@ async def aget_tools(
     # Add tools for accessing memory
     if agent.read_chat_history:
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
-        agent_tools.append(_default_tools.search_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
     if agent.search_past_sessions:

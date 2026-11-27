@@ -17,7 +17,6 @@ from agno.os.manager.prompts import (
     COMPANY_FILES_INSTRUCTIONS,
     COMPANY_INSTRUCTIONS,
     DOCS_INSTRUCTIONS,
-    EARLIER_TURNS_INSTRUCTIONS,
     FOCUSED_EXECUTION_INSTRUCTIONS,
     LINKED_WORK_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
@@ -470,7 +469,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
             instructions.append(
                 PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
             )
-    instructions.append(EARLIER_TURNS_INSTRUCTIONS.format(turns=config.num_history_runs))
     if config.instructions:
         instructions.append(config.instructions)
 

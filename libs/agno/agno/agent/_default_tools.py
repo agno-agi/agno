@@ -25,7 +25,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
-from agno.utils.agent import get_chat_history_json, search_chat_history_text
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
@@ -265,26 +265,6 @@ def create_knowledge_search_tool(
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
         return Function.from_callable(search_knowledge_base, name="search_knowledge_base")
-
-
-def search_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
-    def search_chat_history(pattern: str, context_lines: int = 2) -> str:
-        """Search the earlier turns of this conversation, including turns that are no longer in context.
-
-        Use this to recover something said earlier: a name, number, path, decision or instruction.
-
-        Args:
-            pattern: Text to find, matched case-insensitively line by line against the user's
-                messages and the replies. Separate alternatives with "|" to find any of them,
-                e.g. "budget|deadline".
-            context_lines: Lines of surrounding context to show around each match (at most 10).
-
-        Returns:
-            str: The matching lines, each labelled with its turn number and who said it.
-        """
-        return search_chat_history_text(session, pattern, context_lines)
-
-    return search_chat_history
 
 
 def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:

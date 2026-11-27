@@ -70,7 +70,7 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.team._members import member_knowledge_filters, member_storage
 from agno.tools.function import Function
-from agno.utils.agent import get_chat_history_json, search_chat_history_text
+from agno.utils.agent import get_chat_history_json
 from agno.utils.knowledge import (
     get_agentic_or_user_search_filters,
     get_run_response_kwarg,
@@ -227,44 +227,6 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
     else:
         get_chat_history_func = get_chat_history  # type: ignore
     return Function.from_callable(get_chat_history_func, name="get_chat_history")
-
-
-def _search_chat_history_function(team: "Team", session: TeamSession, async_mode: bool = False):
-    def search_chat_history(pattern: str, context_lines: int = 2) -> str:
-        """Search the earlier turns of this conversation, including turns that are no longer in context.
-
-        Use this to recover something said earlier: a name, number, path, decision or instruction.
-
-        Args:
-            pattern: Text to find, matched case-insensitively line by line against the user's
-                messages and the replies. Separate alternatives with "|" to find any of them,
-                e.g. "budget|deadline".
-            context_lines: Lines of surrounding context to show around each match (at most 10).
-
-        Returns:
-            str: The matching lines, each labelled with its turn number and who said it.
-        """
-        return search_chat_history_text(session, pattern, context_lines, team_id=team.id)
-
-    async def asearch_chat_history(pattern: str, context_lines: int = 2) -> str:
-        """Search the earlier turns of this conversation, including turns that are no longer in context.
-
-        Use this to recover something said earlier: a name, number, path, decision or instruction.
-
-        Args:
-            pattern: Text to find, matched case-insensitively line by line against the user's
-                messages and the replies. Separate alternatives with "|" to find any of them,
-                e.g. "budget|deadline".
-            context_lines: Lines of surrounding context to show around each match (at most 10).
-
-        Returns:
-            str: The matching lines, each labelled with its turn number and who said it.
-        """
-        return search_chat_history_text(session, pattern, context_lines, team_id=team.id)
-
-    if async_mode:
-        return Function.from_callable(asearch_chat_history, name="search_chat_history")
-    return Function.from_callable(search_chat_history, name="search_chat_history")
 
 
 def _update_session_state_tool(team: "Team", run_context: RunContext, session_state_updates: dict) -> str:
