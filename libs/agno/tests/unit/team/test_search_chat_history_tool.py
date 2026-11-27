@@ -155,3 +155,90 @@ def test_a_team_that_reads_its_chat_history_gets_the_search_tool():
     )
     names = [tool.name if hasattr(tool, "name") else tool.get("name") for tool in tools]
     assert "get_chat_history" in names and "search_chat_history" in names
+
+
+def _plain_session(turns: List) -> TeamSession:
+    runs = [_team_run(index, question, answer) for index, (question, answer) in enumerate(turns, start=1)]
+    return TeamSession(session_id="s1", team_id="team-1", runs=runs)
+
+
+def test_a_number_matches_what_was_said_not_the_turn_labels(team):
+    turns = [("Next question.", "Done.")] * 16
+    turns[2] = ("Keep the budget at 15 dollars.", "Done.")
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    found = search(pattern="15", context_lines=0)  # type: ignore[misc]
+    assert found.splitlines()[1:] == ["[turn 3 user] Keep the budget at 15 dollars."]
+
+
+def test_a_role_word_matches_what_was_said_not_every_label(team):
+    turns = [("Next question.", "Done.")] * 5
+    turns[1] = ("How many seats does each user get?", "Done.")
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    assert search(pattern="user", context_lines=0).splitlines()[1:] == [  # type: ignore[misc]
+        "[turn 2 user] How many seats does each user get?"
+    ]
+    assert search(pattern="turn|assistant", context_lines=0).startswith("No earlier turn matches")  # type: ignore[misc]
+
+
+def test_a_match_deep_in_a_long_line_keeps_its_turn(team):
+    reply = "Background on the rollout. " * 40 + "The deploy path is /srv/app/blue."
+    turns = [("Next question.", "Done."), ("Where does it deploy?", reply)]
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    line = search(pattern="/srv/app", context_lines=0).splitlines()[1]  # type: ignore[misc]
+    assert line.startswith("[turn 2 assistant] ")
+    assert "/srv/app/blue" in line
+
+
+async def _agent_tool_names(agent: Agent, async_mode: bool) -> List[str]:
+    from agno.agent import _tools
+    from agno.run import RunContext
+
+    kwargs = dict(
+        run_response=RunOutput(run_id="r", session_id="s1"),
+        run_context=RunContext(run_id="r", session_id="s1"),
+        session=AgentSession(session_id="s1"),
+    )
+    tools = await _tools.aget_tools(agent, **kwargs) if async_mode else _tools.get_tools(agent, **kwargs)  # type: ignore[arg-type]
+    return [getattr(tool, "__name__", getattr(tool, "name", "")) for tool in tools]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_an_agent_that_searches_its_compacted_history_gets_one_search_tool(tmp_path, async_mode):
+    from agno.compaction import Compaction
+    from agno.compaction.types import CompactionRecord
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    db = SqliteDb(db_file=str(tmp_path / "agent.db"))
+    compaction = Compaction(search_compacted_messages=True)
+    compaction.archive_for("s1", db).write(  # type: ignore[union-attr]
+        CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1"),
+        [Message(role="user", content="archived")],
+    )
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    agent = Agent(model=model, db=db, compaction=compaction, read_chat_history=True)
+    names = await _agent_tool_names(agent, async_mode)
+    assert "search_compacted_history" in names and "get_chat_history" in names
+    assert "search_chat_history" not in names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_an_agent_without_a_compacted_history_search_gets_the_chat_history_search(tmp_path, async_mode):
+    from agno.compaction import Compaction
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    db = SqliteDb(db_file=str(tmp_path / "agent.db"))
+    for agent in (
+        Agent(model=model, db=db, read_chat_history=True),
+        Agent(model=model, db=db, compaction=Compaction(search_compacted_messages=False), read_chat_history=True),
+        # Before the first fold num_history_runs can still drop turns, and nothing is archived yet.
+        Agent(model=model, db=db, compaction=True, read_chat_history=True),
+        # Without a db the compacted history has nowhere to live, so it can never be searched.
+        Agent(model=model, compaction=Compaction(search_compacted_messages=True), read_chat_history=True),
+    ):
+        names = await _agent_tool_names(agent, async_mode)
+        assert "search_chat_history" in names and "search_compacted_history" not in names

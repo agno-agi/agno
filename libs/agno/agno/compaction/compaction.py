@@ -1076,7 +1076,7 @@ class Compaction:
             blocks: List[str] = []
             used = 0
             for row in rows:
-                hits = _grep(row.get("archived_messages") or "", pattern, context_lines)
+                hits = grep_text(row.get("archived_messages") or "", pattern, context_lines)
                 if not hits:
                     continue
                 # The cap holds across folds too, not just within each one.
@@ -1102,7 +1102,13 @@ def _clip_line(line: str, match_start: Optional[int]) -> str:
     return ("..." if start > 0 else "") + line[start:end] + ("..." if end < len(line) else "")
 
 
-def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20) -> str:
+def grep_text(
+    text: str,
+    pattern: str,
+    context_lines: int = 2,
+    max_matches: int = 20,
+    line_labels: Optional[List[str]] = None,
+) -> str:
     """Matching lines with surrounding context, numbered - the shape `grep -n -C` returns.
 
     The pattern is literal text, with "|" separating alternatives - never a regular expression. It
@@ -1112,6 +1118,9 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
 
     SQL prefilters which rows are worth scanning, so this only ever runs over candidates. Output is
     bounded - context lines, line length, and total size - since it goes into the context window.
+
+    ``line_labels``, one per line of ``text``, replaces the line numbers. A label is neither
+    searched nor clipped, so it always survives on the lines it names.
     """
     import re
 
@@ -1122,6 +1131,8 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
     context_lines = max(0, min(context_lines, _SEARCH_MAX_CONTEXT_LINES))
 
     lines = text.split("\n")
+    if line_labels is not None and len(line_labels) != len(lines):
+        raise ValueError(f"line_labels has {len(line_labels)} labels for {len(lines)} lines")
     hits = {}
     for i, line in enumerate(lines):
         found = compiled.search(line)
@@ -1143,9 +1154,12 @@ def _grep(text: str, pattern: str, context_lines: int = 2, max_matches: int = 20
         else:
             spans.append([start, end])
 
+    def prefix(i: int) -> str:
+        return f"{line_labels[i]} " if line_labels is not None else f"{i + 1}: "
+
     rendered = ""
     for span_start, span_end in spans:
-        block = "\n".join(f"{i + 1}: {_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
+        block = "\n".join(f"{prefix(i)}{_clip_line(lines[i], hits.get(i))}" for i in range(span_start, span_end))
         candidate = block if not rendered else f"{rendered}\n--\n{block}"
         if len(candidate) > _SEARCH_OUTPUT_CHARS:
             truncated = True

@@ -302,6 +302,15 @@ def _diagnostics_tool(agent_os: "AgentOS", required_env: Sequence[str]) -> Any:
     )
 
 
+def _earlier_turns_window(turns: int) -> str:
+    """How many earlier turns Super Agent is sent, as the start of a sentence."""
+    if turns == 0:
+        return "no earlier turn of this conversation is"
+    if turns == 1:
+        return "only the last turn of this conversation is"
+    return f"only the last {turns} turns of this conversation are"
+
+
 def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
     """Create the manager using the OS registry and database.
 
@@ -468,7 +477,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
             instructions.append(
                 PRIVATE_MEMORY_INSTRUCTIONS if _remembers_people(config.learning) else NO_PRIVATE_PLACE_INSTRUCTIONS
             )
-    instructions.append(EARLIER_TURNS_INSTRUCTIONS.format(turns=config.num_history_runs))
+    instructions.append(EARLIER_TURNS_INSTRUCTIONS.format(window=_earlier_turns_window(config.num_history_runs)))
     if config.instructions:
         instructions.append(config.instructions)
 

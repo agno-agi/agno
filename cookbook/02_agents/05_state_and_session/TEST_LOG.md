@@ -112,3 +112,12 @@
 **Result:** Completed successfully in 23s.
 
 ---
+
+---
+
+### search_chat_history.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** An agent with `num_history_runs=2` and OpenAI chaining off is told a fact in turn 1 and asked for it in turn 5. It called `search_chat_history` with `staging|database|db`, got back `[turn 1 user] Our staging database is called lumen-stage-7.` and answered with it. The result said 4 turns are stored, so the run in progress is not searched.
+**Result:** Completed successfully (gpt-5.6-luna, SqliteDb).

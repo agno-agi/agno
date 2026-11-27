@@ -138,9 +138,9 @@ call a status tool for a Task you just started: its state is in that list on the
 """
 
 EARLIER_TURNS_INSTRUCTIONS = """\
-Earlier turns: only the last {turns} turns of this conversation are in front of you. Older turns are
-stored. Before you say you do not know something the person told you, or ask for it again, find it with
-search_chat_history. Do not search for what is already in front of you.
+Earlier turns: {window} in front of you. Older turns are stored. Before you say you do not know
+something the person told you, or ask for it again, find it with search_chat_history. Do not search for
+what is already in front of you.
 """
 
 COMPANY_FILES_INSTRUCTIONS = """\

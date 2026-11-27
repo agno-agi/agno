@@ -140,10 +140,10 @@ def _determine_tools_for_model(
 
     from agno.team._default_tools import (
         _get_chat_history_function,
-        _search_chat_history_function,
         _get_delegate_task_function,
         _get_update_user_memory_function,
         _read_past_session_function,
+        _search_chat_history_function,
         _search_past_sessions_function,
         _update_session_state_tool,
         create_add_to_knowledge_tool,
