@@ -18,6 +18,7 @@ except ImportError:
             )
 
 
+from agno.os.middleware.sse_buffering import SSEBufferingMiddleware
 from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     for name in (
         "JWTMiddleware",
         "TokenSource",
+        "SSEBufferingMiddleware",
         "TrailingSlashMiddleware",
     )
     if name in globals()
