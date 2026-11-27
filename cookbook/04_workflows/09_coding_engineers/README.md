@@ -46,7 +46,7 @@ The small function steps (`review_brief`, `triage_brief`, `fix_brief`, `record_t
 | `REVIEW_REPOSITORY_BRANCH` | `main` | The branch the sandboxes start from before fetching the pull request. |
 | `CLAUDE_MODEL` | `claude-sonnet-5-5` | Model of the Claude reviewer and the fixing engineer. |
 | `CODEX_MODEL` | `gpt-5.6-luna` | Model of the Codex reviewer. |
-| `TRIAGE_MODEL` | `gpt-5.6-luna` | Model of the triage agent. |
+| `TRIAGE_MODEL` | `gpt-5.6-luna` | Model of the triage agent. Triage decides whether the rounds end: use the strongest model you have. See `TEST_LOG.md`. |
 | `AGNO_SANDBOX_IMAGE` | `agno-sandbox:local` | The sandbox image. |
 | `AGNO_SANDBOX_DB_URL` | local pgvector | The database for sessions and runs. |
 
