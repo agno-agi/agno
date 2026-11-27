@@ -344,6 +344,11 @@ class BaseExternalAgent:
         """What writes this agent's login into a sandbox before a turn and saves it after; None for none."""
         return None
 
+    @property
+    def _runs_one_at_a_time(self) -> bool:
+        """Whether this agent holds a slot for each run, so a second run waits or is refused."""
+        return False
+
     @asynccontextmanager
     async def _asubscription_slot(self, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
         """Held for the length of one run by an agent that runs one piece of work at a time.

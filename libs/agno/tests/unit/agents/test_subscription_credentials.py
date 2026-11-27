@@ -607,6 +607,17 @@ async def test_a_waiting_step_that_is_cancelled_never_takes_the_slot(monkeypatch
                 pass
 
 
+def test_a_codex_agent_on_a_sign_in_may_sit_in_two_parallel_branches():
+    from agno.workflow import Parallel, Step
+
+    on_a_sign_in = CodexAgent(id="codex-1", auth_json=login())
+    Parallel(Step(name="a", agent=on_a_sign_in), Step(name="b", agent=on_a_sign_in))
+    # Any other engineer in two branches would collide on its one conversation, and is refused as before.
+    for other in (CodexAgent(id="codex-key"), CodexAgent(id="codex-2", access_token="token")):
+        with pytest.raises(ValueError, match="used in more than one Parallel branch"):
+            Parallel(Step(name="a", agent=other), Step(name="b", agent=other))
+
+
 async def test_a_claude_step_never_waits(coordinator):
     coordinator.hold = 0.03
     agent = ClaudeAgent(id="claude-1", oauth_token="oauth-token-1", sandbox=FakeSandbox())

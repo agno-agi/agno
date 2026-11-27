@@ -431,6 +431,10 @@ class CodexAgent(BaseExternalAgent):
 
         return SandboxLogin(self)
 
+    @property
+    def _runs_one_at_a_time(self) -> bool:
+        return self.auth_json is not None
+
     @asynccontextmanager
     async def _asubscription_slot(self, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
         if self.auth_json is None:
