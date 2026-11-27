@@ -1,3 +1,28 @@
+# Super Agent is told about the work a conversation started — November 26, 2026
+
+Branch: `claude/super-agent-linked-work-674b92`. Starting
+a Task no longer ends Super Agent's turn, and each message reaches it with the state
+of the Tasks the conversation started. The live run used a new, empty PostgreSQL
+database and `gpt-5.6-luna`, with this branch's `agno` on the path.
+
+### 13_start_tasks_from_chat.py
+
+**Status:** PASS
+
+**Description:** Run with `.venv/bin/python cookbook/05_agent_os/30_company/13_start_tasks_from_chat.py`.
+A person asks Super Agent to start an accepted Task, asks an unrelated question while
+it runs, waits for it to finish, and then says "Thanks. Anything else I should know?".
+
+**Result:** Exit 0. The start was answered in 5.2 seconds with the Task and its run id.
+The unrelated question was answered in 3.0 seconds. After the Task reached In review,
+the last reply opened with "The investigation Task 'Investigate the nightly export
+failure' finished and is waiting for review", without being asked about the Task. The
+attempt recorded the chat in `requested_from`. An earlier build of this branch that put
+the same state in the instructions did not say so: the model continued from its
+previous response and was not sent that run's instructions. `--serve` was NOT RUN.
+
+---
+
 # A Task run is given its brief and what was attached to it — November 26, 2026
 
 Branch: `claude/company-task-context-f5f45c`, on the chat acceptance branch. It
