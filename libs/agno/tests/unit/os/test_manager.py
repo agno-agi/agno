@@ -2459,6 +2459,22 @@ def test_super_agent_asks_before_work_that_pushes_whatever_starts_it():
     assert "wiki" not in MANAGER_INSTRUCTIONS
 
 
+def test_super_agent_is_told_earlier_turns_are_stored_and_can_search_them(db):
+    from agno.os.manager.finished_work import READ_TOOLS as read_only
+    from agno.os.manager.prompts import EARLIER_TURNS_INSTRUCTIONS
+
+    said = " ".join(EARLIER_TURNS_INSTRUCTIONS.format(turns=5).split())
+    assert "only the last 5 turns of this conversation are in front of you. Older turns are stored." in said
+    assert "Before you say you do not know something the person told you, or ask for it again" in said
+    assert "find it with search_chat_history" in said
+    assert "Do not search for what is already in front of you." in said
+    # A finished-work report only reads, and this tool only reads.
+    assert "search_chat_history" in read_only
+    # The number is the one this Super Agent is configured with.
+    os = AgentOS(db=db, manager=OSManager(model=OfflineModel(), num_history_runs=7), telemetry=False)
+    assert EARLIER_TURNS_INSTRUCTIONS.format(turns=7) in os.manager.instructions()
+
+
 def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():
     from agno.os.manager.prompts import BUILDER_INSTRUCTIONS
 

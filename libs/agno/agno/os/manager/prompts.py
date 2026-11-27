@@ -137,6 +137,12 @@ what changed, then answer, even when the message is a one-line question about so
 call a status tool for a Task you just started: its state is in that list on the next turn.
 """
 
+EARLIER_TURNS_INSTRUCTIONS = """\
+Earlier turns: only the last {turns} turns of this conversation are in front of you. Older turns are
+stored. Before you say you do not know something the person told you, or ask for it again, find it with
+search_chat_history. Do not search for what is already in front of you.
+"""
+
 COMPANY_FILES_INSTRUCTIONS = """\
 Company files:
 - One tree: wiki/ is agreed direction, goals/<id>/ a Goal's brief.md, status.md and findings,
