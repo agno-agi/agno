@@ -6836,7 +6836,8 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Keep step identity stable across the run's pause/continue boundary
+        # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
+        self._prepare_steps()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
@@ -8885,7 +8886,8 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Keep step identity stable across the run's pause/continue boundary
+        # A fresh workflow may still need to wrap its executors in Steps before restoring their IDs.
+        self._prepare_steps()
         self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
