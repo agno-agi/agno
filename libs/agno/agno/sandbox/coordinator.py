@@ -97,6 +97,10 @@ class SandboxCoordinator:
         self.retain_checkpoints = _retention(retain_checkpoints)
         # Agents whose sessions this coordinator cleans up when they are deleted.
         self.agent_ids: Set[str] = set()
+        # By agent id: what writes that agent's login into its computer before a turn (ainstall)
+        # and saves the refreshed copy before the computer is checkpointed or removed (acollect).
+        # A login is never part of a request, a checkpoint or a stored record.
+        self.logins: Dict[str, Any] = {}
 
     async def arun(
         self,
@@ -181,6 +185,9 @@ class SandboxCoordinator:
         state = await self.store.abegin_stop(lease, status=status, reason=reason, retryable=retryable)
         if state.record.get("computer") is not None:
             handle = SandboxHandle(**state.record["computer"])
+            login = self.logins.get(lease.agent_id)
+            if login is not None:
+                await login.acollect(self.provider, handle)
             # The persisted stopping phase forbids every subsequent owner from
             # restarting execution on this immutable generation.
             await self.provider.adestroy(handle)
@@ -651,6 +658,9 @@ class SandboxCoordinator:
                         return
                     execution = RuntimeExecution(handle, state.record["execution_id"], run_id)
                     try:
+                        login = self.logins.get(agent_id)
+                        if login is not None:
+                            await login.ainstall(self.provider, handle)
                         # Identical execution identity/request reconciles a lost start acknowledgement.
                         await self.client.astart(
                             handle,
@@ -948,6 +958,9 @@ class SandboxCoordinator:
                 execution_id=record["execution_id"],
                 generation=record["generation"],
             )
+            login = self.logins.get(lease.agent_id)
+            if login is not None:
+                await login.acollect(self.provider, handle)
             # A digest, not the result: the manifest is capped at the runtime's own result limit.
             digest = hashlib.sha256(
                 json.dumps(record["result"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()

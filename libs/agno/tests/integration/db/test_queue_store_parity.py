@@ -236,6 +236,26 @@ class TestSettlementParity:
         assert stored["status"] == "failed" and stored["error"] == "boom"
 
     @pytest.mark.asyncio
+    async def test_release_hands_back_the_claim_and_its_attempt(self, store):
+        await store.enqueue_job(make_job("r1"))  # max_attempts=1
+        await store.claim_job("w1")
+        assert not await store.release_job("r1", "wrong-worker", 1)
+        assert not await store.release_job("r1", "w1", 2)
+        assert await store.release_job("r1", "w1", 1, 60)
+        stored = await store.get_job("r1")
+        assert stored["status"] == "queued" and stored["attempt"] == 0 and stored["locked_by"] is None
+        assert await store.claim_job("w1") is None, "not claimable before the delay"
+        assert not await store.release_job("r1", "w1", 1), "a queued job has no claim to hand back"
+
+        await store.enqueue_job(make_job("r2"))
+        await store.claim_job("w1")
+        assert await store.release_job("r2", "w1", 1)
+        # The attempt was given back, so the one execution the ticket allows is still there.
+        claimed = await store.claim_job("w1")
+        assert claimed["id"] == "r2" and claimed["attempt"] == 1
+        assert await store.complete_job("r2", "w1", 1, "completed")
+
+    @pytest.mark.asyncio
     async def test_heartbeat_only_refreshes_claim_holder(self, store):
         await store.enqueue_job(make_job("r1"))
         await store.claim_job("w1")
