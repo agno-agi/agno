@@ -308,13 +308,19 @@ class Ollama(Model):
 
         messages = normalize_tool_messages(messages)
 
+        # Keep parity with invoke/ainvoke: stream must honor response_format
+        # (Ollama `format`) for structured outputs.
+        request_kwargs = self._prepare_request_kwargs_for_invoke(
+            response_format=response_format, tools=tools
+        )
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
             model=self.id,
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_params(tools=tools),
+            **request_kwargs,
         ):
             yield self._parse_provider_response_delta(chunk)
 
@@ -337,13 +343,17 @@ class Ollama(Model):
 
         messages = normalize_tool_messages(messages)
 
+        request_kwargs = self._prepare_request_kwargs_for_invoke(
+            response_format=response_format, tools=tools
+        )
+
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(
             model=self.id.strip(),
             messages=[self._format_message(m, compress_tool_results) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_params(tools=tools),
+            **request_kwargs,
         ):
             yield self._parse_provider_response_delta(chunk)
 
