@@ -22,7 +22,7 @@ from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.offload import ResultStore
 from agno.run.agent import RunContentEvent, RunOutputEvent
-from agno.run.base import RunStatus
+from agno.run.base import RunContext, RunStatus
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
@@ -142,6 +142,12 @@ def needs_ok(city: str) -> str:
     return f"sunny in {city}"
 
 
+@tool(requires_confirmation=True)
+def needs_confirmation(city: str) -> str:
+    """Return the weather for a city once the caller has confirmed the call."""
+    return f"sunny in {city}"
+
+
 def _runs(db: SqliteDb, session_id: str) -> int:
     runs = db.get_runs(session_id=session_id)
     assert isinstance(runs, list)
@@ -252,6 +258,38 @@ class TestAgent:
         assert _approvals(db) == 0
         assert _runs(db, "s1") == 0
 
+    def test_continuing_a_paused_temporary_run_stays_temporary(self, db: SqliteDb):
+        agent = Agent(id="a", model=ToolCallingModel("needs_ok", {"city": "Paris"}), db=db, tools=[needs_ok])
+
+        paused = agent.run("weather?", session_id="s1", store_run=False)
+        assert paused.is_paused
+        for requirement in paused.requirements or []:
+            requirement.confirm()
+
+        done = agent.continue_run(run_response=paused, requirements=paused.requirements, store_run=False)
+
+        assert done.status == RunStatus.completed
+        assert db.get_session(session_id="s1", session_type=SessionType.AGENT) is None
+        assert _runs(db, "s1") == 0
+
+    @pytest.mark.asyncio
+    async def test_continuing_a_paused_temporary_run_stays_temporary_async(self, db: SqliteDb):
+        agent = Agent(id="a", model=ToolCallingModel("needs_ok", {"city": "Paris"}), db=db, tools=[needs_ok])
+
+        paused = await agent.arun("weather?", session_id="s1", store_run=False)
+        assert paused.is_paused
+        for requirement in paused.requirements or []:
+            requirement.confirm()
+
+        done = await agent.acontinue_run(run_response=paused, requirements=paused.requirements, store_run=False)
+        assert done.status == RunStatus.completed
+
+        with pytest.raises(ValueError, match="store_run=False"):
+            agent.acontinue_run(run_response=paused, requirements=paused.requirements, background=True, store_run=False)
+
+        assert db.get_session(session_id="s1", session_type=SessionType.AGENT) is None
+        assert _runs(db, "s1") == 0
+
     def test_media_is_not_offloaded_for_a_temporary_run(self, db: SqliteDb, tmp_path):
         media_root = tmp_path / "media"
         agent = Agent(id="a", model=RecordingModel(), db=db, media_storage=LocalMediaStorage(base_path=str(media_root)))
@@ -333,6 +371,48 @@ class TestTeam:
         stored = team.run("weather?", session_id="s1")
         assert stored.is_paused
         assert _approvals(db) == 1
+
+    def test_continuing_a_paused_temporary_team_run_stays_temporary(self, db: SqliteDb):
+        team = Team(
+            id="t",
+            name="T",
+            model=ToolCallingModel("needs_confirmation", {"city": "Paris"}),
+            members=[Agent(id="member", model=RecordingModel())],
+            tools=[needs_confirmation],
+            db=db,
+        )
+
+        paused = team.run("weather?", session_id="s1", store_run=False)
+        assert paused.is_paused
+        for requirement in paused.requirements or []:
+            requirement.confirm()
+
+        done = team.continue_run(run_response=paused, requirements=paused.requirements, store_run=False)
+
+        assert done.status == RunStatus.completed
+        assert db.get_session(session_id="s1", session_type=SessionType.TEAM) is None
+        assert _runs(db, "s1") == 0
+
+    @pytest.mark.asyncio
+    async def test_continuing_a_paused_temporary_team_run_stays_temporary_async(self, db: SqliteDb):
+        team = Team(
+            id="t",
+            name="T",
+            model=ToolCallingModel("needs_confirmation", {"city": "Paris"}),
+            members=[Agent(id="member", model=RecordingModel())],
+            tools=[needs_confirmation],
+            db=db,
+        )
+
+        paused = await team.arun("weather?", session_id="s1", store_run=False)
+        assert paused.is_paused
+        for requirement in paused.requirements or []:
+            requirement.confirm()
+
+        done = await team.acontinue_run(run_response=paused, requirements=paused.requirements, store_run=False)
+
+        assert done.status == RunStatus.completed
+        assert _runs(db, "s1") == 0
 
     def test_temporary_run_offloads_no_member_messages_to_the_result_store(self, db: SqliteDb):
         member = Agent(id="member", name="Member", model=RecordingModel())
@@ -554,55 +634,42 @@ class EchoExternalAgent(BaseExternalAgent):
 
 
 class TestExternalAgent:
+    """Harness agents keep their own native conversation, so a temporary run is refused, never stored quietly."""
+
     @pytest.mark.asyncio
-    async def test_temporary_run_writes_nothing(self, db: SqliteDb):
+    async def test_temporary_run_is_refused(self, db: SqliteDb):
         agent = EchoExternalAgent(name="Echo", id="echo", db=db)
 
-        output = await agent.arun("hi", session_id="s1", store_run=False)
-        assert output.content == "echo: hi"
-
-        events = [event async for event in agent.arun("hi", session_id="s1", stream=True, store_run=False)]
-        assert events
-
-        assert db.get_session(session_id="s1", session_type=SessionType.AGENT) is None
+        with pytest.raises(ValueError, match="not supported"):
+            await agent.arun("hi", session_id="s1", store_run=False)
+        with pytest.raises(ValueError, match="not supported"):
+            async for _ in agent.arun("hi", session_id="s1", stream=True, store_run=False):
+                pass
+        with pytest.raises(ValueError, match="not supported"):
+            await agent.arun("hi", session_id="s1", background=True, store_run=False)
         assert _runs(db, "s1") == 0
 
-        # The default keeps storing.
-        await agent.arun("hi", session_id="s1")
+        # Stored runs are unaffected.
+        output = await agent.arun("hi", session_id="s1")
+        assert output.content == "echo: hi"
         assert _runs(db, "s1") == 1
 
-    @pytest.mark.asyncio
-    async def test_temporary_run_sees_history_but_does_not_extend_it(self, db: SqliteDb):
+    def test_sync_temporary_run_is_refused(self, db: SqliteDb):
         agent = EchoExternalAgent(name="Echo", id="echo", db=db)
 
-        await agent.arun("first", session_id="s1")
-        await agent.arun("second", session_id="s1", store_run=False)
-        assert agent.last_history == [
-            {"role": "user", "content": "first"},
-            {"role": "assistant", "content": "echo: first"},
-        ]
-
-        await agent.arun("third", session_id="s1")
-        assert agent.last_history == [
-            {"role": "user", "content": "first"},
-            {"role": "assistant", "content": "echo: first"},
-        ]
-        assert _runs(db, "s1") == 2
-
-    def test_sync_run_honors_the_option(self, db: SqliteDb):
-        agent = EchoExternalAgent(name="Echo", id="echo", db=db)
-
-        output = agent.run("hi", session_id="s1", store_run=False)
-
-        assert output.content == "echo: hi"
+        with pytest.raises(ValueError, match="not supported"):
+            agent.run("hi", session_id="s1", store_run=False)
         assert _runs(db, "s1") == 0
 
     @pytest.mark.asyncio
-    async def test_background_rejects_store_run_false(self, db: SqliteDb):
+    async def test_temporary_run_context_is_refused(self, db: SqliteDb):
+        """A workflow step hands the option over on the run context, not as a keyword."""
         agent = EchoExternalAgent(name="Echo", id="echo", db=db)
+        run_context = RunContext(run_id="r1", session_id="s1", store_run=False)
 
-        with pytest.raises(ValueError, match="store_run=False"):
-            await agent.arun("hi", session_id="s1", background=True, store_run=False)
+        with pytest.raises(ValueError, match="not supported"):
+            await agent.arun("hi", session_id="s1", run_context=run_context)
+        assert _runs(db, "s1") == 0
 
 
 class TestTransientMarkerStaysOutOfStorage:

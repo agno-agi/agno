@@ -2148,7 +2148,7 @@ class TestStreamingRealBody:
         # Use a list so the closure can mutate / read it
         observed: dict = {}
 
-        async def fake_aread_or_create(agent, session_id=None, user_id=None):
+        async def fake_aread_or_create(agent, session_id=None, user_id=None, store_run=True):
             return AgentSession(session_id=session_id, runs=[run])
 
         # Patch the model-loop stream handler — that's the boundary where the

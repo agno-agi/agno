@@ -209,11 +209,11 @@ async def _asetup_session(
 
     if _has_async_db(team):
         team_session = await _aread_or_create_session(
-            team, session_id=session_id, user_id=user_id, store_run=run_context.store_run
+            team, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
         )
     else:
         team_session = _read_or_create_session(
-            team, session_id=session_id, user_id=user_id, store_run=run_context.store_run
+            team, session_id=session_id, user_id=user_id, store_run=getattr(run_context, "store_run", True)
         )
 
     # Update metadata
@@ -1996,7 +1996,9 @@ def run_dispatch(
         from copy import deepcopy
 
         # Resolved early: the session load already depends on it (a temporary run gets a private copy).
-        effective_store_run = store_run if store_run is not None else (run_context.store_run if run_context else True)
+        effective_store_run = (
+            store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+        )
         team_session = _read_or_create_session(
             team, session_id=session_id, user_id=user_id, store_run=effective_store_run
         )
@@ -4179,7 +4181,9 @@ def arun_dispatch(  # type: ignore
 
     run_id = run_id or str(uuid4())
 
-    effective_store_run = store_run if store_run is not None else (run_context.store_run if run_context else True)
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
     if background and not effective_store_run:
         raise ValueError(
             "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
@@ -7552,6 +7556,7 @@ def continue_run_dispatch(
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (sync).
@@ -7600,7 +7605,10 @@ def continue_run_dispatch(
     # Read existing session from storage
     from copy import deepcopy
 
-    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
+    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id, store_run=effective_store_run)
     # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
     # so the session layer keeps the session's own values (team < session < call-site).
     session_metadata = deepcopy(team_session.metadata)
@@ -7638,6 +7646,7 @@ def continue_run_dispatch(
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=session_metadata,
+        store_run=store_run,
     )
 
     # Initialize run context
@@ -7649,6 +7658,7 @@ def continue_run_dispatch(
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
@@ -7664,6 +7674,8 @@ def continue_run_dispatch(
         run_context.metadata = opts.metadata
     elif run_context.metadata is None:
         run_context.metadata = opts.metadata
+    if store_run is not None:
+        run_context.store_run = store_run
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -9313,6 +9325,7 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
+    store_run: Optional[bool] = None,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
@@ -9358,13 +9371,18 @@ def acontinue_run_dispatch(  # type: ignore
     # resolved, so session metadata does not reach this run's resolved options.
     from agno.team._init import _has_async_db
 
+    effective_store_run = (
+        store_run if store_run is not None else (getattr(run_context, "store_run", True) if run_context else True)
+    )
     session_metadata: Optional[Dict[str, Any]] = None
     if team.db is not None and not _has_async_db(team):
         from copy import deepcopy
 
         from agno.team._storage import _read_or_create_session, _update_metadata
 
-        _pre_session = _read_or_create_session(team, session_id=session_id_resolved, user_id=user_id)
+        _pre_session = _read_or_create_session(
+            team, session_id=session_id_resolved, user_id=user_id, store_run=effective_store_run
+        )
         # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
         # so the session layer keeps the session's own values (team < session < call-site).
         session_metadata = deepcopy(_pre_session.metadata)
@@ -9380,6 +9398,7 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=knowledge_filters,
         metadata=metadata,
         session_metadata=session_metadata,
+        store_run=store_run,
     )
 
     # Initialize run context
@@ -9391,6 +9410,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        store_run=effective_store_run,
     )
     if user_id is not None and run_context.user_id is None:
         run_context.user_id = user_id
@@ -9406,10 +9426,16 @@ def acontinue_run_dispatch(  # type: ignore
         run_context.metadata = opts.metadata
     elif run_context.metadata is None:
         run_context.metadata = opts.metadata
+    if store_run is not None:
+        run_context.store_run = store_run
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
     if background:
+        if not effective_store_run:
+            raise ValueError(
+                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
+            )
         if not team.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the team for run persistence."

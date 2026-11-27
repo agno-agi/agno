@@ -54,7 +54,6 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.base import METRICS_FINAL_STATUSES, RunStatus
-from agno.session._utils import is_transient
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
@@ -1102,8 +1101,6 @@ class BaseExternalAgent:
 
     async def _apersist_member_state(self, session: AgentSession) -> None:
         """Save a team member's own session, which holds its native conversation ids, without runs."""
-        if is_transient(session):
-            return
         try:
             await self.aupsert_session(session)
         except Exception as error:
@@ -1111,16 +1108,20 @@ class BaseExternalAgent:
             if self.strict_persistence:
                 raise
 
-    def _pop_store_run(self, kwargs: Dict[str, Any]) -> bool:
-        """Take the run-level ``store_run`` option out of the adapter kwargs.
+    def _pop_store_run(self, kwargs: Dict[str, Any]) -> None:
+        """Take the run-level ``store_run`` option out of the adapter kwargs and refuse a temporary run.
 
-        False asks for a temporary run: answered, but neither the run nor its session is written.
-        A sandboxed run executes and persists inside the sandbox harness, which has no such mode.
+        A harness agent keeps its conversation in the harness's own native session, which a run
+        resumes and extends; there is no way to answer from that conversation without recording
+        the exchange in it, so a temporary run is refused instead of being stored quietly.
         """
-        store_run = kwargs.pop("store_run", None) is not False
-        if not store_run and self.sandbox is not None:
-            raise ValueError("store_run=False is not supported for sandboxed agents")
-        return store_run
+        run_context = kwargs.get("run_context")
+        if kwargs.pop("store_run", None) is False or (
+            run_context is not None and getattr(run_context, "store_run", True) is False
+        ):
+            raise ValueError(
+                f"store_run=False is not supported for {self.framework} agents: the harness keeps its own conversation"
+            )
 
     def read_or_create_session(
         self,
@@ -1195,9 +1196,6 @@ class BaseExternalAgent:
 
         session.upsert_run(run=run_output)
         self._update_session_metrics(session)
-        # A temporary run (store_run=False) keeps its private session copy in memory only.
-        if is_transient(session):
-            return
         worker_owned = get_worker_ownership(run_output.run_id or "") is not None
         try:
             if self.db is not None:
@@ -1246,8 +1244,6 @@ class BaseExternalAgent:
         from agno.session._utils import resolve_run_index
 
         session.upsert_run(run=run_output)
-        if is_transient(session):
-            return
         user_id = run_output.user_id or session.user_id
         try:
             # A queued attempt's write goes through the attempt fence, so a stale attempt cannot
@@ -1678,10 +1674,7 @@ class BaseExternalAgent:
         yield_run_output: bool,
         **kwargs: Any,
     ) -> Any:
-        if kwargs.pop("store_run", True) is False:
-            raise ValueError(
-                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
-            )
+        self._pop_store_run(kwargs)
         if self.sandbox is not None:
             return await _sandbox_harness().astart_background(
                 self,
@@ -1758,10 +1751,7 @@ class BaseExternalAgent:
         return transport if transport is not None else run
 
     async def _arun_background_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        if kwargs.pop("store_run", True) is False:
-            raise ValueError(
-                "store_run=False cannot be combined with background=True: a background run is polled from its stored run row"
-            )
+        self._pop_store_run(kwargs)
         if self.sandbox is not None:
             events = _sandbox_harness().astream_background(self, input, **kwargs)
             try:
@@ -2265,7 +2255,7 @@ class BaseExternalAgent:
             finally:
                 await events.aclose()  # type: ignore[attr-defined]
             raise RuntimeError("Paused native run produced no result")
-        store_run = self._pop_store_run(kwargs)
+        self._pop_store_run(kwargs)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2309,8 +2299,6 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
-        if session is not None and not store_run:
-            session.transient = True
         slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:
@@ -2427,7 +2415,7 @@ class BaseExternalAgent:
 
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[Any]:
         native_non_stream = kwargs.pop("_native_non_stream", False)
-        store_run = self._pop_store_run(kwargs)
+        self._pop_store_run(kwargs)
         team_id, workflow_id = self._pop_run_parent(kwargs)
         parent_id = self._parent_id(team_id, workflow_id)
         if self.sandbox is not None:
@@ -2489,8 +2477,6 @@ class BaseExternalAgent:
         session = (
             await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
         )
-        if session is not None and not store_run:
-            session.transient = True
         slot = AsyncExitStack()
         self._claim_session(session, state_session_id, run_id)
         try:

@@ -1107,6 +1107,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> TeamRunOutput: ...
 
@@ -1125,6 +1126,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]: ...
 
@@ -1150,6 +1152,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
         **kwargs,
     ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
@@ -1173,6 +1176,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
+            store_run=store_run,
             yield_run_output=yield_run_output,
             **kwargs,
         )
@@ -1192,6 +1196,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> Coroutine[Any, Any, TeamRunOutput]: ...
 
@@ -1210,6 +1215,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]: ...
 
@@ -1235,6 +1241,7 @@ class Team:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        store_run: Optional[bool] = None,
         yield_run_output: bool = False,
         background: bool = False,
         **kwargs: Any,
@@ -1259,6 +1266,7 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
+            store_run=store_run,
             yield_run_output=yield_run_output,
             background=background,
             **kwargs,

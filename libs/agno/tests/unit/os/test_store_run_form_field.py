@@ -8,12 +8,14 @@ can switch the option off for the whole OS with ``AgentOS(allow_temporary_runs=F
 which also answers 400 and is visible on ``GET /config`` as the ``temporary_runs`` feature block.
 """
 
-from typing import Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
@@ -177,6 +179,36 @@ class TestTemporaryRunCannotBeBackground:
         assert response.status_code == 400, response.text
         assert "store_run" in response.json()["detail"]
         assert db.get_session(session_id="bg", session_type=SESSION_TYPES[route]) is None
+
+
+@dataclass
+class EchoExternalAgent(BaseExternalAgent):
+    """A harness-style agent that answers without a provider."""
+
+    framework: str = "test-framework"
+
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+        return f"echo: {input}"
+
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any):
+        from agno.run.agent import RunContentEvent
+
+        yield RunContentEvent(run_id=kwargs.get("run_id", ""), content=f"echo: {input}")
+
+
+class TestHarnessAgentsRefuseTemporaryRuns:
+    def test_external_agent_answers_400(self, db: SqliteDb):
+        agent = EchoExternalAgent(id="echo", name="Echo", db=db)
+        app = AgentOS(db=db, agents=[agent], telemetry=False).get_app()
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = _run(client, "/agents/echo/runs", "ext", store_run="false")
+            assert response.status_code == 400, response.text
+            assert "harness" in response.json()["detail"]
+            assert db.get_session(session_id="ext", session_type=SessionType.AGENT) is None
+
+            stored = _run(client, "/agents/echo/runs", "ext")
+            assert stored.status_code == 200, stored.text
+            assert db.get_session(session_id="ext", session_type=SessionType.AGENT) is not None
 
 
 @pytest.fixture()
