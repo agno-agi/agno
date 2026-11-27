@@ -334,12 +334,23 @@ def test_a_caller_without_tasks_read_gets_no_block_and_keeps_the_list(mode):
 
 @modes
 @pytest.mark.parametrize("isolation", [False, True])
-def test_under_user_isolation_a_person_is_shown_only_their_own_tasks(mode, isolation):
+def test_a_person_is_shown_a_teammates_task_their_conversation_lists(mode, isolation):
+    # A Task is company work: bob messaged or started the Task alice created, and it stays in his list.
     task = row()
     run_context = context(user="bob")
     link_task(run_context, task)
-    text = block(Tasks(task), run_context, mode, isolation=isolation)
-    assert ("task-1" in text) is (not isolation)
+    assert "task-1" in block(Tasks(task), run_context, mode, isolation=isolation)
+    assert listed(run_context) == ["task-1"]
+
+
+@modes
+def test_under_user_isolation_a_caller_with_no_identity_is_shown_no_tasks(mode):
+    task = row()
+    run_context = context(user=None)
+    link_task(run_context, task)
+    assert "task-1" in block(Tasks(task), run_context, mode)
+    assert block(Tasks(task), run_context, mode, isolation=True) == ""
+    assert listed(run_context) == ["task-1"]
 
 
 @modes
@@ -770,7 +781,6 @@ def test_ticket_read_failure_leaves_the_notice_pending_and_other_tasks_visible(m
         return provider.read(current) if mode == "sync" else asyncio.run(provider.aread(current))
 
     assert read("denied", scopes=[]) is None
-    assert read("different-user", user="bob") is None
     assert not calls
     first = read("first")
     assert "id other" in first and "id task-1" not in first

@@ -623,7 +623,6 @@ class CompanyTaskTools(Toolkit):
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
         from agno.registry._reserved import MINI_AGENT_ID
         from agno.run.authorization import authorization_scope
-        from agno.tools.company import _scoped_user
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "message a Company Task")
@@ -641,9 +640,9 @@ class CompanyTaskTools(Toolkit):
                 for resource, action in read_permissions(context):
                     await authority.arequire(resource, action)
             starter = _TaskStarter(agent_os)
-            # Where users are isolated a person reaches only their own Tasks.
-            owner = _scoped_user(_agno_run_context, _user_isolation(agent_os))
-            value = await _call(starter.db, "get_task", task_id, user_id=owner)
+            # A Task is company work, read by its ID whoever created it, also where users are isolated:
+            # the permissions checked above and the executor check below decide who may message it.
+            value = await _call(starter.db, "get_task", task_id)
             if value is None:
                 return "Not sent: Task not found"
             title = value.get("title") or task_id
@@ -721,7 +720,6 @@ class CompanyTaskTools(Toolkit):
                     target="ready",
                     # The reason of a return to Ready is what the next attempt is given as the person's reply.
                     reason=text,
-                    user_id=owner,
                     accepted_by=user_id,
                     expected_updated_at=value["updated_at"],
                     # Seconds cannot tell two writes in one second apart. The stage and the run can.
