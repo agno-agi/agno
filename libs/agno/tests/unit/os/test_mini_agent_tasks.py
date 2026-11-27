@@ -169,7 +169,7 @@ class System:
         self.queue = QueueWorker(
             InMemoryQueueStore(),
             lambda kind, id, scope=None: components.get(id),
-            QueueConfig(durable=True, retry_delay_seconds=0),
+            QueueConfig(durable=True),
             authorization_app=self.app,
         )
         self.queue._company_db = self.db
@@ -214,13 +214,9 @@ class System:
         assert started.status_code == 202, started.text
 
         async def run():
-            # The queue executes a Task run that failed once more before it gives up.
-            status = "queued"
-            while status == "queued":
-                job = await self.queue.store.claim_job(self.queue.worker_id, self.queue.config.lock_grace_seconds)
-                assert job is not None
-                await self.queue._execute_claimed(job)
-                status = (await self.queue.store.get_job(job["id"]))["status"]
+            job = await self.queue.store.claim_job(self.queue.worker_id, self.queue.config.lock_grace_seconds)
+            assert job is not None
+            await self.queue._execute_claimed(job)
 
         asyncio.run(run())
         return self.db.get_task(task_id)
@@ -1182,8 +1178,8 @@ def test_a_failed_task_run_records_the_components_it_started(system):
     system.accept(proposal["id"])
     model = FailingModel([("run_agent", {"agent_id": "writer", "message": "Write the notes"})])
     saved = system.execute(proposal["id"], model=model)
-    # The writer ran before Mini Agent's own run failed, in each of the two executions the queue gave it.
-    assert system.writer.model.turns == 2 and saved["result"]["status"] == "ERROR"
+    # The writer ran before Mini Agent's own run failed.
+    assert system.writer.model.turns == 1 and saved["result"]["status"] == "ERROR"
     invoked = saved["result"]["invoked"]
     assert [(entry["type"], entry["id"], entry["status"]) for entry in invoked] == [("agent", "writer", "COMPLETED")]
     assert invoked[0]["run_id"]

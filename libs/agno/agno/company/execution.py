@@ -25,12 +25,13 @@ _task_transport: ContextVar[Optional[Tuple[str, str, Optional[str]]]] = ContextV
 )
 
 
-# How many times the queue may execute one attempt of a Task. With one, a run that was executing when its
-# server stopped or crashed is failed and never run again. With two, the queue runs it once more: after a
-# crash, after a shutdown, and after a run that ended in an error its component did not mark as one that
-# repeats. A second execution starts from the Task's input in the Task's session, so a tool call the first
-# execution made is made again. A run that completed, was cancelled or paused is never executed again.
-# QueueConfig(max_attempts=...) above this applies as it is.
+# How many times the queue may execute one attempt of a Task whose worker was lost. With one, a run that
+# was executing when its server stopped or crashed is failed and never run again. With two, the queue
+# runs it once more after a crash or a shutdown. That execution starts from the Task's input in the
+# Task's session, so a tool call the lost execution made is made again. A run that failed by itself (an
+# error, a timeout), completed, was cancelled or paused is not executed again for this: the queue's own
+# setting still decides how often a failed run is retried. QueueConfig(max_attempts=...) above this
+# applies as it is, to both.
 TASK_RUN_MAX_ATTEMPTS = 2
 
 
@@ -437,11 +438,14 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
         # The new executor starts from the brief. With no earlier messages it also has no stored
         # provider response of the other component to continue from.
         kwargs["add_history_to_context"] = False
+    allowed = job.get("max_attempts") or 1
     job = {
         **job,
-        "max_attempts": max(job.get("max_attempts") or 1, TASK_RUN_MAX_ATTEMPTS),
+        "max_attempts": max(allowed, TASK_RUN_MAX_ATTEMPTS),
         "payload": {
             **job["payload"],
+            # The executions beyond the queue's own setting are only for a run whose worker was lost.
+            **({"max_failed_attempts": allowed} if allowed < TASK_RUN_MAX_ATTEMPTS else {}),
             **({"kwargs": kwargs} if kwargs else {}),
             "company_task_id": task["id"],
             "company_task_transitions": history,

@@ -143,7 +143,9 @@ def system(tmp_path):
 
 def test_a_task_ticket_may_be_executed_twice_and_another_run_once(system):
     _, run_id = system.started()
-    assert system.ticket(run_id)["max_attempts"] == 2
+    ticket = system.ticket(run_id)
+    # Two executions, the second only for a run whose worker was lost: a failed run keeps the queue's one.
+    assert ticket["max_attempts"] == 2 and ticket["payload"]["max_failed_attempts"] == 1
     # A run of the same agent that is not a Task keeps the queue's own setting.
     plain = system.client.post(
         "/agents/writer/runs", data={"message": "Hello", "background": "true", "stream": "false"}
@@ -156,7 +158,11 @@ def test_a_higher_queue_setting_applies_to_a_task_as_it_is(tmp_path):
     system = System(tmp_path, max_attempts=3)
     try:
         _, run_id = system.started()
-        assert system.ticket(run_id)["max_attempts"] == 3
+        ticket = system.ticket(run_id)
+        assert ticket["max_attempts"] == 3 and "max_failed_attempts" not in ticket["payload"]
+        # The application's setting governs a failed run as it does for any other run: it is retried.
+        system.model.down = True
+        assert system.execute()["status"] == "queued"
     finally:
         system.db.close()
 
@@ -214,16 +220,51 @@ def test_a_run_that_completed_before_its_ticket_was_settled_is_not_run_again(sys
 
 
 def failed(system):
-    """A Task whose run failed in both executions the queue gave it. Returns the Task and the run id."""
+    """A Task whose run failed by itself. Returns the Task and the run id."""
     task, run_id = system.started()
     system.model.down = True
-    # The first failure is followed by a second execution, and the Task is still In progress between them.
-    assert system.execute()["status"] == "queued"
-    between = system.task(task["id"])
-    assert between["status"] == "in_progress" and between["result"] is None
-    assert system.execute()["status"] == "failed" and system.model.calls == 2
+    # A run that fails by itself is executed once: the second execution is only for a lost worker.
+    after = system.execute()
+    assert (after["status"], after["attempt"]) == ("failed", 1) and system.model.calls == 1
+    assert system.claim() is None
     system.model.down = False
     return task, run_id
+
+
+def test_a_task_run_that_raises_is_executed_once(system, monkeypatch):
+    task, run_id = system.started()
+    calls = []
+
+    async def raises(*args, **kwargs):
+        calls.append(1)
+        raise RuntimeError("The executor raised")
+
+    monkeypatch.setattr(system.writer, "arun", raises)
+    after = system.execute()
+    assert (after["status"], after["attempt"]) == ("failed", 1) and calls == [1]
+    assert system.claim() is None
+    saved = system.task(task["id"])
+    assert saved["status"] == "in_review" and saved["result"]["status"] == "ERROR"
+    assert "The executor raised" in saved["result"]["content"]
+
+
+def test_a_run_that_failed_before_its_worker_was_lost_is_not_run_again(system, monkeypatch):
+    task, run_id = system.started()
+    system.model.down = True
+    with monkeypatch.context() as crash:
+        # The server stops after the run is stored as failed and before its ticket is settled.
+        async def never_settles(*args, **kwargs):
+            return None
+
+        crash.setattr(system.queue, "_aretry_or_fail_ticket", never_settles)
+        assert system.execute()["status"] == "running"
+    system.model.down = False
+    system.lose_worker(run_id)
+    # The ticket is claimed again, and the claim fails it from the stored run without executing.
+    after = system.execute()
+    assert (after["status"], after["attempt"]) == ("failed", 2) and system.model.calls == 1
+    saved = system.task(task["id"])
+    assert saved["status"] == "in_review" and saved["result"]["status"] == "ERROR"
 
 
 def test_a_task_whose_run_failed_waits_in_review_with_the_error(system):
