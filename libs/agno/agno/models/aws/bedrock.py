@@ -375,7 +375,11 @@ class AwsBedrock(Model):
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
-                    tool_use_content = []
+                    tool_use_content: List[Dict[str, Any]] = []
+                    # Text the model wrote ahead of its tool calls is replayed ahead of them.
+                    # Whitespace alone is left out: Converse refuses a blank text block.
+                    if isinstance(message.content, str) and message.content.strip():
+                        tool_use_content.append({"text": message.content})
                     for tool_call in message.tool_calls:
                         try:
                             # Parse arguments with error handling for empty or invalid JSON
@@ -398,7 +402,8 @@ class AwsBedrock(Model):
                             }
                         )
                     formatted_message["content"].extend(tool_use_content)
-                else:
+                elif message.content:
+                    # A message with no text gets no text block: Converse refuses an empty or null one
                     formatted_message["content"].append({"text": message.content})
 
                 if message.images:
@@ -478,7 +483,27 @@ class AwsBedrock(Model):
                             }
                         )
 
-                formatted_messages.append(formatted_message)
+                # Models with strict templates refuse two user turns in a row, so a user message that
+                # follows a user message joins its turn, earlier blocks first. A turn of tool results
+                # stays a turn of its own: some models refuse text and a toolResult in one turn.
+                previous = formatted_messages[-1] if formatted_messages else None
+                if (
+                    message.role == "user"
+                    and previous is not None
+                    and previous["role"] == "user"
+                    and not any("toolResult" in block for block in previous["content"])
+                    and not any("toolResult" in block for block in formatted_message["content"])
+                ):
+                    previous["content"] = [*previous["content"], *formatted_message["content"]]
+                else:
+                    formatted_messages.append(formatted_message)
+
+        # Converse refuses a user turn with no content. One is left when a message had neither text
+        # nor media, as a turn from history does once its media has been removed. It keeps its place
+        # in the conversation with a short text.
+        for formatted_message in formatted_messages:
+            if formatted_message["role"] == "user" and not formatted_message["content"]:
+                formatted_message["content"] = [{"text": "(no text)"}]
 
         # Claude 4.6+ models do not support assistant message prefill.
         # Append a trailing user turn so the request ends with a user message.
