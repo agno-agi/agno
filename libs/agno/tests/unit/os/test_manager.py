@@ -2459,6 +2459,52 @@ def test_super_agent_asks_before_work_that_pushes_whatever_starts_it():
     assert "wiki" not in MANAGER_INSTRUCTIONS
 
 
+def test_platform_builder_calls_a_workflow_verified_only_after_reading_a_run():
+    from agno.os.manager.prompts import BUILDER_INSTRUCTIONS
+
+    said = " ".join(BUILDER_INSTRUCTIONS.split())
+    # A workflow is run once and judged by what it returned, not by its stored configuration.
+    assert "Check every workflow you create or change: run it once on a short realistic input" in said
+    assert "It works only when that content is the result the person asked for." in said
+    assert 'A skip message, text that starts "Error: ", empty content' in said
+    assert 'Say "verified" or "working" only of a component you ran in this turn' in said
+    assert 'Otherwise say "published, not run", or "published, not working" with the text the run returned.' in said
+    assert "show that a component can be built, not what it returns" in said
+    # The check run does not reach work that acts outside, and an agent or team is still run only on request.
+    assert "Skip the run only when a step's tools send, publish, push or spend, or wait for approval." in said
+    assert "Run an agent or a team only if asked." in said
+    assert "Run the result only if asked" not in said
+
+
+def test_platform_builder_is_told_what_a_workflow_returns():
+    from agno.os.manager.prompts import BUILDER_INSTRUCTIONS
+
+    said = " ".join(BUILDER_INSTRUCTIONS.split())
+    assert "A workflow returns the output of its last step, and nothing from the steps before it." in said
+    assert "is sent only the previous step's output: not the workflow input, not any earlier step" in said
+    assert "End with the step that produces what the person asked for." in said
+    assert "that step must return the work in full, corrected where needed" in said
+    # A condition with no else branch is never the end of a workflow.
+    assert "Never end a workflow or a loop with one." in said
+    # Only function steps return "Error: " text, so only they need an error branch.
+    assert "Only a workflow with a function step needs an error branch" in said
+    assert "give every workflow that can fail" not in said
+
+
+def test_super_agent_sends_a_broken_component_to_the_builder_and_adds_no_task():
+    from agno.os.manager.prompts import COMPANY_INSTRUCTIONS, MANAGER_INSTRUCTIONS
+
+    said = " ".join(MANAGER_INSTRUCTIONS.split())
+    assert "Delegate creating, changing or fixing agents, teams, workflows and schedules to Platform Builder." in said
+    assert "and the result the person wants back from the component" in said
+    assert "A component that returns the wrong thing is fixed by Platform Builder, never by a Task." in said
+    assert "add or propose no Task for the fix unless the person asks for a Task" in said
+    assert "Call a component verified or working only when Platform Builder ran it" in said
+    # Work for an agent that a person asks to have done is still recorded and started.
+    company = " ".join(COMPANY_INSTRUCTIONS.split())
+    assert "put it on record with add_company_task, start true only when asked to do it" in company
+
+
 @pytest.mark.parametrize("limit", [7, 0, None])
 def test_mini_agent_runs_under_super_agents_tool_call_limit(db, limit):
     from agno.os import CompanyConfig

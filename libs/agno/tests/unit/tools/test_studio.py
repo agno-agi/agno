@@ -1632,6 +1632,78 @@ class TestWorkflowStepSpecCoercion:
         assert data["steps"] == ["s1"]
 
 
+class TestWorkflowThatCanEndOnASkipMessage:
+    """A workflow returns its last step's output. A condition that is not met and has no
+    else branch outputs a skip message, so a workflow ending on one returns that message."""
+
+    ERROR_ONLY = {
+        "type": "condition",
+        "name": "Check final error",
+        "evaluator_function": 'previous_step_content.startsWith("Error: ")',
+        "steps": [{"name": "handle", "agent_id": "a1"}],
+    }
+
+    @pytest.fixture
+    def studio_workflows(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4", publish=True)
+        return studio
+
+    def test_create_warns_when_the_last_step_is_a_condition_with_no_else(self, studio_workflows):
+        out = json.loads(
+            studio_workflows.create_workflow(
+                name="ends on a check", steps=[{"name": "s1", "agent_id": "a1"}, self.ERROR_ONLY]
+            )
+        )
+        assert out["ok"] is True
+        (warning,) = out["warnings"]
+        assert "'Check final error'" in warning and "no else_steps" in warning
+        assert "returns 'Condition Check final error not met - skipped ...' and not a result" in warning
+
+    def test_create_warns_when_a_loop_at_the_end_closes_on_such_a_condition(self, studio_workflows):
+        loop = {
+            "type": "loop",
+            "name": "rounds",
+            "max_iterations": 2,
+            "steps": [{"name": "s1", "agent_id": "a1"}, self.ERROR_ONLY],
+        }
+        out = json.loads(studio_workflows.create_workflow(name="loop ends on a check", steps=[loop]))
+        assert len(out["warnings"]) == 1 and "'Check final error'" in out["warnings"][0]
+
+    def test_no_warning_when_the_condition_has_an_else_or_is_not_last(self, studio_workflows):
+        with_else = {**self.ERROR_ONLY, "else_steps": [{"name": "result", "agent_id": "a1"}]}
+        ends_with_else = json.loads(
+            studio_workflows.create_workflow(name="has else", steps=[{"name": "s1", "agent_id": "a1"}, with_else])
+        )
+        assert ends_with_else["ok"] is True and ends_with_else["warnings"] == []
+        not_last = json.loads(
+            studio_workflows.create_workflow(
+                name="check first", steps=[self.ERROR_ONLY, {"name": "s1", "agent_id": "a1"}]
+            )
+        )
+        assert not_last["ok"] is True and not_last["warnings"] == []
+
+    def test_a_branch_that_ends_on_a_bare_condition_is_named(self, studio_workflows):
+        outer = {**self.ERROR_ONLY, "name": "outer", "else_steps": [{"name": "s1", "agent_id": "a1"}, self.ERROR_ONLY]}
+        out = json.loads(studio_workflows.create_workflow(name="nested", steps=[outer]))
+        assert len(out["warnings"]) == 1 and "'Check final error'" in out["warnings"][0]
+
+    def test_edit_warns_and_a_fix_clears_it(self, studio_workflows):
+        studio_workflows.create_workflow(name="pipeline", steps=[{"name": "s1", "agent_id": "a1"}], publish=True)
+        broken = json.loads(
+            studio_workflows.edit_workflow(
+                workflow_id="pipeline", steps=[{"name": "s1", "agent_id": "a1"}, self.ERROR_ONLY]
+            )
+        )
+        assert broken["ok"] is True and "'Check final error'" in broken["warnings"][0]
+        fixed = json.loads(
+            studio_workflows.edit_workflow(workflow_id="pipeline", steps=[{"name": "s1", "agent_id": "a1"}])
+        )
+        assert fixed["ok"] is True and fixed["warnings"] == []
+        renamed = json.loads(studio_workflows.edit_workflow(workflow_id="pipeline", description="same steps"))
+        assert renamed["warnings"] == []
+
+
 # ----------------------------------------------------------------------
 # Edit: append-only drafts by default, immediate publish with versions=False
 # ----------------------------------------------------------------------
