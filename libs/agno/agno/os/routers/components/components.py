@@ -482,9 +482,9 @@ def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[
 def _require_stored_agent_composable(db: BaseDb, child_id: str, role: str) -> None:
     """Refuse a stored external agent where an Agent is required.
 
-    Teams and workflows delegate to Agents; a stored ClaudeAgent or CodexAgent
-    (its config names the adapter under ``sdk``) can be run on its own but
-    never as a member or a step, and the load would refuse it later anyway.
+    A team delegates to Agents; a stored ClaudeAgent or CodexAgent (its config names
+    the adapter under ``sdk``) can be run on its own or as a workflow step, but never
+    as a team member, and the load would refuse it later anyway.
     """
     from agno.agents._storage import is_external_agent_config
 
@@ -669,8 +669,6 @@ def _resolve_step_links(
         child_component = db.get_component(child_component_id)
         if child_component is None:
             return None
-        if link.get("link_kind") == "step_agent":
-            _require_stored_agent_composable(db, child_component_id, "workflow steps")
         child_version = child_component.get("current_version")
         if child_version is None:
             return None
