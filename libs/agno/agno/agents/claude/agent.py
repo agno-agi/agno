@@ -95,8 +95,9 @@ def _sdk() -> Any:
 
 # Result subtypes for limits the user configured; a retry would grant a fresh allowance.
 _LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"}
-_PLAN_TOKEN_REFUSED = (
-    "The Claude plan token was refused or has expired; make a new one with `claude setup-token`. No API key was used."
+_OAUTH_TOKEN_REFUSED = (
+    "The Claude Code OAuth token was refused or has expired; make a new one with `claude setup-token`. "
+    "No API key was used."
 )
 # AssistantMessage.error values that fail the same way on every attempt.
 _PERMANENT_ASSISTANT_ERRORS = {"authentication_failed", "billing_error", "invalid_request"}
@@ -186,7 +187,8 @@ class ClaudeAgent(BaseExternalAgent):
         strict_mcp_config: Use only explicitly configured MCP servers when True.
         skills: Available skill names, or "all". Include "Skill" when explicitly selecting tools.
         plugins: Native SDK plugin configurations.
-        plan_token: Run on a Claude plan instead of an API key: a token from `claude setup-token`.
+        oauth_token: Run on a Claude plan instead of an API key: the OAuth token that
+            `claude setup-token` prints, given to Claude Code as CLAUDE_CODE_OAUTH_TOKEN.
             Claude Code is then never given ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or a cloud
             provider switch, on this host or in a sandbox, so a missing, expired or refused token
             fails the run instead of billing an API key.
@@ -247,8 +249,8 @@ class ClaudeAgent(BaseExternalAgent):
     # Execution limits
     max_turns: Optional[int] = None
     max_budget_usd: Optional[float] = None
-    # A Claude plan token; never shown, stored as a component config or sent to a sandbox as configuration.
-    plan_token: Optional[str] = field(default=None, repr=False)
+    # A Claude Code OAuth token; never shown, stored as a component config or sent to a sandbox as configuration.
+    oauth_token: Optional[str] = field(default=None, repr=False)
     # Advanced native configuration
     options: Optional["ClaudeAgentOptions"] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -259,7 +261,7 @@ class ClaudeAgent(BaseExternalAgent):
     _unstorable_fields: ClassVar[Dict[str, str]] = {
         "options": "native ClaudeAgentOptions carry callbacks and services; use the named parameters instead",
         "options_kwargs": "deprecated; use the named parameters instead",
-        "plan_token": "a credential; set it on the agent in the serving AgentOS's code",
+        "oauth_token": "a credential; set it on the agent in the serving AgentOS's code",
     }
     _plan_blocked_env: ClassVar[Tuple[str, ...]] = (
         "ANTHROPIC_API_KEY",
@@ -317,18 +319,18 @@ class ClaudeAgent(BaseExternalAgent):
             self.project_key = self.get_id()
 
     def _plan_env(self) -> Optional[Dict[str, str]]:
-        return {"CLAUDE_CODE_OAUTH_TOKEN": self.plan_token.strip()} if self.plan_token is not None else None
+        return {"CLAUDE_CODE_OAUTH_TOKEN": self.oauth_token.strip()} if self.oauth_token is not None else None
 
     def _check_plan(self) -> None:
-        if self.plan_token is not None and not self.plan_token.strip():
+        if self.oauth_token is not None and not self.oauth_token.strip():
             raise ValueError(
-                f"{self.get_id()} is set to run on a Claude plan, but its plan token is empty. Make one with "
+                f"{self.get_id()} is set to run on a Claude plan, but its OAuth token is empty. Make one with "
                 "`claude setup-token`. ANTHROPIC_API_KEY was not used."
             )
 
-    def _signed_in_with_plan_token(self) -> bool:
-        """Whether Claude Code has only a plan token to sign in with, here or inside a sandbox."""
-        if self.plan_token is not None:
+    def _signed_in_with_oauth_token(self) -> bool:
+        """Whether Claude Code has only an OAuth token to sign in with, here or inside a sandbox."""
+        if self.oauth_token is not None:
             return True
         return bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")) and not os.environ.get("ANTHROPIC_API_KEY")
 
@@ -609,7 +611,7 @@ class ClaudeAgent(BaseExternalAgent):
                         assistant_error = message.error
                     if isinstance(message, sdk.ResultMessage):
                         self._check_result_message(
-                            sdk, message, assistant_error, plan_token=self._signed_in_with_plan_token()
+                            sdk, message, assistant_error, oauth_token=self._signed_in_with_oauth_token()
                         )
                     if not isinstance(message, sdk.SystemMessage):
                         received = True
@@ -1230,7 +1232,7 @@ class ClaudeAgent(BaseExternalAgent):
 
     @staticmethod
     def _check_result_message(
-        sdk: Any, message: Any, assistant_error: Optional[str] = None, plan_token: bool = False
+        sdk: Any, message: Any, assistant_error: Optional[str] = None, oauth_token: bool = False
     ) -> None:
         """Raise if the SDK reported an error result so the base class can surface it."""
         if not isinstance(message, sdk.ResultMessage):
@@ -1246,10 +1248,10 @@ class ClaudeAgent(BaseExternalAgent):
                 or getattr(message, "stop_reason", None)
             )
             status = getattr(message, "api_error_status", None)
-            refused = plan_token and (assistant_error == "authentication_failed" or status == 401)
+            refused = oauth_token and (assistant_error == "authentication_failed" or status == 401)
             text = f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}"
             raise ClaudeResultError(
-                f"{text.rstrip('. ')}. {_PLAN_TOKEN_REFUSED}" if refused else text,
+                f"{text.rstrip('. ')}. {_OAUTH_TOKEN_REFUSED}" if refused else text,
                 subtype=subtype,
                 errors=getattr(message, "errors", None),
                 api_error_status=getattr(message, "api_error_status", None),

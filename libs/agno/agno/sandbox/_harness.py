@@ -43,7 +43,7 @@ _RUNTIME_OWNED = frozenset(
         # Shown to a team leader on the host; the harness inside the sandbox never reads it.
         "role",
         # Plan credentials reach the sandbox as its environment or its login file, never in a request.
-        "plan_token",
+        "oauth_token",
         "plan_login",
     }
 )

@@ -135,35 +135,35 @@ def api_keys_on_the_host(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Claude on a plan token
+# Claude on an OAuth token
 # ---------------------------------------------------------------------------
 
 
-async def test_claude_plan_token_is_the_only_credential_in_the_sandbox(coordinator):
+async def test_claude_oauth_token_is_the_only_credential_in_the_sandbox(coordinator):
     sandbox = FakeSandbox(env={"ANTHROPIC_API_KEY": "scoped-key", "CLAUDE_CODE_USE_BEDROCK": "1", "GH_TOKEN": "gh"})
-    agent = ClaudeAgent(id="claude-1", plan_token=" plan-token-1 \n", sandbox=sandbox)
+    agent = ClaudeAgent(id="claude-1", oauth_token=" oauth-token-1 \n", sandbox=sandbox)
     await agent.arun("hello", session_id="s1")
     _, execution = coordinator.calls[0]
-    assert execution["env"] == {"CLAUDE_CODE_OAUTH_TOKEN": "plan-token-1", "GH_TOKEN": "gh"}
+    assert execution["env"] == {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-token-1", "GH_TOKEN": "gh"}
     # The token is the sandbox's environment, never part of the request the sandbox stores.
-    assert "plan-token-1" not in json.dumps(execution["config"])
-    assert "plan-token-1" not in repr(agent)
+    assert "oauth-token-1" not in json.dumps(execution["config"])
+    assert "oauth-token-1" not in repr(agent)
 
 
 async def test_each_claude_engineer_holds_its_own_plan(coordinator):
     sandbox = FakeSandbox()
     for name, token in (("claude-1", "token-one"), ("claude-2", "token-two")):
-        await ClaudeAgent(id=name, plan_token=token, sandbox=sandbox).arun("hello", session_id=name)
+        await ClaudeAgent(id=name, oauth_token=token, sandbox=sandbox).arun("hello", session_id=name)
     assert [execution["env"] for _, execution in coordinator.calls] == [
         {"CLAUDE_CODE_OAUTH_TOKEN": "token-one"},
         {"CLAUDE_CODE_OAUTH_TOKEN": "token-two"},
     ]
 
 
-async def test_claude_with_an_empty_plan_token_fails_instead_of_using_the_api_key(coordinator):
+async def test_claude_with_an_empty_oauth_token_fails_instead_of_using_the_api_key(coordinator):
     # Constructing the agent never fails: the platform must start, and the run says what is wrong.
-    agent = ClaudeAgent(id="claude-1", plan_token="  ", sandbox=FakeSandbox())
-    with pytest.raises(ValueError, match="claude-1 is set to run on a Claude plan, but its plan token is empty"):
+    agent = ClaudeAgent(id="claude-1", oauth_token="  ", sandbox=FakeSandbox())
+    with pytest.raises(ValueError, match="claude-1 is set to run on a Claude plan, but its OAuth token is empty"):
         await agent.arun("hello", session_id="s1")
     assert coordinator.calls == []
     assert API_KEY not in json.dumps(_harness.env(agent))
@@ -183,7 +183,7 @@ def test_claude_on_the_host_is_started_without_the_api_key(monkeypatch):
     monkeypatch.setattr(claude_module, "_sdk", lambda: SimpleNamespace(ClaudeAgentOptions=ClaudeOptions))
     monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
     native = ClaudeOptions(env={"ANTHROPIC_API_KEY": "option-key", "KEEP": "1"})
-    options = ClaudeAgent(id="claude-1", plan_token="plan-token-1", options=native)._build_options()
+    options = ClaudeAgent(id="claude-1", oauth_token="oauth-token-1", options=native)._build_options()
     # Claude Code inherits the host's environment, so each of these is overridden with nothing.
     assert options.env == {
         "KEEP": "1",
@@ -192,28 +192,31 @@ def test_claude_on_the_host_is_started_without_the_api_key(monkeypatch):
         "CLAUDE_CODE_USE_BEDROCK": "",
         "CLAUDE_CODE_USE_VERTEX": "",
         "CLAUDE_CODE_USE_FOUNDRY": "",
-        "CLAUDE_CODE_OAUTH_TOKEN": "plan-token-1",
+        "CLAUDE_CODE_OAUTH_TOKEN": "oauth-token-1",
     }
-    with pytest.raises(ValueError, match="plan token is empty"):
-        ClaudeAgent(id="claude-1", plan_token="")._build_options()
+    with pytest.raises(ValueError, match="OAuth token is empty"):
+        ClaudeAgent(id="claude-1", oauth_token="")._build_options()
 
 
-def test_a_refused_claude_plan_token_says_so():
+def test_a_refused_claude_oauth_token_says_so():
     class ResultMessage:
         is_error, subtype, errors, result, stop_reason, api_error_status = True, "success", None, "401", None, 401
 
     sdk = SimpleNamespace(ResultMessage=ResultMessage)
-    with pytest.raises(ClaudeResultError, match="plan token was refused or has expired.*No API key was used"):
-        ClaudeAgent._check_result_message(sdk, ResultMessage(), "authentication_failed", plan_token=True)
+    with pytest.raises(
+        ClaudeResultError,
+        match="Claude Code OAuth token was refused or has expired.*`claude setup-token`.*No API key was used",
+    ):
+        ClaudeAgent._check_result_message(sdk, ResultMessage(), "authentication_failed", oauth_token=True)
     with pytest.raises(ClaudeResultError) as error:
         ClaudeAgent._check_result_message(sdk, ResultMessage(), "authentication_failed")
-    assert "plan token" not in str(error.value)
+    assert "OAuth token" not in str(error.value)
 
 
 def test_plan_credentials_are_not_stored_as_component_configs(monkeypatch):
     monkeypatch.setattr(claude_module, "_sdk", lambda: SimpleNamespace(ClaudeAgentOptions=ClaudeOptions))
-    with pytest.raises(ValueError, match="plan_token cannot be stored"):
-        ClaudeAgent(id="claude-1", plan_token="plan-token-1").to_dict()
+    with pytest.raises(ValueError, match="oauth_token cannot be stored"):
+        ClaudeAgent(id="claude-1", oauth_token="oauth-token-1").to_dict()
     with pytest.raises(ValueError, match="plan_login cannot be stored"):
         CodexAgent(id="codex-1", plan_login=login()).to_dict()
 
@@ -453,7 +456,7 @@ async def test_a_waiting_request_stops_waiting_when_it_is_cancelled(coordinator,
 @pytest.mark.parametrize(
     "build",
     [
-        lambda sandbox: ClaudeAgent(id="claude-1", plan_token="plan-token-1", sandbox=sandbox),
+        lambda sandbox: ClaudeAgent(id="claude-1", oauth_token="oauth-token-1", sandbox=sandbox),
         lambda sandbox: ClaudeAgent(id="claude-key", sandbox=sandbox),
         lambda sandbox: CodexAgent(id="codex-key", sandbox=sandbox),
     ],
