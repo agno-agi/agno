@@ -2005,3 +2005,99 @@ def test_the_read_only_functions_can_be_selected_alone():
         github_tools = GithubTools(include_tools=read_only)
 
     assert sorted(github_tools.functions) == sorted(read_only)
+
+
+# ---------------------------------------------------------------------------
+# A used-up rate limit is an error at once, never a wait
+# ---------------------------------------------------------------------------
+
+
+def _registered(github_tools: GithubTools, name: str):
+    """The function an agent calls, as the toolkit registered it."""
+    return github_tools.functions[name].entrypoint
+
+
+def test_the_client_is_built_not_to_wait_for_the_rate_limit():
+    """PyGithub's default retry sleeps until the limit resets, up to an hour, inside the tool call."""
+    from github.GithubRetry import GithubRetry
+
+    with (
+        patch("agno.tools.github.Github") as mock_github,
+        patch.dict("os.environ", {"GITHUB_ACCESS_TOKEN": "dummy_token"}),
+    ):
+        GithubTools()
+        GithubTools(base_url="https://github.example.com/api/v3")
+
+    for call in mock_github.call_args_list:
+        retry = call.kwargs["retry"]
+        assert not isinstance(retry, GithubRetry)
+        # A rate limit answers 403 or 429: neither is retried. A server error is, a few times.
+        assert 403 not in retry.status_forcelist and 429 not in retry.status_forcelist
+        assert 502 in retry.status_forcelist and retry.total == 3
+        assert retry.respect_retry_after_header is False or 403 not in retry.status_forcelist
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "API rate limit exceeded for user ID 1.",
+        "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+    ],
+)
+def test_a_used_up_rate_limit_returns_when_it_resets(mock_github, message):
+    import time
+
+    from github import RateLimitExceededException
+
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_client.requester.rate_limiting_resettime = int(time.time()) + 31 * 60
+    mock_repo.get_pull.side_effect = RateLimitExceededException(403, {"message": message}, {})
+
+    started = time.monotonic()
+    result = json.loads(_registered(github_tools, "get_pull_request")(repo_name="test-org/test-repo", pr_number=7))
+
+    assert time.monotonic() - started < 1
+    assert result["error"].startswith("GitHub's rate limit for this token is used up, so nothing was read.")
+    assert " UTC, in about 31 minutes." in result["error"]
+    assert "Do not retry before then" in result["error"]
+    # The same holds for every registered function, such as the checks.
+    checks = json.loads(_registered(github_tools, "get_pull_request_checks")("test-org/test-repo", 7))
+    assert checks["error"] == result["error"]
+
+
+def test_a_rate_limit_with_no_known_reset_time_and_other_errors(mock_github):
+    from github import RateLimitExceededException
+
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_client.requester.rate_limiting_resettime = 0
+    mock_repo.get_pull.side_effect = RateLimitExceededException(403, {"message": "API rate limit exceeded"}, {})
+
+    unknown = json.loads(_registered(github_tools, "get_pull_request")("test-org/test-repo", 7))
+    assert unknown["error"] == (
+        "GitHub's rate limit for this token is used up, so nothing was read. Do not retry before then; tell the person."
+    )
+
+    # Any other error is returned as it was.
+    mock_repo.get_pull.side_effect = GithubException(status=404, data={"message": "Not Found"})
+    not_found = json.loads(_registered(github_tools, "get_pull_request")("test-org/test-repo", 7))
+    assert "404" in not_found["error"] and "rate limit" not in not_found["error"]
+
+    # And a result that is not an error is untouched, even when it mentions a rate limit.
+    mock_repo.get_pull.side_effect = None
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.get_files.return_value = [_pull_request_file("docs/rate limit.md", "+a rate limit note")]
+    mock_repo.get_pull.return_value = mock_pr
+    changes = json.loads(_registered(github_tools, "get_pull_request_changes")("test-org/test-repo", 7))
+    assert changes[0]["filename"] == "docs/rate limit.md"
+
+
+def test_wrapping_keeps_each_functions_name_and_arguments(mock_github):
+    github_tools = GithubTools(include_tools=["get_pull_request_changes", "search_code"])
+
+    assert sorted(github_tools.functions) == ["get_pull_request_changes", "search_code"]
+    function = github_tools.functions["get_pull_request_changes"]
+    function.process_entrypoint()
+    assert set(function.parameters["properties"]) == {"repo_name", "pr_number", "path", "include_patches"}
+    assert "files modified" in (function.description or "")

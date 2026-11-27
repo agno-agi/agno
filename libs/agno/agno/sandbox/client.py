@@ -51,8 +51,7 @@ class SandboxRuntimeClient:
             await task
             raise
         if output.exit_code or output.timed_out or output.output_limited:
-            reason = output.stderr[-2000:] or ("timed out" if output.timed_out else "no reply")
-            raise SandboxError("Runtime RPC failed: " + reason)
+            raise SandboxError("Runtime RPC failed: " + (output.stderr[-2000:] or self._silent_failure(output)))
         try:
             response = json.loads(output.stdout)
         except ValueError as error:
@@ -62,6 +61,15 @@ class SandboxRuntimeClient:
         if response.get("execution_id") != request.get("execution_id"):
             raise SandboxError("Runtime execution identity mismatch")
         return response
+
+    @staticmethod
+    def _silent_failure(output: Any) -> str:
+        """What is known about a runtime request that failed and left no message."""
+        if output.timed_out:
+            return "the runtime request timed out"
+        if output.output_limited:
+            return "the runtime's reply was larger than the limit"
+        return f"the runtime request ended with exit code {output.exit_code} and left no message"
 
     async def astart(
         self,
