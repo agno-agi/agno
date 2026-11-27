@@ -6279,15 +6279,22 @@ def _persist_cancelled_run_in_background(
         # splits the run row from the ticket. User cancels persist elsewhere.
         return
 
+    # A workflow marks its step's agent only while the step runs it, and this task outlives the step.
+    # It carries the mark with it, so the run is not saved as the agent's own in the workflow's session.
+    workflow_id = agent.workflow_id
+
     async def _persist() -> None:
+        from agno.workflow.step import running_as_workflow_step
+
         try:
-            await acleanup_and_store(
-                agent,
-                run_response=run_response,
-                session=session,
-                run_context=run_context,
-                user_id=user_id,
-            )
+            with running_as_workflow_step(agent, workflow_id):
+                await acleanup_and_store(
+                    agent,
+                    run_response=run_response,
+                    session=session,
+                    run_context=run_context,
+                    user_id=user_id,
+                )
             # The _arun finally also cleans up, but on a disconnect that await can be
             # re-cancelled; clean up here too so the run is never left tracked.
             if run_response.run_id:
