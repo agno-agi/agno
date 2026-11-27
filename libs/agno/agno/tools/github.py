@@ -409,7 +409,17 @@ class GithubTools(Toolkit):
                         "url": run.html_url,
                     }
                 )
-            for status in commit.get_combined_status().statuses:
+            combined = commit.get_combined_status()
+            statuses = combined.statuses
+            if combined.total_count > len(statuses):
+                # The combined status holds one page of contexts (30). A commit with more has the
+                # rest read from its status history, newest first: the first seen of a context is
+                # its latest.
+                latest: dict = {}
+                for status in commit.get_statuses():
+                    latest.setdefault(status.context, status)
+                statuses = list(latest.values())
+            for status in statuses:
                 checks.append(
                     {
                         "name": status.context,

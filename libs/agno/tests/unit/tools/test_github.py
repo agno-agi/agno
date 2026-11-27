@@ -1908,11 +1908,14 @@ def test_get_pull_request_checks_reports_check_runs_and_statuses(mock_github):
         commit_status("deploy/preview", "success"),
         commit_status("license", "pending"),
     ]
+    mock_commit.get_combined_status.return_value.total_count = 2
     mock_repo.get_commit.return_value = mock_commit
 
     result = json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7))
 
     mock_repo.get_commit.assert_called_once_with("b" * 40)
+    # Every status came with the combined status, so the status history is not read.
+    mock_commit.get_statuses.assert_not_called()
     assert result["head_sha"] == "b" * 40 and result["total"] == 5
     assert result["summary"] == {"success": 2, "failure": 1, "in_progress": 2}
     assert [(check["name"], check["type"], check["status"], check["conclusion"]) for check in result["checks"]] == [
@@ -1924,6 +1927,46 @@ def test_get_pull_request_checks_reports_check_runs_and_statuses(mock_github):
     ]
 
 
+def test_get_pull_request_checks_reports_every_status_of_a_commit_with_more_than_one_page(mock_github):
+    """GitHub's combined status holds 30 contexts. A failure past the 30th is still reported."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.head.sha = "d" * 40
+    mock_repo.get_pull.return_value = mock_pr
+
+    def commit_status(context, state):
+        status = MagicMock()
+        status.context, status.state, status.target_url = context, state, f"https://status/{context}"
+        return status
+
+    first_page = [commit_status(f"job-{number}", "success") for number in range(30)]
+    past_the_page = [commit_status("release-notes", "failure")] + [
+        commit_status(f"job-{number}", "pending") for number in range(30, 36)
+    ]
+    # The history is newest first and keeps each context's earlier results.
+    history = (
+        past_the_page
+        + first_page
+        + [commit_status("release-notes", "pending")]
+        + [commit_status(f"job-{number}", "pending") for number in range(30)]
+    )
+    mock_commit = MagicMock()
+    mock_commit.get_check_runs.return_value = []
+    mock_commit.get_combined_status.return_value.statuses = first_page
+    mock_commit.get_combined_status.return_value.total_count = 37
+    mock_commit.get_statuses.return_value = history
+    mock_repo.get_commit.return_value = mock_commit
+
+    result = json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7))
+
+    assert result["total"] == 37
+    assert result["summary"] == {"success": 30, "failure": 1, "in_progress": 6}
+    assert len({check["name"] for check in result["checks"]}) == 37
+    [release_notes] = [check for check in result["checks"] if check["name"] == "release-notes"]
+    assert (release_notes["status"], release_notes["conclusion"]) == ("completed", "failure")
+
+
 def test_get_pull_request_checks_with_no_checks_and_on_an_error(mock_github):
     mock_client, mock_repo = mock_github
     github_tools = GithubTools()
@@ -1933,6 +1976,7 @@ def test_get_pull_request_checks_with_no_checks_and_on_an_error(mock_github):
     mock_commit = MagicMock()
     mock_commit.get_check_runs.return_value = []
     mock_commit.get_combined_status.return_value.statuses = []
+    mock_commit.get_combined_status.return_value.total_count = 0
     mock_repo.get_commit.return_value = mock_commit
 
     assert json.loads(github_tools.get_pull_request_checks("test-org/test-repo", 7)) == {
