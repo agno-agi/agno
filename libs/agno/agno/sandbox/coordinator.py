@@ -742,10 +742,15 @@ class SandboxCoordinator:
                     )
                 elif state.record["result"]["run"]["status"] != "COMPLETED":
                     result = state.record["result"]["run"]
+                    reason = str(result.get("content", "Execution failed"))
+                    # The runtime adds this when the kernel killed processes for memory during the turn.
+                    note = state.record["result"].get("memory_note")
+                    if isinstance(note, str) and note:
+                        reason = f"{reason.rstrip('. ')}. {note}"
                     committed = await self._stop(
                         lease,
                         status=result["status"],
-                        reason=str(result.get("content", "Execution failed"))[:8192],
+                        reason=reason[:8192],
                         retryable=not config.get("_native_hitl", False)
                         and (result.get("metadata") or {}).get("retryable") is not False,
                     )
