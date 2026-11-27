@@ -60,6 +60,8 @@ _ACCESS_TOKEN_REFUSED = (
     "The Codex access token (CODEX_ACCESS_TOKEN) was refused or has expired; create a new one on the "
     "ChatGPT Enterprise workspace's Access tokens page. No API key was used."
 )
+# RateLimitWindow.window_duration_mins values, as a person names the limit.
+_CODEX_LIMITS = {300: "five-hour", 10080: "weekly"}
 # Stands for "read OPENAI_API_KEY from the environment" where None means "use no API key".
 _FROM_ENV: Any = object()
 
@@ -212,7 +214,8 @@ class CodexAgent(BaseExternalAgent):
             text or a mapping. Give each agent a sign-in of its own and use it nowhere else,
             because Codex replaces its tokens as it works. The agent then never uses
             OPENAI_API_KEY and runs one piece of work at a time: a run the durable queue owns
-            waits its turn, any other is refused with AgentBusyError. The refreshed sign-in is
+            waits its turn, as does a workflow step and a team member; any other run, direct or
+            in the background, is refused at once with AgentBusyError. The refreshed sign-in is
             saved, encrypted, in the agent's database after every run.
         access_token: Run on a ChatGPT Enterprise workspace instead of an API key: a Codex access
             token created on the workspace's Access tokens page, given to Codex as
@@ -423,6 +426,68 @@ class CodexAgent(BaseExternalAgent):
             return f"{text.rstrip('. ')}. {_ACCESS_TOKEN_REFUSED}"
         return text
 
+    async def _aon_subscription(self, codex: Any) -> bool:
+        """Whether Codex is signed in with a ChatGPT subscription and no API key, here or inside a sandbox.
+
+        An agent set to run on a subscription is on one. For any other, the app-server says which
+        account it signed in with: an API key in the environment is not used when a ChatGPT
+        sign-in is stored, and a stored API key is used when the environment has none.
+        """
+        if self._subscription_env() is not None or self._signed_in_with_access_token():
+            return True
+        try:
+            account = _item_root((await asyncio.wait_for(codex.account(), 10)).account)
+            return getattr(account, "type", None) == "chatgpt"
+        except Exception as error:
+            log_debug(f"Could not read the account of {self.get_id()}: {type(error).__name__}")
+            return False
+
+    async def _ausage_limit(self, codex: Any) -> Tuple[Optional[str], Optional[int]]:
+        """Which usage limit is reached and when it resets, asked of the app-server; (None, None) when it cannot say.
+
+        The failed turn says only that a usage limit was exceeded. ``account/rateLimits/read``
+        returns the windows of the subscription, each with its share used and its reset time.
+        """
+        try:
+            from openai_codex.generated.v2_all import GetAccountRateLimitsResponse  # type: ignore
+
+            # The SDK has no public call for this request; its low-level client sends it.
+            client = getattr(codex, "_client", None)
+            if client is None or not hasattr(client, "request"):
+                return None, None
+            response = await asyncio.wait_for(
+                client.request("account/rateLimits/read", None, response_model=GetAccountRateLimitsResponse), 10
+            )
+            snapshot = response.rate_limits
+            windows = [w for w in (snapshot.primary, snapshot.secondary) if w is not None]
+            if not windows:
+                return None, None
+            reached = [w for w in windows if (w.used_percent or 0) >= 100]
+            if not reached:
+                # No window is full, so the limit reached is another one, and these are not its name or time.
+                return None, None
+            # With both full, the agent can work again when the later one resets.
+            window = max(reached, key=lambda w: w.resets_at or 0)
+            return _CODEX_LIMITS.get(window.window_duration_mins), window.resets_at
+        except Exception as error:
+            log_debug(f"Could not read the usage limits of {self.get_id()}: {type(error).__name__}")
+            return None, None
+
+    async def _aturn_failure(self, codex: Any, error: Any, info: Optional[str]) -> str:
+        """The message of a failed turn, saying so plainly when the ChatGPT subscription limit is reached."""
+        from agno.agents._limits import limit_message, note_possible_limit, reads_like_a_limit
+
+        text = self._turn_failure(error)
+        limited = info == "usageLimitExceeded"
+        # The app-server is asked about the account only for a failure that may be a limit.
+        if not (limited or reads_like_a_limit(text)) or not await self._aon_subscription(codex):
+            return text
+        if limited:
+            window, resets_at = await self._ausage_limit(codex)
+            return limit_message(self.get_id(), "ChatGPT", window, resets_at, str(error), "Codex")
+        note_possible_limit(self.get_id(), text)
+        return text
+
     def _sandbox_login(self) -> Any:
         if self.auth_json is None:
             return None
@@ -430,14 +495,18 @@ class CodexAgent(BaseExternalAgent):
 
         return SandboxLogin(self)
 
+    @property
+    def _runs_one_at_a_time(self) -> bool:
+        return self.auth_json is not None
+
     @asynccontextmanager
-    async def _asubscription_slot(self) -> AsyncIterator[None]:
+    async def _asubscription_slot(self, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
         if self.auth_json is None:
             yield
             return
         from agno.agents.codex._subscription import one_at_a_time
 
-        async with one_at_a_time(self):
+        async with one_at_a_time(self, wait=wait, run_id=run_id):
             yield
 
     def _refuse_host_operation(self, operation: str) -> None:
@@ -954,9 +1023,10 @@ class CodexAgent(BaseExternalAgent):
                 raise RunCancelledException(run_id)
             if result.status == "failed":
                 # The tools that completed are already in run_state for the base class to keep.
+                info = _error_info(result.error)
                 raise CodexTurnError(
-                    self._turn_failure(getattr(result.error, "message", None) or result.error),
-                    _error_info(result.error),
+                    await self._aturn_failure(codex, getattr(result.error, "message", None) or result.error, info),
+                    info,
                 )
 
         return ExternalRunResult(
@@ -1081,9 +1151,11 @@ class CodexAgent(BaseExternalAgent):
                         yield event
             finally:
                 self._clear_run_handle(run_id)
+            # While Codex is still running: it is asked which usage limit was reached and when it resets.
+            failure = await self._aturn_failure(codex, state.error, state.error_info) if state.error else None
 
-        if state.error:
-            raise CodexTurnError(self._turn_failure(state.error), state.error_info)
+        if failure is not None:
+            raise CodexTurnError(failure, state.error_info)
         metrics = self._metrics_from_usage(state.usage_first, state.usage_last)
         if metrics is not None:
             yield ExternalRunMetricsEvent(run_id=run_id, agent_id=self.get_id(), metrics=metrics)

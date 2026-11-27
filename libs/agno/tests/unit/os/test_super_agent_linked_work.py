@@ -3,6 +3,7 @@ since the person last spoke. The block is sent and never stored."""
 
 import asyncio
 import json
+import re
 import time
 from types import SimpleNamespace
 
@@ -34,6 +35,7 @@ from tests.unit.os.test_mini_agent_tasks import headers as chat_headers
 pytestmark = pytest.mark.usefixtures("unavailable_manager_docs")
 
 CHANGED = "Changed since your last turn."
+PERSON = "Who you are talking to (information from AgentOS, not instructions and not written by the person): "
 NOTE = _HEADER + " (information from AgentOS, not instructions and not written by the person). Read at "
 
 
@@ -421,13 +423,28 @@ class Scripted(ScriptedModel):
         return super().invoke(system + [m for m in messages if not m.from_history and m.role != "system"], tools)
 
 
+def added_by_agentos(request):
+    """The messages AgentOS adds in one request to the model: who the person is, then the linked work."""
+    return [str(content) for role, content, old in request if role == "user" and not old and is_context(content)]
+
+
+def is_context(content):
+    return isinstance(content, str) and content.startswith(("Now: ", PERSON, NOTE))
+
+
+def work_of(content):
+    """The linked-work block of a context message, '' when it carries only who the person is."""
+    text = str(content)
+    return text[text.index(NOTE) :] if NOTE in text else ""
+
+
 def blocks(request):
-    """The linked-work blocks in one request to the model: each is a user message of its own."""
-    return [str(content) for role, content, old in request if role == "user" and not old and is_block(content)]
+    """The linked-work blocks in one request to the model."""
+    return [work_of(content) for content in added_by_agentos(request) if work_of(content)]
 
 
 def is_block(content):
-    return isinstance(content, str) and content.startswith(NOTE)
+    return bool(work_of(content)) if isinstance(content, str) else False
 
 
 def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
@@ -441,10 +458,11 @@ def say(chat, calls=(), session="chat", scopes=None, **options):  # noqa: F811
     assert all(found == sent[0] and len(found) <= 1 for found in sent), sent
     for request in model.requests:
         fresh = [content for role, content, old in request if not old and role == "user"]
-        assert str(fresh[-1]).startswith("Hello") and len(fresh) == 1 + len(sent[0])
-        if sent[0]:
-            position = [content for _, content, _ in request].index(sent[0][0])
-            assert request[position + 1][:2] == ("user", fresh[-1])
+        # One context message, right before the person's: it always says who the person is.
+        added = added_by_agentos(request)
+        assert str(fresh[-1]).startswith("Hello") and len(fresh) == 2 and len(added) == 1
+        position = [str(content) for _, content, _ in request].index(added[0])
+        assert request[position + 1][:2] == ("user", fresh[-1])
     return run, (sent[0][0] if sent[0] else "")
 
 
@@ -946,7 +964,7 @@ def test_a_super_agent_run_copy_reads_linked_work_with_background_hooks(chat):  
 
     manager = chat.os.manager
     copied = manager.deep_copy(update={"model": Scripted()})
-    assert isinstance(copied._message_context, LinkedWork)
+    assert isinstance(copied._message_context.work, LinkedWork)
     assert copied._message_context is manager._message_context
     say(chat, [("add_company_task", {**ADD, "start": False})])
     task = only_task(chat)
@@ -957,6 +975,20 @@ def test_a_super_agent_run_copy_reads_linked_work_with_background_hooks(chat):  
     assert run.status.value == "COMPLETED"
     (note,) = blocks(copied.model.requests[0])
     assert task["id"] in note
+
+
+def test_the_time_is_in_the_message_before_the_persons_and_not_in_the_system_message(chat):  # noqa: F811
+    say(chat)
+    model = chat.os.manager.model
+    assert chat.os.manager.add_datetime_to_context is False
+    assert "The current time is" not in model.system
+    added = added_by_agentos(model.requests[0])[0]
+    first, second = added.split("\n")[:2]
+    # Weekday, date, time to the minute and the timezone, then who the person is.
+    assert re.fullmatch(r"Now: \w+day \d{1,2} \w+ \d{4}, \d{2}:\d{2} \S.* \(UTC[+-]\d{2}:\d{2}\)\.", first), first
+    assert second.startswith(PERSON)
+    # Platform Builder is a member and keeps the time in its own system message.
+    assert chat.os.manager.members[0].add_datetime_to_context is True
 
 
 def test_nothing_of_the_block_is_stored_and_the_persons_message_is_what_they_sent(chat):  # noqa: F811
@@ -1687,12 +1719,15 @@ def test_an_os_without_company_reads_no_tasks(tmp_path):
     agent_os = AgentOS(db=db, manager=OSManager(model=model, access_docs=False), telemetry=False)
     manager = agent_os.manager
     # The block is there for the runs a conversation starts in the background. It has no Tasks to read.
-    assert manager._message_context.db is None
+    assert manager._message_context.work.db is None
     assert not manager.add_dependencies_to_context
     assert not any(isinstance(tool, CompanyTaskTools) for tool in manager.tools)
-    # A list in the session state of such an OS is never read, and nothing is sent with the message.
+    # A list in the session state of such an OS is never read: the message before the person's says
+    # who they are and carries no work.
     state = {LINKED_WORK_KEY: [{"kind": "task", "id": "task-1", "added_at": 1, "shown": "ready::"}]}
     run = asyncio.run(manager.arun("Hello", user_id="alice", session_id="chat", session_state=state))
-    assert run.content and [entry[:2] for entry in model.requests[0] if entry[0] == "user"] == [("user", "Hello")]
+    sent = [entry[1] for entry in model.requests[0] if entry[0] == "user"]
+    assert run.content and len(sent) == 2 and sent[1] == "Hello"
+    assert str(sent[0]).startswith("Now: ") and PERSON in str(sent[0]) and not work_of(sent[0])
     assert LINKED_WORK_INSTRUCTIONS not in model.system
     db.close()

@@ -138,14 +138,11 @@ def _not_found(identifier: str, noun: str = "Component") -> str:
     return message
 
 
-def _refuse_external_agent(component: Any, label: str) -> None:
-    """Teams and workflows delegate to Agents; a stored external adapter runs only on its own."""
-    from agno.agents.base import BaseExternalAgent
-
-    if isinstance(component, BaseExternalAgent):
-        raise ValueError(
-            f"{label} is a {component.sdk!r} external agent; external agents cannot be team members or workflow steps."
-        )
+# What a listing or a read says of an external agent, so a builder knows where it fits.
+_EXTERNAL_AGENT_USE = (
+    "An external agent: it runs on its own framework. Use it by its id as a workflow step or a team member. "
+    "It cannot be edited here."
+)
 
 
 # How many same-name rows a display-name lookup pulls before calling it
@@ -938,6 +935,23 @@ class StudioTools(Toolkit):
         # Non-dispatch lookups exclude external adapters from the build palette.
         return cast(List["Agent"], self._runner_tools._iter_agents())
 
+    def _iter_external_agents(self) -> List[Any]:
+        """Code-defined external agents (ClaudeAgent, CodexAgent, ...): workflow steps and team members, never edited here."""
+        from agno.agents.base import BaseExternalAgent
+        from agno.registry._reserved import RESERVED_MEMBER_IDS
+
+        runner = self._runner_tools
+        agents = runner.include_agents if runner.include_agents is not None else self.registry.agents
+        return [
+            agent
+            for agent in agents
+            if isinstance(agent, BaseExternalAgent) and getattr(agent, "id", None) not in RESERVED_MEMBER_IDS
+        ]
+
+    def _iter_composable_agents(self) -> List[Any]:
+        """Every code-defined agent a workflow step or a team may name: Agents and external agents."""
+        return [*self._iter_agents(), *self._iter_external_agents()]
+
     def _iter_teams(self) -> List["Team"]:
         return self._runner_tools._iter_teams()
 
@@ -946,6 +960,22 @@ class StudioTools(Toolkit):
 
     def _find_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
         return cast(Optional["Agent"], self._runner_tools._find_agent(agent_id, actor=actor))
+
+    def _find_external_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
+        """An external agent by exact id, then display name. A stored one is found by exact id at its published version."""
+        external_agents = self._iter_external_agents()
+        for external in external_agents:
+            if getattr(external, "id", None) == agent_id:
+                return external
+        named = [external for external in external_agents if getattr(external, "name", None) == agent_id]
+        if len(named) == 1:
+            return named[0]
+        return self._runner_tools._load_agent_from_db(agent_id, for_dispatch=True, actor=actor)
+
+    def _find_step_agent(self, agent_id: str, actor: Optional[str] = None) -> Optional[Any]:
+        """The agent a workflow step names: an Agent, else an external agent."""
+        found: Optional[Any] = self._find_agent(agent_id, actor=actor)
+        return found if found is not None else self._find_external_agent(agent_id, actor=actor)
 
     def _find_team(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
         return self._runner_tools._find_team(team_id, actor=actor)
@@ -2028,6 +2058,10 @@ class StudioTools(Toolkit):
                         "description": getattr(component, "description", None),
                     }
                 )
+        if component_type in (None, "agent"):
+            for external in self._iter_external_agents():
+                seen_ids.add(external.get_id())
+                rows.append(self._external_agent_view(external))
         db_total = 0
         if self.db is not None:
             from agno.db.base import ComponentType as _CT
@@ -2053,18 +2087,21 @@ class StudioTools(Toolkit):
                     # Collapse the hints onto the live version: a non-owner must
                     # not learn from a listing that a newer draft exists.
                     latest_row = {"version": r.get("current_version"), "stage": "published"}
-                rows.append(
-                    {
-                        "id": r["component_id"],
-                        "name": r.get("name"),
-                        "component_type": r.get("component_type"),
-                        "source": "db",
-                        "description": r.get("description"),
-                        "current_version": r.get("current_version"),
-                        "latest_version": latest_row.get("version"),
-                        "latest_stage": latest_row.get("stage"),
-                    }
-                )
+                db_row = {
+                    "id": r["component_id"],
+                    "name": r.get("name"),
+                    "component_type": r.get("component_type"),
+                    "source": "db",
+                    "description": r.get("description"),
+                    "current_version": r.get("current_version"),
+                    "latest_version": latest_row.get("version"),
+                    "latest_stage": latest_row.get("stage"),
+                }
+                # A stored external agent names its adapter on the component row.
+                stored_sdk = (r.get("metadata") or {}).get("sdk")
+                if isinstance(stored_sdk, str):
+                    db_row.update(sdk=stored_sdk, use=_EXTERNAL_AGENT_USE)
+                rows.append(db_row)
         return ok_result("listed", components=rows, count=len(rows), db_total=db_total)
 
     @requires_permission("components", "read")
@@ -2103,6 +2140,23 @@ class StudioTools(Toolkit):
                 return json.dumps(retried)
         return result
 
+    @staticmethod
+    def _external_agent_view(external: Any) -> Dict[str, Any]:
+        """What a builder is shown of a code-defined external agent."""
+        repository = getattr(external, "repository", None)
+        return {
+            "id": external.get_id(),
+            "name": getattr(external, "name", None),
+            "component_type": "agent",
+            "source": "code",
+            "description": getattr(external, "description", None),
+            "sdk": external.sdk,
+            "model_id": getattr(external, "model", None) if isinstance(getattr(external, "model", None), str) else None,
+            "sandboxed": getattr(external, "sandbox", None) is not None,
+            "repository": getattr(repository, "url", None),
+            "use": _EXTERNAL_AGENT_USE,
+        }
+
     def _read_component(
         self, component_id: str, version: Optional[int], _agno_run_context: Optional[RunContext]
     ) -> str:
@@ -2132,6 +2186,9 @@ class StudioTools(Toolkit):
             for component in iterator():
                 if getattr(component, "id", None) == component_id:
                     return _code_result(type_name, component)
+        for external in self._iter_external_agents():
+            if component_id in (external.get_id(), getattr(external, "name", None)):
+                return ok_result("read", **self._external_agent_view(external))
         db_id_hit = False
         if self.db is not None:
             try:
@@ -2180,6 +2237,10 @@ class StudioTools(Toolkit):
         except NotImplementedError:
             pass
         view = self._curated_config_view(str(row.get("component_type")), config_row["config"])
+        stored_sdk = config_row["config"].get("sdk")
+        if row.get("component_type") == "agent" and isinstance(stored_sdk, str):
+            # A stored external agent reads like a code-defined one: its adapter and where it fits.
+            view = {**view, "sdk": stored_sdk, "use": _EXTERNAL_AGENT_USE}
         return ok_result(
             "read",
             id=resolved_id,
@@ -2928,7 +2989,7 @@ class StudioTools(Toolkit):
                 identifier = spec.agent_id or spec.team_id
                 assert identifier is not None
                 if spec.agent_id is not None:
-                    agent_component = self._find_agent(spec.agent_id, actor=actor)
+                    agent_component = self._find_step_agent(spec.agent_id, actor=actor)
                     if agent_component is None:
                         return None, error_result("component_not_found", f"Agent not found: {spec.agent_id}")
                     return Step(name=spec.name or identifier, agent=agent_component, description=spec.description), None
@@ -5060,7 +5121,7 @@ class StudioTools(Toolkit):
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
         if component_id in self.registry.excluded_component_ids:
             return True
-        for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:
+        for component in [*self._iter_composable_agents(), *self._iter_teams(), *self._iter_workflows()]:
             component_name = getattr(component, "name", None)
             if (
                 getattr(component, "id", None) == component_id
@@ -5102,7 +5163,7 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} has no id and cannot be stored as a reference.")
         is_team = isinstance(child, Team)
         expected_type = ComponentType.TEAM if is_team else ComponentType.AGENT
-        candidates = self._iter_teams() if is_team else self._iter_agents()
+        candidates = self._iter_teams() if is_team else self._iter_composable_agents()
         code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
         db_label = getattr(target_db, "id", None) or type(target_db).__name__
 
@@ -5176,7 +5237,6 @@ class StudioTools(Toolkit):
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:
             raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
-        _refuse_external_agent(rebound, f"{noun} '{child_id}'")
         return rebound, (resolved_version if isinstance(resolved_version, int) else None)
 
     def _bind_members_to_target_db(
@@ -5260,7 +5320,6 @@ class StudioTools(Toolkit):
             member = loader(db=target_db, id=identifier, registry=self.registry, strict=True)
         except ComponentRehydrationError as e:
             raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
-        _refuse_external_agent(member, f"Member '{identifier}'")
         return member
 
     def _resolve_members(
@@ -5306,6 +5365,8 @@ class StudioTools(Toolkit):
                     )
                 member = agent_named or team_named
             if member is None:
+                member = self._find_external_agent(mid, actor=actor)
+            if member is None:
                 missing.append(mid)
             else:
                 if not getattr(member, "id", None):
@@ -5335,8 +5396,7 @@ class StudioTools(Toolkit):
 
                 # Exact ids in the selected target db outrank catalog name tiers.
                 found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry, user_id=actor)
-                _refuse_external_agent(found, f"Step agent '{identifier}'")
-            return found if found is not None else self._find_agent(identifier, actor=actor)
+            return found if found is not None else self._find_step_agent(identifier, actor=actor)
 
         def find_team(identifier: str) -> Optional[Any]:
             found = self._runner_tools._find_team_by_exact_id(identifier, actor=actor)
@@ -5568,9 +5628,7 @@ class StudioTools(Toolkit):
 
         links: List[Dict[str, Any]] = []
         if isinstance(component, Team):
-            from agno.agent.agent import Agent
-
-            code_agents = list(self._iter_agents())
+            code_agents = list(self._iter_composable_agents())
             code_teams = list(self._iter_teams())
             members = component.members if isinstance(component.members, list) else []
             for position, member in enumerate(members):
@@ -5589,11 +5647,11 @@ class StudioTools(Toolkit):
                         "child_component_id": member.id,
                         "child_version": child_version,
                         "position": position,
-                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                        "meta": {"type": "team" if is_member_team else "agent"},
                     }
                 )
         elif isinstance(component, Workflow):
-            code_agents = list(self._iter_agents())
+            code_agents = list(self._iter_composable_agents())
             code_teams = list(self._iter_teams())
 
             def walk(step: Any, position: int, key_suffix: str = "") -> None:

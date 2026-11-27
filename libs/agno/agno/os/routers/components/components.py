@@ -479,24 +479,6 @@ def _require_write_ownership(existing: Dict[str, Any], scoped_user_id: Optional[
         raise HTTPException(status_code=403, detail=f"Cannot {verb} component owned by another user")
 
 
-def _require_stored_agent_composable(db: BaseDb, child_id: str, role: str) -> None:
-    """Refuse a stored external agent where an Agent is required.
-
-    Teams and workflows delegate to Agents; a stored ClaudeAgent or CodexAgent
-    (its config names the adapter under ``sdk``) can be run on its own but
-    never as a member or a step, and the load would refuse it later anyway.
-    """
-    from agno.agents._storage import is_external_agent_config
-
-    try:
-        row = db.get_config(component_id=child_id)
-    except NotImplementedError:
-        return
-    config = row.get("config") if isinstance(row, dict) else None
-    if is_external_agent_config(config):
-        raise ValueError(f"External agents cannot be {role}: {child_id}")
-
-
 def _config_agent_sdk(config: Optional[Dict[str, Any]]) -> Optional[str]:
     """The adapter a stored agent config names, or None for an Agent config."""
     from agno.agents._storage import is_external_agent_config
@@ -588,10 +570,7 @@ def _resolve_member_links(
         member_type = member.get("type")
         if member_type == "agent":
             child_id = member.get("agent_id")
-            from agno.agents.base import BaseExternalAgent
-
-            registered = registry.get_agent(child_id) if registry and isinstance(child_id, str) else None
-            in_registry = registered is not None
+            in_registry = bool(registry and isinstance(child_id, str) and registry.get_agent(child_id) is not None)
         elif member_type == "team":
             child_id = member.get("team_id")
             in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
@@ -606,8 +585,6 @@ def _resolve_member_links(
         # Prefer a persisted DB component: create a link so the graph is complete.
         child_component = db.get_component(child_id)
         if child_component is not None:
-            if member_type == "agent":
-                _require_stored_agent_composable(db, child_id, "team members")
             child_version = child_component.get("current_version")
             if child_version is not None:
                 links.append(
@@ -623,9 +600,6 @@ def _resolve_member_links(
             # A draft-only component (no current_version) still exists; leave it
             # to be resolved at load time rather than flagging it as unresolved.
             continue
-
-        if member_type == "agent" and isinstance(registered, BaseExternalAgent):
-            raise ValueError("External agents cannot be team members: " + child_id)
 
         # Not a DB component. If it is a code-defined component it will be
         # resolved from the registry at load time; otherwise it is unresolved.
@@ -669,8 +643,6 @@ def _resolve_step_links(
         child_component = db.get_component(child_component_id)
         if child_component is None:
             return None
-        if link.get("link_kind") == "step_agent":
-            _require_stored_agent_composable(db, child_component_id, "workflow steps")
         child_version = child_component.get("current_version")
         if child_version is None:
             return None
