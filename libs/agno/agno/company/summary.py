@@ -121,6 +121,8 @@ def _summary_report(goal: Any, counts: Any, tasks: Any, narrative: str, previous
     import json
     import re
 
+    from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES
+
     if not isinstance(narrative, str) or not narrative.strip():
         raise ValueError("Summary requires the executor's narrative")
     prior: Dict[str, Any] = {}
@@ -144,9 +146,9 @@ def _summary_report(goal: Any, counts: Any, tasks: Any, narrative: str, previous
             else None
         )
         current[task["id"]] = {"title": task["title"], "status": task["status"], "run_status": status, "error": error}
-        if error and task["status"] == "in_progress" and result.get("status") in {"ERROR", "CANCELLED"}:
+        if error and task["status"] in FAILED_RUN_TASK_STATUSES and result.get("status") in {"ERROR", "CANCELLED"}:
             failures.append("- " + task["title"] + " (" + task["id"] + "): " + status + ": " + error)
-        if task["status"] in {"backlog", "in_review"}:
+        elif task["status"] in {"backlog", "in_review"}:
             waiting.append("- " + task["title"] + ": " + task["status"])
     changes = []
     for task_id, state in current.items():

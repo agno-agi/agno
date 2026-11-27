@@ -595,7 +595,7 @@ _OPEN_STATUSES = OPEN_TASK_STATUSES
 def _open_tasks(tasks, routine_id):
     """How many of a Routine's Tasks are accepted and not yet Done or Cancelled.
 
-    A Task whose run failed stays In progress, so it counts until a person retries, returns or cancels it.
+    A Task whose run failed waits in review, so it counts until a person retries, returns or cancels it.
     """
     return sum(1 for task in tasks if task.get("routine_id") == routine_id and task["status"] in _OPEN_STATUSES)
 

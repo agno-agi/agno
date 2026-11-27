@@ -25,6 +25,15 @@ _task_transport: ContextVar[Optional[Tuple[str, str, Optional[str]]]] = ContextV
 )
 
 
+# How many times the queue may execute one attempt of a Task. With one, a run that was executing when its
+# server stopped or crashed is failed and never run again. With two, the queue runs it once more: after a
+# crash, after a shutdown, and after a run that ended in an error its component did not mark as one that
+# repeats. A second execution starts from the Task's input in the Task's session, so a tool call the first
+# execution made is made again. A run that completed, was cancelled or paused is never executed again.
+# QueueConfig(max_attempts=...) above this applies as it is.
+TASK_RUN_MAX_ATTEMPTS = 2
+
+
 class _TaskRunConflict(ValueError):
     """The persisted reservation conflicts with the observed execution state."""
 
@@ -430,6 +439,7 @@ async def _enqueue_ticket(worker: Any, job: Dict[str, Any]) -> Dict[str, Any]:
         kwargs["add_history_to_context"] = False
     job = {
         **job,
+        "max_attempts": max(job.get("max_attempts") or 1, TASK_RUN_MAX_ATTEMPTS),
         "payload": {
             **job["payload"],
             **({"kwargs": kwargs} if kwargs else {}),
@@ -686,15 +696,17 @@ def _review_feedback(task: Dict[str, Any]) -> Optional[str]:
     """What people said when they returned the Task to Ready after an attempt, oldest first, until an
     attempt reaches review again.
 
-    A return from review answers a finished result. A return from In progress is a reply only when it
+    A return from review answers a result. A return from In progress is a reply only when it
     answered a run that failed or was cancelled, which its entry records as ended_run: the same move
     withdraws a queued attempt, and the reason of that is a note. A return to Backlog withdraws the
-    acceptance, and the work that is accepted next starts without the earlier replies.
+    acceptance, and the work that is accepted next starts without the earlier replies. A run that failed
+    or was cancelled also moves the Task to review, with ended_run on that entry: it acted on no reply,
+    so the replies are kept for the next attempt.
     """
     replies: List[str] = []
     for entry in task.get("transitions") or []:
         origin, target = entry.get("from"), entry.get("target")
-        if target in ("in_review", "backlog"):
+        if target == "backlog" or (target == "in_review" and not entry.get("ended_run")):
             replies = []
         elif target == "ready" and (origin == "in_review" or (origin == "in_progress" and entry.get("ended_run"))):
             if entry.get("reason"):

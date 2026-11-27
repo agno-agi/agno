@@ -175,6 +175,34 @@ def task_transition_fields(
     return fields
 
 
+# The stages in which a Task whose last run failed or was cancelled is found. A run's end moves the Task
+# to review. A Task stored before that, and one a run could not move, is still In progress.
+FAILED_RUN_TASK_STATUSES = ("in_progress", "in_review")
+
+_RUN_END_REASONS = {
+    "COMPLETED": "Execution completed; human review required",
+    "CANCELLED": "Run cancelled; a person retries the Task, sends it back or closes it",
+}
+
+
+def task_run_end_fields(existing: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """The lifecycle fields of a Task whose run has ended; callers persist them with the result.
+
+    Every ended run moves the Task to review, whatever its outcome, so a Task is In progress only
+    while something is queued or running for it. The result says whether the run completed, failed
+    or was cancelled.
+    """
+    reason = _RUN_END_REASONS.get(
+        str(result.get("status")), "Run failed; a person retries the Task, sends it back or closes it"
+    )
+    fields = task_transition_fields(existing, "in_review", reason)
+    if result.get("status") != "COMPLETED":
+        # This review follows a run that did not finish. What people replied to the Task before that
+        # run still waits for an attempt that acts on it.
+        fields["transitions"][-1]["ended_run"] = existing.get("job_id")
+    return fields
+
+
 def public_task(task: Dict[str, Any]) -> Dict[str, Any]:
     """Keep persisted caller claims out of API and tool results."""
     from agno.run.authorization import AUTHORIZATION_KEY

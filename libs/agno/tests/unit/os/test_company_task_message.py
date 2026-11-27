@@ -91,7 +91,8 @@ def ended(client, db, queue, task_id, how):
         {"run_id": run_id, "status": "ERROR" if how == "failed" else "CANCELLED", "content": "The model failed"},
         expected_transitions=db.get_task(task_id)["transitions"],
     )
-    assert db.get_task(task_id)["status"] == "in_progress"
+    # A run that failed or was cancelled leaves In progress: the Task waits in review with that result.
+    assert db.get_task(task_id)["status"] == "in_review"
 
 
 def fail(db, queue, task_id, attempt):
@@ -163,7 +164,8 @@ def test_a_message_to_a_task_whose_run_failed_or_was_cancelled_starts_its_next_a
     assert reply.startswith("Sent the message to 'Draft' as attempt 2"), reply
     saved = db.get_task(task["id"])
     returned = saved["transitions"][-2]
-    assert (returned["from"], returned["target"], returned["reason"]) == ("in_progress", "ready", MESSAGE)
+    # The run's end moved the Task to review, and the message returns it from there.
+    assert (returned["from"], returned["target"], returned["reason"]) == ("in_review", "ready", MESSAGE)
     job, sent = sent_input(db, queue, task["id"])
     assert job["id"] == task_run_id(task["id"], 2) and job["session_id"] == saved["session_id"]
     assert sent["review_feedback"] == MESSAGE
@@ -228,8 +230,10 @@ def test_a_reply_to_a_failed_run_survives_a_withdrawn_attempt_and_shows_in_the_s
     _, task = records(client)
     ended(client, db, queue, task["id"], "failed")
     assert message(agent_os, context(), task["id"], text="Use the other key").startswith("Sent")
-    returned = db.get_task(task["id"])["transitions"][-2]
-    assert returned["ended_run"] == task_run_id(task["id"], 1)
+    reviewed, returned = db.get_task(task["id"])["transitions"][-3:-1]
+    # The step into review records the run that ended without finishing, and the reply answers it.
+    assert (reviewed["target"], reviewed["ended_run"]) == ("in_review", task_run_id(task["id"], 1))
+    assert (returned["from"], returned["target"]) == ("in_review", "ready")
     # The status shows what the queued run was sent.
     assert db.get_task(task["id"])["result"] is None
     assert status_feedback(agent_os, task["id"]) == "Use the other key"

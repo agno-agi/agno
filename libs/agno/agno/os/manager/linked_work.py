@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
-from agno.db.schemas.tasks import TASK_STATUS_MEANING
+from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES, TASK_STATUS_MEANING
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
@@ -145,12 +145,14 @@ def _task_words(value: Dict[str, Any]) -> str:
     """A Task's state in plain words."""
     status = value.get("status")
     words = TASK_STATUS_MEANING.get(str(status), str(status))
-    if status == "in_progress":
+    if status in FAILED_RUN_TASK_STATUSES:
+        # A Task whose run failed or was cancelled waits in review, and it is not finished work.
+        waiting = ", waiting for a person" if status == "in_review" else ""
         ended = _result_status(value)
         if ended == "ERROR":
-            return "started, its run ended in error"
+            return "started, its run ended in error" + waiting
         if ended == "CANCELLED":
-            return "started, its run was cancelled"
+            return "started, its run was cancelled" + waiting
     return words
 
 
@@ -357,7 +359,8 @@ def _since(value: Dict[str, Any]) -> str:
     """When the Task entered the state its line describes, or '' when no record says.
 
     The time of the step into its stage: an edit, a move to another Project and an archive are not
-    steps. A proposal is dated by its creation. A run's failure or cancellation is not dated.
+    steps. A proposal is dated by its creation. A failed or cancelled run that left the Task In progress
+    is not dated.
     """
     status = value.get("status")
     if status == "in_progress" and _result_status(value) in ("ERROR", "CANCELLED"):
