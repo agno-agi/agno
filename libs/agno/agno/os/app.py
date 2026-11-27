@@ -3540,6 +3540,7 @@ class AgentOS:
             namespace_config.agents.sort(key=lambda agent: agent.id)
 
         return FileSystemConfig(
+            enabled=bool(namespaces),
             namespaces=sorted(
                 namespaces.values(),
                 key=lambda namespace_config: (
@@ -3549,7 +3550,7 @@ class AgentOS:
                     namespace_config.id,
                     [agent.id for agent in namespace_config.agents],
                 ),
-            )
+            ),
         )
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
