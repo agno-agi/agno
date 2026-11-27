@@ -4831,9 +4831,18 @@ def _persist_cancelled_team_run_in_background(
         # an unfenced CANCELLED here lands first and splits run row vs ticket.
         return
 
+    # A workflow marks its step's team only while the step runs it, and this task outlives the step.
+    # It carries the mark with it, so the run is not saved as the team's own in the workflow's session.
+    # The run's own context names the workflow too: a stream the step did not get to close reaches
+    # here after the step has taken the mark off.
+    workflow_id = team.workflow_id or (run_context.workflow_id if run_context is not None else None)
+
     async def _persist() -> None:
+        from agno.workflow.step import running_as_workflow_step
+
         try:
-            await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
+            with running_as_workflow_step(team, workflow_id):
+                await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
             # The _arun finally also cleans up, but on a disconnect that await can be
             # re-cancelled; clean up here too so the run is never left tracked.
             if run_response.run_id:
