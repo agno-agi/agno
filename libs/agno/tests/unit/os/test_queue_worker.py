@@ -194,6 +194,86 @@ class TestExecution:
             await again.stop()
 
     @pytest.mark.asyncio
+    async def test_cancelling_a_run_handed_back_for_a_busy_agent_cancels_its_row(self, monkeypatch):
+        from agno.exceptions import AgentBusyError
+        from agno.run.status_persist import RunPersistOutcome
+
+        monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 60)
+        row = {"status": "PENDING", "queue_attempt": 0}
+
+        class Db:
+            """The run row behind PostgreSQL's fenced update: a write from an older attempt is refused."""
+
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, **kwargs):
+                if expected_attempt is not None and row["queue_attempt"] > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT
+                row.update(fields)
+                if expected_attempt is not None:
+                    row["queue_attempt"] = expected_attempt
+                return RunPersistOutcome.UPDATED
+
+        class Busy:
+            id = "agent-1"
+            db = Db()
+
+            async def arun(self, **kwargs: Any) -> Any:
+                raise AgentBusyError("agent-1 is busy", agent_id="agent-1")
+
+        store = InMemoryQueueStore()
+        worker = make_worker(store, Busy(), make_config())  # type: ignore[arg-type]
+        await store.enqueue_job(make_job())
+        await worker._execute_claimed(await store.claim_job(worker.worker_id))
+        # Handed back: the ticket and its run row read as they did before the claim.
+        job = await store.get_job("r1")
+        assert (job["status"], job["attempt"]) == ("queued", 0)
+        assert (row["status"].upper(), row["queue_attempt"]) == ("PENDING", 0)
+
+        # The user cancels while it waits for the agent: the run row is cancelled with the ticket.
+        assert await worker.acancel_queued("r1")
+        assert (await store.get_job("r1"))["status"] == "cancelled"
+        assert row["status"].upper() == "CANCELLED"
+
+    @pytest.mark.asyncio
+    async def test_a_handed_back_run_reads_pending_on_a_database_without_the_fenced_update(self, monkeypatch):
+        from agno.exceptions import AgentBusyError
+
+        monkeypatch.setattr("agno.os.job_queue._BUSY_RETRY_SECONDS", 60)
+        stored = SimpleNamespace(run_id="r1", status=RunStatus.pending)
+
+        class Busy:
+            id = "agent-1"
+            db = object()  # SQLite and Redis: no update_run_in_session
+
+            async def arun(self, **kwargs: Any) -> Any:
+                raise AgentBusyError("agent-1 is busy", agent_id="agent-1")
+
+            async def aget_run_output(self, run_id: str, session_id: str, user_id: Optional[str] = None) -> Any:
+                return SimpleNamespace(run_id=stored.run_id, status=stored.status)
+
+            async def _apersist_run_fallback(self, session_id: str, run: Any, user_id: Optional[str] = None) -> None:
+                stored.status = run.status
+
+            async def _aprepare_pending_run(self, *args: Any, **kwargs: Any) -> Any:
+                return stored
+
+        seen: list = []
+        store = InMemoryQueueStore()
+        agent = Busy()
+        real_arun = agent.arun
+
+        async def arun(**kwargs: Any) -> Any:
+            seen.append(stored.status)
+            return await real_arun(**kwargs)
+
+        agent.arun = arun  # type: ignore[method-assign]
+        worker = make_worker(store, agent, make_config())  # type: ignore[arg-type]
+        await store.enqueue_job(make_job())
+        await worker._execute_claimed(await store.claim_job(worker.worker_id))
+        assert seen == [RunStatus.running], "the claim showed RUNNING while it tried the agent"
+        assert (await store.get_job("r1"))["status"] == "queued"
+        assert stored.status == RunStatus.pending
+
+    @pytest.mark.asyncio
     async def test_cancelled_result_marks_cancelled(self):
         store = InMemoryQueueStore()
         agent = FakeAgent(status=RunStatus.cancelled)

@@ -349,6 +349,15 @@ class BaseExternalAgent:
         """
         yield
 
+    async def _arefuse_if_busy(self) -> None:
+        """Raise AgentBusyError when another run holds this agent's slot, without keeping the slot.
+
+        For a run that is accepted before it starts, so the caller is refused instead of being
+        handed a run that then fails. The run still takes the slot itself when it starts.
+        """
+        async with self._asubscription_slot():
+            pass
+
     @property
     def sdk(self) -> str:
         """Integration identifier selected by the adapter, not a constructor option."""
@@ -1670,6 +1679,8 @@ class BaseExternalAgent:
 
         # Checked before the pending row is written, so a busy session is refused at submission.
         self._assert_session_free(await self.aread_or_create_session(session_id, user_id), session_id, run_id)
+        # A busy agent likewise: refused here, not accepted and then stored as a failed run.
+        await self._arefuse_if_busy()
         run = await self._aprepare_pending_run(run_id, session_id, user_id, input)
         await aregister_run(run_id)
         transport = (
