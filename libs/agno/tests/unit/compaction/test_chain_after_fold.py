@@ -294,8 +294,12 @@ def _run_fold(compaction, messages, use_async):
 @pytest.mark.parametrize("use_async", [False, True])
 @pytest.mark.parametrize(
     "error",
-    [None, ModelProviderError("Error code: 400 - context_length_exceeded", status_code=400)],
-    ids=["classified", "provider_message"],
+    [
+        None,
+        ModelProviderError("Error code: 400 - context_length_exceeded", status_code=400),
+        ModelProviderError("{'Error': {'Message': 'Input is too long for requested model.'}}", status_code=400),
+    ],
+    ids=["classified", "provider_message", "bedrock_message"],
 )
 def test_a_part_the_summarizer_rejects_as_too_long_is_halved_and_read_again(use_async, error):
     """Given up on, the fold would fail the same way on every run and the history would never
