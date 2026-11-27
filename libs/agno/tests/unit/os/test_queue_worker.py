@@ -1883,18 +1883,16 @@ class TestForegroundCancelPersistGuard:
         from agno.run.agent import RunOutput
 
         session = AgentSession(session_id="s1", runs=[])
+        # The helper reads the agent's workflow mark, which every Agent has; the stand-in runs on its own.
+        agent = SimpleNamespace(workflow_id=None)
         mark_worker_managed("wm-a")
         try:
-            _persist_cancelled_run_in_background(
-                SimpleNamespace(), run_response=RunOutput(run_id="wm-a"), session=session
-            )  # type: ignore[arg-type]
+            _persist_cancelled_run_in_background(agent, run_response=RunOutput(run_id="wm-a"), session=session)  # type: ignore[arg-type]
             await asyncio.sleep(0.02)
             assert agent_persists == []
         finally:
             unmark_worker_managed("wm-a")
-        _persist_cancelled_run_in_background(
-            SimpleNamespace(), run_response=RunOutput(run_id="free-a"), session=session
-        )  # type: ignore[arg-type]
+        _persist_cancelled_run_in_background(agent, run_response=RunOutput(run_id="free-a"), session=session)  # type: ignore[arg-type]
         await asyncio.sleep(0.02)
         assert agent_persists == ["free-a"]
 
@@ -1905,16 +1903,16 @@ class TestForegroundCancelPersistGuard:
             team_persists.append(run_response.run_id)
 
         monkeypatch.setattr("agno.team._run._acleanup_and_store", team_store)
+        # The team helper reads the same mark.
+        team = SimpleNamespace(workflow_id=None)
         mark_worker_managed("wm-t")
         try:
-            _persist_cancelled_team_run_in_background(
-                SimpleNamespace(), TeamRunOutput(run_id="wm-t"), SimpleNamespace()
-            )  # type: ignore[arg-type]
+            _persist_cancelled_team_run_in_background(team, TeamRunOutput(run_id="wm-t"), SimpleNamespace())  # type: ignore[arg-type]
             await asyncio.sleep(0.02)
             assert team_persists == []
         finally:
             unmark_worker_managed("wm-t")
-        _persist_cancelled_team_run_in_background(SimpleNamespace(), TeamRunOutput(run_id="free-t"), SimpleNamespace())  # type: ignore[arg-type]
+        _persist_cancelled_team_run_in_background(team, TeamRunOutput(run_id="free-t"), SimpleNamespace())  # type: ignore[arg-type]
         await asyncio.sleep(0.02)
         assert team_persists == ["free-t"]
 
