@@ -32,7 +32,13 @@ from pydantic import BaseModel, ValidationError
 
 from agno.agents._config import agent_dataclass
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.exceptions import InputCheckError, RunCancelledException, SessionBusyError, UnsupportedMediaError
+from agno.exceptions import (
+    AgentBusyError,
+    InputCheckError,
+    RunCancelledException,
+    SessionBusyError,
+    UnsupportedMediaError,
+)
 from agno.media import Audio, File, Image, Video
 from agno.metrics import BaseMetrics, ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
@@ -338,13 +344,38 @@ class BaseExternalAgent:
         """What writes this agent's login into a sandbox before a turn and saves it after; None for none."""
         return None
 
+    @property
+    def _runs_one_at_a_time(self) -> bool:
+        """Whether this agent holds a slot for each run, so a second run waits or is refused."""
+        return False
+
     @asynccontextmanager
-    async def _asubscription_slot(self) -> AsyncIterator[None]:
+    async def _asubscription_slot(self, wait: bool = False, run_id: Optional[str] = None) -> AsyncIterator[None]:
         """Held for the length of one run by an agent that runs one piece of work at a time.
 
-        Raises AgentBusyError when another run holds it.
+        Raises AgentBusyError when another run holds it. With ``wait`` the run waits its turn first,
+        and raises only when the wait has gone on too long; ``run_id`` lets a cancel end the wait.
         """
         yield
+
+    async def _amember_slot(
+        self, slot: AsyncExitStack, parent_id: Optional[str], run_id: str
+    ) -> Optional[BaseException]:
+        """Take this agent's slot for a workflow step or a team member, waiting its turn for it.
+
+        Taken before the member reads and claims its session: two pieces of work for one agent under
+        one parent share that session, so the second must wait for the first and then read what it
+        left there. Returns the refusal, when the wait went on too long or the run was cancelled, for
+        the run to raise once it has started, so the parent reads it as this member's failed run. A
+        refused run does not read or claim the session, which the run it waited for may still hold.
+        """
+        if parent_id is None:
+            return None
+        try:
+            await slot.enter_async_context(self._asubscription_slot(wait=True, run_id=run_id))
+        except (AgentBusyError, RunCancelledException) as error:
+            return error
+        return None
 
     async def _arefuse_if_busy(self) -> None:
         """Raise AgentBusyError when another run holds this agent's slot, without keeping the slot.
@@ -2258,7 +2289,7 @@ class BaseExternalAgent:
                 await aregister_member_run(member_run_id, forwarded["run_id"])
                 try:
                     await self._araise_if_member_cancelled(member_run_id)
-                    run = await _sandbox_harness().arun(self, text, **forwarded)
+                    run = await _sandbox_harness().arun(self, text, _wait_for_turn=True, **forwarded)
                 finally:
                     await acleanup_member_runs(member_run_id)
             except Exception as error:
@@ -2278,11 +2309,18 @@ class BaseExternalAgent:
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
         state_session_id = self._state_session_id(session_id, parent_id)
-        session = (
-            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
-        )
         slot = AsyncExitStack()
-        self._claim_session(session, state_session_id, run_id)
+        refusal = await self._amember_slot(slot, parent_id, run_id)
+        try:
+            session: Optional[AgentSession] = None
+            # A refused step or member never ran: the session stays with the run that holds it.
+            if refusal is None:
+                if self.db:
+                    session = await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id)
+                self._claim_session(session, state_session_id, run_id)
+        except BaseException:
+            await slot.aclose()
+            raise
         try:
             if parent_id is None:
                 # Before anything starts: the caller of a busy agent is refused, and no run is stored.
@@ -2297,9 +2335,9 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
-                    if parent_id is not None:
-                        # A team or workflow reads a busy member's refusal as that member's failed run.
-                        await slot.enter_async_context(self._asubscription_slot())
+                    if refusal is not None:
+                        # A team or workflow reads this as the member's failed run.
+                        raise refusal
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
@@ -2426,7 +2464,7 @@ class BaseExternalAgent:
             if failure is None:
                 try:
                     await self._araise_if_member_cancelled(member_run_id)
-                    events = _sandbox_harness().astream(self, text, **forwarded)
+                    events = _sandbox_harness().astream(self, text, _wait_for_turn=True, **forwarded)
                     try:
                         async for item in events:
                             yield self._as_team_member_output(item, team_session_id, member_run_id, forwarded["run_id"])
@@ -2455,11 +2493,18 @@ class BaseExternalAgent:
         output_schema = self._resolve_output_schema(kwargs)
         run_state: Dict[str, Any] = {}
         state_session_id = self._state_session_id(session_id, parent_id)
-        session = (
-            await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id) if self.db else None
-        )
         slot = AsyncExitStack()
-        self._claim_session(session, state_session_id, run_id)
+        refusal = await self._amember_slot(slot, parent_id, run_id)
+        try:
+            session: Optional[AgentSession] = None
+            # A refused step or member never ran: the session stays with the run that holds it.
+            if refusal is None:
+                if self.db:
+                    session = await self.aread_or_create_session(state_session_id, user_id, team_id, workflow_id)
+                self._claim_session(session, state_session_id, run_id)
+        except BaseException:
+            await slot.aclose()
+            raise
         try:
             if parent_id is None:
                 # Before the first event, as in the non-streaming path.
@@ -2476,11 +2521,14 @@ class BaseExternalAgent:
                     stored_events.append(event)
                 return event
 
-            yield keep(
-                RunStartedEvent(
-                    run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id
+            # A member cancelled while it waited its turn says only that it was cancelled. A team that
+            # was cancelled with it stops reading at the member's next event, and must read that one.
+            if not isinstance(refusal, RunCancelledException):
+                yield keep(
+                    RunStartedEvent(
+                        run_id=run_id, agent_id=self.get_id(), agent_name=self.name or "", session_id=session_id
+                    )
                 )
-            )
             accumulated_content = ""
             warnings: List[Dict[str, Any]] = []
             tools: Dict[str, ToolExecution] = {}
@@ -2500,8 +2548,8 @@ class BaseExternalAgent:
             timer.start_timer()
             try:
                 async with self._run_cancellation(run_id):
-                    if parent_id is not None:
-                        await slot.enter_async_context(self._asubscription_slot())
+                    if refusal is not None:
+                        raise refusal
                     num_attempts = self.retries + 1
                     for attempt in range(num_attempts):
                         attempts_made = attempt + 1
