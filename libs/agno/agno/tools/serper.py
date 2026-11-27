@@ -12,6 +12,7 @@ class SerperTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         location: str = "us",
         language: str = "en",
         num_results: int = 10,
@@ -29,6 +30,10 @@ class SerperTools(Toolkit):
 
         Args:
             api_key Optional[str]: The Serper API key.
+            base_url Optional[str]: Base URL for the Serper API. Defaults to
+                the SERPER_API_BASE environment variable, then to
+                https://google.serper.dev. Useful for proxies, regional
+                endpoints and local mocks in tests.
             location Optional[str]: The Google location code for search results.
             language Optional[str]: The language code for search results.
             num_results Optional[int]: The number of search results to retrieve.
@@ -38,6 +43,8 @@ class SerperTools(Toolkit):
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
             log_debug("No Serper API key provided")
+
+        self.base_url = (base_url or getenv("SERPER_API_BASE") or "https://google.serper.dev").rstrip("/")
 
         self.location = location
         self.language = language
@@ -72,7 +79,7 @@ class SerperTools(Toolkit):
                 log_error("No Serper API key provided")
                 return {"success": False, "error": "Please provide a Serper API key"}
 
-            url = f"https://google.serper.dev/{endpoint}"
+            url = f"{self.base_url}/{endpoint}"
             if endpoint == "scrape":
                 url = "https://scrape.serper.dev"
 
