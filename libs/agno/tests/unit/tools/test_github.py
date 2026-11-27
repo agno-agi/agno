@@ -1853,6 +1853,34 @@ def test_get_pull_request_changes_lists_files_without_patches_and_reads_one_file
     assert missing == {"error": "app/other.py is not among the files pull request #7 changes."}
 
 
+def test_get_pull_request_changes_stops_reading_at_the_file_it_was_asked_for(mock_github):
+    """GitHub serves the files in pages: one file's read asks for no page after the one that holds it."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+    read = []
+
+    def pages():
+        for number in range(1, 6):
+            read.append(number)
+            yield _pull_request_file(f"src/file_{number}.py", f"@@ -1 +1 @@\n+{number}")
+
+    mock_pr = MagicMock(spec=PullRequest)
+    mock_pr.get_files.side_effect = pages
+    mock_repo.get_pull.return_value = mock_pr
+
+    [one] = json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="src/file_2.py"))
+    assert one["filename"] == "src/file_2.py" and one["patch"] == "@@ -1 +1 @@\n+2"
+    assert read == [1, 2]
+
+    # Without a path, and for a path that is not there, every file is still read.
+    read.clear()
+    assert len(json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7))) == 5
+    assert read == [1, 2, 3, 4, 5]
+    read.clear()
+    assert "error" in json.loads(github_tools.get_pull_request_changes("test-org/test-repo", 7, path="src/nope.py"))
+    assert read == [1, 2, 3, 4, 5]
+
+
 def test_get_pull_request_checks_reports_check_runs_and_statuses(mock_github):
     mock_client, mock_repo = mock_github
     github_tools = GithubTools()

@@ -371,6 +371,9 @@ class GithubTools(Toolkit):
                     # GitHub returns no patch for a binary file or a very large one.
                     file_info["patch"] = file.patch
                 changes.append(file_info)
+                if path is not None:
+                    # A path names one file: stop here, so GitHub is not asked for the pages after it.
+                    break
             if path is not None and not changes:
                 return json.dumps({"error": f"{path} is not among the files pull request #{pr_number} changes."})
             return json.dumps(changes, indent=2)
