@@ -1,10 +1,11 @@
-"""Warm and cold turns, on Docker or AgentCore: see which path each turn takes and what it costs.
+"""Warm and cold turns, on Docker, AgentCore or E2B: see which path each turn takes and what it costs.
 
 Credential-free: the fixture runtime stands in for Claude or Codex. Run Postgres and build the
 runtime image, then:
 
     .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py                       # Docker
     .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py --provider agentcore  # needs AGENTCORE_RUNTIME_ARN
+    .venv/bin/python cookbook/frameworks/sandbox/warm_turns.py --provider e2b        # needs E2B_API_KEY
 
 Four turns of one session. Turn 1 is cold: a new computer. Turn 2 resumes the computer turn 1
 left warm, with nothing restored. Before turn 3 the warm window is shortened to a few seconds,
@@ -28,7 +29,9 @@ from agno.sandbox.checkpoint import CheckpointRef, FileCheckpointStore
 from agno.sandbox.coordinator import SandboxCoordinator
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--provider", choices=["docker", "agentcore"], default="docker")
+parser.add_argument(
+    "--provider", choices=["docker", "agentcore", "e2b"], default="docker"
+)
 args = parser.parse_args()
 
 db = PostgresDb(
@@ -43,6 +46,13 @@ if args.provider == "docker":
         os.getenv("AGNO_SANDBOX_IMAGE", "agno-sandbox:local"),
         namespace="warm-turns",
         memory_mb=512,
+    )
+elif args.provider == "e2b":
+    from agno.sandbox.e2b import E2BSandbox
+
+    # Build the template with e2b/e2b_template.py; a warm computer is paused between turns.
+    sandbox = E2BSandbox(
+        os.getenv("E2B_TEMPLATE", "agno-sandbox"), namespace="warm-turns", lifetime=1800
     )
 else:
     from agno.sandbox.agentcore import AgentCoreSandbox
