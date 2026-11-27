@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Collection, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -691,16 +691,23 @@ class Compaction:
     # -- archive --------------------------------------------------------
 
     def archive_for(
-        self, session_id: str, db: Optional[Any] = None, user_id: Optional[str] = None
+        self,
+        session_id: str,
+        db: Optional[Any] = None,
+        user_id: Optional[str] = None,
+        message_ids: Optional[Collection[str]] = None,
     ) -> Optional[CompactionArchive]:
         """The record store for one session, or None without a database.
 
         Fold records are kept whatever ``store_compacted_messages`` says - they are what makes a fold
         outlast the run that made it. It decides only whether the folded messages go in with them.
+
+        ``message_ids`` limits reads to the records anchored on those messages, for a session that
+        holds more than one conversation: a Team's and its members'.
         """
         if db is None:
             return None
-        return CompactionArchive(db, session_id, user_id)
+        return CompactionArchive(db, session_id, user_id, message_ids)
 
     # -- applying -------------------------------------------------------
 
@@ -1043,7 +1050,9 @@ class Compaction:
 
     # -- tools ----------------------------------------------------------
 
-    def tools_for(self, session_id: str, db: Optional[Any] = None) -> Optional[List[Any]]:
+    def tools_for(
+        self, session_id: str, db: Optional[Any] = None, message_ids: Optional[Collection[str]] = None
+    ) -> Optional[List[Any]]:
         """A tool letting the agent read back what this session compacted away.
 
         Scoped to one session by construction - the session id is bound here, never taken from a
@@ -1051,10 +1060,13 @@ class Compaction:
 
         Returns None until something has actually been archived: offering the tool over an empty
         archive only invites a pointless lookup on the first turn.
+
+        ``message_ids`` limits the search to the folds anchored on those messages, so a Team and a
+        member sharing a session each search their own conversation.
         """
         if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
-        archive = self.archive_for(session_id, db)
+        archive = self.archive_for(session_id, db, message_ids=message_ids)
         if archive is None or archive.latest() is None:
             return None
 

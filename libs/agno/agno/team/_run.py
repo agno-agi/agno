@@ -96,6 +96,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.session._utils import continue_history_session, resolve_run_index
+from agno.team import _compaction
 from agno.team._members import member_storage
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -690,6 +691,17 @@ def _run_tasks_stream(
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
+        # Events raised while assembling messages (compaction). Assembly
+        # is not a generator, so they are collected there and emitted here.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
         # 4. Start memory creation in background
         memory_future = _start_memory_future(
             team,
@@ -1257,6 +1269,9 @@ def _run(
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    recover_from_overflow=lambda: _compaction.recompact_after_overflow(
+                        team, session, run_messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -1591,6 +1606,17 @@ def _run_stream(
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 # 4. Start memory creation in background thread
                 memory_future = _start_memory_future(
@@ -2620,6 +2646,17 @@ async def _arun_tasks_stream(
             **kwargs,
         )
 
+        # Events raised while assembling messages (compaction). Assembly
+        # is not a generator, so they are collected there and emitted here.
+        if stream_events:
+            for assembly_event in run_messages.events:
+                yield handle_event(  # type: ignore
+                    assembly_event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
         # 4. Start memory creation in background
         memory_task = await _astart_memory_task(
             team,
@@ -3244,6 +3281,9 @@ async def _arun(
                 model_response = await acall_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    recover_from_overflow=lambda: _compaction.arecompact_after_overflow(
+                        team, team_session, run_messages, run_response, _tools
+                    ),
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=team.tool_choice,
@@ -3788,6 +3828,17 @@ async def _arun_stream(
                     tools=_tools,
                     **kwargs,
                 )
+
+                # Events raised while assembling messages (compaction). Assembly
+                # is not a generator, so they are collected there and emitted here.
+                if stream_events:
+                    for assembly_event in run_messages.events:
+                        yield handle_event(  # type: ignore
+                            assembly_event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
 
                 # 4. Start memory creation in background task
                 memory_task = await _astart_memory_task(
@@ -5357,19 +5408,18 @@ def _build_continue_run_messages(
     if add_history_to_context and session is not None and not input_has_history:
         from agno.utils.message import copy_history_message, filter_tool_calls
 
-        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+        from agno.team import _compaction
 
-        history: List[Message] = continue_history_session(session, run_response).get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
+        history, stored_record, replay_ids = _compaction.history_for_run(
+            team, continue_history_session(session, run_response), run_response
         )
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+            # Replay the stored fold, as a fresh run does. No new fold is planned here.
+            history_copy = _compaction.replayed_history(team, history_copy, stored_record, replay_ids)
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
 
@@ -6941,6 +6991,9 @@ async def _ahandle_model_response_for_continue(
     model_response: ModelResponse = await acall_model_with_fallback(
         team.model,
         team.fallback_config,
+        recover_from_overflow=lambda: _compaction.arecompact_after_overflow(
+            team, team_session, run_messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -7313,6 +7366,8 @@ def _build_forked_team_session(source_session: TeamSession, new_user_id: Optiona
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["forked_from_session_id"] = source_session.session_id
+    # A compaction's usage stays counted in the session it was made in, like the runs this session copied
+    new_session_data.pop("compaction_metrics", None)
 
     return TeamSession(
         session_id=new_session_id,
@@ -8327,6 +8382,9 @@ def _continue_run(
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
+                    recover_from_overflow=lambda: _compaction.recompact_after_overflow(
+                        team, session, run_messages, run_response, tools
+                    ),
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,

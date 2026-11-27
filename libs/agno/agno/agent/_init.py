@@ -21,6 +21,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.fs import FileSystem
+    from agno.team.team import Team
 
 from agno.agent.followup import FollowupConfig
 from agno.compression.manager import CompressionManager
@@ -197,7 +198,7 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
-def disable_compaction_without_records(agent: Agent) -> None:
+def disable_compaction_without_records(agent: Union[Agent, "Team"]) -> None:
     """Turn compaction off, with a warning, when the db cannot store compaction records.
 
     A fold lasts only as long as its record: without one, every run starts from the full history
@@ -216,8 +217,8 @@ def disable_compaction_without_records(agent: Agent) -> None:
         agent.compaction = None
 
 
-def set_compaction(agent: Agent) -> None:
-    """Resolve ``agent.compaction`` into the Compaction the run uses.
+def set_compaction(agent: Union[Agent, "Team"]) -> None:
+    """Resolve ``agent.compaction`` into the Compaction the run uses. A Team resolves its own the same way.
 
     ``True`` folds only when the provider rejects a request as too long. A proactive threshold
     is a guess about a number nobody can look up - no provider exposes its context window, and
