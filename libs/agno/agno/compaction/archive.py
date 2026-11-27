@@ -13,7 +13,7 @@ where the filesystem backend is implemented for SQLite and PostgreSQL only.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Collection, Dict, List, Optional
 from uuid import uuid4
 
 from agno.models.message import Message
@@ -83,12 +83,31 @@ def stores_compaction_records(db: Any) -> bool:
 
 
 class CompactionArchive:
-    """Reads and writes one session's compaction records."""
+    """Reads and writes one session's compaction records.
 
-    def __init__(self, db: Any, session_id: str, user_id: Optional[str] = None) -> None:
+    A Team and its members run in one session, so one session can hold the records of more than
+    one conversation. ``message_ids`` names the messages of the conversation being read: a record
+    is read only when the message it is anchored on is one of them. None reads every record of the
+    session, which is right when the session holds one conversation.
+    """
+
+    def __init__(
+        self,
+        db: Any,
+        session_id: str,
+        user_id: Optional[str] = None,
+        message_ids: Optional[Collection[str]] = None,
+    ) -> None:
         self.db = db
         self.session_id = session_id
         self.user_id = user_id
+        self.message_ids = message_ids
+
+    def _own(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """The rows anchored in this conversation, or every row when no conversation is named."""
+        if self.message_ids is None:
+            return rows
+        return [row for row in rows if row.get("first_kept_message_id") in self.message_ids]
 
     def _row(self, record: Any, messages: List[Message]) -> Dict[str, Any]:
         return {
@@ -145,6 +164,7 @@ class CompactionArchive:
         except Exception as e:  # noqa: BLE001
             log_warning(f"Could not read compaction records: {e}")
             return None
+        rows = self._own(rows or [])
         if not rows:
             return None
         if up_to_run_id is None:
@@ -169,7 +189,7 @@ class CompactionArchive:
         if not terms:
             return []
         try:
-            return self._method("search_compactions")(self.session_id, terms, limit)
+            return self._own(self._method("search_compactions")(self.session_id, terms, limit))
         except NotImplementedError:
             return []
         except Exception as e:  # noqa: BLE001

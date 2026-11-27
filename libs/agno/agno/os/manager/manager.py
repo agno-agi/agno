@@ -492,6 +492,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
+        compaction=config.compaction,
     )
     finished_work_boundary.served = ref(team)
     from agno.os.manager import linked_work

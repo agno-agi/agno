@@ -790,7 +790,8 @@ def update_session_metrics(team: "Team", session: TeamSession) -> None:
     Accumulates metrics from every run of the session, the team leader's and
     its members' (recursively for nested teams), once each.
     """
-    session_metrics = SessionMetrics()
+    # A manual compaction with no finished run to carry its usage keeps it apart from the runs
+    session_metrics = SessionMetrics.from_dict((session.session_data or {}).get("compaction_metrics") or {})
     runs = session.runs or []
     # A run of its own is counted from its row, never again from a copy kept inside its team's run
     seen_run_ids: set[str] = {run.run_id for run in runs if run.run_id}

@@ -8,10 +8,12 @@ from collections import ChainMap, Counter
 from typing import (
     TYPE_CHECKING,
     Any,
+    Callable,
     Dict,
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -23,6 +25,9 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.compaction import Compaction
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team.team import Team
 
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
@@ -50,9 +55,16 @@ from agno.utils.message import copy_history_message, filter_tool_calls, get_text
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
+if TYPE_CHECKING:
+    # Compaction works on a conversation, whoever holds it. The helpers that only read the
+    # compaction settings, the database and the model take an Agent or a Team.
+    CompactionOwner = Union[Agent, Team]
+    CompactionSession = Union[AgentSession, TeamSession]
+    CompactionRun = Union[RunOutput, TeamRunOutput]
 
-def agent_compaction(agent: "Agent") -> Optional["Compaction"]:
-    """The agent's Compaction, or None when compaction is off.
+
+def agent_compaction(agent: "CompactionOwner") -> Optional["Compaction"]:
+    """The agent's or team's Compaction, or None when compaction is off.
 
     set_compaction turns compaction=True into a Compaction at init, so anything else left on the
     field means compaction is off.
@@ -62,7 +74,41 @@ def agent_compaction(agent: "Agent") -> Optional["Compaction"]:
     return agent.compaction if isinstance(agent.compaction, Compaction) else None
 
 
-def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Optional[str] = None) -> Optional[Any]:
+def _own_message_ids(
+    agent: "CompactionOwner", session: Any, messages: Optional[List[Message]] = None
+) -> Optional[Set[str]]:
+    """The ids of the messages in this owner's conversation, or None when the session holds no other.
+
+    A Team and its members run in one session, and compaction records are stored by session. Each
+    reads only the records anchored on its own messages, so a leader never replays a member's fold
+    or the other way round. A standalone agent's session holds one conversation, so nothing is
+    filtered. ``messages`` adds a live message list, for a fold anchored inside the current run.
+    """
+    from agno.agent.agent import Agent
+    from agno.session import TeamSession
+
+    is_member = isinstance(agent, Agent) and agent.team_id is not None
+    if isinstance(agent, Agent) and not is_member:
+        return None
+    stored: List[Message] = []
+    try:
+        if not isinstance(agent, Agent):
+            stored = session.get_messages(team_id=agent.id if agent.parent_team_id is not None else None)
+        elif isinstance(session, TeamSession):
+            stored = session.get_messages(member_ids=[agent.id] if agent.id else None)
+        else:
+            stored = session.get_messages(agent_id=agent.id)
+    except Exception as e:  # noqa: BLE001 - an unreadable session leaves only the live messages
+        log_warning(f"Could not read the session's messages for compaction: {e}")
+    return {m.id for m in [*stored, *(messages or [])] if m.id is not None}
+
+
+def _stored_compaction(
+    agent: "CompactionOwner",
+    session: "CompactionSession",
+    up_to_run_id: Optional[str] = None,
+    messages: Optional[List[Message]] = None,
+) -> Optional[Any]:
     """The compaction in force for this run.
 
     Read from the record table rather than from a value on the session: records are immutable
@@ -74,7 +120,9 @@ def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Opti
     compaction = agent_compaction(agent)
     if compaction is None:
         return None
-    archive = compaction.archive_for(session.session_id, agent.db)
+    archive = compaction.archive_for(
+        session.session_id, agent.db, message_ids=_own_message_ids(agent, session, messages)
+    )
     if archive is None:
         return None
     row = archive.latest(up_to_run_id)
@@ -87,7 +135,7 @@ def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Opti
         return None
 
 
-def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
+def _compaction_as_of(run_response: Optional["CompactionRun"]) -> Optional[str]:
     """The run whose fold this run must inherit, if it is resuming one.
 
     A fresh run returns None and takes the latest. A fork or regeneration returns the run it
@@ -100,7 +148,7 @@ def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
 
 
 def _estimated_context_tokens(
-    agent: "Agent", messages: List[Message], tools: Optional[List[Any]] = None
+    agent: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]] = None
 ) -> Optional[int]:
     """Local estimate for the model-bound context this compaction decision is about.
 
@@ -126,7 +174,7 @@ def _estimated_context_tokens(
 
 
 def _compaction_inputs(
-    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+    agent: "CompactionOwner", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
 ) -> Dict[str, Any]:
     return {
         "context_tokens": _estimated_context_tokens(agent, messages, tools) if messages is not None else None,
@@ -135,7 +183,7 @@ def _compaction_inputs(
 
 
 async def _acompaction_inputs(
-    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+    agent: "CompactionOwner", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
 ) -> Dict[str, Any]:
     """``_compaction_inputs`` for async runs, counting without blocking the event loop."""
     if messages is None:
@@ -147,7 +195,7 @@ async def _acompaction_inputs(
     }
 
 
-def _sync_counter(agent: "Agent") -> Any:
+def _sync_counter(agent: "CompactionOwner") -> Any:
     """What counts a request in a sync run: the model's own count_tokens when use_model_token_count
     is set, else the token_counter, else nothing - the local estimate."""
     compaction = agent.compaction
@@ -156,7 +204,7 @@ def _sync_counter(agent: "Agent") -> Any:
     return getattr(compaction, "token_counter", None)
 
 
-async def _acount(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> Optional[int]:
+async def _acount(agent: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]]) -> Optional[int]:
     """A request's count in an async run, or None to use the local estimate.
 
     The model's own count is awaited through acount_tokens. An async token_counter is awaited too;
@@ -175,7 +223,7 @@ async def _acount(agent: "Agent", messages: List[Message], tools: Optional[List[
     return await acount_request(getattr(compaction, "token_counter", None), messages, tools)
 
 
-def _request_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+def _request_tokens(agent: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]]) -> int:
     """A request's size for overflow recovery, counted the way the trigger counts it, so before and
     after are comparable."""
     from agno.compaction._tokens import count_request, estimate_tokens
@@ -184,7 +232,7 @@ def _request_tokens(agent: "Agent", messages: List[Message], tools: Optional[Lis
     return counted if counted is not None else estimate_tokens(messages, tools)
 
 
-async def _arequest_tokens(agent: "Agent", messages: List[Message], tools: Optional[List[Any]]) -> int:
+async def _arequest_tokens(agent: "CompactionOwner", messages: List[Message], tools: Optional[List[Any]]) -> int:
     """``_request_tokens`` for async runs."""
     from agno.compaction._tokens import estimate_tokens
 
@@ -203,16 +251,26 @@ def _log_compaction(record: Any) -> None:
     log_info(detail)
 
 
-def _compaction_events(run_response: Optional[RunOutput], record: Any, started: bool = False) -> List[Any]:
+def _compaction_events(run_response: Optional["CompactionRun"], record: Any, started: bool = False) -> List[Any]:
     """The events one compaction raises, when there is a run to attach them to."""
     if run_response is None:
         return []
-    from agno.utils.events import create_compaction_completed_event, create_compaction_started_event
+    from agno.utils.events import (
+        create_compaction_completed_event,
+        create_compaction_started_event,
+        create_team_compaction_completed_event,
+        create_team_compaction_started_event,
+    )
+
+    create_started: Any = create_compaction_started_event
+    create_completed: Any = create_compaction_completed_event
+    if not isinstance(run_response, RunOutput):
+        create_started, create_completed = create_team_compaction_started_event, create_team_compaction_completed_event
 
     if started:
-        return [create_compaction_started_event(from_run_response=run_response)]
+        return [create_started(from_run_response=run_response)]
     return [
-        create_compaction_completed_event(
+        create_completed(
             from_run_response=run_response,
             messages_compacted=record.messages_compacted,
             tokens_before=record.tokens_before,
@@ -228,7 +286,7 @@ def _compaction_events(run_response: Optional[RunOutput], record: Any, started: 
 _PLANNER_WINDOW_MAX_RUNS = 500
 
 
-def _compaction_history_runs(agent: "Agent") -> Optional[int]:
+def _compaction_history_runs(agent: "CompactionOwner") -> Optional[int]:
     """How many runs the compaction planner may read, or None for no extra limit.
 
     num_history_runs governs how much history a RUN replays and defaults to 3. Compaction folds
@@ -269,6 +327,16 @@ def _history_for_run(
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
+    return _history_from(agent, session, run_response, fetch)
+
+
+def _history_from(
+    agent: "CompactionOwner",
+    session: "CompactionSession",
+    run_response: Optional["CompactionRun"],
+    fetch: Callable[[Optional[int], Optional[int]], List[Message]],
+) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
+    """``_history_for_run`` over any conversation: ``fetch(last_n_runs, limit)`` reads its stored messages."""
     compaction = agent_compaction(agent)
     if compaction is None:
         return fetch(agent.num_history_runs, agent.num_history_messages), None, None
@@ -360,12 +428,20 @@ def _last_sent(agent: "Agent", session: AgentSession, compaction: Any) -> List[M
     return _replayed_view(compaction, history, record, replay_ids)
 
 
-def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+def compact_now(
+    agent: "CompactionOwner",
+    session: "CompactionSession",
+    history: List[Message],
+    sent_messages: Optional[List[Message]] = None,
+) -> Any:
     """Fold ``history`` now, without waiting for the size trigger.
 
     The explicit counterpart to the automatic path: same boundary, same guards, same archive.
     Only ``compact_at_tokens`` is bypassed - a caller asking to compact has supplied the
     judgement that threshold exists to make.
+
+    ``sent_messages`` is the history the model was last sent, for a caller that is not an Agent
+    with an AgentSession and has worked it out itself.
 
     Every other guard still applies, and a decline is reported rather than raised. The ratio
     guard in particular is not a preference: a summary costs a few hundred tokens whatever it
@@ -396,7 +472,9 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        sent_messages=_last_sent(agent, session, compaction),
+        sent_messages=sent_messages
+        if sent_messages is not None
+        else _last_sent(cast("Agent", agent), cast(AgentSession, session), compaction),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -409,7 +487,12 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
     return _compaction_result(new_record, metrics)
 
 
-async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+async def acompact_now(
+    agent: "CompactionOwner",
+    session: "CompactionSession",
+    history: List[Message],
+    sent_messages: Optional[List[Message]] = None,
+) -> Any:
     from agno.compaction.types import CompactionResult, CompactionStatus
 
     compaction = agent_compaction(agent)
@@ -433,7 +516,9 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         user_id=session.user_id,
         previous=record,
         run_metrics=run_metrics,
-        sent_messages=_last_sent(agent, session, compaction),
+        sent_messages=sent_messages
+        if sent_messages is not None
+        else _last_sent(cast("Agent", agent), cast(AgentSession, session), compaction),
     )
     metrics = run_metrics if run_metrics.details else None
     if new_record is None:
@@ -541,7 +626,7 @@ async def acompact_session(agent: "Agent", session_id: Optional[str] = None, use
     return result
 
 
-def _plan_overflow_fold(agent: "Agent", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
+def _plan_overflow_fold(agent: "CompactionOwner", run_messages: Any) -> Optional[Tuple[Any, Any, List[Message]]]:
     """Where to cut after a context-window rejection: the Compaction, the variant that folds, and
     the message list the model call holds. None when there is nothing to do or no safe cut.
 
@@ -607,7 +692,7 @@ def _finish_overflow_fold(
     compacted: List[Message],
     before: int,
     after: int,
-    run_response: Optional[RunOutput],
+    run_response: Optional["CompactionRun"],
 ) -> bool:
     """Apply a fold made after a rejection to the list the model call holds. True if it shrank."""
     if after >= before:
@@ -633,7 +718,11 @@ def _finish_overflow_fold(
 
 
 def _overflow_fold_kwargs(
-    agent: "Agent", session: AgentSession, run_response: Optional[RunOutput], before: int, messages: List[Message]
+    agent: "CompactionOwner",
+    session: "CompactionSession",
+    run_response: Optional["CompactionRun"],
+    before: int,
+    messages: List[Message],
 ) -> Dict[str, Any]:
     from agno.compaction._cut import leading_system_count
     from agno.compaction._tokens import estimate_tokens
@@ -642,7 +731,7 @@ def _overflow_fold_kwargs(
         session_id=session.session_id,
         db=agent.db,
         user_id=session.user_id,
-        previous=_stored_compaction(agent, session),
+        previous=_stored_compaction(agent, session, messages=messages),
         run_id=run_response.run_id if run_response is not None else None,
         run_metrics=run_response.metrics if run_response is not None else None,
         tokens_before=before,
@@ -653,10 +742,10 @@ def _overflow_fold_kwargs(
 
 
 def _recompact_after_overflow(
-    agent: "Agent",
-    session: AgentSession,
+    agent: "CompactionOwner",
+    session: "CompactionSession",
     run_messages: Any,
-    run_response: Optional[RunOutput] = None,
+    run_response: Optional["CompactionRun"] = None,
     tools: Optional[List[Any]] = None,
 ) -> bool:
     """Fold harder after the provider rejected a request as too long. True if the payload shrank.
@@ -692,10 +781,10 @@ def _recompact_after_overflow(
 
 
 async def _arecompact_after_overflow(
-    agent: "Agent",
-    session: AgentSession,
+    agent: "CompactionOwner",
+    session: "CompactionSession",
     run_messages: Any,
-    run_response: Optional[RunOutput] = None,
+    run_response: Optional["CompactionRun"] = None,
     tools: Optional[List[Any]] = None,
 ) -> bool:
     """Async variant of :func:`_recompact_after_overflow`. The summarizer is awaited, so a recovery
@@ -718,11 +807,11 @@ async def _arecompact_after_overflow(
 
 
 def apply_compaction(
-    agent: "Agent",
-    session: AgentSession,
+    agent: "CompactionOwner",
+    session: "CompactionSession",
     history: List[Message],
     record: Any,
-    run_response: Optional[RunOutput] = None,
+    run_response: Optional["CompactionRun"] = None,
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,
@@ -800,11 +889,11 @@ def apply_compaction(
 
 
 async def aapply_compaction(
-    agent: "Agent",
-    session: AgentSession,
+    agent: "CompactionOwner",
+    session: "CompactionSession",
     history: List[Message],
     record: Any,
-    run_response: Optional[RunOutput] = None,
+    run_response: Optional["CompactionRun"] = None,
     events: Optional[List[Any]] = None,
     context_prefix: Optional[List[Message]] = None,
     tools: Optional[List[Any]] = None,

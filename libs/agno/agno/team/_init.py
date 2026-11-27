@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.compaction.compaction import Compaction
     from agno.learn.machine import LearningMachine
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
@@ -159,6 +160,7 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    compaction: Optional[Union[bool, "Compaction"]] = None,
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -350,6 +352,9 @@ def __init__(
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
 
+    # Compaction settings
+    team.compaction = compaction
+
     # Result offloading settings
     team.offload_tool_results = offload_tool_results
     team._result_store = None
@@ -436,6 +441,9 @@ def __init__(
     _resolve_models(
         team,
     )
+    from agno.agent._init import disable_compaction_without_records
+
+    disable_compaction_without_records(team)
 
 
 def background_executor(team: "Team") -> Any:
@@ -849,6 +857,11 @@ def _resolve_models(team: "Team") -> None:
     if team.fallback_config is not None:
         team.fallback_config.resolve_models()
 
+    from agno.compaction.compaction import Compaction as _Compaction
+
+    if isinstance(team.compaction, _Compaction) and team.compaction.model is None:
+        team.compaction.model = team.model
+
 
 def set_checkpoint(team: "Team") -> None:
     """Resolve the team's checkpoint setting. Mirrors agent.set_checkpoint.
@@ -903,6 +916,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    if team.compaction is not None:
+        from agno.agent._init import set_compaction
+
+        set_compaction(team)
     # Offloading and tool-result compression cannot run together: compression
     # rewrites the tool messages that hold stored-result envelopes. Refuse the
     # combination loudly instead of silently favouring one of them.

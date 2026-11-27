@@ -1012,12 +1012,16 @@ def _handle_model_response_stream(
         stream_model_response = False
 
     # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team import _compaction
     from agno.team._run import build_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
         team.model,
         team.fallback_config,
+        recover_from_overflow=lambda: _compaction.recompact_after_overflow(
+            team, session, run_messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1173,12 +1177,16 @@ async def _ahandle_model_response_stream(
         stream_model_response = False
 
     # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team import _compaction
     from agno.team._run import abuild_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
         team.model,
         team.fallback_config,
+        recover_from_overflow=lambda: _compaction.arecompact_after_overflow(
+            team, session, run_messages, run_response, tools
+        ),
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,

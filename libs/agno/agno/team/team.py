@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent.followup import FollowupConfig
+from agno.compaction.compaction import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -33,6 +34,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.registry._reserved import RESERVED_MANAGER_IDS, _reserved_manager_id_message
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionResult
     from agno.learn.machine import LearningMachine
     from agno.tools.component import ComponentTool
 
@@ -342,6 +344,13 @@ class Team:
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
+    # --- Compaction ---
+    # Keep a long conversation inside the context window by storing the team
+    # leader's older messages verbatim and replacing them in context with a
+    # summary. True uses the defaults; a Compaction sets the thresholds, what
+    # to keep verbatim, and the summary model. Members are not compacted here.
+    compaction: Optional[Union[bool, "Compaction"]] = None
+
     # --- Result Offloading ---
     # Store tool results and member answers longer than a threshold as files
     # and leave a short envelope with a result id in the message. True uses
@@ -564,6 +573,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction: Optional[Union[bool, Compaction]] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -683,6 +693,7 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            compaction=compaction,
             offload_tool_results=offload_tool_results,
             metadata=metadata,
             reasoning_model=reasoning_model,
@@ -1769,6 +1780,26 @@ class Team:
         return await _session.aupdate_session_state(
             self, session_state_updates=session_state_updates, session_id=session_id
         )
+
+    def compact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        """Compact the team leader's history in this session now, without waiting for the size trigger.
+
+        Only the leader's conversation is folded; members are left as they are. The stored
+        conversation is never modified - compaction shortens what is sent to the model.
+
+        Returns a CompactionResult carrying a status and a human-readable message. A fold can
+        legitimately decline, so it is reported rather than performed. Check ``result.compacted``,
+        or show ``result.message``. ``result.metrics`` carries the summarizer's token usage under
+        ``compaction_model``, or None when no summary was made.
+        """
+        from agno.team import _compaction
+
+        return _compaction.compact_session(self, session_id=session_id, user_id=user_id)
+
+    async def acompact(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> "CompactionResult":
+        from agno.team import _compaction
+
+        return await _compaction.acompact_session(self, session_id=session_id, user_id=user_id)
 
     def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return _session.get_session_metrics(self, session_id=session_id)
