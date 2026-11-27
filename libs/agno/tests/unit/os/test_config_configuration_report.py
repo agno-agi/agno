@@ -120,6 +120,11 @@ class TestNoAuth:
         assert client.get("/config").json()["authorization"]["user_isolation"] is True
         assert client.get("/info").json()["user_isolation"] is True
 
+    def test_name_matches_info(self, db):
+        client = TestClient(_os(db, name="Support OS").get_app())
+        assert client.get("/config").json()["name"] == "Support OS"
+        assert client.get("/info").json()["name"] == "Support OS"
+
 
 class TestSecurityKey:
     def test_key_holder_counts_as_admin(self, db):
