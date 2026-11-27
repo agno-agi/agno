@@ -11461,24 +11461,46 @@ class Workflow:
         return self._get_session_metrics(session=session)
 
     def update_agents_and_teams_session_info(self):
-        """Update agents and teams with workflow session information"""
+        """Tell every agent and team that runs in this workflow which workflow it runs in.
+
+        An agent or team that knows its workflow leaves the workflow's session row alone: its run is
+        stored with the workflow's run. One that does not would save its own session under the
+        workflow's session id, and the workflow's session would then be stored as that agent's.
+        """
         log_debug("Updating agents and teams with session information", log_level=2)
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
             for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
+                self._set_workflow_id_on_step(step)
 
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.id
+    def _set_workflow_id_on_step(self, step: Any) -> None:
+        """Set this workflow's id on a step's agent or team, and on those of the steps nested in it."""
+        if isinstance(step, Workflow):
+            # A nested workflow marks its own agents and teams when it runs.
+            return
+        if isinstance(step, (list, tuple)):
+            for nested_step in step:
+                self._set_workflow_id_on_step(nested_step)
+            return
 
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:  # type: ignore
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.id
+        # A Step holds its agent or team as the active executor. Inside a Loop, Parallel, Condition,
+        # Router or Steps an agent or team may also be listed directly.
+        executor = step.active_executor if isinstance(step, Step) else step
+        if isinstance(executor, (Agent, Team)) or (isinstance(step, Step) and hasattr(executor, "workflow_id")):
+            executor.workflow_id = self.id  # type: ignore[union-attr]
+            # If it's a team, update all members
+            members = getattr(executor, "members", None)
+            for member in members if isinstance(members, list) else []:
+                if hasattr(member, "workflow_id"):
+                    member.workflow_id = self.id
+            return
+
+        # Loop, Parallel, Condition and Steps hold steps; a Condition also else_steps; a Router choices.
+        for attr_name in ("steps", "else_steps", "choices"):
+            nested = getattr(step, attr_name, None)
+            if isinstance(nested, (list, tuple)):
+                self._set_workflow_id_on_step(nested)
 
     def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
         """
