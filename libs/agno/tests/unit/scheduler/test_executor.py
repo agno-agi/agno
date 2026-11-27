@@ -176,6 +176,17 @@ class TestExecutorEvalSuiteRun:
         assert result["error"] == "judge unavailable"
 
     @pytest.mark.asyncio
+    async def test_cancelled_suite_is_a_cancelled_run(self, executor):
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(
+            side_effect=[self._resp(202, self._eval_run("RUNNING")), self._resp(200, self._eval_run("CANCELLED"))]
+        )
+
+        result = await executor._eval_suite_run(mock_client, "http://localhost:8000/eval-suites/s/runs", {}, None, 60)
+        assert result["status"] == "cancelled"
+        assert result["error"] == "Eval suite run was cancelled"
+
+    @pytest.mark.asyncio
     async def test_suite_that_outlasts_the_schedule_timeout_keeps_its_eval_run(self, executor):
         mock_client = AsyncMock()
         mock_client.request = AsyncMock(return_value=self._resp(202, self._eval_run("RUNNING")))
@@ -214,6 +225,34 @@ class TestExecutorEvalSuiteRun:
             await executor._call_endpoint(schedule)
 
         assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites/math/runs?db_id=main-db"
+
+    @pytest.mark.asyncio
+    async def test_posted_suite_endpoint_is_started_in_the_background(self, executor):
+        payload = {"name": "nightly", "cases": [{"name": "mul", "agent_id": "math", "input": "17 * 23"}]}
+        schedule = Schedule(
+            id="s1",
+            name="nightly-posted-suite",
+            cron_expr="0 0 * * *",
+            endpoint="/eval-suites",
+            method="POST",
+            payload=payload,
+        )
+        with patch.object(executor, "_eval_suite_run", new=AsyncMock(return_value={})) as suite_run:
+            await executor._call_endpoint(schedule)
+
+        assert suite_run.await_args.args[1] == "http://localhost:8000/eval-suites"
+        assert suite_run.await_args.args[3] == payload
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["/eval-suites/", "/eval-suites?db_id=main-db"])
+    async def test_posted_suite_endpoint_with_a_slash_or_a_query_is_started_in_the_background(self, executor, endpoint):
+        schedule = Schedule(
+            id="s1", name="nightly-posted-suite", cron_expr="0 0 * * *", endpoint=endpoint, method="POST"
+        )
+        with patch.object(executor, "_eval_suite_run", new=AsyncMock(return_value={})) as suite_run:
+            await executor._call_endpoint(schedule)
+
+        assert suite_run.await_args.args[1] == f"http://localhost:8000{endpoint}"
 
 
 class TestExecutorBackgroundRun:

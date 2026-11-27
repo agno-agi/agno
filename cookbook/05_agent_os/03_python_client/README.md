@@ -13,7 +13,7 @@ memory, knowledge, evaluations, and central Bearer authentication.
 | `02_run_and_stream.py` | Non-streaming runs, typed SSE events, and cancellation |
 | `03_sessions_and_memory.py` | Session lifecycle and memory CRUD |
 | `04_knowledge.py` | Upload, status polling, list, search, and delete |
-| `05_evals.py` | Accuracy and reliability evaluations, and eval suites |
+| `05_evals.py` | Accuracy and reliability evaluations, and eval suite runs, polling, and cancellation |
 | `06_auth.py` | `OS_SECURITY_KEY` Bearer authentication |
 
 ## Prerequisites
@@ -74,6 +74,6 @@ For JWT, RBAC, and `agno_pat_` service accounts, continue to lesson
 ## Where run lifecycle continues
 
 The SDK does not yet expose background agent-run polling, checkpoint listing,
-or SSE stream resumption; a background eval suite run is polled with
-`get_eval_run` in `05_evals.py`. The raw HTTP patterns are taught in
-[`04_run_lifecycle`](../04_run_lifecycle/).
+or SSE stream resumption. A background eval suite run is polled with
+`get_eval_run` and cancelled with `cancel_eval_run` in `05_evals.py`. The raw
+HTTP patterns are taught in [`04_run_lifecycle`](../04_run_lifecycle/).

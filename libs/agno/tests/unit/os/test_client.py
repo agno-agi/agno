@@ -488,6 +488,19 @@ async def test_run_eval_suite_from_body():
 
 
 @pytest.mark.asyncio
+async def test_cancel_eval_run():
+    """Verify cancel_eval_run cancels an eval run."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = None
+        await client.cancel_eval_run("run-1", db_id="main-db")
+
+        mock_post.assert_called_once()
+        assert mock_post.call_args.args[0] == "/eval-runs/run-1/cancel"
+        assert mock_post.call_args.kwargs["params"] == {"db_id": "main-db"}
+
+
+@pytest.mark.asyncio
 async def test_list_content():
     """Verify list_content returns paginated content."""
     client = AgentOSClient(base_url="http://localhost:7777")

@@ -2,8 +2,8 @@
 
 The reliability case verifies the assistant calls the calculator's
 ``multiply`` tool with the expected arguments. The suite part lists and runs
-the server's registered suite, once in the background, and runs cases posted
-in the request.
+the server's registered suite, once in the background and once cancelled, and
+runs cases posted in the request.
 
 Prerequisites: start ``_server.py`` and set OPENAI_API_KEY.
 Run: .venvs/demo/bin/python cookbook/05_agent_os/03_python_client/05_evals.py
@@ -26,15 +26,21 @@ SUITE_ID = "assistant-quality"
 # ---------------------------------------------------------------------------
 
 
+def outcome(eval_data: dict) -> str:
+    """The suite status and pass count from a suite run's eval data."""
+    summary = eval_data["summary"]
+    return f"{summary['status']}, {summary['passed']} of {summary['total']} passed"
+
+
 async def run_eval_suites(client: AgentOSClient) -> None:
-    """List and run the registered suite, then run cases posted in the request."""
+    """List and run the registered suite, in the background and cancelled, then run posted cases."""
     suites = await client.list_eval_suites()
     print(f"Registered suites: {[suite.id for suite in suites]}")
     suite = await client.get_eval_suite(SUITE_ID)
     print(f"{suite.name}: {len(suite.cases)} cases")
 
     smoke = await client.run_eval_suite(SUITE_ID, tag="smoke")
-    print(f"Smoke run {smoke.id}: {smoke.eval_data['summary']}")
+    print(f"Smoke run {smoke.id}: {outcome(smoke.eval_data)}")
 
     # In the background the call returns at once; the run is polled until it is not RUNNING.
     background = await client.run_eval_suite(SUITE_ID, background=True)
@@ -45,7 +51,19 @@ async def run_eval_suites(client: AgentOSClient) -> None:
         background = await client.get_eval_run(background.id)
     else:
         raise TimeoutError("Background eval suite run did not finish")
-    print(f"Background run {background.id}: {background.eval_data['summary']}")
+    print(f"Background run {background.id}: {outcome(background.eval_data)}")
+
+    # A background run can be cancelled: its cases stop and the run is kept as CANCELLED.
+    cancelled = await client.run_eval_suite(SUITE_ID, background=True)
+    await client.cancel_eval_run(cancelled.id)
+    for _ in range(30):
+        if cancelled.eval_data["summary"]["status"] != "RUNNING":
+            break
+        await asyncio.sleep(1)
+        cancelled = await client.get_eval_run(cancelled.id)
+    else:
+        raise TimeoutError("Cancelled eval suite run did not stop")
+    print(f"Cancelled run {cancelled.id}: {cancelled.eval_data['summary']['status']}")
 
     posted = await client.run_eval_suite_from_body(
         name="Posted checks",
@@ -58,7 +76,7 @@ async def run_eval_suites(client: AgentOSClient) -> None:
             )
         ],
     )
-    print(f"Posted run {posted.id}: {posted.eval_data['summary']}")
+    print(f"Posted run {posted.id}: {outcome(posted.eval_data)}")
 
 
 async def run_evaluations() -> None:

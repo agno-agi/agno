@@ -83,7 +83,8 @@ class EvalSchema(BaseModel):
             evaluated_component_name=eval_run.get("evaluated_component_name"),
             user_id=eval_run.get("user_id"),
             eval_type=eval_run["eval_type"],
-            eval_data=eval_run["eval_data"],
+            # queue_attempt is the queue fence's bookkeeping, kept out of the response as RunSchema keeps it
+            eval_data={key: value for key, value in eval_run["eval_data"].items() if key != "queue_attempt"},
             eval_input=eval_run.get("eval_input"),
             created_at=to_utc_datetime(eval_run.get("created_at")),
             updated_at=to_utc_datetime(eval_run.get("updated_at")),

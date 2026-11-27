@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qsl, quote, urlsplit
 
 from agno.db.schemas.scheduler import (
+    EVAL_SUITE_FROM_BODY_ENDPOINT_RE,
     EVAL_SUITE_RUN_ENDPOINT_RE,
     RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
@@ -84,6 +85,9 @@ def terminal_eval_suite_status(data: Dict[str, Any]) -> Optional[Tuple[str, Opti
         return "success", None
     if suite_status == "FAIL":
         return "failed", f"{summary.get('failed')} of {summary.get('total')} cases failed"
+    if suite_status == "CANCELLED":
+        # A cancelled suite run was stopped on purpose, so it is neither a failure nor retried.
+        return "cancelled", eval_data.get("error") or "Eval suite run was cancelled"
     return "failed", eval_data.get("error") or f"Eval suite run ended with status {suite_status}"
 
 
@@ -505,7 +509,9 @@ class ScheduleExecutor:
                 resource_id,
                 timeout_seconds,
             )
-        elif method == "POST" and EVAL_SUITE_RUN_ENDPOINT_RE.match(endpoint):
+        elif method == "POST" and (
+            EVAL_SUITE_RUN_ENDPOINT_RE.match(endpoint) or EVAL_SUITE_FROM_BODY_ENDPOINT_RE.match(endpoint)
+        ):
             headers["Content-Type"] = "application/json"
             return await self._eval_suite_run(client, url, headers, payload if payload else None, timeout_seconds)
         else:

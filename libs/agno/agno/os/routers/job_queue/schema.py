@@ -9,10 +9,10 @@ class QueueJobSchema(BaseModel):
     """One durable queue job (a background run's queue ticket)."""
 
     id: str = Field(..., description="Job ID (identical to the run's run_id)")
-    component_type: str = Field(..., description="Component kind: agent, team or workflow")
-    component_id: str = Field(..., description="ID of the agent/team/workflow the run executes on")
-    session_id: str = Field(..., description="Session the run belongs to")
-    job_type: str = Field("run", description="Kind of work the ticket carries (runs only today)")
+    component_type: str = Field(..., description="Component kind: agent, team, workflow or eval_suite")
+    component_id: str = Field(..., description="ID of the agent/team/workflow, or eval suite, the run executes")
+    session_id: str = Field(..., description="Session the run belongs to (an eval suite ticket: its eval run ID)")
+    job_type: str = Field("run", description="Kind of work the ticket carries: run or eval_suite")
     user_id: Optional[str] = Field(None, description="User the run was submitted for")
     payload: Dict[str, Any] = Field(default_factory=dict, description="Serialized run parameters")
     status: str = Field(..., description="queued | running | completed | failed | cancelled | paused")

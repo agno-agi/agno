@@ -4366,6 +4366,51 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
             raise e
 
+    async def update_eval_run_data_in_attempt(
+        self, eval_run_id: str, eval_data: Dict[str, Any], expected_attempt: int
+    ) -> "RunPersistOutcome":
+        """Atomically replace the eval_data of a queued eval run, fenced by its queue attempt, as
+        update_run_in_session fences a queued run.
+
+        Attempt fencing: the write is rejected if the stored eval run carries a NEWER ``queue_attempt`` (a
+        reclaimed job's later attempt owns the row). The attempt is stored in eval_data. Terminal guard: a
+        finished (PASS/FAIL) row refuses a write with a different status. Exceptions PROPAGATE - a DB failure
+        must never read as a fallback-permitting outcome.
+        """
+        from agno.run.status_persist import RunPersistOutcome
+
+        try:
+            table = await self._get_table(table_type="evals")
+            if table is None:
+                return RunPersistOutcome.MISSING
+            async with self.async_session_factory() as sess, sess.begin():
+                row = (
+                    await sess.execute(select(table.c.eval_data).where(table.c.run_id == eval_run_id).with_for_update())
+                ).fetchone()
+                if row is None:
+                    return RunPersistOutcome.MISSING
+                stored_attempt = (row[0] or {}).get("queue_attempt")
+                if stored_attempt is not None and stored_attempt > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                stored_status = ((row[0] or {}).get("summary") or {}).get("status")
+                incoming_status = (eval_data.get("summary") or {}).get("status")
+                if (
+                    stored_status in ("PASS", "FAIL", "CANCELLED")
+                    and incoming_status
+                    and incoming_status != stored_status
+                ):
+                    return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                sanitized_eval_data = sanitize_postgres_strings({**eval_data, "queue_attempt": expected_attempt})
+                await sess.execute(
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(eval_data=sanitized_eval_data, updated_at=int(time.time()))
+                )
+                return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_error(f"Error updating eval data on eval run {eval_run_id}: {str(e)}")
+            raise e
+
     # -- Migrations --
 
     async def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):

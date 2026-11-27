@@ -2543,7 +2543,7 @@ class AgentOSClient:
         By default the call returns when every selected case has finished, so the client timeout
         (``AgentOSClient(timeout=...)``, 60 seconds by default) must cover the whole suite.
         With background=True the server returns 202 with the run while its summary status is
-        RUNNING; poll get_eval_run until it is PASS, FAIL or ERROR.
+        RUNNING; poll get_eval_run until it is PASS, FAIL, ERROR or CANCELLED.
 
         Args:
             suite_id: ID of the eval suite to run
@@ -2596,7 +2596,7 @@ class AgentOSClient:
         By default the call returns when every selected case has finished, so the client timeout
         (``AgentOSClient(timeout=...)``, 60 seconds by default) must cover the whole suite.
         With background=True the server returns 202 with the run while its summary status is
-        RUNNING; poll get_eval_run until it is PASS, FAIL or ERROR.
+        RUNNING; poll get_eval_run until it is PASS, FAIL, ERROR or CANCELLED.
 
         Args:
             name: Name for the suite run
@@ -2629,6 +2629,34 @@ class AgentOSClient:
             "/eval-suites", payload.model_dump(exclude_none=True, mode="json"), params=params, headers=headers
         )
         return EvalSchema.model_validate(data)
+
+    async def cancel_eval_run(
+        self,
+        eval_run_id: str,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Cancel a background eval suite run.
+
+        The run is kept with summary status CANCELLED once its cases stop; poll get_eval_run to see it.
+
+        Args:
+            eval_run_id: ID of the evaluation run to cancel
+            db_id: Optional database ID to use
+            table: Optional table name to use
+            headers: HTTP headers to include in the request (optional)
+
+        Raises:
+            HTTPStatusError: On HTTP errors (404 if not found)
+        """
+        params: Dict[str, Any] = {
+            "db_id": db_id,
+            "table": table,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+
+        await self._apost(f"/eval-runs/{eval_run_id}/cancel", params=params, headers=headers)
 
     # Knowledge Operations
 

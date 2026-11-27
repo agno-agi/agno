@@ -588,8 +588,8 @@ def _get_sandbox_bindings_table_schema(
 JOBS_TABLE_SCHEMA = {
     # id == run_id, so poll/resume endpoints key identically
     "id": {"type": String, "primary_key": True, "nullable": False},
-    "component_type": {"type": String, "nullable": False},  # agent | team | workflow
-    "job_type": {"type": String, "nullable": False},  # "run" today; future: other AgentOS job types
+    "component_type": {"type": String, "nullable": False},  # agent | team | workflow | eval_suite
+    "job_type": {"type": String, "nullable": False},  # "run" or "eval_suite"; future: other AgentOS job types
     # Claim affinity: NULL = any worker; set = only workers whose
     # QueueConfig.deployment_id matches (filtered in the claim predicate)
     "deployment_id": {"type": String, "nullable": True},

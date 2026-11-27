@@ -33,6 +33,8 @@ RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
 # Accepts a query string, such as the run route's db_id and table, which the executor
 # forwards to the poll so both read the same database.
 EVAL_SUITE_RUN_ENDPOINT_RE = re.compile(r"^/eval-suites/([^/?#]+)/runs/?(?:\?[^#\s]*)?\Z")
+# Matches the endpoint that runs the eval suite posted in the request body, with the same query parameters.
+EVAL_SUITE_FROM_BODY_ENDPOINT_RE = re.compile(r"^/eval-suites/?(?:\?[^#\s]*)?\Z")
 
 
 def _schedule_endpoint_targets(managed_by: Optional[str], endpoint: str) -> Dict[str, Optional[str]]:

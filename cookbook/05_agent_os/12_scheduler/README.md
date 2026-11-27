@@ -106,11 +106,17 @@ In another terminal:
 
 The schedule calls `POST /eval-suites/{suite_id}/runs`. The executor starts the
 suite as a background run and polls its eval run: PASS records a `success`
-schedule run, FAIL records `failed` with "N of M cases failed". The schedule
+schedule run, FAIL records `failed` with "N of M cases failed", and a
+cancelled suite run records `cancelled`, which is not retried. The schedule
 run's `run_id` is the eval run id, so the observer reads the suite summary from
 `GET /eval-runs/{run_id}`. On an AgentOS with more than one database, put the
 database on the endpoint, for example `/eval-suites/{suite_id}/runs?db_id=...`
 (and `&table=...`): the executor keeps them on the run and on the poll.
+
+A schedule can also run the suite in its payload with `POST /eval-suites`; it
+runs in the background and is polled the same way. The cases name their agent
+or team in the payload, so only an admin can schedule that endpoint, as for any
+endpoint that is not a run endpoint.
 
 ## Deployment notes
 
