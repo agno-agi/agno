@@ -88,6 +88,8 @@ class Chat(ScriptedModel):
         super().__init__()
         self.scripts: list = []
         self.runs: list = []
+        # How many requests have reached the chat gate and wait there.
+        self.held = 0
 
     def invoke(self, messages, tools=None, **kwargs):
         fresh = [m for m in messages if not m.from_history and m.role != "system"]
@@ -106,6 +108,7 @@ class Chat(ScriptedModel):
 
     async def ainvoke(self, messages, tools=None, **kwargs):
         if GATES.get("chat") is not None:
+            self.held += 1
             await GATES["chat"].wait()
         return self.invoke(messages, tools=tools, **kwargs)
 
@@ -181,6 +184,20 @@ class System:
         authority = self.authority(user)
         with authorization_scope(lambda: authority):
             return await self.os.manager.arun(message, user_id=user, session_id=session)
+
+    async def say_held(self, message, **turn):
+        """Start a turn of the person and return once it is held at the chat gate: its messages are
+        built, with the work as it stood then, and its reply has not been written. A fixed wait in
+        its place lets a slow machine end the work before the turn has read it."""
+        GATES["chat"] = asyncio.Event()
+        before = self.chat.held
+        going = asyncio.ensure_future(self.say(message, **turn))
+        for _ in range(4000):
+            if self.chat.held > before:
+                return going
+            assert not going.done(), "the turn ended before it reached the chat gate"
+            await asyncio.sleep(0.005)
+        raise AssertionError("the turn did not reach the chat gate")
 
     async def start(self, kind="agent", component="writer", **turn):
         """The person asks for a background run. Returns its run id."""
@@ -530,9 +547,7 @@ def test_the_switch_off_starts_no_finished_work_report(tmp_path):
 def test_a_conversation_with_a_turn_going_is_not_interrupted(system):
     async def steps():
         run_id = await system.start()
-        GATES["chat"] = asyncio.Event()
-        turn = asyncio.ensure_future(system.say("What is 17 times 23?"))
-        await asyncio.sleep(0.05)
+        turn = await system.say_held("What is 17 times 23?")
         # The person's turn is not stored yet: only this process knows it is going.
         assert len(system.turns()) == 1
         await system.finish()
@@ -557,9 +572,7 @@ def test_a_turn_going_when_the_work_ends_means_no_finished_work_report_even_if_i
 
     async def steps():
         run_id = await system.start()
-        GATES["chat"] = asyncio.Event()
-        turn = asyncio.ensure_future(system.say("What is 17 times 23?"))
-        await asyncio.sleep(0.05)
+        turn = await system.say_held("What is 17 times 23?")
         GATES["writer"].set()
         for _ in range(300):
             await system.work()
@@ -1177,6 +1190,7 @@ class HeldReports(Chat):
             if GATES.get("report") is not None:
                 await GATES["report"].wait()
         elif GATES.get("chat") is not None:
+            self.held += 1
             await GATES["chat"].wait()
         return self.invoke(messages, tools=tools, **kwargs)
 
@@ -1409,9 +1423,7 @@ def test_a_turn_of_the_person_while_a_notice_waits_means_no_finished_work_report
         await held.finish("writer")
         await held.finish("investigator")
         # The person speaks while the second notice waits for the first finished-work report.
-        GATES["chat"] = asyncio.Event()
-        turn = asyncio.ensure_future(held.say("What is 17 times 23?"))
-        await asyncio.sleep(0.05)
+        turn = await held.say_held("What is 17 times 23?")
         GATES["report"].set()
         await held.settle()
         count = len(held.reports_stored())

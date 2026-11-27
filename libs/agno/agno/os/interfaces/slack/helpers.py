@@ -149,20 +149,48 @@ def strip_bot_mention(text: str, bot_user_id: Optional[str], bot_name: Optional[
     return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", replacement, text).strip()
 
 
+def confirmed_email(member: Dict[str, Any]) -> Optional[str]:
+    """A Slack member's email when Slack reports it confirmed, else None.
+
+    Only a confirmed email names a person. An unconfirmed one is whatever was typed into the
+    profile, so using it as the user id would let its holder act as the owner of that address."""
+    email = (member.get("profile") or {}).get("email")
+    return email if email and member.get("is_email_confirmed") is True else None
+
+
+def is_outsider(member: Dict[str, Any], team_id: Optional[str]) -> bool:
+    """Whether a Slack sender is not a full member of the workspace the app is installed in.
+
+    True for a guest (single- or multi-channel) and for a member of another organization
+    writing in a shared channel."""
+    if member.get("is_restricted") or member.get("is_ultra_restricted") or member.get("is_stranger"):
+        return True
+    home = member.get("team_id")
+    # An Enterprise Grid member also belongs to each workspace listed on their enterprise_user
+    teams = (member.get("enterprise_user") or {}).get("teams")
+    return bool(team_id and home and home != team_id and not (isinstance(teams, list) and team_id in teams))
+
+
 async def resolve_slack_user(
-    async_client: Any, slack_user_id: str, errors: Optional[Set[str]] = None
+    async_client: Any,
+    slack_user_id: str,
+    errors: Optional[Set[str]] = None,
+    members: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Optional[str]]:
     """Resolve a Slack user ID to (canonical_user_id, display_name).
 
-    Returns the user's email as canonical_user_id if available, otherwise
+    Returns the user's confirmed email as canonical_user_id if available, otherwise
     falls back to the raw Slack user ID. Display name is best-effort.
+    The users.info record is put into members when given.
     """
     try:
         resp = await async_client.users_info(user=slack_user_id)
         user = resp.get("user", {}) if resp else {}
+        if members is not None and user:
+            members[slack_user_id] = user
         profile = user.get("profile", {})
 
-        email = profile.get("email")
+        email = confirmed_email(user)
         resolved_id = email if email else slack_user_id
 
         display_name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
@@ -305,11 +333,26 @@ class LookupCache:
         cached = self.get(key)
         if cached is not None:
             return cached
-        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors)
+        members: Dict[str, Any] = {}
+        resolved_user_id, display_name = await resolve_slack_user(async_client, slack_user_id, errors, members)
         # resolve_slack_user falls back to the raw id on failure; only real lookups are kept
         if resolved_user_id != slack_user_id or display_name:
             self.set(key, (resolved_user_id, display_name))
+        if slack_user_id in members:
+            self.set(f"member:{slack_user_id}", members[slack_user_id])
         return resolved_user_id, display_name
+
+    async def member(self, async_client: Any, slack_user_id: str) -> Optional[Dict[str, Any]]:
+        """The users.info record of a Slack user, or None when Slack cannot be asked for it."""
+        key = f"member:{slack_user_id}"
+        record = self.get(key)
+        if record is None:
+            members: Dict[str, Any] = {}
+            await resolve_slack_user(async_client, slack_user_id, None, members)
+            record = members.get(slack_user_id)
+            if record is not None:
+                self.set(key, record)
+        return record
 
     async def bot_identity(
         self, async_client: Any, bot_id: str, errors: Optional[Set[str]] = None

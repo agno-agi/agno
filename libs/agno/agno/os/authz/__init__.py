@@ -12,7 +12,8 @@ interface and pass it via ``Authorization(authorization_provider=...)``.
 
 Managed roles (runtime-editable RBAC) are backed by agno's own
 :class:`NativePolicyEngine` behind the swappable :class:`PolicyEngine` port — no
-third-party policy engine in the default path.
+third-party policy engine in the default path. A role is a :class:`Role`, usually built
+from the scope lists ``READ``, ``RUN`` and ``PLATFORM``.
 """
 
 from agno.os.authz.audit import AuditEvent, AuditSink
@@ -20,6 +21,7 @@ from agno.os.authz.authorization import Authorization
 from agno.os.authz.engine import PolicyEngine
 from agno.os.authz.fga import FGAAuthorizationProvider, FGAClient
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+from agno.os.authz.role import PLATFORM, READ, RUN, Role
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_directory import UserDirectory
 
@@ -30,6 +32,11 @@ __all__ = [
     "AuthorizationProvider",
     "ScopeAuthorizationProvider",
     "UserDirectory",
+    # Roles as objects, and the scope lists they are built from.
+    "Role",
+    "READ",
+    "RUN",
+    "PLATFORM",
     "PolicyEngine",
     # Fine-grained / relationship-based authz (ReBAC). The provider + port are
     # dependency-free; the OpenFGA adapter (OpenFGAClient) lives behind agno[fga].

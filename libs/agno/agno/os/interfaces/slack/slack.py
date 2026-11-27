@@ -66,6 +66,7 @@ class Slack(BaseInterface):
         approvers: Optional[List[str]] = None,
         users: Optional[Dict[str, str]] = None,
         default_role: Optional[str] = None,
+        authorize_senders: bool = False,
     ):
         """
         Initialize the Slack interface.
@@ -87,7 +88,7 @@ class Slack(BaseInterface):
             ssl: SSL context for Slack API calls and file downloads
             buffer_size: Characters buffered before a streamed update is flushed
             max_file_size: Largest attached file downloaded, in bytes
-            resolve_user_identity: Use the sender's Slack email as the run's user_id
+            resolve_user_identity: Use the sender's confirmed Slack email as the run's user_id
             respond_to_other_apps: Answer messages posted by other bots
             markdown: Format replies as Slack mrkdwn
             unfurl_links: Let Slack expand link previews in replies
@@ -95,6 +96,12 @@ class Slack(BaseInterface):
             approvers: Slack member IDs (e.g., "U0123ABC") who may decide on or stop anyone's run; the owner always can
             users: Slack member ID to AgentOS principal; unmapped users are refused unless default_role covers them
             default_role: Managed role a user not in users gets, under authorization; the user still acts as themselves
+            authorize_senders: Run each message as its sender's own user in the user directory. The user is
+                created on their first message, as on a first sign-in, and their role and disabled switch are
+                read on every message. With resolve_user_identity the user is the sender's confirmed email,
+                so one person is one user in Slack and on the web. A sender whose role does not cover the
+                agent, team or workflow gets a private reply. Under it, default_role is the role of a
+                sender who holds none.
         """
         self.agent = agent
         self.team = team
@@ -120,6 +127,7 @@ class Slack(BaseInterface):
         self.approvers = approvers
         self.users = users
         self.default_role = default_role
+        self.authorize_senders = authorize_senders
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -159,6 +167,7 @@ class Slack(BaseInterface):
             approvers=self.approvers,
             users=self.users,
             default_role=self.default_role,
+            authorize_senders=self.authorize_senders,
         )
 
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:

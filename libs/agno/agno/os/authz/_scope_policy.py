@@ -11,6 +11,8 @@ Resources use a ``type/id`` shape with ``/*`` for the collection/global form;
 from functools import lru_cache
 from typing import Dict, List, Tuple
 
+from agno.os.scopes import _built_in_resources
+
 ADMIN_SCOPE = "agent_os:admin"
 # The namespace of the admin scope. Not a resource type: no other scope may use it.
 ADMIN_NAMESPACE = ADMIN_SCOPE.split(":")[0]
@@ -126,7 +128,7 @@ def legacy_resources(resource: str) -> List[str]:
     return [old + separator + rest for old, new in _renamed_policy_types().items() if new == resource_type]
 
 
-def resource_matches(pattern: str, request: str) -> bool:
+def resource_matches(pattern: str, request: str, *, grant: bool = True) -> bool:
     """Does a policy's ``pattern`` resource match a request's ``request`` resource?
 
     Glob-style matching over our restricted resource space
@@ -138,6 +140,11 @@ def resource_matches(pattern: str, request: str) -> bool:
       string ``"type"``, which no policy writes,
     - otherwise an exact match.
 
+    A ``"type/*"`` grant never matches a built-in component (``teams/superagent`` and the others
+    in ``MANAGER_RESOURCES``): only its own row or the admin wildcard grants one. Pass
+    ``grant=False`` for a deny row, which keeps the plain match: a deny on ``teams/*`` still
+    covers Super Agent, because narrowing a deny would widen access.
+
     A renamed resource type and its old name are the same type on both sides.
     """
     if pattern == "*":
@@ -146,5 +153,7 @@ def resource_matches(pattern: str, request: str) -> bool:
     if pattern == request:
         return True
     if pattern.endswith("/*"):
-        return request.startswith(pattern[:-1])  # "type/" prefix
+        if not request.startswith(pattern[:-1]):  # "type/" prefix
+            return False
+        return not (grant and request in _built_in_resources())
     return False

@@ -251,14 +251,11 @@ def get_tools(
         agent_tools.extend(resolved_tools)
 
     # Read-only search over history this session compacted away. Scoped to
-    # this session's archive namespace, so one session can never read another's.
-    from agno.agent._messages import agent_compaction
+    # this session's archive namespace, so one session can never read another's,
+    # and for a team member to its own folds, never the leader's.
+    from agno.agent._messages import search_tools
 
-    compaction = agent_compaction(agent)
-    if compaction is not None and compaction.search_compacted_messages:
-        archive_tools = compaction.tools_for(session.session_id, agent.db)
-        if archive_tools:
-            agent_tools.extend(archive_tools)
+    agent_tools.extend(search_tools(agent, session, run_response))
 
     _append_filesystem_tools(agent, agent_tools)
 
@@ -403,14 +400,11 @@ async def aget_tools(
             agent_tools.append(tool)
 
     # Read-only search over history this session compacted away. Scoped to
-    # this session's archive namespace, so one session can never read another's.
-    from agno.agent._messages import agent_compaction
+    # this session's archive namespace, so one session can never read another's,
+    # and for a team member to its own folds, never the leader's.
+    from agno.agent._messages import search_tools
 
-    compaction = agent_compaction(agent)
-    if compaction is not None and compaction.search_compacted_messages:
-        archive_tools = compaction.tools_for(session.session_id, agent.db)
-        if archive_tools:
-            agent_tools.extend(archive_tools)
+    agent_tools.extend(search_tools(agent, session, run_response))
 
     _append_filesystem_tools(agent, agent_tools)
 

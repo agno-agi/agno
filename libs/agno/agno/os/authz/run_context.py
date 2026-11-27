@@ -19,11 +19,20 @@ def _snapshot_goal_id(snapshot: Dict[str, Any]) -> Optional[str]:
     return snapshot.get("company_goal_id") or snapshot.get("company_product_id")
 
 
-def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optional[RunAuthorization]:
+def restore_authorization(
+    app: Any, snapshot: Optional[Dict[str, Any]], *, saved: Optional[bool] = None
+) -> Optional[RunAuthorization]:
+    """Rebuild an authority from its snapshot.
+
+    saved says where the snapshot came from. True: it was stored with a schedule, a Routine or a
+    Task acceptance, and is loaded from there. None: it is in transit (a job queue payload, an
+    internal hop), and is saved only if the authority it was taken from was."""
     from agno.os.auth import _default_authorization_provider, resolve_authorization_provider
 
     if snapshot is None:
         return None
+    if saved is None:
+        saved = bool(snapshot.get("saved"))
     provider = (
         _default_authorization_provider() if snapshot.get("service_account") else resolve_authorization_provider(app)
     )
@@ -33,6 +42,7 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         bool(snapshot.get("service_account")),
         enforce_tools=snapshot.get("enforce_tools", True),
         scheduled=bool(snapshot.get("scheduled")),
+        saved=saved,
     )
 
     if snapshot.get("company_routine"):
@@ -51,7 +61,8 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         executor_authority = _ExecutorAuthorization(authority, task_id=snapshot.get("company_task_id"))
         executor_authority.goal_id = _snapshot_goal_id(snapshot)
         if snapshot.get("company_acceptance") is not None:
-            executor_authority.acceptance = restore_authorization(app, snapshot["company_acceptance"])
+            # The acceptance was stored with the Task when a person accepted it
+            executor_authority.acceptance = restore_authorization(app, snapshot["company_acceptance"], saved=True)
         return executor_authority
     return authority
 

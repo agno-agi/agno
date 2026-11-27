@@ -127,7 +127,7 @@ def test_manager_can_dispatch_only_an_authorized_target(tmp_path, allowed, ident
     model = ScriptedModel("run_agent", {"agent_id": "Friendly target", "message": "hello"})
     scopes = ["teams:superagent:run"] + (["agents:allowed:run"] if allowed else [])
     token_headers = headers(scopes)
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test")
+    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", trust_token_scopes=False)
     if identity == "managed_role":
         auth.define_role("caller", scopes)
         auth.assign("alice", "caller")
@@ -564,8 +564,10 @@ def test_manager_run_discovery_and_session_permissions_remain_separate(tmp_path)
     assert client.get(f"/teams/{manager_id}", headers=run_headers).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=run_headers).status_code == 403
 
-    read_headers = headers(["teams:read"])
+    # Super Agent is read through its own scope: a type-wide teams:read does not reach it
+    read_headers = headers([f"teams:{manager_id}:read"])
     assert client.get(f"/teams/{manager_id}", headers=read_headers).status_code == 200
+    assert client.get(f"/teams/{manager_id}", headers=headers(["teams:read"])).status_code == 403
     assert client.get(f"/sessions/{session_id}", headers=read_headers).status_code == 403
     assert client.post(f"/teams/{manager_id}/runs", headers=read_headers, data={"message": "hi"}).status_code == 403
 
@@ -581,7 +583,9 @@ def _leader_permission_os(tmp_path, scopes, identity="jwt", tool="read_file", ar
     root.mkdir()
     (root / "example.py").write_text("READABLE_SOURCE_SENTINEL = 42\n")
     (root / ".env").write_text("SECRET_SENTINEL_NEVER_RETURN=synthetic\n")
-    auth = Authorization(verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True)
+    auth = Authorization(
+        verification_keys=[SECRET], algorithm="HS256", audience="test", verify_audience=True, trust_token_scopes=False
+    )
     request_headers = headers(scopes)
     if identity == "managed":
         auth.define_role("caller", scopes)
@@ -1013,7 +1017,8 @@ async def test_mcp_preserves_ordinary_studio_access_and_enforces_manager_tools(t
             authorization_enabled=True,
             user_id="alice",
             claims={"sub": "alice"},
-            scopes=["agents:run", "teams:run"],
+            # The built-ins are named: a plain agents:run or teams:run does not reach them
+            scopes=["agents:run", "teams:run", f"agents:{builder.id}:run", f"teams:{MANAGER_TEAM_ID}:run"],
         ),
     )
     monkeypatch.setattr(dependencies, "get_http_request", lambda: request)

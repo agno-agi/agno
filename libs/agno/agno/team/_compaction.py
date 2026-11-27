@@ -4,39 +4,31 @@ What is compacted is the team leader's conversation: the messages of the Team's 
 hold the person's messages, the leader's answers and its tool calls and results. A member's answer
 is in there as the result of the delegation call. A member's own runs are not compacted here.
 
-The threshold, the cut, the summary, the stored record and the search tool are the Agent's, from
-``agno.compaction`` and ``agno.agent._messages``. This module holds only what differs for a Team:
-how the leader's history is read, the message a Team adds to a run without storing it, and the
-session a manual compaction saves its usage to.
+The threshold, the cut, the summary, the stored record and the search tool are the ones an Agent
+uses, from ``agno.compaction``. This module holds what differs for a Team: how the leader's history
+is read, which stored messages are the leader's, the message a Team adds to a run without storing
+it, and how a manual compaction is run and its usage saved.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, cast
+from functools import partial
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple, cast
 
-from agno.agent._messages import (
-    _arecompact_after_overflow,
-    _history_from,
-    _own_message_ids,
-    _recompact_after_overflow,
-    _replayed_view,
-    aapply_compaction,
-    acompact_now,
-    agent_compaction,
-    apply_compaction,
-    compact_now,
-)
-from agno.metrics import RunMetrics, SessionMetrics, merge_background_metrics
+from agno.compaction import _conversation
+from agno.compaction._conversation import aapply_compaction, apply_compaction, replayed_history
+from agno.compaction.types import CompactionRecord, CompactionResult, CompactionStatus
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.session._utils import resolve_run_index
+from agno.team.mode import TeamMode
 from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
-    from agno.compaction.types import CompactionResult
+    from agno.run.messages import RunMessages
     from agno.team.team import Team
 
 __all__ = [
@@ -57,7 +49,7 @@ def _skip_role(team: "Team") -> Optional[str]:
     return team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
 
-def _fetch(team: "Team", session: TeamSession) -> Callable[[Optional[int], Optional[int]], List[Message]]:
+def _fetch(team: "Team", session: TeamSession) -> _conversation.Fetch:
     """Reads the team leader's stored messages, the way a run without compaction reads its history."""
     skip_role = _skip_role(team)
 
@@ -72,38 +64,70 @@ def _fetch(team: "Team", session: TeamSession) -> Callable[[Optional[int], Optio
     return fetch
 
 
+def _own_message_ids(team: "Team", session: TeamSession, messages: Optional[List[Message]] = None) -> Set[str]:
+    """The ids of the messages in the leader's conversation.
+
+    A Team and its members run in one session, and compaction records are stored by session. The
+    leader reads only the records anchored on its own messages, so it never replays a member's
+    fold. ``messages`` adds a live message list, for a fold anchored inside the current run.
+    """
+    return _conversation.message_ids_of(
+        lambda: session.get_messages(team_id=team.id if team.parent_team_id is not None else None), messages
+    )
+
+
+def _stored_message_ids(team: "Team", session: TeamSession) -> Set[str]:
+    """The ids of the messages the leader has stored in this session.
+
+    A nested team's runs are stored in the top team's session, which its own run does not load: the
+    session a nested team runs with holds no runs. So that session is read from the database.
+    """
+    if team.parent_team_id is None:
+        return _own_message_ids(team, session)
+
+    def read() -> List[Message]:
+        from agno.team._storage import _read_session
+
+        stored = _read_session(team, session_id=session.session_id, user_id=session.user_id)
+        return stored.get_messages(team_id=team.id) if isinstance(stored, TeamSession) else []
+
+    return _conversation.message_ids_of(read)
+
+
 def history_for_run(
     team: "Team", session: TeamSession, run_response: Optional[TeamRunOutput]
-) -> Tuple[List[Message], Any, Optional[Counter[str]]]:
+) -> Tuple[List[Message], Optional[CompactionRecord], Optional[Counter[str]]]:
     """The history a run of the Team works from, the fold in force for it, and the replay window.
 
     Without compaction this is the history a Team has always read: ``num_history_runs`` and
     ``num_history_messages`` of the leader's messages, with no fold and no window.
     """
-    return _history_from(team, session, run_response, _fetch(team, session))
+    return _conversation.history_for_run(
+        team, session, run_response, _fetch(team, session), own_message_ids=partial(_own_message_ids, team, session)
+    )
 
 
-def replayed_history(team: "Team", history: List[Message], record: Any, replay_ids: Optional[Counter[str]]) -> Any:
-    """What a continued run sends from ``history``: the stored fold replayed, never a new one.
+def search_tools(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> List[Any]:
+    """The tool that searches what this conversation compacted away.
 
-    The run checked this same history before it paused, and its own messages are never folded.
+    Offered before the first fold too: the tools of a run are built before the run folds, and the
+    summary it is then sent says to search. Bound to this session and to the leader's own folds:
+    those anchored on the messages it has stored, read when the model searches, and those this run
+    makes. A member that compacts in the same session keeps its folds to itself.
     """
-    compaction = agent_compaction(team)
+    compaction = _conversation.compaction_of(team)
     if compaction is None:
-        return history
-    return _replayed_view(compaction, history, record, replay_ids)
-
-
-def search_tools(team: "Team", session: TeamSession) -> List[Any]:
-    """The tool that searches what this conversation compacted away, once it has a fold.
-
-    Bound to this session and to the leader's own folds: a member that compacts in the same
-    session keeps its folds to itself.
-    """
-    compaction = agent_compaction(team)
-    if compaction is None or not compaction.search_compacted_messages:
         return []
-    return compaction.tools_for(session.session_id, team.db, message_ids=_own_message_ids(team, session)) or []
+    return (
+        compaction.tools_for(
+            session.session_id,
+            team.db,
+            message_ids=partial(_stored_message_ids, team, session),
+            run_id=run_response.run_id,
+            offer_before_first_fold=True,
+        )
+        or []
+    )
 
 
 def _is_unstored_input(message: Message) -> bool:
@@ -138,20 +162,39 @@ def _put_back_unstored_input(messages: Optional[List[Message]], taken: List[Tupl
         messages.insert(len(messages) if index is None else index, message)
 
 
+def _recovers_from_overflow(team: "Team") -> bool:
+    """Whether a request the provider rejected as too long is folded and sent again."""
+    compaction = _conversation.compaction_of(team)
+    if compaction is None or not compaction.on_context_overflow:
+        return False
+    if team.mode == TeamMode.tasks:
+        # A tasks run adds a user message holding the task state on every iteration. A fold takes
+        # the newest user message for the start of the current exchange, so here it would fold the
+        # person's question and the run's own tool calls out of the request and the stored run.
+        log_warning(
+            "Compaction: a request was rejected as too long, and folding after a rejection is not "
+            "supported in TeamMode.tasks, so it is not retried. Set compact_at_tokens to fold earlier."
+        )
+        return False
+    return True
+
+
 def recompact_after_overflow(
     team: "Team",
     session: TeamSession,
-    run_messages: Any,
+    run_messages: "RunMessages",
     run_response: Optional[TeamRunOutput] = None,
     tools: Optional[List[Any]] = None,
 ) -> bool:
     """Fold the leader's live messages after the provider rejected a request as too long. True if it shrank."""
-    if agent_compaction(team) is None:
+    if not _recovers_from_overflow(team):
         return False
     messages = getattr(run_messages, "messages", None)
     taken = _take_out_unstored_input(messages)
     try:
-        return _recompact_after_overflow(team, session, run_messages, run_response, tools)
+        return _conversation.recompact_after_overflow(
+            team, session, run_messages, run_response, tools, own_message_ids=partial(_own_message_ids, team, session)
+        )
     finally:
         _put_back_unstored_input(messages, taken)
 
@@ -159,17 +202,19 @@ def recompact_after_overflow(
 async def arecompact_after_overflow(
     team: "Team",
     session: TeamSession,
-    run_messages: Any,
+    run_messages: "RunMessages",
     run_response: Optional[TeamRunOutput] = None,
     tools: Optional[List[Any]] = None,
 ) -> bool:
     """Async variant of :func:`recompact_after_overflow`."""
-    if agent_compaction(team) is None:
+    if not _recovers_from_overflow(team):
         return False
     messages = getattr(run_messages, "messages", None)
     taken = _take_out_unstored_input(messages)
     try:
-        return await _arecompact_after_overflow(team, session, run_messages, run_response, tools)
+        return await _conversation.arecompact_after_overflow(
+            team, session, run_messages, run_response, tools, own_message_ids=partial(_own_message_ids, team, session)
+        )
     finally:
         _put_back_unstored_input(messages, taken)
 
@@ -184,70 +229,44 @@ def _history_for_compaction(team: "Team", session: TeamSession) -> List[Message]
     return _fetch(team, session)(None, None)
 
 
-def _last_sent(team: "Team", session: TeamSession) -> List[Message]:
-    """The history the leader was last sent, which is what a fold's "before" size measures."""
-    history, record, replay_ids = history_for_run(team, session, None)
-    return _replayed_view(agent_compaction(team), history, record, replay_ids)
-
-
-def _not_enabled() -> "CompactionResult":
-    from agno.compaction.types import CompactionResult, CompactionStatus
-
+def _not_enabled() -> CompactionResult:
     return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this team.")
 
 
-def _no_session() -> "CompactionResult":
-    from agno.compaction.types import CompactionResult, CompactionStatus
-
+def _no_session() -> CompactionResult:
     return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
 
 
 def _add_to_session_and_latest_run(team: "Team", session: TeamSession, metrics: RunMetrics) -> Optional[TeamRunOutput]:
     """Add a manual compaction's usage to the leader's latest finished run, returned for saving, and to
-    the session's metrics. With no such run it is kept in the session's compaction metrics."""
-    from copy import copy as shallow_copy
-
+    the session's metrics. A member's run in the same session is never the one."""
     from agno.team._session import update_session_metrics
 
-    if session.session_data is None:
-        session.session_data = {}
-    runs = session.runs or []
-    # A run that can still change would drop the usage when it is saved again
-    finished = [
-        index
-        for index, run in enumerate(runs)
-        if isinstance(run, TeamRunOutput)
-        and run.parent_run_id is None
-        and run.status in (RunStatus.completed, RunStatus.cancelled)
-    ]
-    latest_run = None
-    if finished:
-        # Update a copy, never the loaded run: history run objects are shared between reads of the same session
-        latest_run = cast(TeamRunOutput, shallow_copy(runs[finished[-1]]))
-        latest_run.metrics = RunMetrics.from_dict(latest_run.metrics.to_dict()) if latest_run.metrics else RunMetrics()
-        merge_background_metrics(latest_run.metrics, [metrics])
-        runs[finished[-1]] = latest_run
-    else:
-        compaction_metrics = SessionMetrics.from_dict(session.session_data.get("compaction_metrics") or {})
-        compaction_metrics.accumulate_from_run(metrics)
-        session.session_data["compaction_metrics"] = compaction_metrics.to_dict()
-
+    latest_run = _conversation.add_usage_to_latest_run(
+        session, metrics, is_own_run=lambda run: isinstance(run, TeamRunOutput) and run.parent_run_id is None
+    )
     update_session_metrics(team, session=session)
-    return latest_run
+    return cast(Optional[TeamRunOutput], latest_run)
 
 
-def compact_session(
-    team: "Team", session_id: Optional[str] = None, user_id: Optional[str] = None
-) -> "CompactionResult":
+def compact_session(team: "Team", session_id: Optional[str] = None, user_id: Optional[str] = None) -> CompactionResult:
     """Compact the team leader's history in one session now, without waiting for the size trigger."""
     from agno.team import _session
 
-    if agent_compaction(team) is None:
+    # compaction=True becomes a Compaction when the team is initialized, which a run does and this must too
+    team.initialize_team()
+    if _conversation.compaction_of(team) is None:
         return _not_enabled()
     session = _session.get_session(team, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, TeamSession):
         return _no_session()
-    result = compact_now(team, session, _history_for_compaction(team, session), sent_messages=_last_sent(team, session))
+    result = _conversation.compact_history(
+        team,
+        session,
+        _history_for_compaction(team, session),
+        fetch=_fetch(team, session),
+        own_message_ids=partial(_own_message_ids, team, session),
+    )
     if result.metrics is not None:
         # Read the session again: a run may have finished while the summarizer ran
         session = _session.get_session(team, session_id=session.session_id, user_id=user_id) or session
@@ -269,17 +288,23 @@ def compact_session(
 
 async def acompact_session(
     team: "Team", session_id: Optional[str] = None, user_id: Optional[str] = None
-) -> "CompactionResult":
+) -> CompactionResult:
     """Async variant of :func:`compact_session`."""
     from agno.team import _session
 
-    if agent_compaction(team) is None:
+    # compaction=True becomes a Compaction when the team is initialized, which a run does and this must too
+    team.initialize_team()
+    if _conversation.compaction_of(team) is None:
         return _not_enabled()
     session = await _session.aget_session(team, session_id=session_id, user_id=user_id)
     if session is None or not isinstance(session, TeamSession):
         return _no_session()
-    result = await acompact_now(
-        team, session, _history_for_compaction(team, session), sent_messages=_last_sent(team, session)
+    result = await _conversation.acompact_history(
+        team,
+        session,
+        _history_for_compaction(team, session),
+        fetch=_fetch(team, session),
+        own_message_ids=partial(_own_message_ids, team, session),
     )
     if result.metrics is not None:
         # Read the session again: a run may have finished while the summarizer ran

@@ -1011,8 +1011,9 @@ def _handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    # Lazy import — _run imports _response, so we can't import at module top.
     from agno.team import _compaction
+
+    # Lazy import — _run imports _response, so we can't import at module top.
     from agno.team._run import build_team_after_tool_results_callback
 
     full_model_response = ModelResponse()
@@ -1176,8 +1177,9 @@ async def _ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    # Lazy import — _run imports _response, so we can't import at module top.
     from agno.team import _compaction
+
+    # Lazy import — _run imports _response, so we can't import at module top.
     from agno.team._run import abuild_team_after_tool_results_callback
 
     full_model_response = ModelResponse()

@@ -274,6 +274,11 @@ async def _caller_is_admin(os: "AgentOS", request: Request) -> bool:
         await require_admin(request)
     except HTTPException:
         return False
+    except Exception as e:
+        # The role store could not be read, so an admin role cannot be confirmed. The caller gets
+        # the report every caller gets; /config is loaded on every connect and must still answer.
+        logger.debug(f"Could not read the role store to check for an admin role: {e}")
+        return False
     return True
 
 
@@ -294,7 +299,11 @@ async def _authorization_report(os: "AgentOS", request: Request, is_admin: bool)
     role_store = os._authz_role_store
     report.managed_roles = bool(enabled and role_store is not None and role_store.roles_decide)
     if report.managed_roles:
-        report.default_role = await role_store.adefault_role()
+        try:
+            report.default_role = await role_store.adefault_role()
+        except Exception as e:
+            # A role store that cannot be read leaves the default role out, as when none is set
+            logger.debug(f"Could not read the default role: {e}")
     report.roles_from_token = bool(report.managed_roles and role_store.roles_claim)
     report.token_scopes_trusted = bool(enabled and token_scopes_are_authoritative(request))
     # The audience is checked only when a JWT is what authenticates the request and the
