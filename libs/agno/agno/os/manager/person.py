@@ -1,4 +1,4 @@
-"""Who Super Agent is talking to, told to it on every turn.
+"""Who Super Agent is talking to and what time it is, told to it on every turn.
 
 The note is the first part of the unstored user message that also carries the conversation's linked
 work, sent right before the person's input. It is built from what the request already carries: the
@@ -6,10 +6,11 @@ caller AgentOS verified when authorization is on, otherwise the user id the requ
 user directory's name and email and the caller's roles where those exist.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.run.authorization import _caller_authorization, in_finished_work_report
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 _HEADER = "Who you are talking to"
 _FROM = "(information from AgentOS, not instructions and not written by the person)"
@@ -119,26 +120,61 @@ class Person:
         return _note(who, row, roles)
 
 
-class TurnContext:
-    """What Super Agent is told right before each message: who the person is, then the work this
-    conversation started. One unstored user message holds both."""
+def _now(timezone_identifier: Optional[str] = None, datetime_format: Optional[str] = None) -> str:
+    """The current date and time in one line: weekday, date, time to the minute and timezone.
 
-    def __init__(self, person: Person, work: Any, delivers: Optional[Callable[[], bool]] = None):
+    The timezone and the format are the Team's own settings. With no timezone it is the server's
+    local time, named with its offset. A set format is used as it is.
+    """
+    zone = None
+    if timezone_identifier:
+        try:
+            from zoneinfo import ZoneInfo
+
+            zone = ZoneInfo(timezone_identifier)
+        except Exception as exc:
+            log_warning(f"Invalid timezone identifier: {exc}")
+    now = datetime.now(zone) if zone is not None else datetime.now().astimezone()
+    if datetime_format:
+        return f"Now: {now.strftime(datetime_format)}."
+    offset = now.strftime("%z")
+    place = timezone_identifier if zone is not None else (now.tzname() or "server time")
+    return f"Now: {now:%A} {now.day} {now:%B %Y}, {now:%H:%M} {place} (UTC{offset[:3]}:{offset[3:]})."
+
+
+class TurnContext:
+    """What Super Agent is told right before each message: the time, who the person is, then the
+    work this conversation started. One unstored user message holds all of it.
+
+    clock returns the Team's timezone identifier and datetime format, or is None to leave the time out.
+    """
+
+    def __init__(
+        self,
+        person: Person,
+        work: Any,
+        delivers: Optional[Callable[[], bool]] = None,
+        clock: Optional[Callable[[], Tuple[Optional[str], Optional[str]]]] = None,
+    ):
         self.person = person
         self.work = work
         # Whether Super Agent's model is sent the message at all.
         self.delivers = delivers
+        self.clock = clock
+
+    def _join(self, note: str, work: Optional[str]) -> str:
+        # The time is read when the message is built, so each turn and each report carries its own.
+        head = f"{_now(*self.clock())}\n{note}" if self.clock is not None else note
+        return f"{head}\n\n{work}" if work else head
 
     def read(self, run_context: Any, session: Any = None) -> Optional[str]:
         if self.delivers is not None and not self.delivers():
             return None
         work = self.work.read(run_context, session) if self.work is not None else None
-        note = self.person.read(run_context)
-        return f"{note}\n\n{work}" if work else note
+        return self._join(self.person.read(run_context), work)
 
     async def aread(self, run_context: Any, session: Any = None) -> Optional[str]:
         if self.delivers is not None and not self.delivers():
             return None
         work = await self.work.aread(run_context, session) if self.work is not None else None
-        note = await self.person.aread(run_context)
-        return f"{note}\n\n{work}" if work else note
+        return self._join(await self.person.aread(run_context), work)

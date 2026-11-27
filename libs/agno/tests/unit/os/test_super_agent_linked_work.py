@@ -3,6 +3,7 @@ since the person last spoke. The block is sent and never stored."""
 
 import asyncio
 import json
+import re
 import time
 from types import SimpleNamespace
 
@@ -428,7 +429,7 @@ def added_by_agentos(request):
 
 
 def is_context(content):
-    return isinstance(content, str) and content.startswith((PERSON, NOTE))
+    return isinstance(content, str) and content.startswith(("Now: ", PERSON, NOTE))
 
 
 def work_of(content):
@@ -974,6 +975,20 @@ def test_a_super_agent_run_copy_reads_linked_work_with_background_hooks(chat):  
     assert run.status.value == "COMPLETED"
     (note,) = blocks(copied.model.requests[0])
     assert task["id"] in note
+
+
+def test_the_time_is_in_the_message_before_the_persons_and_not_in_the_system_message(chat):  # noqa: F811
+    say(chat)
+    model = chat.os.manager.model
+    assert chat.os.manager.add_datetime_to_context is False
+    assert "The current time is" not in model.system
+    added = added_by_agentos(model.requests[0])[0]
+    first, second = added.split("\n")[:2]
+    # Weekday, date, time to the minute and the timezone, then who the person is.
+    assert re.fullmatch(r"Now: \w+day \d{1,2} \w+ \d{4}, \d{2}:\d{2} \S.* \(UTC[+-]\d{2}:\d{2}\)\.", first), first
+    assert second.startswith(PERSON)
+    # Platform Builder is a member and keeps the time in its own system message.
+    assert chat.os.manager.members[0].add_datetime_to_context is True
 
 
 def test_nothing_of_the_block_is_stored_and_the_persons_message_is_what_they_sent(chat):  # noqa: F811
@@ -1713,6 +1728,6 @@ def test_an_os_without_company_reads_no_tasks(tmp_path):
     run = asyncio.run(manager.arun("Hello", user_id="alice", session_id="chat", session_state=state))
     sent = [entry[1] for entry in model.requests[0] if entry[0] == "user"]
     assert run.content and len(sent) == 2 and sent[1] == "Hello"
-    assert str(sent[0]).startswith(PERSON) and not work_of(sent[0])
+    assert str(sent[0]).startswith("Now: ") and PERSON in str(sent[0]) and not work_of(sent[0])
     assert LINKED_WORK_INSTRUCTIONS not in model.system
     db.close()
