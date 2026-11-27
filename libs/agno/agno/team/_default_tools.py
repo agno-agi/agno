@@ -822,7 +822,6 @@ def _get_delegate_task_function(
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
-            yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
         if not stream:
@@ -1005,7 +1004,6 @@ def _get_delegate_task_function(
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
             )
-            yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
         if not stream:
