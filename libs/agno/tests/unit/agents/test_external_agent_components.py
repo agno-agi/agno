@@ -1161,6 +1161,11 @@ class TestStudioEngineerSteps:
         reviews = workflow.steps[0].steps[0].steps  # type: ignore[index, union-attr]
         assert reviews[0].agent is claude and reviews[1].agent is codex
 
+        # The runner refuses a step that is the registry's shared Agent; an engineer is shared by design.
+        runnable = studio._runner_tools._workflow_for_run(created["data"]["id"])
+        assert runnable is not None
+        assert runnable.steps[0].steps[0].steps[0].agent is claude  # type: ignore[index, union-attr]
+
     def test_an_engineer_is_still_refused_as_a_team_member(self, studio):
         import json
 
