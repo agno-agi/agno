@@ -16,6 +16,7 @@ from agno.os.interfaces.slack.handlers import (
     should_process,
 )
 from agno.os.interfaces.slack.helpers import DEFAULT_SUGGESTED_PROMPTS, slack_run_id
+from agno.os.interfaces.slack.security import _DISABLED_MESSAGE
 
 from .conftest import (
     BOT_ID,
@@ -266,7 +267,7 @@ async def test_handle_message_refused_principal_gets_ephemeral():
     ):
         await handle_message(make_event_body(), client, ctx)
     assert not run_event.called
-    assert client.chat_postEphemeral.call_args.kwargs["text"] == "Not run: User is disabled"
+    assert client.chat_postEphemeral.call_args.kwargs["text"] == _DISABLED_MESSAGE
 
 
 @pytest.mark.asyncio
@@ -338,7 +339,7 @@ async def test_handle_message_without_users_runs_as_the_slack_user_with_the_defa
     if super_agent:
         authorize.assert_awaited_once_with(ctx.app, "U123", "agent-1", ["slack-bot"])
     else:
-        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"])
+        authorize.assert_awaited_once_with(ctx.app, "U123", "agents", "agent-1", ["slack-bot"], disabled=None)
     event_context = run_event.call_args.args[0]
     assert (event_context.user_id, event_context.authority) == ("U123", authority)
 

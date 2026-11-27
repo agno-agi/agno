@@ -39,7 +39,7 @@ from agno.os.interfaces.slack.helpers import (
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.pause import finalize_pause, pause_labels, post_pause_card
-from agno.os.interfaces.slack.security import can_act
+from agno.os.interfaces.slack.security import can_stop
 from agno.os.interfaces.slack.state import StreamState
 from agno.os.interfaces.slack.stream import SlackStream, StreamStopped
 from agno.os.interfaces.slack.types import tool_args, tool_name, truncate
@@ -73,6 +73,7 @@ _SANDBOX_FILES_MESSAGE = "This agent can't take these files ({error}); send fewe
 _AWAITING_DECISION_MESSAGE = "Waiting for a decision on the approval above. Approve or deny it, then send yours again."
 _CANNOT_STOP_MESSAGE = "This agent cannot be stopped."
 _NOT_OWNER_STOP_MESSAGE = "Only <@{owner}> can stop this."
+_NOT_ALLOWED_STOP_MESSAGE = "Sorry, you don't have permission to stop this."
 _STOPPED_NOTE = "Stopped by user"
 APPROVAL_NOT_RECORDED_MESSAGE = "Could not record the decision. Please try again."
 NO_LONGER_ACTIVE_MESSAGE = "This approval is no longer active."
@@ -883,10 +884,14 @@ async def stop_runs(
 ) -> None:
     """Stop the runs a Slack Stop names: the one owning the stopped message, else every running one in the thread."""
     for event_context in ctx.runs.find(channel, thread_ts, streaming_message_ts):
-        if not await can_act(ctx, user, event_context, client):
+        if not await can_stop(ctx, user, event_context, client):
             # A Stop on the whole thread passes over other people's runs; only a Stop on this one says why
             if streaming_message_ts:
-                message = _NOT_OWNER_STOP_MESSAGE.format(owner=event_context.owner)
+                message = (
+                    _NOT_ALLOWED_STOP_MESSAGE
+                    if ctx.senders_authorized
+                    else _NOT_OWNER_STOP_MESSAGE.format(owner=event_context.owner)
+                )
                 await post_ephemeral(client, channel, user, message, thread_ts)
             continue
         if not hasattr(ctx.entity, "acancel_run"):

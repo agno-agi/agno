@@ -1311,6 +1311,24 @@ def _slack_super_agent(db, authorization, **slack_kwargs):
     return os, interface.ctx.bind(app)
 
 
+@pytest.mark.parametrize(
+    "setting, warning",
+    [
+        ({"authorize_senders": True}, "Slack(authorize_senders=True) does not apply to Super Agent"),
+        ({"allowed_apps": {"A_APP": "reviewbot"}}, "Slack(allowed_apps=...) does not apply to Super Agent"),
+    ],
+    ids=["authorize_senders", "allowed_apps"],
+)
+def test_slack_super_agent_warns_for_each_setting_it_ignores(db, monkeypatch, setting, warning):
+    pytest.importorskip("slack_bolt")
+    texts = []
+    monkeypatch.setattr("agno.os.app.log_warning", texts.append)
+    _slack_super_agent(db, True, respond_to_other_apps=True, **setting)
+    # Each setting Super Agent ignores is named on its own
+    assert sum("does not apply to Super Agent" in text for text in texts) == 1
+    assert any(warning in text for text in texts)
+
+
 async def _send_slack_message(ctx, text="hello"):
     from agno.os.interfaces.slack.handlers import handle_message
 
@@ -1351,6 +1369,31 @@ async def test_slack_super_agent_without_users_checks_tool_permissions(db, autho
     pytest.importorskip("slack_bolt")
     os, ctx = _slack_super_agent(db, authorization)
     model = _ToolResultModel(tool, args)
+    os.manager.model = model
+    await _send_slack_message(ctx)
+    assert len(model.tool_results) == 1
+    if refusal is None:
+        assert "Permission required" not in model.tool_results[0]
+    else:
+        assert model.tool_results[0] == refusal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scopes, refusal",
+    [
+        (["teams:run", "agents:restricted:run"], None),
+        # The member's default role may run the agent, but the bot's own service account may not
+        (["teams:run"], "Permission required: agents:restricted:run"),
+    ],
+)
+async def test_slack_super_agent_tools_are_capped_by_the_bot_service_account(db, scopes, refusal):
+    pytest.importorskip("slack_bolt")
+    from .interfaces.conftest import make_service_account
+
+    os, ctx = _slack_super_agent(db, "default_role", service_account="slack-bot")
+    make_service_account(ctx.app, "slack-bot", scopes)
+    model = _ToolResultModel("run_agent", {"agent_id": "restricted", "message": "x"})
     os.manager.model = model
     await _send_slack_message(ctx)
     assert len(model.tool_results) == 1

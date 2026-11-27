@@ -9,7 +9,14 @@ from agno.os.interfaces.slack.helpers import (
     set_suggested_prompts,
     should_respond,
 )
-from agno.os.interfaces.slack.security import authorize_run, authorize_unmapped
+from agno.os.interfaces.slack.security import (
+    authorize_app,
+    authorize_run,
+    authorize_sender,
+    authorize_unmapped,
+    is_other_app,
+    refuse_unidentified,
+)
 from agno.utils.log import log_debug, log_warning
 
 _NOT_LINKED_MESSAGE = "Your Slack account is not linked to an account on this AgentOS."
@@ -55,9 +62,23 @@ def should_process(event: Dict[str, Any], ctx: SlackContext) -> bool:
 
 
 async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackContext) -> bool:
-    """Run the message under the sender's authority, mapped, default or none; a refused user gets an ephemeral."""
+    """Run the message as its app, directory user, users= mapping, default role or none; a refusal says why."""
     from agno.os.auth import _authorization_enforced
 
+    event = event_context.event
+    # allowed_apps= lists the other apps that may run, each as its service account, in any mode; under
+    # authorize_senders an app it leaves out is refused, as users= refuses a sender, and one users= maps keeps it
+    mapped = ctx.users is not None and not ctx.senders_authorized and event_context.owner in ctx.users
+    if (ctx.allowed_apps is not None or ctx.senders_authorized) and ctx.company is None and not mapped:
+        try:
+            other_app = await is_other_app(ctx, client, event.get("user") or "", event.get("bot_id") or "")
+        except LookupError:
+            return await refuse_unidentified(ctx, event_context, client, event_context.owner)
+        if other_app:
+            return await authorize_app(ctx, event_context, client)
+    # authorize_senders runs an agent, team or workflow as the sender's directory user, whose roles decide
+    if ctx.senders_authorized:
+        return await authorize_sender(ctx, event_context, client)
     # Without users=, the message runs and its permission checks use the default role, or no roles
     if ctx.users is None:
         return await authorize_unmapped(ctx, event_context, client, event_context.owner, event_context.thread_ts)
@@ -70,10 +91,9 @@ async def _authorize_event(event_context: EventContext, client: Any, ctx: SlackC
             client, event_context.channel, event_context.owner, _NOT_LINKED_MESSAGE, event_context.thread_ts
         )
         return False
-    if not await authorize_run(ctx, event_context, principal, client, event_context.owner, event_context.thread_ts):
-        return False
+    # The run is the mapped user's from here, so the bot's limit is built for that user too
     event_context.user_id = principal
-    return True
+    return await authorize_run(ctx, event_context, principal, client, event_context.owner, event_context.thread_ts)
 
 
 async def handle_message(payload: Dict[str, Any], client: Any, ctx: SlackContext) -> None:

@@ -7,7 +7,7 @@ from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agno.os.authz.provider import AuthorizationContext
-from agno.run.authorization import AUTHORIZATION_HEADER, RunAuthorization, authorization_scope
+from agno.run.authorization import AUTHORIZATION_HEADER, InterfaceAuthorization, RunAuthorization, authorization_scope
 
 
 def _snapshot_goal_id(snapshot: Dict[str, Any]) -> Optional[str]:
@@ -34,6 +34,19 @@ def restore_authorization(app: Any, snapshot: Optional[Dict[str, Any]]) -> Optio
         enforce_tools=snapshot.get("enforce_tools", True),
         scheduled=bool(snapshot.get("scheduled")),
     )
+    interface = restore_authorization(app, snapshot.get("interface"))
+    if interface is not None:
+        # The interface's own service account still caps the run once it is restored, inside any Company authority
+        if snapshot.get("caller_unchecked"):
+            authority = InterfaceAuthorization(
+                interface.provider,
+                authority.context,
+                enforce_tools=authority.enforce_tools,
+                scheduled=authority.scheduled,
+                interface=interface,
+            )
+        else:
+            authority = InterfaceAuthorization.wrap(authority, interface)
 
     if snapshot.get("company_routine"):
         from agno.company.routines import _RoutineAuthorization

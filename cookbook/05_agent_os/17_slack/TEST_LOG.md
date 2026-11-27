@@ -208,9 +208,49 @@ unmapped Slack user.
 - The unmapped user got the private "not linked" notice and nothing ran, in
   both views.
 - Test server: a mapped user whose principal lacks the run permission got
-  "Not run: Permission required: ..." and nothing ran, while a mapped user with
-  the role ran.
+  "Sorry, you don't have permission to run this. Required scope(s): ..." and
+  nothing ran, while a mapped user with the role ran.
 - The approver click was not part of the live session.
+
+---
+
+### authorize_senders.py
+
+**Status:** PASS
+
+**Description:** A question from a Slack member, then GET /users and
+PATCH /users/{id} with alice's token, then the same question again.
+
+**Result:**
+- The first message created `slack:{workspace}:{member}` with the
+  `slack-member` default role and ran as it.
+- GET /users listed the new user; after PATCH disabled, the next message got
+  "Sorry, your account on this AgentOS is disabled." and nothing ran.
+- The example keeps `respond_to_other_apps=False`, and the test users post
+  through a driver app, so the message was sent as a signed, human-typed
+  Slack event to the running example.
+
+---
+
+### authorize_apps.py
+
+**Status:** PASS
+
+**Description:** Served unchanged in a Slack test workspace: the reviewer is a
+test bot on /reviewer, and the coordinator is a second test app driven through
+its own SlackTools. As alice, POST /service-accounts created the reviewer's own
+account (slack-<app id>) and coordinator-bot.
+
+**Result:**
+- The coordinator's request was answered in the thread, running as
+  sa:coordinator-bot; no directory user was created for the app.
+- With coordinator-bot revoked, the next post got "Sorry, this app's service
+  account is missing, revoked or expired." once; a further post in that thread
+  got no reply.
+- With the reviewer's own account revoked, the coordinator got "Sorry, this
+  bot's service account is missing, revoked or expired."
+- The coordinator's own inbound Slack path was not exercised (its test app has
+  no event subscription).
 
 ---
 

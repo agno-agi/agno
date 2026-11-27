@@ -1862,7 +1862,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
         from agno.os.authz.run_context import request_authorization
-        from agno.run.authorization import AUTHORIZATION_HEADER
+        from agno.run.authorization import AUTHORIZATION_HEADER, InterfaceAuthorization
 
         # A persisted caller snapshot limits the target as well as its nested
         # tools. The executor's transport credential is not the caller's grant.
@@ -1872,14 +1872,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 resource_type, resource_id = get_resource_context_from_path(path)
                 required = self._get_required_scopes(method, path)
                 if authority is not None and required:
-                    ctx = replace(
-                        authority.context,
-                        resource_type=resource_type,
-                        resource_id=resource_id,
-                        action=_route_action(required),
-                    )
-                    if not await authority.provider.aauthorize_route(ctx, required):
-                        raise PermissionError("Scheduled target is not permitted")
+                    action = _route_action(required)
+                    deciders = [authority]
+                    # The interface's service account decides every scheduled request too, inside any Company wrapper
+                    capped: Any = authority
+                    while capped is not None and not isinstance(capped, InterfaceAuthorization):
+                        capped = getattr(capped, "original", None)
+                    if capped is not None and capped.interface is not None:
+                        deciders.append(capped.interface)
+                    for decider in deciders:
+                        ctx = replace(
+                            decider.context, resource_type=resource_type, resource_id=resource_id, action=action
+                        )
+                        if not await decider.provider.aauthorize_route(ctx, required):
+                            raise PermissionError("Scheduled target is not permitted")
             except Exception:
                 return self._create_error_response(
                     403, "Insufficient permissions for scheduled target", origin, cors_allowed_origins

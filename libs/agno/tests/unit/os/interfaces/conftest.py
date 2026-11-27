@@ -136,6 +136,27 @@ def make_event_context(**overrides: Any):
     return EventContext(**fields)
 
 
+def make_service_account(app: Any, name: str, scopes: List[str], revoked: bool = False) -> None:
+    """Create a service account in the AgentOS database, as POST /service-accounts does."""
+    from uuid import uuid4
+
+    from agno.db.schemas.service_accounts import ServiceAccount
+    from agno.os.service_accounts import generate_token
+
+    _, token_hash, token_prefix = generate_token()
+    now = int(time.time())
+    account = ServiceAccount(
+        id=str(uuid4()),
+        name=name,
+        token_hash=token_hash,
+        token_prefix=token_prefix,
+        scopes=list(scopes),
+        created_at=now,
+        revoked_at=now if revoked else None,
+    )
+    app.state.service_account_verifier.db.create_service_account(account.to_dict())
+
+
 def make_message_event_context(ctx: Any, text: str = "hello", ts: str = "100.1", **event_fields: Any):
     """The EventContext a Slack message gets, with the session id resolve_context gives it."""
     from agno.os.interfaces.slack.context import new_event_context

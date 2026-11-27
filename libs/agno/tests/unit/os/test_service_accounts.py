@@ -255,6 +255,21 @@ class TestVerifier:
         assert result.status == VerificationStatus.UNAVAILABLE
 
     @pytest.mark.asyncio
+    async def test_get_by_name_reads_the_account_and_raises_on_a_db_error(self, sync_db):
+        sync_db.get_service_account_by_name = MagicMock(return_value=_account_row())
+        verifier = ServiceAccountVerifier(db=sync_db)
+        account = await verifier.aget_by_name("claude-code")
+        assert account is not None and account.principal == "sa:claude-code"
+        # A usable account is marked used, as verify() marks one a token authenticates
+        sync_db.update_service_account.assert_called_once()
+        sync_db.get_service_account_by_name.return_value = None
+        assert await verifier.aget_by_name("missing") is None
+        # Unlike verify(), the caller decides what an outage means, so the error is raised
+        sync_db.get_service_account_by_name.side_effect = RuntimeError("connection refused")
+        with pytest.raises(RuntimeError):
+            await verifier.aget_by_name("claude-code")
+
+    @pytest.mark.asyncio
     async def test_failed_lookups_are_rate_limited(self, sync_db):
         verifier = ServiceAccountVerifier(db=sync_db)
         verifier._limiter.max_failures = 3
