@@ -499,7 +499,10 @@ def test_the_leader_does_not_read_a_fold_a_member_stored_in_the_same_session(mod
 def test_a_member_does_not_read_the_leaders_fold():
     """The other direction: a member folding its own live messages after an overflow must not take
     the leader's summary as the summary it continues from."""
-    from agno.agent._messages import _stored_compaction
+    from functools import partial
+
+    from agno.agent._messages import _own_message_ids
+    from agno.compaction._conversation import _stored_compaction
 
     team = _team(compaction=_folding())
     _talk(team, 8)
@@ -509,11 +512,13 @@ def test_a_member_does_not_read_the_leaders_fold():
 
     member = Agent(id="m1", db=team.db, compaction=_folding())
     member.team_id = "t"
-    assert _stored_compaction(member, session, messages=live) is None
+    own_message_ids = partial(_own_message_ids, member, session)
+    assert _stored_compaction(member, session, messages=live, own_message_ids=own_message_ids) is None
     # A member that did fold reads its own record back.
     _foreign_row(team.db)
     live.append(Message(role="assistant", content="kept", id="a-member-message"))
-    assert _stored_compaction(member, session, messages=live).summary == "A MEMBER'S SUMMARY"
+    stored = _stored_compaction(member, session, messages=live, own_message_ids=own_message_ids)
+    assert stored.summary == "A MEMBER'S SUMMARY"
 
 
 @pytest.mark.parametrize("use_async", [False, True])

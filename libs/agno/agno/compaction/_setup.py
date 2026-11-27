@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
-
-    CompactionOwner = Union[Agent, Team]
+    from agno.compaction._conversation import CompactionOwner
 
 
 def disable_compaction_without_records(owner: CompactionOwner) -> None:
