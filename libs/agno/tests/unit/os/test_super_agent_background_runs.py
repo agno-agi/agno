@@ -1291,14 +1291,15 @@ def test_check_refuses_a_run_this_conversation_did_not_start(plain):
     assert forged == {"error": f"Run {run_id} is not a run you started in this conversation."}
 
 
-def checked(run_context, stored, mode="async", **row):
+def checked(run_context, stored, mode="async", offset=None, **row):
     """check_background_run over a stand-in database, sync or async."""
     tools = BackgroundRunTools(type("OS", (), {"dbs": {}, "db": Runs({**stored, **row})})())
     tools._os = tools._agent_os()  # keep the stand-in alive
+    arguments = {"_agno_run_context": run_context, **({} if offset is None else {"offset": offset})}
     with authorization_scope(lambda: run_context.authorization):
         if mode == "sync":
-            return json.loads(tools.check_background_run(stored["run_id"], _agno_run_context=run_context))
-        return json.loads(asyncio.run(tools.acheck_background_run(stored["run_id"], _agno_run_context=run_context)))
+            return json.loads(tools.check_background_run(stored["run_id"], **arguments))
+        return json.loads(asyncio.run(tools.acheck_background_run(stored["run_id"], **arguments)))
 
 
 def run_data(status, content="Found it.", **fields):
@@ -1329,9 +1330,47 @@ def test_a_long_result_is_cut_and_says_so(mode, keep_standins):
     long = "x" * (RESULT_LENGTH + 500)
     result = checked(run_context, stored, mode, **run_data("COMPLETED", long))
     assert result["content"] == "x" * RESULT_LENGTH
-    assert result["note"] == f"The result is cut to its first {RESULT_LENGTH} of {RESULT_LENGTH + 500} characters."
+    assert result["note"] == (
+        f"The result is long: this is the first {RESULT_LENGTH} of {RESULT_LENGTH + 500} characters. "
+        f"Read on with offset={RESULT_LENGTH}."
+    )
     short = checked(run_context, stored, mode, **run_data("COMPLETED"))
     assert short["content"] == "Found it." and "note" not in short
+
+
+@modes
+def test_the_rest_of_a_long_result_is_read_from_the_offset(mode, keep_standins):
+    """A report that ends with its verdict: the verdict is past the first part, and offset reaches it."""
+    run_context = person()
+    stored = listed_run(run_context, "COMPLETED")
+    report = "a" * RESULT_LENGTH + "b" * RESULT_LENGTH + "Verdict: merge-ready."
+    total = len(report)
+    row = run_data("COMPLETED", report)
+
+    first = checked(run_context, stored, mode, **row)
+    assert first["content"] == "a" * RESULT_LENGTH
+    assert f"Read on with offset={RESULT_LENGTH}." in first["note"]
+
+    second = checked(run_context, stored, mode, offset=RESULT_LENGTH, **row)
+    assert second["content"] == "b" * RESULT_LENGTH
+    assert second["note"] == (
+        f"The result is long: this is characters {RESULT_LENGTH} to {2 * RESULT_LENGTH} of {total} characters. "
+        f"Read on with offset={2 * RESULT_LENGTH}."
+    )
+
+    last = checked(run_context, stored, mode, offset=2 * RESULT_LENGTH, **row)
+    assert last["content"] == "Verdict: merge-ready."
+    assert last["note"] == (
+        f"The result is long: this is characters {2 * RESULT_LENGTH} to {total} of {total} characters. "
+        "This is the end of the result."
+    )
+    # The parts are the whole result, with nothing lost or repeated at a cut.
+    assert first["content"] + second["content"] + last["content"] == report
+
+    past = checked(run_context, stored, mode, offset=total + 50, **row)
+    assert past["content"] == "" and "This is the end of the result." in past["note"]
+    negative = checked(run_context, stored, mode, offset=-5, **row)
+    assert negative["content"] == "a" * RESULT_LENGTH
 
 
 @modes
