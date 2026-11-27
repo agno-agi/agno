@@ -608,6 +608,10 @@ class OpenAIResponses(Model):
                 if isinstance(_tool, Function):
                     _tool_dict = _tool.to_dict()
                     _tool_dict["type"] = "function"
+                    # The Responses API treats a function sent without "strict" as strict: every
+                    # optional parameter becomes required, so the model has to write a value for
+                    # an argument it was told to leave out. A tool is strict only when it says so.
+                    _tool_dict.setdefault("strict", False)
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
@@ -615,6 +619,7 @@ class OpenAIResponses(Model):
                 elif _tool.get("type") == "function":
                     _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
+                    _tool_dict.setdefault("strict", False)
                     for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
                         if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
