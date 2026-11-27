@@ -975,8 +975,8 @@ class StudioRunnerTools(Toolkit):
     def _refuse_sandboxed_agent_in_task_run(component: Any) -> None:
         """Refuse a sandboxed agent inside a Company Task run, at any version.
 
-        Starting a Task on a sandboxed executor checks its repository and that no other sandboxed Task is
-        live. A run from inside another Task passes neither check.
+        Starting a Task on a sandboxed executor checks its repository. A run from inside another Task
+        skips that check.
         """
         if isinstance(component, BaseExternalAgent) and component.sandbox is not None and _company_task_authority():
             raise StudioRunnerError(

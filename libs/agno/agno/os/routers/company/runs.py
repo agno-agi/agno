@@ -1,6 +1,5 @@
 """Task run routes: authorize, then enter the existing executor route and queue."""
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Optional, Union
 from urllib.parse import quote, unquote
@@ -285,34 +284,17 @@ class _TaskStarter:
         message: Optional[str],
     ):
         from agno.company.execution import _automatic_task
-        from agno.company.sandbox import _is_sandboxed
-        from agno.os.routers.company.sandbox import _sandbox_start_gate
 
         # The route checks this before accepting a Backlog Task; Super Agent's start reaches only this
         # path, and must be refused here rather than at the worker's claim.
         reason = await _project_run_block(self.db, value)
         if reason:
             raise HTTPException(409, reason)
-        component = self.executor(value)
+        self.executor(value)
         if _automatic_task.get() is None:
             await caller.require_accept(self.endpoint(value))
-
-        if _is_sandboxed(component):
-
-            async def admit():
-                async with _sandbox_start_gate(self.os, value, self.worker(caller.app)):
-                    return await self.dispatch(task_id, caller, attempt, value, message)
-
-            # A disconnected caller must not release admission while an off-thread
-            # queue INSERT can still commit. Finish submission under the same lock.
-            pending = asyncio.create_task(admit())
-            try:
-                return await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                try:
-                    await asyncio.shield(pending)
-                finally:
-                    raise
+        # A sandboxed executor is queued like any other. Each Task has its own session, so its own
+        # sandbox, checkout and checkpoints; the queue's max_concurrency bounds how many run at once.
         return await self.dispatch(task_id, caller, attempt, value, message)
 
     async def dispatch(
