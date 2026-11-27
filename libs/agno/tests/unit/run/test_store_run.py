@@ -5,11 +5,13 @@ nothing is written back, and a cached session is not changed by the temporary ru
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import pytest
 
 from agno.agent.agent import Agent
+from agno.agents.base import BaseExternalAgent
 from agno.approval import approval
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
@@ -19,6 +21,7 @@ from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.offload import ResultStore
+from agno.run.agent import RunContentEvent, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
@@ -532,6 +535,74 @@ class TestWorkflow:
 
         with pytest.raises(ValueError, match="store_run=False"):
             workflow.arun("hi", session_id="s1", background=True, store_run=False)
+
+
+@dataclass
+class EchoExternalAgent(BaseExternalAgent):
+    """A harness-style external agent that answers without a provider and records its history."""
+
+    framework: str = "test-framework"
+    last_history: Any = None
+
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+        self.last_history = kwargs.get("history")
+        return f"echo: {input}"
+
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+        self.last_history = kwargs.get("history")
+        yield RunContentEvent(run_id=kwargs.get("run_id", ""), content=f"echo: {input}")
+
+
+class TestExternalAgent:
+    @pytest.mark.asyncio
+    async def test_temporary_run_writes_nothing(self, db: SqliteDb):
+        agent = EchoExternalAgent(name="Echo", id="echo", db=db)
+
+        output = await agent.arun("hi", session_id="s1", store_run=False)
+        assert output.content == "echo: hi"
+
+        events = [event async for event in agent.arun("hi", session_id="s1", stream=True, store_run=False)]
+        assert events
+
+        assert db.get_session(session_id="s1", session_type=SessionType.AGENT) is None
+        assert _runs(db, "s1") == 0
+
+        # The default keeps storing.
+        await agent.arun("hi", session_id="s1")
+        assert _runs(db, "s1") == 1
+
+    @pytest.mark.asyncio
+    async def test_temporary_run_sees_history_but_does_not_extend_it(self, db: SqliteDb):
+        agent = EchoExternalAgent(name="Echo", id="echo", db=db)
+
+        await agent.arun("first", session_id="s1")
+        await agent.arun("second", session_id="s1", store_run=False)
+        assert agent.last_history == [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "echo: first"},
+        ]
+
+        await agent.arun("third", session_id="s1")
+        assert agent.last_history == [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "echo: first"},
+        ]
+        assert _runs(db, "s1") == 2
+
+    def test_sync_run_honors_the_option(self, db: SqliteDb):
+        agent = EchoExternalAgent(name="Echo", id="echo", db=db)
+
+        output = agent.run("hi", session_id="s1", store_run=False)
+
+        assert output.content == "echo: hi"
+        assert _runs(db, "s1") == 0
+
+    @pytest.mark.asyncio
+    async def test_background_rejects_store_run_false(self, db: SqliteDb):
+        agent = EchoExternalAgent(name="Echo", id="echo", db=db)
+
+        with pytest.raises(ValueError, match="store_run=False"):
+            await agent.arun("hi", session_id="s1", background=True, store_run=False)
 
 
 class TestTransientMarkerStaysOutOfStorage:

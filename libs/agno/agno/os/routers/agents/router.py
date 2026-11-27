@@ -893,6 +893,10 @@ def get_agent_router(
         from agno.agents.base import BaseExternalAgent
 
         if isinstance(agent, BaseExternalAgent) and agent.sandbox is not None:
+            if is_temporary_run(store_run):
+                raise HTTPException(
+                    status_code=400, detail="A temporary run (store_run=false) is not supported for sandboxed agents"
+                )
             from agno.os.routers.agents.sandbox import sandbox_run_response
 
             if getattr(agent, "_uses_native_hitl", False):
