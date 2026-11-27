@@ -244,3 +244,21 @@ def test_a_part_that_gets_no_summary_leaves_the_history_as_it_is(use_async):
         record = compaction.compact(messages, session_id="s")
 
     assert record is None
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_message_that_cannot_be_rendered_leaves_the_history_as_it_is(use_async):
+    """Splitting the fold renders every message. A message that cannot be rendered - raw bytes in
+    a provider content block - must not fail the run: the fold is given up, as when the summarizer
+    call fails."""
+    summarizer = _Summarizer()
+    compaction = Compaction(compact_at_tokens=None, uncompacted_runs=1, model=summarizer)
+    messages = _turns(4)
+    messages[2] = Message(role="user", content=[{"image": {"format": "png", "source": {"bytes": b"\x89PNG"}}}])
+
+    if use_async:
+        record = asyncio.run(compaction.acompact(messages, session_id="s"))
+    else:
+        record = compaction.compact(messages, session_id="s")
+
+    assert record is None and summarizer.asked == []

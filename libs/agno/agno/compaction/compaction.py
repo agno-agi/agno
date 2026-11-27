@@ -35,8 +35,9 @@ if TYPE_CHECKING:
 DEFAULT_TOKENIZER_MODEL_ID = "gpt-5.4"
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
-# overflow. Trim what the summarizer reads, oldest first, to this budget - about
-# 100k tokens, so a fold at the default compact_at_tokens fits in one call.
+# overflow, so one summarizer call reads at most this many characters - about
+# 100k tokens. A larger fold is read in parts, oldest first. A text-heavy fold at
+# the default compact_at_tokens is larger than this, so it takes more than one call.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 400_000
 
 # Bounds on what one archive search can return. The result lands in the context window, so an
@@ -656,7 +657,13 @@ class Compaction:
         if model is None:
             log_warning("No compaction model available")
             return None
-        parts = self._summary_parts(messages)
+        try:
+            # Splitting renders every message, and a message that cannot be rendered must leave
+            # the history as it is, the same as a summarizer call that fails.
+            parts = self._summary_parts(messages)
+        except Exception as e:
+            log_error(f"Error compacting conversation: {e}")
+            return None
         if len(parts) > 1:
             log_info(
                 f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
@@ -686,7 +693,13 @@ class Compaction:
         if model is None:
             log_warning("No compaction model available")
             return None
-        parts = self._summary_parts(messages)
+        try:
+            # Splitting renders every message, and a message that cannot be rendered must leave
+            # the history as it is, the same as a summarizer call that fails.
+            parts = self._summary_parts(messages)
+        except Exception as e:
+            log_error(f"Error compacting conversation: {e}")
+            return None
         if len(parts) > 1:
             log_info(
                 f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
