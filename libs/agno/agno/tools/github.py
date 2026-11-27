@@ -31,6 +31,7 @@ class GithubTools(Toolkit):
             self.get_repository,
             self.get_pull_request,
             self.get_pull_request_changes,
+            self.get_pull_request_checks,
             self.create_issue,
             self.create_repository,
             self.delete_repository,
@@ -309,8 +310,17 @@ class GithubTools(Toolkit):
                 "created_at": pr.created_at.isoformat(),
                 "updated_at": pr.updated_at.isoformat(),
                 "state": pr.state,
+                "draft": pr.draft,
                 "merged": pr.is_merged(),
                 "mergeable": pr.mergeable,
+                "mergeable_state": pr.mergeable_state,
+                "base": pr.base.ref,
+                "head": pr.head.ref,
+                "head_sha": pr.head.sha,
+                "commits": pr.commits,
+                "changed_files": pr.changed_files,
+                "additions": pr.additions,
+                "deletions": pr.deletions,
                 "url": pr.html_url,
             }
             return json.dumps(pr_info, indent=2)
@@ -318,37 +328,103 @@ class GithubTools(Toolkit):
             logger.exception("Error getting pull request")
             return json.dumps({"error": str(e)})
 
-    def get_pull_request_changes(self, repo_name: str, pr_number: int) -> str:
+    def get_pull_request_changes(
+        self, repo_name: str, pr_number: int, path: Optional[str] = None, include_patches: bool = True
+    ) -> str:
         """Get the changes (files modified) in a pull request.
+
+        A large pull request's patches can be too long to read in one result. For one, list the
+        files first with include_patches=False, then read the patch of each file that matters
+        with path.
 
         Args:
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             pr_number (int): The number of the pull request.
+            path (Optional[str]): Return only the file with this path, with its patch.
+            include_patches (bool): Include each file's patch and URLs. Pass False to list the
+                changed files with their line counts only. Ignored when path is given.
 
         Returns:
             A JSON-formatted string containing the list of changed files.
         """
         log_debug(f"Getting changes for pull request #{pr_number} in repository: {repo_name}")
+        # A model that means "no path" often sends an empty one.
+        path = path.strip() if isinstance(path, str) and path.strip() else None
         try:
             repo = self.g.get_repo(repo_name)
             pr = repo.get_pull(pr_number)
             files = pr.get_files()
             changes = []
             for file in files:
+                if path is not None and file.filename != path:
+                    continue
                 file_info = {
                     "filename": file.filename,
                     "status": file.status,
                     "additions": file.additions,
                     "deletions": file.deletions,
                     "changes": file.changes,
-                    "raw_url": file.raw_url,
-                    "blob_url": file.blob_url,
-                    "patch": file.patch,
                 }
+                if include_patches or path is not None:
+                    file_info["raw_url"] = file.raw_url
+                    file_info["blob_url"] = file.blob_url
+                    # GitHub returns no patch for a binary file or a very large one.
+                    file_info["patch"] = file.patch
                 changes.append(file_info)
+            if path is not None and not changes:
+                return json.dumps({"error": f"{path} is not among the files pull request #{pr_number} changes."})
             return json.dumps(changes, indent=2)
         except GithubException as e:
             logger.exception("Error getting pull request changes")
+            return json.dumps({"error": str(e)})
+
+    def get_pull_request_checks(self, repo_name: str, pr_number: int) -> str:
+        """Get the checks of a pull request's head commit: CI check runs and commit statuses.
+
+        Args:
+            repo_name (str): The full name of the repository (e.g., 'owner/repo').
+            pr_number (int): The number of the pull request.
+
+        Returns:
+            A JSON-formatted string with the head commit, a 'summary' count per result, and one
+            entry per check with its name, status and conclusion.
+        """
+        log_debug(f"Getting checks for pull request #{pr_number} in repository: {repo_name}")
+        try:
+            repo = self.g.get_repo(repo_name)
+            pr = repo.get_pull(pr_number)
+            commit = repo.get_commit(pr.head.sha)
+            checks = []
+            for run in commit.get_check_runs():
+                checks.append(
+                    {
+                        "name": run.name,
+                        "type": "check_run",
+                        "status": run.status,
+                        # None while the check is queued or running.
+                        "conclusion": run.conclusion,
+                        "url": run.html_url,
+                    }
+                )
+            for status in commit.get_combined_status().statuses:
+                checks.append(
+                    {
+                        "name": status.context,
+                        "type": "status",
+                        "status": "completed" if status.state != "pending" else "in_progress",
+                        "conclusion": status.state if status.state != "pending" else None,
+                        "url": status.target_url,
+                    }
+                )
+            summary: dict = {}
+            for check in checks:
+                result = check["conclusion"] or check["status"]
+                summary[result] = summary.get(result, 0) + 1
+            return json.dumps(
+                {"head_sha": pr.head.sha, "total": len(checks), "summary": summary, "checks": checks}, indent=2
+            )
+        except GithubException as e:
+            logger.exception("Error getting pull request checks")
             return json.dumps({"error": str(e)})
 
     def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
