@@ -224,14 +224,21 @@ def _keep_stored_state(session: Any, stored: Any, run_id: Any, marks: Optional[D
     replied = str(getattr(getattr(run, "status", None), "value", getattr(run, "status", None))) == "COMPLETED"
     marks = marks if marks is not None else {}
     for entry in loaded.get(LINKED_WORK_KEY) or []:
-        if isinstance(entry, dict) and run_id is not None and entry.get("changed_in") == run_id:
+        # This run marked an entry when the block showed it as changed, or when one of its tools
+        # read the entry's state, which linked work records as a receipt.
+        if (
+            isinstance(entry, dict)
+            and run_id is not None
+            and run_id in (entry.get("changed_in"), entry.get("receipt_in"))
+        ):
             marks[(entry.get("kind"), entry.get("id"))] = dict(entry)
     mine = marks if replied else {}
     listed = []
     for entry in state.get(LINKED_WORK_KEY) or []:
         own = mine.get((entry.get("kind"), entry.get("id"))) if isinstance(entry, dict) else None
         if own is not None:
-            entry = {**entry, "shown": own.get("shown"), "changed_in": own.get("changed_in")}
+            entry = {key: value for key, value in entry.items() if key != "receipt_in"}
+            entry.update({key: own[key] for key in ("shown", "changed_in", "receipt_in") if key in own})
         listed.append(entry)
     # Changed in place: the run and its session object hold this same dictionary.
     merged = {**state, LINKED_WORK_KEY: listed}
@@ -394,6 +401,13 @@ class WorkUpdates:
         if manager is None or not manager.config.work_updates or not isinstance(session_id, str):
             return
         if requested_from.get("team_id") != manager.config.id:
+            return
+        from agno.os.manager import linked_work
+
+        # A work update depends on the linked-work block to say what changed and to mark it reported.
+        # A model that is not sent the block gets no work update: it would have nothing to report from.
+        if not linked_work._delivers(manager.team.model):
+            log_debug(f"No work update for conversation {session_id}: its model is not sent the linked work")
             return
         # A turn of the person going in the conversation when the work ends means no work update, also
         # when that turn ends a moment later: the person's next message shows what changed.

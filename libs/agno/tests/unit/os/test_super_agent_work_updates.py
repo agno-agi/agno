@@ -21,7 +21,7 @@ from agno.os.authz import Authorization
 from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
-from agno.os.manager import work_update
+from agno.os.manager import linked_work, work_update
 from agno.os.manager.linked_work import LINKED_WORK_KEY
 from agno.os.manager.work_update import (
     READ_TOOLS,
@@ -248,6 +248,8 @@ def quick(monkeypatch):
     SEEN.clear()
     work_update._latest_run.clear()
     monkeypatch.setattr(work_update, "SETTLE_SECONDS", 0.02)
+    # The scripted test models stand in for a provider that is sent the linked-work block.
+    monkeypatch.setattr(linked_work, "_delivers", lambda model: not getattr(model, "unlisted", False))
     yield
 
 
@@ -748,6 +750,7 @@ REFUSED = {
     "add_company_task",
     "move_company_task",
     "start_company_task",
+    "message_company_task",
     "approve_company_project",
     "accept_company_task",
     "review_company_task",
@@ -866,6 +869,7 @@ PERSON_ONLY = [
     ("add_company_task", {"title": "T", "brief": "B", "start": True}),
     ("move_company_task", {"task_id": "t", "project_id": "p"}),
     ("start_company_task", {"task_id": "t"}),
+    ("message_company_task", {"task_id": "t", "message": "Add a section on permissions"}),
     ("approve_company_project", {"project_id": "p", "reason": "ok"}),
     ("accept_company_task", {"task_id": "t", "executor_type": "agent", "executor_id": "writer", "reason": "ok"}),
     ("review_company_task", {"task_id": "t", "decision": "complete", "reason": "ok"}),
@@ -1830,7 +1834,10 @@ def test_a_work_update_that_saves_before_it_ends_still_marks_what_it_showed():
     assert session.session_data["session_state"][LINKED_WORK_KEY][0]["shown"] == "LIVE"
 
 
-def test_a_checkpointing_work_update_reports_two_finishes_once(tmp_path):
+def test_a_checkpointing_work_update_reports_two_finishes_once(tmp_path, monkeypatch):
+    # Long enough for both runs to end inside the wait, so one work update shows both.
+    monkeypatch.setattr(work_update, "SETTLE_SECONDS", 0.4)
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
     system = System(tmp_path)
     system.os.manager.checkpoint = "tool-batch"
 
@@ -1841,7 +1848,7 @@ def test_a_checkpointing_work_update_reports_two_finishes_once(tmp_path):
             [("check_background_run", {"run_id": first}), ("check_background_run", {"run_id": second})]
         )
         await system.finish("writer", "investigator")
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.8)
         await system.settle()
         return len(system.updates_stored()), listed(system)
 
@@ -1849,3 +1856,103 @@ def test_a_checkpointing_work_update_reports_two_finishes_once(tmp_path):
     system.close()
     assert updates == 1
     assert entries == {"writer": "COMPLETED", "investigator": "COMPLETED"}
+
+
+# ----------------------------------------------------------------- on the reworked linked work
+
+
+def test_a_mark_set_by_a_tool_read_is_carried_over_too():
+    """Linked work records a tool's read of a run as a receipt, not as a change shown in the block."""
+    stored = {
+        "session_data": {
+            "session_state": {
+                LINKED_WORK_KEY: [
+                    {"kind": "run", "id": "a", "shown": "LIVE", "changed_in": None, "receipt_in": "the-start"},
+                    {"kind": "run", "id": "b", "shown": "LIVE", "changed_in": None},
+                ]
+            }
+        }
+    }
+
+    class Session:
+        session_data = {
+            "session_state": {
+                LINKED_WORK_KEY: [
+                    {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": None, "receipt_in": "update"},
+                    {"kind": "run", "id": "b", "shown": "COMPLETED", "changed_in": "update"},
+                ]
+            }
+        }
+
+        def get_run(self, run_id):
+            return type("Run", (), {"status": "COMPLETED"})()
+
+    session = Session()
+    work_update._keep_stored_state(session, stored, "update")
+    assert session.session_data["session_state"][LINKED_WORK_KEY] == [
+        {"kind": "run", "id": "a", "shown": "COMPLETED", "changed_in": None, "receipt_in": "update"},
+        {"kind": "run", "id": "b", "shown": "COMPLETED", "changed_in": "update"},
+    ]
+
+
+def test_two_finishes_read_with_the_check_tool_are_reported_once(system, monkeypatch):
+    monkeypatch.setattr(work_update, "SETTLE_SECONDS", 0.4)
+    monkeypatch.setattr(work_update, "_UPDATE_POLL_SECONDS", 0.02)
+
+    async def steps():
+        first = await system.start()
+        second = await system.start("workflow", "investigator")
+        system.chat.scripts.append(
+            [("check_background_run", {"run_id": first}), ("check_background_run", {"run_id": second})]
+        )
+        await system.finish("writer", "investigator")
+        await asyncio.sleep(0.8)
+        await system.settle()
+        await system.say("Thanks")
+        return len(system.updates_stored()), listed(system), system.chat.runs[-1]["sent"]
+
+    updates, entries, last = scenario(steps)
+    assert updates == 1
+    assert entries == {"writer": "COMPLETED", "investigator": "COMPLETED"}
+    assert not any("Changed since your last turn." in message for message in last)
+
+
+def test_a_model_that_is_not_sent_the_linked_work_gets_no_work_update(system, monkeypatch):
+    """Without the block a work update has nothing to report from and nothing to mark."""
+    read = []
+    real = WorkUpdates._read
+
+    async def counted(db, session_id):
+        read.append(session_id)
+        return await real(db, session_id)
+
+    monkeypatch.setattr(WorkUpdates, "_read", staticmethod(counted))
+
+    async def steps():
+        run_id = await system.start()
+        # Decided from the model Super Agent holds when the work ends.
+        system.chat.unlisted = True
+        await system.finish()
+        without = len(system.updates_stored()), list(read), system.row(run_id)["status"]
+        system.chat.unlisted = False
+        asked = {"session_id": CHAT, "run_id": "r", "team_id": "superagent", "user_id": "alice"}
+        await system.updates(asked, {"kind": "run", "id": run_id, "status": "COMPLETED"}, None)
+        await system.settle()
+        return without, len(system.updates_stored())
+
+    without, after = scenario(steps)
+    # Nothing was started and the conversation was not even read.
+    assert without == (0, [], "COMPLETED")
+    assert after == 1
+
+
+def test_the_guard_is_linked_works_own_check():
+    """The rule calls linked work's check, so it follows any change to which providers are sent the block."""
+    import inspect
+
+    source = inspect.getsource(WorkUpdates.__call__)
+    assert "linked_work._delivers(manager.team.model)" in source
+    assert linked_work._delivers(ScriptedModel()) is True
+    unlisted = ScriptedModel()
+    unlisted.unlisted = True
+    assert linked_work._delivers(unlisted) is False
