@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -100,11 +101,27 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     return image_messages
 
 
+# Values under these keywords are data, not schemas
+_DATA_KEYWORDS = frozenset({"default", "examples", "example", "const", "enum"})
+# Values under these keywords map names to schemas
+_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"})
+
+
 def _ref_siblings(schema: dict) -> List[str]:
     """Keywords beside a $ref; $defs and definitions hold the referenced schemas and may stay."""
     if not isinstance(schema.get("$ref"), str):
         return []
     return [key for key in schema if not key.startswith("$") and key != "definitions"]
+
+
+def _local_definition(root: dict, ref: str) -> Optional[dict]:
+    for container in ("$defs", "definitions"):
+        prefix = f"#/{container}/"
+        if ref.startswith(prefix):
+            definitions = root.get(container)
+            target = definitions.get(ref[len(prefix) :]) if isinstance(definitions, dict) else None
+            return target if isinstance(target, dict) else None
+    return None
 
 
 def sanitize_response_schema(schema: dict):
@@ -120,16 +137,21 @@ def sanitize_response_schema(schema: dict):
     - Moves a "$ref" that has sibling keywords (title, description, examples, default)
       into a single-item "anyOf", since OpenAI rejects any keyword beside "$ref" but
       accepts them beside "anyOf".
-    - A root "$ref" (a RootModel or recursive model) drops those keywords instead, since
-      the root must resolve to an object; the referenced definition keeps its own.
+    - A root "$ref" with sibling keywords (a RootModel) is replaced by its local definition,
+      with the siblings kept on top, since the root must be an object schema.
+    - Leaves values under "default", "examples", "const" and "enum" untouched: they are data.
     """
-    if isinstance(schema, dict):
-        for key in _ref_siblings(schema):
-            schema.pop(key)
-    _sanitize_schema_node(schema)
+    if isinstance(schema, dict) and _ref_siblings(schema):
+        definition = _local_definition(schema, schema["$ref"])
+        if definition is not None:
+            schema.pop("$ref")
+            for key, value in copy.deepcopy(definition).items():
+                schema.setdefault(key, value)
+    # An anyOf root is never valid, so an unresolved root $ref is left for OpenAI to report
+    _sanitize_schema_node(schema, wrap_ref=False)
 
 
-def _sanitize_schema_node(schema: Any) -> None:
+def _sanitize_schema_node(schema: Any, wrap_ref: bool = True) -> None:
     if isinstance(schema, dict):
         # Enforce additionalProperties: false for object types, but preserve Dict schemas
         if schema.get("type") == "object":
@@ -157,12 +179,17 @@ def _sanitize_schema_node(schema: Any) -> None:
         if "default" in schema and schema["default"] is None:
             schema.pop("default")
 
-        if _ref_siblings(schema) and "anyOf" not in schema:
+        if wrap_ref and _ref_siblings(schema) and "anyOf" not in schema:
             schema["anyOf"] = [{"$ref": schema.pop("$ref")}]
 
-        # Recurse into all values
-        for value in schema.values():
-            _sanitize_schema_node(value)
+        for key, value in schema.items():
+            if key in _DATA_KEYWORDS:
+                continue
+            if key in _SCHEMA_MAPS and isinstance(value, dict):
+                for subschema in value.values():
+                    _sanitize_schema_node(subschema)
+            else:
+                _sanitize_schema_node(value)
 
     elif isinstance(schema, list):
         for item in schema:

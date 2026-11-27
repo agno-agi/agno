@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytest
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from agno.media import Image
 from agno.utils.media import resolve_image_mime_type
@@ -462,15 +462,94 @@ class _DocumentedCast(RootModel[_Actor]):
     """The cast."""
 
 
-@pytest.mark.parametrize("model, siblings", [(_Cast, {"title"}), (_DocumentedCast, {"title", "description"})])
-def test_sanitize_response_schema_keeps_a_root_model_root_an_object_ref(model, siblings):
-    """OpenAI needs the root to resolve to an object, so a root $ref drops its siblings instead of moving into anyOf."""
+class _ConstrainedCast(RootModel[_Actor]):
+    model_config = ConfigDict(json_schema_extra={"minProperties": 1})
+
+
+class _Node(BaseModel):
+    name: str
+    child: Optional["_Node"] = None
+
+
+class _Tree(RootModel[_Node]):
+    """A tree."""
+
+
+@pytest.mark.parametrize(
+    "model, kept",
+    [
+        (_Cast, {"title": "_Cast"}),
+        (_DocumentedCast, {"title": "_DocumentedCast", "description": "The cast."}),
+        (_ConstrainedCast, {"title": "_ConstrainedCast", "minProperties": 1}),
+    ],
+)
+def test_sanitize_response_schema_inlines_a_root_ref_with_siblings(model, kept):
+    """OpenAI needs an object at the root, so a root $ref with siblings becomes its definition plus those siblings."""
     schema = model.model_json_schema()
-    assert set(schema) == {"$defs", "$ref"} | siblings
+    assert schema["$ref"] == "#/$defs/_Actor"
 
     sanitize_response_schema(schema)
 
-    assert schema == {"$defs": schema["$defs"], "$ref": "#/$defs/_Actor"}
+    assert "$ref" not in schema and "anyOf" not in schema
+    assert schema["type"] == "object"
+    assert schema["properties"] == {"name": {"title": "Name", "type": "string"}}
+    assert schema["required"] == ["name"]
+    assert schema["additionalProperties"] is False
+    assert {key: schema[key] for key in kept} == kept
+
+
+def test_sanitize_response_schema_inlines_a_recursive_root_ref():
+    schema = _Tree.model_json_schema()
+
+    sanitize_response_schema(schema)
+
+    assert "$ref" not in schema
+    assert schema["description"] == "A tree."
+    assert schema["properties"]["child"]["anyOf"][0] == {"$ref": "#/$defs/_Node"}
+    assert schema["$defs"]["_Node"]["additionalProperties"] is False
+
+
+def test_sanitize_response_schema_leaves_an_unresolvable_root_ref():
+    schema = {"$ref": "https://example.com/actor.json", "title": "Cast"}
+
+    sanitize_response_schema(schema)
+
+    assert schema == {"$ref": "https://example.com/actor.json", "title": "Cast"}
+
+
+def test_sanitize_response_schema_leaves_literal_data_alone():
+    """Values under examples, default, const and enum are data, not schemas."""
+
+    class Doc(BaseModel):
+        ref: Dict[str, str] = Field(examples=[{"$ref": "document-id", "title": "Read me"}])
+        meta: Dict[str, str] = Field(default={"type": "object"})
+
+    schema = Doc.model_json_schema()
+    schema["properties"]["kind"] = {"const": {"type": "object"}}
+    schema["properties"]["shape"] = {"enum": [{"$ref": "x", "title": "y"}]}
+
+    sanitize_response_schema(schema)
+
+    properties = schema["properties"]
+    assert properties["ref"]["examples"] == [{"$ref": "document-id", "title": "Read me"}]
+    assert properties["meta"]["default"] == {"type": "object"}
+    assert properties["kind"]["const"] == {"type": "object"}
+    assert properties["shape"]["enum"] == [{"$ref": "x", "title": "y"}]
+
+
+def test_sanitize_response_schema_still_sanitizes_properties_named_like_data_keywords():
+    schema = {
+        "type": "object",
+        "properties": {
+            "examples": {"type": "object", "properties": {"a": {"type": "string"}}},
+            "default": {"$ref": "#/$defs/A", "description": "A default."},
+        },
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["properties"]["examples"]["additionalProperties"] is False
+    assert schema["properties"]["default"] == {"anyOf": [{"$ref": "#/$defs/A"}], "description": "A default."}
 
 
 def test_sanitize_response_schema_leaves_a_bare_ref_alone():
