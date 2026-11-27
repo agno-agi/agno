@@ -118,6 +118,19 @@ def _policy_line(policy: Any) -> str:
     return "; ".join(parts)
 
 
+def _no_sandbox_goal(executor: str, url: str, has: str, goals: List[Dict[str, Any]]) -> str:
+    """Why a sandboxed executor's Task is not recorded, with the Goals it can be filed under."""
+    if goals:
+        names = ", ".join(f"'{row['name']}' ({row['id']})" for row in goals[:10])
+        way = f"Goals that have one: {names}. Ask the person which Goal it belongs to, then pass that goal_id"
+    else:
+        way = f"No Goal has one: add {url} as a git Source to the Goal this work belongs to, then add the Task"
+    return (
+        f"Not done, and nothing was recorded: {executor} works in a sandbox on {url}, so its Task needs a "
+        f"Goal with a git Source for that repository, and {has}. {way}."
+    )
+
+
 def _refusal(authority: Any) -> Optional[str]:
     from agno.company.execution import _automatic_task, _ExecutorAuthorization
     from agno.company.routines import _RoutineAuthorization
@@ -274,7 +287,8 @@ class CompanyTaskTools(Toolkit):
                 it serves. Null when none fits, which puts the Task in the Default Project. A proposed
                 Project cannot hold accepted work.
             goal_id: The Goal this Task belongs to; null for none. In a Project, null takes the
-                Project's Goal and another Goal is refused.
+                Project's Goal and another Goal is refused. For an executor that works in a sandbox,
+                null files the Task under the Goal that has its repository as a git Source.
             executor_type: agent, team or workflow, only when the person named a component. Null with a
                 null executor_id runs it on Mini Agent, which does the work itself or runs the components
                 the person may run.
@@ -291,6 +305,7 @@ class CompanyTaskTools(Toolkit):
         from agno.os.routers.company.runs import _StartCaller, _TaskStarter
         from agno.registry._reserved import MINI_AGENT_ID
         from agno.run.authorization import authorization_scope
+        from agno.tools.company import _scoped_user
 
         async def call(agent_os: Any) -> str:
             authority, user_id = self._person(agent_os, _agno_run_context, "add accepted Company work")
@@ -327,8 +342,29 @@ class CompanyTaskTools(Toolkit):
             # Tasks in one run than a person reads in one request.
             run_id = getattr(_agno_run_context, "run_id", None)
             waits = None
-            if _is_sandboxed(starter.executor(executor)):
+            goal, filed = _named(goal_id), ""
+            component = starter.executor(executor)
+            if _is_sandboxed(component):
                 waits = f"{kind} {name} runs in a sandbox and can push code"
+                # A sandboxed executor accepts a Task only under a Goal with a git Source for its
+                # repository. A Task that could never be accepted is not recorded; one with no Goal
+                # named is filed under the only Goal that fits.
+                in_default = project is None or is_default_project(project)
+                wanted = goal if in_default else stored["goal_id"]
+                owner = _scoped_user(_agno_run_context, _user_isolation(agent_os))
+                goals = await _manager_call(starter.manager, "sandbox_goals", kind, name, user_id=owner)
+                url = component.repository.url
+                if wanted is None and in_default and len(goals) == 1:
+                    goal = goals[0]["id"]
+                    filed = f" It is filed under Goal '{goals[0]['name']}' ({goal}), which has {url} as a git Source."
+                elif wanted not in [row["id"] for row in goals]:
+                    has = "its Project has no Goal" if not in_default else "no Goal was named"
+                    if wanted is not None:
+                        row = await _manager_call(starter.manager, "get", wanted)
+                        if row is None:
+                            return "Not done: Goal not found"
+                        has = f"Goal '{row['name']}' has none"
+                    return _no_sandbox_goal(f"{kind} {name}", url, has, goals)
             elif not _take_acceptance(run_id):
                 waits = f"this run already added {ACCEPTED_TASKS_PER_RUN} accepted Tasks"
             # Asked only to add it, the Task is held for a person to start: the tick leaves it alone.
@@ -344,7 +380,7 @@ class CompanyTaskTools(Toolkit):
                         "create_task",
                         title=title,
                         brief=brief,
-                        goal_id=_named(goal_id),
+                        goal_id=goal,
                         project_id=project,
                         user_id=user_id,
                         origin="human",
@@ -362,7 +398,7 @@ class CompanyTaskTools(Toolkit):
             if waits:
                 then = " Then start it with start_company_task." if start else ""
                 return (
-                    f"Recorded {named} as a proposal, not accepted: {waits}, so the person confirms it. "
+                    f"Recorded {named} as a proposal, not accepted: {waits}, so the person confirms it.{filed} "
                     f"Now call accept_company_task with this Task, updated_at null, executor {kind} {name}, "
                     f"which pauses for their confirmation; pass every waiting Task that takes this executor "
                     f"in one call.{then}"
