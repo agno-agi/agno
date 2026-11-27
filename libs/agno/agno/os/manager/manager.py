@@ -20,6 +20,7 @@ from agno.os.manager.prompts import (
     FOCUSED_EXECUTION_INSTRUCTIONS,
     LINKED_WORK_INSTRUCTIONS,
     MANAGER_INSTRUCTIONS,
+    PERSON_INSTRUCTIONS,
     NO_PRIVATE_PLACE_INSTRUCTIONS,
     NOTES_INSTRUCTIONS,
     PRIVATE_MEMORY_INSTRUCTIONS,
@@ -71,7 +72,7 @@ _CATALOG_LIMIT = 20
 
 # Sentences that describe the linked-work block, and the ones said in their place to a model that is
 # not sent it.
-_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS)
+_SAID_WITH_THE_BLOCK = (LINKED_WORK_INSTRUCTIONS, BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, PERSON_INSTRUCTIONS)
 _SAID_WITHOUT_THE_BLOCK = (BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS,)
 
 
@@ -403,6 +404,7 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         _diagnostics_tool(agent_os, config.required_env),
     ]
     instructions: List[str] = [MANAGER_INSTRUCTIONS]
+    instructions.append(PERSON_INSTRUCTIONS)
     # What Super Agent is told about its background runs depends on whether its model is sent the block.
     instructions.extend([BACKGROUND_RUNS_SHOWN_INSTRUCTIONS, BACKGROUND_RUNS_NOT_SHOWN_INSTRUCTIONS])
     if has_sandbox:
@@ -487,7 +489,6 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         tool_call_limit=config.tool_call_limit,
         search_past_sessions=True,
         read_chat_history=True,
-        add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=config.num_history_runs,
     )
@@ -499,9 +500,27 @@ def _build_manager(agent_os: "AgentOS", config: OSManager) -> _Manager:
         return linked_work._delivers(team.model)
 
     # The work a conversation started: its Tasks when Company is on, and its background runs.
-    team._message_context = linked_work.LinkedWork(
-        company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores
+    work = linked_work.LinkedWork(company_db, user_isolation, company_queue, block_is_sent, run_db=runner._run_stores)
+    from agno.os.manager.person import Person, TurnContext
+
+    # Who the person is, then that work, in one message right before theirs. The role store is the
+    # Authorization object when it manages roles; agent_os.authorization itself is only a switch.
+    team._message_context = TurnContext(
+        Person(
+            lambda: getattr(agent_os, "user_directory", None),
+            lambda: getattr(agent_os, "_authz_role_store", None),
+        ),
+        work,
+        block_is_sent,
+        clock=lambda: (team.timezone_identifier, team.datetime_format),
     )
+    # That message is where Super Agent reads the time, so the time is left out of its system message:
+    # a timestamp there differs on every request, which stops the provider caching the prompt, and it
+    # goes stale in a conversation the provider continues without being sent the system message again.
+    # A model that is not sent the message has no other clock, so it alone gets the time in its system
+    # message.
+    if not block_is_sent():
+        team.add_datetime_to_context = True
     team.instructions.linked_work = block_is_sent  # type: ignore[union-attr]
     registry.reserve_component_ids(RESERVED_MEMBER_IDS | {config.id})
     registry.exclude_components([team, builder])
