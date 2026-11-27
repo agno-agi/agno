@@ -11,8 +11,8 @@ from agno.company.manager import CompanyManager
 from agno.db.schemas.scheduler import SCHEDULED_RUN_METADATA_KEY
 from agno.db.schemas.tasks import task_run_id
 from agno.os.manager import company_tasks
-from agno.os.manager.company_tasks import CompanyTaskTools
-from agno.os.manager.linked_work import _LISTED, LINKED_WORK_KEY, _task_phase
+from agno.os.manager.company_tasks import CompanyTaskTools, _user_isolation
+from agno.os.manager.linked_work import _LISTED, LINKED_WORK_KEY, LinkedWork, _task_phase
 from agno.os.manager.prompts import COMPANY_INSTRUCTIONS
 from agno.os.routers.company.runs import _TaskStarter
 from agno.registry._reserved import MINI_AGENT_ID
@@ -465,18 +465,77 @@ def test_a_message_needs_the_grants_of_sending_back_and_starting(system, missing
     assert message(agent_os, context(), task["id"]).startswith("Sent the message")
 
 
-def test_under_user_isolation_a_person_messages_only_their_own_task(system):  # noqa: F811
+def test_a_person_messages_their_own_task(system):  # noqa: F811
     client, db, agent_os, queue = system
     _, task = records(client)
     in_review(client, db, queue, task["id"])
+    assert message(agent_os, context(), task["id"]).startswith("Sent the message")
+    saved = db.get_task(task["id"])
+    assert (saved["user_id"], saved["accepted_by"], saved["transitions"][-1]["started_by"]) == ("alice",) * 3
+
+
+def test_a_person_messages_a_teammates_task_under_their_own_name_and_authority(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    session = db.get_task(task["id"])["session_id"]
+    # Bob reads the Task alice created, and messages the same Task, with or without user isolation.
+    bob = context(user="bob")
+    bob.session_id, bob.session_state = "bob-chat", {}
+    assert json.loads(call(agent_os, "get_company_task_status", bob, task_id=task["id"]))["status"] == "in_review"
+    reply = message(agent_os, bob, task["id"])
+    assert reply.startswith("Sent the message to 'Draft' as attempt 2"), reply
+
+    saved = db.get_task(task["id"])
+    returned, reserved = saved["transitions"][-2:]
+    # The Task stays alice's. The return to Ready and the attempt are bob's acts, under bob's permissions.
+    assert (saved["user_id"], saved["accepted_by"], saved["status"]) == ("alice", "bob", "in_progress")
+    assert (returned["user_id"], returned["reason"]) == ("bob", MESSAGE)
+    assert returned[AUTHORIZATION_KEY]["context"]["principal_id"] == "bob"
+    assert reserved["attempt"] == 2 and reserved["started_by"] == "bob"
+    # The attempt continues the Task's own session, and its end is reported to bob's conversation.
+    job, sent = sent_input(db, queue, task["id"])
+    assert job["session_id"] == session == saved["session_id"] and sent["review_feedback"] == MESSAGE
+    assert reserved["requested_from"]["session_id"] == "bob-chat"
+    assert [(item["id"], item["shown"]) for item in bob.session_state[LINKED_WORK_KEY]] == [
+        (task["id"], _task_phase(saved))
+    ]
+    # Bob speaks again while the attempt runs. The Task stays in his conversation's list, so the
+    # attempt's end is still reported there.
+    reader = LinkedWork(db, _user_isolation(agent_os))
+    bob.run_id = "bob-next-turn"
+    assert f"(id {task['id']}" in reader.read(bob)
+    assert [item["id"] for item in bob.session_state[LINKED_WORK_KEY]] == [task["id"]]
+    # The attempt ends, and his next turn is told so.
+    finish(db, queue, task["id"], attempt=2)
+    bob.run_id = "bob-turn-after-the-end"
+    assert CHANGED in reader.read(bob)
+    assert [(item["id"], item["shown"]) for item in bob.session_state[LINKED_WORK_KEY]] == [
+        (task["id"], _task_phase(db.get_task(task["id"])))
+    ]
+
+
+@pytest.mark.parametrize(
+    "missing,words",
+    [("tasks:write", "tasks:write"), ("wiki:read", "wiki:read"), ("agents:writer:run", "writer")],
+)
+def test_a_teammate_who_may_not_change_the_task_is_told_why_and_never_not_found(system, missing, words):  # noqa: F811
+    client, db, agent_os, queue = system
+    _, task = records(client)
+    in_review(client, db, queue, task["id"])
+    before, queued = state(db), jobs(queue)
+    reply = message(agent_os, context(scopes=[scope for scope in SCOPES if scope != missing], user="bob"), task["id"])
+    assert reply.startswith("Not done") and words in reply and "not found" not in reply.lower(), reply
+    assert "\n" not in reply and state(db) == before and jobs(queue) == queued
+
+
+def test_a_task_that_does_not_exist_is_not_found_for_anyone(system):  # noqa: F811
+    client, db, agent_os, queue = system
+    records(client)
     before = state(db)
-    reply = message(agent_os, context(user="bob"), task["id"])
-    if agent_os.user_isolation:
-        assert reply == "Not sent: Task not found" and state(db) == before
-        assert message(agent_os, context(), task["id"]).startswith("Sent the message")
-    else:
-        assert reply.startswith("Sent the message"), reply
-        assert db.get_task(task["id"])["transitions"][-2]["user_id"] == "bob"
+    for user in ("alice", "bob"):
+        assert message(agent_os, context(user=user), "missing") == "Not sent: Task not found"
+    assert state(db) == before
 
 
 def test_an_executor_that_pushes_code_keeps_the_confirmed_path(system, monkeypatch):  # noqa: F811
