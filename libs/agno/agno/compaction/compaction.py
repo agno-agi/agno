@@ -21,6 +21,7 @@ from agno.compaction.prompts import (
     SUMMARY_CUT_NOTE_SEARCHABLE,
 )
 from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
+from agno.exceptions import ContextWindowExceededError, ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import get_model
@@ -646,6 +647,26 @@ class Compaction:
             size += length
         return parts
 
+    @staticmethod
+    def _split_rejected_part(parts: List[List[Message]], index: int, error: Exception) -> bool:
+        """Split in two, in place, a part the summarizer rejected as too long. False when that cannot help.
+
+        A part is sized in characters and the summarizer's limit is in tokens. Text that is dense
+        in tokens - ids, hashes, some languages - can fit the character budget and still be more
+        than the summarizer reads. Giving up would leave a fold that fails the same way on every
+        run, so the part is halved and read again. A single message cannot be split, and any
+        other error is not about size.
+        """
+        if isinstance(error, ModelProviderError):
+            error = ModelProviderError.classify(error)
+        part = parts[index]
+        if len(part) < 2 or not isinstance(error, ContextWindowExceededError):
+            return False
+        middle = len(part) // 2
+        parts[index : index + 1] = [part[:middle], part[middle:]]
+        log_info(f"Compaction: the summarizer rejected {len(part)} messages as too long, so they are read in two parts")
+        return True
+
     def _summarize(
         self,
         messages: List[Message],
@@ -669,10 +690,13 @@ class Compaction:
                 f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
             )
         summary = previous
-        for part in parts:
+        index = 0
+        while index < len(parts):
             try:
-                response = model.response(messages=self._summary_messages(part, summary, archived))
+                response = model.response(messages=self._summary_messages(parts[index], summary, archived))
             except Exception as e:
+                if self._split_rejected_part(parts, index, e):
+                    continue
                 log_error(f"Error compacting conversation: {e}")
                 return None
             self._accumulate(response, run_metrics)
@@ -680,6 +704,7 @@ class Compaction:
                 # A part with no summary would drop what it held: leave the history as it is.
                 return None
             summary = response.content
+            index += 1
         return summary if parts else None
 
     async def _asummarize(
@@ -705,10 +730,13 @@ class Compaction:
                 f"Compaction: the fold is more than one summarizer call reads, so it is read in {len(parts)} parts"
             )
         summary = previous
-        for part in parts:
+        index = 0
+        while index < len(parts):
             try:
-                response = await model.aresponse(messages=self._summary_messages(part, summary, archived))
+                response = await model.aresponse(messages=self._summary_messages(parts[index], summary, archived))
             except Exception as e:
+                if self._split_rejected_part(parts, index, e):
+                    continue
                 log_error(f"Error compacting conversation: {e}")
                 return None
             self._accumulate(response, run_metrics)
@@ -716,6 +744,7 @@ class Compaction:
                 # A part with no summary would drop what it held: leave the history as it is.
                 return None
             summary = response.content
+            index += 1
         return summary if parts else None
 
     def _summary_model(self) -> Optional[Model]:

@@ -8,6 +8,7 @@ import pytest
 from agno.compaction import Compaction, CompactionRecord
 from agno.compaction.compaction import DEFAULT_SUMMARIZE_CHAR_BUDGET
 from agno.compaction.prompts import SUMMARY_PREFIX
+from agno.exceptions import ContextWindowExceededError, ModelProviderError
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 
@@ -262,3 +263,77 @@ def test_a_message_that_cannot_be_rendered_leaves_the_history_as_it_is(use_async
         record = compaction.compact(messages, session_id="s")
 
     assert record is None and summarizer.asked == []
+
+
+# ----------------------------------------------------------------- a part the summarizer cannot read
+
+
+class _SmallWindowSummarizer(_Summarizer):
+    """Rejects a transcript longer than its window, as a provider rejects one with too many tokens.
+
+    A part is sized in characters and a provider counts tokens, so a part within the budget can
+    still be more than the summarizer reads. ``asked`` holds only the transcripts it accepted."""
+
+    def __init__(self, window, error=None):
+        super().__init__()
+        self.window, self.error, self.rejected = window, error, 0
+
+    def response(self, messages, **kwargs):
+        if len(messages[-1].content) > self.window:
+            self.rejected += 1
+            raise self.error or ContextWindowExceededError("This model's maximum context length was exceeded")
+        return super().response(messages)
+
+
+def _run_fold(compaction, messages, use_async):
+    if use_async:
+        return asyncio.run(compaction.acompact(messages, session_id="s"))
+    return compaction.compact(messages, session_id="s")
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+@pytest.mark.parametrize(
+    "error",
+    [None, ModelProviderError("Error code: 400 - context_length_exceeded", status_code=400)],
+    ids=["classified", "provider_message"],
+)
+def test_a_part_the_summarizer_rejects_as_too_long_is_halved_and_read_again(use_async, error):
+    """Given up on, the fold would fail the same way on every run and the history would never
+    shrink. Every folded turn is still read once, oldest first."""
+    summarizer = _SmallWindowSummarizer(window=250_000, error=error)
+    compaction = Compaction(compact_at_tokens=None, uncompacted_runs=1, model=summarizer)
+
+    record = _run_fold(compaction, _turns(13, size=80_000), use_async)
+
+    assert record is not None and record.messages_compacted == 24
+    assert summarizer.rejected >= 1 and all(len(asked) <= 250_000 for asked in summarizer.asked)
+    read = "".join(summarizer.asked)
+    assert [read.count(f"q{i} x") for i in range(13)] == [1] * 12 + [0]
+    assert read.index("q0 x") < read.index("q5 x") < read.index("q11 x")
+    # Each call carries the summary of everything read before it.
+    for position in range(1, len(summarizer.asked)):
+        assert f"before this point:\nSUMMARY {position}\n" in summarizer.asked[position]
+    assert record.summary == f"SUMMARY {len(summarizer.asked)}"
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_an_error_that_is_not_about_length_is_not_retried(use_async):
+    error = ModelProviderError("Internal server error", status_code=500)
+    summarizer = _SmallWindowSummarizer(window=250_000, error=error)
+    compaction = Compaction(compact_at_tokens=None, uncompacted_runs=1, model=summarizer)
+
+    assert _run_fold(compaction, _turns(13, size=80_000), use_async) is None
+    assert summarizer.rejected == 1 and summarizer.asked == []
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_one_message_the_summarizer_cannot_read_still_leaves_the_history_as_it_is(use_async):
+    """A single message cannot be split, so the halving stops there and does not loop."""
+    summarizer = _SmallWindowSummarizer(window=250_000)
+    compaction = Compaction(compact_at_tokens=None, uncompacted_runs=1, model=summarizer)
+    messages = _turns(3)
+    messages[2] = Message(role="user", content="pasted " + "y" * 300_000)
+
+    assert _run_fold(compaction, messages, use_async) is None
+    # The part of four, then its second half, then the message alone.
+    assert summarizer.rejected == 3 and len(summarizer.asked) == 1
