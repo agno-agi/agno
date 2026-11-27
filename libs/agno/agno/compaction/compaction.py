@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Collection, List, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, is_offload_envelope
@@ -118,7 +118,7 @@ class Compaction:
     enforce_token_budget: bool = True
 
     # -- when to compact ------------------------------------------------
-    # Fold when the context reaches this many tokens. None folds only on agent.compact() or overflow.
+    # Fold when the context reaches this many tokens. None folds only on compact() or overflow.
     compact_at_tokens: Optional[int] = _COMPACT_AT_TOKENS_UNSET
     # How a request's tokens are counted, for compact_at_tokens and overflow recovery. Unset, a local
     # tiktoken estimate. Set one of these two to count differently:
@@ -691,16 +691,25 @@ class Compaction:
     # -- archive --------------------------------------------------------
 
     def archive_for(
-        self, session_id: str, db: Optional[Any] = None, user_id: Optional[str] = None
+        self,
+        session_id: str,
+        db: Optional[Any] = None,
+        user_id: Optional[str] = None,
+        message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
+        run_id: Optional[str] = None,
     ) -> Optional[CompactionArchive]:
         """The record store for one session, or None without a database.
 
         Fold records are kept whatever ``store_compacted_messages`` says - they are what makes a fold
         outlast the run that made it. It decides only whether the folded messages go in with them.
+
+        ``message_ids`` limits reads to the records anchored on those messages, for a session that
+        holds more than one conversation: a Team's and its members'. ``run_id`` adds the records
+        that run made. See :class:`CompactionArchive`.
         """
         if db is None:
             return None
-        return CompactionArchive(db, session_id, user_id)
+        return CompactionArchive(db, session_id, user_id, message_ids, run_id)
 
     # -- applying -------------------------------------------------------
 
@@ -1043,19 +1052,33 @@ class Compaction:
 
     # -- tools ----------------------------------------------------------
 
-    def tools_for(self, session_id: str, db: Optional[Any] = None) -> Optional[List[Any]]:
-        """A tool letting the agent read back what this session compacted away.
+    def tools_for(
+        self,
+        session_id: str,
+        db: Optional[Any] = None,
+        message_ids: Optional[Union[Collection[str], Callable[[], Optional[Collection[str]]]]] = None,
+        run_id: Optional[str] = None,
+        offer_before_first_fold: bool = False,
+    ) -> Optional[List[Any]]:
+        """A tool letting the agent or team leader read back what this session compacted away.
 
         Scoped to one session by construction - the session id is bound here, never taken from a
         model argument - so an agent can never search another conversation's history.
 
         Returns None until something has actually been archived: offering the tool over an empty
-        archive only invites a pointless lookup on the first turn.
+        archive only invites a pointless lookup on the first turn. ``offer_before_first_fold``
+        offers it anyway. A run's tools are built before the run folds, so without it the run that
+        makes the first fold is sent a summary that says to search and has nothing to search with.
+        A Team and a team member pass it. A standalone Agent does not yet, and has that gap.
+
+        ``message_ids`` limits the search to the folds anchored on those messages, so a Team and a
+        member sharing a session each search their own conversation. ``run_id`` is the run the
+        tool is built for, so that it also finds a fold that run makes.
         """
         if not (self.search_compacted_messages and self.store_compacted_messages):
             return None
-        archive = self.archive_for(session_id, db)
-        if archive is None or archive.latest() is None:
+        archive = self.archive_for(session_id, db, message_ids=message_ids, run_id=run_id)
+        if archive is None or not (offer_before_first_fold or archive.latest() is not None):
             return None
 
         def search_compacted_history(pattern: str, context_lines: int = 2) -> str:
