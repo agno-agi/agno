@@ -79,7 +79,7 @@ async def test_checkout_is_atomic_and_a_different_pin_fails_the_attempt(system):
     failed = await _call(db, "get_task", task["id"])
     assert failed["result"]["status"] == "ERROR"
     assert failed["metadata"]["checkout"] == checkout
-    assert failed["status"] == "in_progress"
+    assert failed["status"] == "in_review"
 
 
 @pytest.mark.asyncio

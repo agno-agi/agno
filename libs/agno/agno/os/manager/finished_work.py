@@ -66,6 +66,8 @@ READ_TOOLS = frozenset(
         # The work the report is about
         "check_background_run",
         "get_company_task_status",
+        # The checkout a sandbox saved when that work's run completed: a stored record, not the sandbox
+        "read_sandbox_changes",
         # Company records
         "list_company_goals",
         "get_company_goal",

@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb
-from agno.db.schemas.tasks import TASK_STATUS_MEANING
+from agno.db.schemas.tasks import FAILED_RUN_TASK_STATUSES, TASK_STATUS_MEANING
 from agno.run.authorization import _caller_authorization
 from agno.utils.log import log_warning
 
@@ -145,12 +145,14 @@ def _task_words(value: Dict[str, Any]) -> str:
     """A Task's state in plain words."""
     status = value.get("status")
     words = TASK_STATUS_MEANING.get(str(status), str(status))
-    if status == "in_progress":
+    if status in FAILED_RUN_TASK_STATUSES:
+        # A Task whose run failed or was cancelled waits in review, and it is not finished work.
+        waiting = ", waiting for a person" if status == "in_review" else ""
         ended = _result_status(value)
         if ended == "ERROR":
-            return "started, its run ended in error"
+            return "started, its run ended in error" + waiting
         if ended == "CANCELLED":
-            return "started, its run was cancelled"
+            return "started, its run was cancelled" + waiting
     return words
 
 
@@ -357,7 +359,8 @@ def _since(value: Dict[str, Any]) -> str:
     """When the Task entered the state its line describes, or '' when no record says.
 
     The time of the step into its stage: an edit, a move to another Project and an archive are not
-    steps. A proposal is dated by its creation. A run's failure or cancellation is not dated.
+    steps. A proposal is dated by its creation. A failed or cancelled run that left the Task In progress
+    is not dated.
     """
     status = value.get("status")
     if status == "in_progress" and _result_status(value) in ("ERROR", "CANCELLED"):
@@ -495,16 +498,22 @@ class LinkedWork:
         ]
         return newest[:_LISTED]
 
-    def _owner(self, run_context: Any) -> Tuple[Optional[str], bool]:
-        """The owner Task reads are limited to, and whether Tasks can be read at all."""
+    def _tasks_readable(self, run_context: Any) -> bool:
+        """Whether this caller can be shown Tasks at all.
+
+        A Task is company work, read by its ID whoever created it, as the Task tools read it: a
+        teammate's Task this conversation messaged or started stays listed. Where users are
+        isolated, a caller with no identity is still shown none.
+        """
         from agno.tools.company import _scoped_user
 
         if self.db is None:
-            return None, False
+            return False
         try:
-            return _scoped_user(run_context, self.user_isolation), True
+            _scoped_user(run_context, self.user_isolation)
         except PermissionError:
-            return None, False
+            return False
+        return True
 
     def _run_stores(self, entry: Dict[str, Any]) -> List[Any]:
         return list(self.run_db(entry.get("db_id")) or []) if self.run_db is not None else []
@@ -533,7 +542,7 @@ class LinkedWork:
         """Write the block and update the list: what was shown, what changed in this run, what leaves.
 
         read pairs each entry with what was found: a Task, a run's stored row, None for one that is
-        gone or not this caller's, or _UNREAD for one this run could not read, which stays as it is.
+        gone, or _UNREAD for one this run could not read, which stays as it is.
 
         A change is marked with the run it was first shown in. A retry builds the block again under
         the same run id and gets the same mark. A continued run uses the stored messages.
@@ -548,7 +557,7 @@ class LinkedWork:
             if value is _UNREAD:
                 continue
             if value is None:
-                # Deleted, or not readable by this caller.
+                # Deleted.
                 entries.remove(entry)
                 continue
             is_run = entry.get("kind") == "run"
@@ -619,9 +628,8 @@ class LinkedWork:
             if not head:
                 return None
             authority = _caller_authorization(run_context)
-            owner, tasks_readable = self._owner(run_context)
             # A synchronous run cannot read an asynchronous database, and the block is optional.
-            tasks_readable = tasks_readable and not isinstance(self.db, AsyncBaseDb)
+            tasks_readable = self._tasks_readable(run_context) and not isinstance(self.db, AsyncBaseDb)
             if tasks_readable and authority is not None:
                 try:
                     authority.require("tasks", "read")
@@ -630,7 +638,7 @@ class LinkedWork:
             read: List[Tuple[Dict[str, Any], Any]] = []
             for entry in head:
                 if entry.get("kind") == "task":
-                    read.append((entry, self.db.get_task(entry["id"], user_id=owner) if tasks_readable else _UNREAD))
+                    read.append((entry, self.db.get_task(entry["id"]) if tasks_readable else _UNREAD))
                     continue
                 stores = self._run_stores(entry)
                 if not stores:
@@ -662,7 +670,7 @@ class LinkedWork:
             if not head:
                 return None
             authority = _caller_authorization(run_context)
-            owner, tasks_readable = self._owner(run_context)
+            tasks_readable = self._tasks_readable(run_context)
             if tasks_readable and authority is not None:
                 try:
                     await authority.arequire("tasks", "read")
@@ -674,8 +682,8 @@ class LinkedWork:
                     if not tasks_readable:
                         return _UNREAD
                     if isinstance(self.db, AsyncBaseDb):
-                        return await self.db.get_task(entry["id"], user_id=owner)
-                    return await asyncio.to_thread(self.db.get_task, entry["id"], user_id=owner)
+                        return await self.db.get_task(entry["id"])
+                    return await asyncio.to_thread(self.db.get_task, entry["id"])
                 stores = self._run_stores(entry)
                 if not stores:
                     return _UNREAD

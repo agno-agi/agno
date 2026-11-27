@@ -212,6 +212,11 @@ class FileSystemSummary(BaseModel):
     user_isolation: bool = Field(..., description="Whether the namespace is partitioned by user identity")
     max_file_bytes: int = Field(..., description="Maximum UTF-8 bytes per file")
     max_namespace_bytes: int = Field(..., description="Maximum bytes across the namespace")
+    description: Optional[str] = Field(
+        None,
+        description="What the store is for, as written for the model. When several stores share an entry, "
+        "the declared one's, else the first agent's by id",
+    )
 
 
 class FileSystemAgent(BaseModel):
@@ -269,6 +274,7 @@ class FileSystemNamespace(FileSystemSummary):
 
 
 class FileSystemConfig(BaseModel):
+    enabled: Optional[bool] = Field(None, description="At least one file system is listed for the caller")
     namespaces: List[FileSystemNamespace] = Field(
         default_factory=list,
         description="Filesystem namespaces with their backend details, limits, and linked agents",
@@ -300,6 +306,7 @@ def _extract_filesystem(filesystem: Any, agent: Any = None, user_id: Optional[st
         user_isolation=user_isolation,
         max_file_bytes=filesystem.max_file_bytes,
         max_namespace_bytes=filesystem.max_namespace_bytes,
+        description=filesystem.description,
     )
 
 
@@ -499,7 +506,7 @@ class QueueCapabilities(BaseModel):
     capability, not operator data - the admin-scoped /queue surface stays
     the only view of actual jobs).
 
-    Both fields describe submissions the durable queue can carry. A
+    durable and queue_per_session describe submissions the durable queue can carry. A
     background submission the queue cannot carry (media uploads, payloads
     plain JSON cannot store, factory-backed or off-registry components)
     executes in-process on the accepting replica, outside the gate and
@@ -516,10 +523,137 @@ class QueueCapabilities(BaseModel):
         description="Same-session background submissions execute at most one at a time, FIFO by submission; "
         "false when no durable queue enforces the gate",
     )
+    cross_container: bool = Field(
+        False,
+        description="Background runs can be cancelled and their events read from any replica, "
+        "because cancellation and the event stream are both shared rather than in-process",
+    )
+
+
+class AuthorizationReport(BaseModel):
+    """How requests to this AgentOS are authenticated and authorized.
+
+    Reported as EFFECTIVE behavior, not constructor arguments: each value is read from
+    what the running app enforces. `enabled`, `mode` and `user_isolation` are returned to
+    every caller that can read /config. The remaining fields are returned only to an
+    administrator of this AgentOS, so their absence beside a present `enabled` means the
+    caller may not see them, while an absent block means the server predates the report.
+
+    Every field is optional so a client parses responses from servers that omit it.
+    Holds no keys, key counts, key locations, audience or issuer values, or role scopes."""
+
+    enabled: Optional[bool] = Field(
+        None,
+        description="Scopes or roles are enforced on requests. False when callers are only authenticated, or not at all",
+    )
+    mode: Optional[Literal["none", "security_key", "jwt"]] = Field(
+        None, description="Authentication mode on the REST/WS plane, the same value /info reports as `auth_mode`"
+    )
+    user_isolation: Optional[bool] = Field(
+        None, description="Per-user data isolation is switched on, the same value /info reports"
+    )
+    managed_roles: Optional[bool] = Field(
+        None,
+        description="Roles managed on this AgentOS decide requests. False under scope-only authorization "
+        "and when a custom authorization provider decides alone. Administrators only",
+    )
+    roles_from_token: Optional[bool] = Field(
+        None,
+        description="A caller's roles can also come from a claim on their token, so the stored assignments "
+        "do not list every role a user holds. Administrators only",
+    )
+    default_role: Optional[str] = Field(
+        None,
+        description="Name of the role a newly provisioned user receives; absent when no default is set. "
+        "Administrators only",
+    )
+    token_scopes_trusted: Optional[bool] = Field(
+        None,
+        description="The scopes carried on a caller's token count toward access decisions: true only when "
+        "a scope plane actually runs, alone or beside managed roles. Administrators only",
+    )
+    audience_verified: Optional[bool] = Field(
+        None,
+        description="A token's audience claim is checked against this AgentOS before the token is accepted. "
+        "Administrators only",
+    )
+
+
+class FeatureStatus(BaseModel):
+    """Whether one optional AgentOS feature is running."""
+
+    enabled: Optional[bool] = Field(None, description="The feature is running on this AgentOS")
+
+
+class UserDirectoryStatus(FeatureStatus):
+    """The user directory: the roster of users and the switch that disables one."""
+
+    auto_provision: Optional[bool] = Field(None, description="A user is added to the directory on their first request")
+    fail_closed: Optional[bool] = Field(
+        None, description="A request is refused when the directory cannot be read to check the user"
+    )
+
+
+class AuditStatus(FeatureStatus):
+    """The audit trails: changes to roles and users, and access decisions.
+
+    `enabled` means events are being recorded. The `*_readable` fields say whether the
+    matching trail can be read back through this AgentOS: a trail is recorded but not
+    readable when the sink only writes (a log sink) or the routes that serve it are not
+    mounted."""
+
+    changes_readable: Optional[bool] = Field(
+        None, description="GET /authz/audit serves the change trail instead of answering 404"
+    )
+    decisions_readable: Optional[bool] = Field(
+        None, description="GET /authz/decisions serves the decision trail instead of answering 404"
+    )
+
+
+class MediaStorageStatus(FeatureStatus):
+    """Where the media routes read stored media from."""
+
+    backend: Optional[str] = Field(None, description="Storage backend: s3, gcs or local")
+
+
+class PublicStatus(FeatureStatus):
+    """The public surface: components served to outside callers under public input and rate limits."""
+
+    agents: Optional[List[str]] = Field(None, description="IDs of the agents anonymous callers can run")
+    teams: Optional[List[str]] = Field(None, description="IDs of the teams anonymous callers can run")
+    workflows: Optional[List[str]] = Field(
+        None, description="IDs of the public workflows. Callers still need a bearer token, unlike agents and teams"
+    )
+    mcp: Optional[bool] = Field(
+        None,
+        description="The MCP server is on the public surface. Anonymous only without mcp_auth; "
+        "/info carries the OAuth details when sign-in is required",
+    )
+
+
+class KnowledgeReport(KnowledgeConfig):
+    """The /config knowledge block. KnowledgeConfig is also operator input, so `enabled` lives here only."""
+
+    enabled: Optional[bool] = Field(None, description="At least one knowledge instance is served")
+
+
+class TracesReport(TracesConfig):
+    """The /config traces block. TracesConfig is also operator input, so `enabled` lives here only."""
+
+    enabled: Optional[bool] = Field(
+        None, description="Runs are traced and the spans stored by this AgentOS; dbs lists where to read them"
+    )
 
 
 class ConfigResponse(BaseModel):
-    """Response schema for the general config endpoint"""
+    """Response schema for the general config endpoint.
+
+    Each optional feature is one top-level block that says whether it is on, reported
+    as EFFECTIVE behavior: a feature that was requested but could not start is off.
+    Most carry `enabled`; three keep the off signal older clients read: `company` is
+    null, `interfaces` is empty and `queue.durable` is false. `user_directory`, `audit`
+    and `public` go to administrators only. The data blocks (session, memory, learning,
+    metrics, evals) say where each domain is stored and are not features."""
 
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
@@ -542,12 +676,35 @@ class ConfigResponse(BaseModel):
     learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
     company: Optional[CompanySectionConfig] = Field(None, description="Company configuration")
     filesystem: Optional[FileSystemConfig] = Field(None, description="Filesystem configuration")
-    knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
+    knowledge: Optional[KnowledgeReport] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
-    traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
+    traces: Optional[TracesReport] = Field(None, description="Traces configuration")
     # Optional for CLIENT compatibility (the SDK parses this same schema, and
     # older servers omit the field); the server always populates it.
     queue: Optional[QueueCapabilities] = Field(None, description="Background-run queue capabilities")
+    authorization: Optional[AuthorizationReport] = Field(
+        None, description="How requests are authenticated and authorized; detail fields for administrators only"
+    )
+    scheduler: Optional[FeatureStatus] = Field(None, description="Scheduled runs are polled and executed")
+    mcp: Optional[FeatureStatus] = Field(
+        None, description="The MCP server is served; /info carries its path and OAuth details"
+    )
+    manager: Optional[FeatureStatus] = Field(
+        None, description="The OS Manager team is served; teams[] carries it as an internal team"
+    )
+    media_storage: Optional[MediaStorageStatus] = Field(
+        None, description="Stored media is served from a storage backend instead of only the database"
+    )
+    telemetry: Optional[FeatureStatus] = Field(
+        None,
+        description="Usage telemetry is sent to Agno: the AgentOS launch ping, or run telemetry "
+        "from a local agent, team or workflow",
+    )
+    user_directory: Optional[UserDirectoryStatus] = Field(None, description="User directory. Administrators only")
+    audit: Optional[AuditStatus] = Field(None, description="Audit trails. Administrators only")
+    public: Optional[PublicStatus] = Field(
+        None, description="Components served under public limits. Administrators only"
+    )
 
     agents: List[AgentSummaryResponse] = Field(..., description="List of registered agents")
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
