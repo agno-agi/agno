@@ -109,7 +109,7 @@ def test_output_is_bounded_like_the_compacted_history_search(team):
     found = _default_tools._search_chat_history_function(team, session).entrypoint(pattern="needle")  # type: ignore[misc]
     assert len(found) < _SEARCH_OUTPUT_CHARS + 200
     assert all(len(line) < _SEARCH_LINE_CHARS + 50 for line in found.splitlines())
-    assert found.endswith("... more matches than fit; narrow the search.")
+    assert found.endswith("narrow the search.")
 
 
 def test_a_pattern_is_literal_text_not_a_regular_expression(team):
@@ -187,6 +187,31 @@ def test_a_match_deep_in_a_long_line_keeps_its_turn(team):
     line = search(pattern="/srv/app", context_lines=0).splitlines()[1]  # type: ignore[misc]
     assert line.startswith("[turn 2 assistant] ")
     assert "/srv/app/blue" in line
+
+
+def _long_reply(topic: str) -> str:
+    return "\n".join(f"{i}. A step for the {topic} migration." for i in range(1, 31))
+
+
+def test_a_rare_term_is_not_buried_by_a_common_one(team):
+    # Models OR in broad words ("migration") next to the one that matters ("budget"). Long replies full of
+    # the broad word must not use up the matches before a short turn that holds the answer.
+    turns = [
+        ("Plan the billing migration.", _long_reply("billing")),
+        ("The load-test budget is 4,200 dollars.", "Noted."),
+        ("Plan the ledger migration.", _long_reply("ledger")),
+        ("Correction: the load-test budget is now 6,000 dollars.", "Noted."),
+        ("Plan the webhook migration.", _long_reply("webhook")),
+    ]
+    search = _default_tools._search_chat_history_function(team, _plain_session(turns)).entrypoint
+    lines = search(pattern="migration|budget", context_lines=0).splitlines()  # type: ignore[misc]
+    budget = [line for line in lines if "budget" in line]
+    # Both values, oldest first, each with its turn, so the later one reads as the correction.
+    assert budget == [
+        "[turn 2 user] The load-test budget is 4,200 dollars.",
+        "[turn 4 user] Correction: the load-test budget is now 6,000 dollars.",
+    ]
+    assert lines[-1].endswith("narrow the search.")
 
 
 async def _agent_tool_names(agent: Agent, async_mode: bool) -> List[str]:

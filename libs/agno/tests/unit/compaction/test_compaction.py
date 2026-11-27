@@ -2873,6 +2873,36 @@ def test_the_search_tool_caps_output_across_folds():
     assert "narrow the search" in out
 
 
+def test_grep_keeps_the_rarest_matches_when_they_do_not_all_fit():
+    """A broad term in the pattern fills the match budget; the rare one is what the model searched for."""
+    from agno.compaction.compaction import grep_text
+
+    lines = [f"deploy step {i}" for i in range(50)]
+    lines.insert(40, "the rotation window is 02:00 UTC")
+    out = grep_text("\n".join(lines), "deploy|rotation window", context_lines=0, max_matches=5)
+
+    assert "41: the rotation window is 02:00 UTC" in out
+    # What is shown still reads top to bottom.
+    numbers = [int(line.split(":")[0]) for line in out.splitlines() if line[:1].isdigit()]
+    assert numbers == sorted(numbers)
+    assert out.endswith("narrow the search.")
+
+
+def test_grep_gives_up_context_before_it_gives_up_a_match():
+    """Wide context around many matches overflows the output; the matches matter more than their context."""
+    from agno.compaction.compaction import grep_text
+
+    lines = [f"deploy step {i} " + "z" * 400 for i in range(60)]
+    lines[50] = "deploy hotfix " + "z" * 400
+    lines[10] = "the rotation window is 02:00 UTC"
+    out = grep_text("\n".join(lines), "deploy|hotfix|rotation window", context_lines=10)
+
+    # The hotfix match sits among dense matches whose merged context alone overflows the output.
+    assert "51: deploy hotfix" in out
+    assert "11: the rotation window is 02:00 UTC" in out
+    assert out.endswith("narrow the search.")
+
+
 def test_grep_falls_back_to_literal_on_bad_regex():
     """The caller is a model; it may send plain text full of regex metacharacters."""
     from agno.compaction.compaction import grep_text
