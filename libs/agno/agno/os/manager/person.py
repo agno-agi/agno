@@ -52,13 +52,15 @@ def _note(who: Dict[str, Any], row: Optional[Dict[str, Any]], roles: List[str]) 
     if who["report"]:
         owner = f"This conversation belongs to user id {user_id}." if user_id else "This conversation names no user."
         return f"{_HEADER} {_FROM}: nobody. This is a finished-work report and no person is typing. {owner}"
+    if who["scheduled"]:
+        # Before the unknown user: a schedule that names no owner still has nobody present.
+        owner = f" for user id {user_id}" if user_id else ", and the schedule names no user"
+        return f"{_HEADER} {_FROM}: nobody. A schedule started this run{owner}."
     if user_id is None:
         return (
             f"{_HEADER} {_FROM}: unknown. The request named no user. Do not guess who the person is, "
             'and say you do not know when asked. Work asked for "me" is recorded with no owner.'
         )
-    if who["scheduled"]:
-        return f"{_HEADER} {_FROM}: nobody. A schedule started this run for user id {user_id}."
     parts = [f"user id {user_id}"]
     name, email = _clean((row or {}).get("name")), _clean((row or {}).get("email"))
     if name:

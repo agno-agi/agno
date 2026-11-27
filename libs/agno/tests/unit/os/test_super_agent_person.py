@@ -96,6 +96,10 @@ def test_a_schedule_and_a_service_account_are_not_called_a_person(mode):
     assert read(Person(), context(user="jonah", metadata={SCHEDULED_RUN_METADATA_KEY: True}), mode) == (
         HEADER + "nobody. A schedule started this run for user id jonah."
     )
+    # A schedule that names no owner is still a run with nobody present, not an unknown person.
+    assert read(Person(), context(metadata={SCHEDULED_RUN_METADATA_KEY: True}), mode) == (
+        HEADER + "nobody. A schedule started this run, and the schedule names no user."
+    )
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])
