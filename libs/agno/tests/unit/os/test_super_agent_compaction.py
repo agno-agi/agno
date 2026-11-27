@@ -85,7 +85,8 @@ def summaries(request):
 
 
 def notes(request):
-    """The linked-work notes in one request: each an unstored user message of its own."""
+    """The messages of one request that carry the linked-work note. It is sent in the unstored user
+    message that holds what Super Agent is told on every turn, after the time and who it is talking to."""
     return [m for m in request if m.role == "user" and not m.from_history and _HEADER in str(m.content)]
 
 
