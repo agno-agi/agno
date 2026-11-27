@@ -897,9 +897,7 @@ async def test_codex_transport_accepts_any_version_from_the_minimum(monkeypatch,
     from agno.agents.codex._hitl import human_client
 
     real = importlib.metadata.version
-    monkeypatch.setattr(
-        importlib.metadata, "version", lambda name: installed if name == "openai-codex" else real(name)
-    )
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: installed if name == "openai-codex" else real(name))
     if supported:
         assert human_client(None, None)._client._sync is not None
     else:

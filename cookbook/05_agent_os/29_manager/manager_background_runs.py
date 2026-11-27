@@ -28,7 +28,9 @@ db = SqliteDb(db_file=f"tmp/manager_background_runs_{int(time.time())}.db")
 
 async def investigate(step_input: StepInput) -> StepOutput:
     await asyncio.sleep(SECONDS)
-    return StepOutput(content="The nightly export fails because the job still uses the old IAM role.")
+    return StepOutput(
+        content="The nightly export fails because the job still uses the old IAM role."
+    )
 
 
 investigator = Workflow(
@@ -52,7 +54,12 @@ def ask(client: TestClient, message: str) -> None:
     started = time.monotonic()
     response = client.post(
         "/teams/superagent/runs",
-        data={"message": message, "session_id": "demo-chat", "user_id": "sam", "stream": "false"},
+        data={
+            "message": message,
+            "session_id": "demo-chat",
+            "user_id": "sam",
+            "stream": "false",
+        },
     )
     response.raise_for_status()
     body = response.json()
@@ -64,7 +71,10 @@ def ask(client: TestClient, message: str) -> None:
 
 if __name__ == "__main__":
     with TestClient(app) as client:
-        ask(client, "Run the Investigator on last night's export failure in the background. Do not wait for it.")
+        ask(
+            client,
+            "Run the Investigator on last night's export failure in the background. Do not wait for it.",
+        )
         ask(client, "What is 17 times 23?")
         print(f"\nWaiting {SECONDS + 5} seconds for the Investigator to finish.")
         time.sleep(SECONDS + 5)

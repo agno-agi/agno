@@ -11,8 +11,8 @@ from urllib.parse import quote
 from agno.db.schemas.scheduler import (
     RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
-    SCHEDULED_RUN_METADATA_KEY,
     SCHEDULE_OWNER_HEADER,
+    SCHEDULED_RUN_METADATA_KEY,
     Schedule,
     match_run_endpoint,
 )

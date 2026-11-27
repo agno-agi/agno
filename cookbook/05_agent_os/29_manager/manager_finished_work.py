@@ -32,7 +32,9 @@ db = SqliteDb(db_file=f"tmp/manager_finished_work_{int(time.time())}.db")
 
 async def investigate(step_input: StepInput) -> StepOutput:
     await asyncio.sleep(SECONDS)
-    return StepOutput(content="The nightly export fails because the job still uses the old IAM role.")
+    return StepOutput(
+        content="The nightly export fails because the job still uses the old IAM role."
+    )
 
 
 investigator = Workflow(
@@ -60,16 +62,25 @@ def turns() -> list:
 
 if __name__ == "__main__":
     with TestClient(app) as client:
-        message = "Run the Investigator on last night's export failure in the background."
+        message = (
+            "Run the Investigator on last night's export failure in the background."
+        )
         response = client.post(
             "/teams/superagent/runs",
-            data={"message": message, "session_id": SESSION, "user_id": "sam", "stream": "false"},
+            data={
+                "message": message,
+                "session_id": SESSION,
+                "user_id": "sam",
+                "stream": "false",
+            },
         )
         response.raise_for_status()
         print(f"> {message}")
         print("  " + (response.json().get("content") or "").replace("\n", "\n  "))
 
-        print(f"\nSending nothing. Waiting for the Investigator ({SECONDS} seconds) and the finished-work report.")
+        print(
+            f"\nSending nothing. Waiting for the Investigator ({SECONDS} seconds) and the finished-work report."
+        )
         deadline = time.monotonic() + SECONDS + 60
         while time.monotonic() < deadline:
             stored = turns()
@@ -81,5 +92,11 @@ if __name__ == "__main__":
         print("\nThe conversation now holds a reply nobody asked for:")
         print("  " + str(update["run_data"].get("content")).replace("\n", "\n  "))
         print("\nIts input, written by AgentOS:")
-        print("  " + str(update["run_data"]["input"]["input_content"]).replace("\n", "\n  "))
-        print("\nIts mark:", update["run_data"]["metadata"].get("agno_finished_work_report"))
+        print(
+            "  "
+            + str(update["run_data"]["input"]["input_content"]).replace("\n", "\n  ")
+        )
+        print(
+            "\nIts mark:",
+            update["run_data"]["metadata"].get("agno_finished_work_report"),
+        )

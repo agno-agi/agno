@@ -95,8 +95,10 @@ async def test_failed_table_creation_can_be_retried_async_mysql(async_mysql_db):
 def test_failed_table_creation_can_be_retried_mysql():
     """A failed CREATE TABLE on MySQLDb must unregister the table from MetaData."""
     from unittest.mock import Mock, patch
+
     from sqlalchemy import Table
     from sqlalchemy.engine import Engine
+
     from agno.db.mysql.mysql import MySQLDb
 
     mock_engine = Mock(spec=Engine)

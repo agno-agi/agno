@@ -9,9 +9,9 @@ import pytest
 
 from agno.agent import Agent
 from agno.db.schemas.scheduler import (
+    FINISHED_WORK_REPORT_METADATA_KEY,
     REQUESTED_FROM_METADATA_KEY,
     RESERVED_RUN_METADATA_KEYS,
-    FINISHED_WORK_REPORT_METADATA_KEY,
 )
 from agno.db.sqlite import SqliteDb
 from agno.job_queue import QueueConfig
@@ -22,13 +22,13 @@ from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.job_queue import QueueWorker
 from agno.os.manager import finished_work, linked_work
-from agno.os.manager.linked_work import LINKED_WORK_KEY
 from agno.os.manager.finished_work import (
-    READ_TOOLS,
     FINISHED_WORK_LABEL,
     FINISHED_WORK_REPORT_LIMIT,
+    READ_TOOLS,
     FinishedWorkReports,
 )
+from agno.os.manager.linked_work import LINKED_WORK_KEY
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run import background as run_background

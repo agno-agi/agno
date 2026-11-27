@@ -428,6 +428,7 @@ def test_absent_table_read_probe_does_not_take_resolve_lock(db):
 def test_failed_table_creation_can_be_retried_sqlite(tmp_path):
     """A failed CREATE TABLE on SqliteDb must not leave the table registered on MetaData."""
     from unittest.mock import patch
+
     from sqlalchemy import Table
 
     db = SqliteDb(db_file=str(tmp_path / "retry_sync.db"), session_table="test_sessions")
@@ -456,7 +457,9 @@ def test_failed_table_creation_can_be_retried_sqlite(tmp_path):
 async def test_failed_table_creation_can_be_retried_async_sqlite(tmp_path):
     """A failed CREATE TABLE on AsyncSqliteDb must not leave the table registered on MetaData."""
     from unittest.mock import patch
+
     from sqlalchemy import Table
+
     from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
     db = AsyncSqliteDb(db_file=str(tmp_path / "retry_async.db"), session_table="test_sessions")

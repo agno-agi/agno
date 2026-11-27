@@ -409,7 +409,7 @@ def test_config_describes_filesystem_at_os_level(db, client_factory):
                 "company": False,
                 "agents": [{"id": "notes"}],
             }
-        ]
+        ],
     }
     assert "filesystem" not in agents["notes"]
     assert "filesystem" not in agents["factory-notes"]

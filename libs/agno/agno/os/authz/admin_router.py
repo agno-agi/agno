@@ -71,11 +71,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from agno.os.authz._role_store import RoleChangeRefused
-from agno.utils.log import log_warning
 from agno.os.authz.audit import AUDIT_SORT_FIELDS, DEFAULT_AUDIT_SORT_FIELD
 from agno.os.authz.user_directory import DEFAULT_USER_SORT_FIELD, USER_SORT_FIELDS
 from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.scopes import AgentOSScope
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.authz.authorization import Authorization
