@@ -141,12 +141,16 @@ def sanitize_response_schema(schema: dict):
       with the siblings kept on top, since the root must be an object schema.
     - Leaves values under "default", "examples", "const" and "enum" untouched: they are data.
     """
-    if isinstance(schema, dict) and _ref_siblings(schema):
+    # Follow a chain of root refs (a RootModel of a RootModel) to the object; seen stops a cycle
+    seen = set()
+    while isinstance(schema, dict) and _ref_siblings(schema) and schema["$ref"] not in seen:
+        seen.add(schema["$ref"])
         definition = _local_definition(schema, schema["$ref"])
-        if definition is not None:
-            schema.pop("$ref")
-            for key, value in copy.deepcopy(definition).items():
-                schema.setdefault(key, value)
+        if definition is None:
+            break
+        schema.pop("$ref")
+        for key, value in copy.deepcopy(definition).items():
+            schema.setdefault(key, value)
     # An anyOf root is never valid, so an unresolved root $ref is left for OpenAI to report
     _sanitize_schema_node(schema, wrap_ref=False)
 

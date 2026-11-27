@@ -498,6 +498,36 @@ def test_sanitize_response_schema_inlines_a_root_ref_with_siblings(model, kept):
     assert {key: schema[key] for key in kept} == kept
 
 
+class _Movie(RootModel[_Cast]):
+    pass
+
+
+def test_sanitize_response_schema_follows_a_root_ref_chain_to_its_object():
+    schema = _Movie.model_json_schema()
+    assert schema["$ref"] == "#/$defs/_Cast"
+    assert schema["$defs"]["_Cast"]["$ref"] == "#/$defs/_Actor"
+
+    sanitize_response_schema(schema)
+
+    assert "$ref" not in schema and "anyOf" not in schema
+    assert schema["title"] == "_Movie"
+    assert schema["type"] == "object"
+    assert schema["properties"] == {"name": {"title": "Name", "type": "string"}}
+
+
+def test_sanitize_response_schema_stops_on_a_root_ref_cycle():
+    schema = {
+        "$defs": {"A": {"$ref": "#/$defs/B", "title": "A"}, "B": {"$ref": "#/$defs/A", "title": "B"}},
+        "$ref": "#/$defs/A",
+        "title": "Root",
+    }
+
+    sanitize_response_schema(schema)
+
+    assert schema["title"] == "Root"
+    assert isinstance(schema["$ref"], str)
+
+
 def test_sanitize_response_schema_inlines_a_recursive_root_ref():
     schema = _Tree.model_json_schema()
 
